@@ -143,10 +143,8 @@ export function ShareDialog({
     return `${n} tracks from ${days.size} days`
   }, [isSingle, tracks])
 
-  const [backgroundMode, setBackgroundMode] = useState<BackgroundMode>(() =>
-    trackPhotos.length > 0 ? "photo" : "dark"
-  )
-  const [blurAmount, setBlurAmount] = useState(6)
+  const [backgroundMode, setBackgroundMode] = useState<BackgroundMode>("map")
+  const [blurAmount, setBlurAmount] = useState(0)
   const [selectedPhotoIndex, setSelectedPhotoIndex] = useState(0)
   const [enabledStats, setEnabledStats] = useState<StatKey[]>(() =>
     getDefaultStats(statsData)
