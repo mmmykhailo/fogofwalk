@@ -30,6 +30,7 @@ export async function parseGpxFile(file: File): Promise<ParsedTrack[]> {
         const rawPoints = buildRawPoints(rawCoords, times)
         const ts = rawPoints.map((p) => p.timestampMs)
         const validTs = ts.filter((t): t is number => t != null && isFinite(t))
+        const stats = computeTrackStats(rawPoints)
         tracks.push({
           id: crypto.randomUUID(),
           name: file.name,
@@ -37,7 +38,7 @@ export async function parseGpxFile(file: File): Promise<ParsedTrack[]> {
           coordinates: rawCoords.map((c) => [c[0], c[1]]) as TrackCoords,
           pointTimestamps: ts.every((t) => t == null) ? undefined : ts.map((t) => t ?? -1),
           format: "gpx",
-          stats: computeTrackStats(rawPoints),
+          stats: { ...stats, uniqueDistanceKm: stats.distanceKm },
         })
       }
     } else if (feat.geometry.type === "MultiLineString") {
@@ -49,6 +50,7 @@ export async function parseGpxFile(file: File): Promise<ParsedTrack[]> {
           const rawPoints = buildRawPoints(rawCoords, allTimes?.[i])
           const ts = rawPoints.map((p) => p.timestampMs)
           const validTs = ts.filter((t): t is number => t != null && isFinite(t))
+          const stats = computeTrackStats(rawPoints)
           tracks.push({
             id: crypto.randomUUID(),
             name: `${file.name}[${i}]`,
@@ -56,7 +58,7 @@ export async function parseGpxFile(file: File): Promise<ParsedTrack[]> {
             coordinates: rawCoords.map((c) => [c[0], c[1]]) as TrackCoords,
             pointTimestamps: ts.every((t) => t == null) ? undefined : ts.map((t) => t ?? -1),
             format: "gpx",
-            stats: computeTrackStats(rawPoints),
+            stats: { ...stats, uniqueDistanceKm: stats.distanceKm },
           })
         }
       })

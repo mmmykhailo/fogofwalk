@@ -13,6 +13,14 @@ import { TrackStatsPanel } from "~/components/TrackStatsPanel"
 import { ShareDialog } from "~/components/ShareDialog"
 import { PhotoCard } from "~/components/PhotoCard"
 import { ErrorBoundary, ErrorCard } from "~/components/ErrorBoundary"
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "~/components/ui/dialog"
+import { Button } from "~/components/ui/button"
 import { mapStore, worldFogGeoJSON } from "~/lib/mapStore"
 import { parseFile } from "~/lib/parsers"
 import { processPhotoFiles } from "~/lib/photos"
@@ -32,7 +40,7 @@ import {
 import { clearMapPosition } from "~/lib/mapStore"
 import {
   sortTracks,
-  computePerTrackUniqueDistances,
+  populateUniqueDistances,
 } from "~/lib/statsAggregator"
 import type { FogMode, MapMode, ParsedTrack } from "~/types/tracks"
 import type { PhotoEntry, PhotoGroup } from "~/types/photos"
@@ -96,6 +104,7 @@ export async function clientLoader(): Promise<{
 
   if (tracks.length > 0) {
     mapStore.tracks = sortTracks(tracks)
+    populateUniqueDistances(mapStore.tracks)
     const trackIds = tracks.map((t) => t.id).sort()
     if (fogCache && isFogCacheValid(fogCache, trackIds, restoredFogMode)) {
       // Cache hit: restore fog directly — setupMapLayers will use mapStore.fogData
@@ -182,6 +191,7 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
     )
     if (allTracks.length > 0) {
       mapStore.tracks = sortTracks([...mapStore.tracks, ...allTracks])
+      populateUniqueDistances(mapStore.tracks)
       mapStore.worker?.postMessage({
         type: "PROCESS_TRACKS",
         tracks: allTracks,
@@ -222,8 +232,9 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
   if (intent === "delete-track") {
     const trackId = formData.get("trackId") as string
 
-    // Remove from in-memory store
+    // Remove from in-memory store and recompute unique distances for remaining tracks
     mapStore.tracks = mapStore.tracks.filter((t) => t.id !== trackId)
+    populateUniqueDistances(mapStore.tracks)
     mapStore.processedCount = 0
 
     // Reset worker + update map sources immediately
@@ -275,7 +286,8 @@ export default function Home() {
   const [mapMode, setMapMode] = useState<MapMode>("flat")
   const [showUploadDialog, setShowUploadDialog] = useState(false)
   const [mapReady, setMapReady] = useState(false)
-  const [selectedTrackId, setSelectedTrackId] = useState<string | null>(null)
+  const [selectedTrackIds, setSelectedTrackIds] = useState<string[]>([])
+  const [pendingTrackId, setPendingTrackId] = useState<string | null>(null)
   const [showShareDialog, setShowShareDialog] = useState(false)
   const [photos, setPhotos] = useState<PhotoEntry[]>(_restoredPhotos)
   const [showPhotos, setShowPhotos] = useState(true)
@@ -283,11 +295,6 @@ export default function Home() {
   const [photoErrorOpen, setPhotoErrorOpen] = useState(false)
   const [parseFailedFiles, setParseFailedFiles] = useState<string[]>([])
   const [isParseErrorOpen, setIsParseErrorOpen] = useState(false)
-  // Per-track unique distance map — recomputed whenever mapStore.tracks changes.
-  // Lazy initializer runs once on mount; mapStore.tracks is pre-sorted by clientLoader.
-  const [perTrackUniqueKm, setPerTrackUniqueKm] = useState(() =>
-    computePerTrackUniqueDistances(mapStore.tracks)
-  )
   // Loading overlay: starts visible, fades out when map is ready, then unmounts
   const [overlayDone, setOverlayDone] = useState(false)
 
@@ -318,7 +325,7 @@ export default function Home() {
     if (!mapReady) return
     const trackId = searchParams.get("track")
     if (!trackId) return
-    setSelectedTrackId(trackId)
+    setSelectedTrackIds([trackId])
     const track = mapStore.tracks.find((t) => t.id === trackId)
     if (!track || !mapStore.map) return
     const fc = featureCollection([lineString(track.coordinates)])
@@ -435,7 +442,6 @@ export default function Home() {
     if (data.intent === "add-files") {
       prevTrackCountRef.current = trackCount // snapshot pre-upload count for fitBounds fallback
       setShowUploadDialog(false)
-      setPerTrackUniqueKm(computePerTrackUniqueDistances(mapStore.tracks))
       if (data.newTracksCount > 0) {
         isNewUploadRef.current = true // triggers fitBounds in the isProcessing effect below
         setTrackCount(data.trackCount)
@@ -451,15 +457,17 @@ export default function Home() {
       setTrackCount(0)
       setProcessedCount(0)
       setIsProcessing(false)
-      setSelectedTrackId(null)
+      setSelectedTrackIds([])
+      setPendingTrackId(null)
+      setShowShareDialog(false)
       setPhotos([])
       setSelectedGroup(null)
-      setPerTrackUniqueKm(new Map())
     }
     if (data.intent === "delete-track") {
-      setSelectedTrackId(null)
+      setSelectedTrackIds([])
+      setPendingTrackId(null)
+      setShowShareDialog(false)
       setTrackCount(data.trackCount)
-      setPerTrackUniqueKm(computePerTrackUniqueDistances(mapStore.tracks))
       if (data.trackCount > 0) {
         setIsProcessing(true)
         setProcessedCount(0)
@@ -554,8 +562,30 @@ export default function Home() {
     }
   }
 
-  const selectedTrack = selectedTrackId
-    ? (mapStore.tracks.find((t) => t.id === selectedTrackId) ?? null)
+  function handleTrackSelect(id: string | null) {
+    if (!id) {
+      setSelectedTrackIds([])
+      setPendingTrackId(null)
+      return
+    }
+    if (selectedTrackIds.includes(id)) {
+      setSelectedTrackIds((prev) => prev.filter((x) => x !== id))
+      setPendingTrackId(null)
+      return
+    }
+    if (selectedTrackIds.length === 0) {
+      setSelectedTrackIds([id])
+    } else {
+      setPendingTrackId(id)
+    }
+  }
+
+  const selectedTracks = selectedTrackIds
+    .map((id) => mapStore.tracks.find((t) => t.id === id))
+    .filter((t): t is ParsedTrack => t != null)
+
+  const pendingTrack = pendingTrackId
+    ? mapStore.tracks.find((t) => t.id === pendingTrackId) ?? null
     : null
 
   return (
@@ -574,8 +604,8 @@ export default function Home() {
           showFog={showFog}
           onMapReady={() => setMapReady(true)}
           onProcessingUpdate={handleProcessingUpdate}
-          selectedTrackId={selectedTrackId}
-          onTrackSelect={setSelectedTrackId}
+          selectedTrackIds={selectedTrackIds}
+          onTrackSelect={handleTrackSelect}
           mapMode={mapMode}
           photos={photos}
           showPhotos={showPhotos}
@@ -622,7 +652,7 @@ export default function Home() {
             group={selectedGroup}
             onClose={() => setSelectedGroup(null)}
           />
-          {selectedTrack && (
+          {selectedTracks.length > 0 && (
             <ErrorBoundary
               fallback={(error, reset) => (
                 <div className="absolute right-4 bottom-4 z-10 w-80">
@@ -631,10 +661,13 @@ export default function Home() {
               )}
             >
               <TrackStatsPanel
-                track={selectedTrack}
-                uniqueKm={perTrackUniqueKm.get(selectedTrack.id)}
+                tracks={selectedTracks}
+                onRemoveTrack={(id) =>
+                  setSelectedTrackIds((prev) => prev.filter((x) => x !== id))
+                }
                 onClose={() => {
-                  setSelectedTrackId(null)
+                  setSelectedTrackIds([])
+                  setPendingTrackId(null)
                   setSearchParams(
                     (prev) => {
                       const next = new URLSearchParams(prev)
@@ -645,17 +678,54 @@ export default function Home() {
                   )
                 }}
                 onShare={() => setShowShareDialog(true)}
-                onDelete={() => handleDeleteTrack(selectedTrack.id)}
+                onDelete={selectedTracks.length === 1 ? () => handleDeleteTrack(selectedTracks[0].id) : undefined}
               />
             </ErrorBoundary>
           )}
-          {showShareDialog && selectedTrack && (
+          {showShareDialog && selectedTracks.length > 0 && (
             <ShareDialog
               open={showShareDialog}
               onOpenChange={setShowShareDialog}
-              track={selectedTrack}
+              tracks={selectedTracks}
               photos={photos}
             />
+          )}
+          {pendingTrack && (
+            <Dialog open onOpenChange={(open) => { if (!open) setPendingTrackId(null) }}>
+              <DialogContent showCloseButton={false}>
+                <DialogHeader>
+                  <DialogTitle>Add to stats?</DialogTitle>
+                </DialogHeader>
+                <p className="text-sm text-muted-foreground">
+                  &ldquo;{pendingTrack.name}&rdquo;
+                </p>
+                <DialogFooter className="flex-col gap-2 sm:flex-row">
+                  <Button
+                    variant="outline"
+                    onClick={() => setPendingTrackId(null)}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      setSelectedTrackIds([pendingTrackId!])
+                      setPendingTrackId(null)
+                    }}
+                  >
+                    Replace
+                  </Button>
+                  <Button
+                    onClick={() => {
+                      setSelectedTrackIds((prev) => [...prev, pendingTrackId!])
+                      setPendingTrackId(null)
+                    }}
+                  >
+                    Add to stats
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
           )}
         </>
       )}

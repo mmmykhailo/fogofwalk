@@ -157,7 +157,7 @@ interface MapViewProps {
   onProcessingUpdate?: (count: number, done: boolean) => void
   showTracks: boolean
   showFog: boolean
-  selectedTrackId: string | null
+  selectedTrackIds: string[]
   onTrackSelect: (id: string | null) => void
   mapMode: MapMode
   photos: PhotoEntry[]
@@ -170,7 +170,7 @@ export function MapView({
   onProcessingUpdate,
   showTracks,
   showFog,
-  selectedTrackId,
+  selectedTrackIds,
   onTrackSelect,
   mapMode,
   photos,
@@ -188,8 +188,8 @@ export function MapView({
   showTracksRef.current = showTracks
   const showFogRef = useRef(showFog)
   showFogRef.current = showFog
-  const selectedTrackIdRef = useRef(selectedTrackId)
-  selectedTrackIdRef.current = selectedTrackId
+  const selectedTrackIdsRef = useRef(selectedTrackIds)
+  selectedTrackIdsRef.current = selectedTrackIds
   const pendingStyleLoadRef = useRef<(() => void) | null>(null)
   const photoMarkersRef = useRef<Map<string, maplibregl.Marker>>(new Map())
   const photosRef = useRef<PhotoEntry[]>(photos)
@@ -302,8 +302,6 @@ export function MapView({
       })
       if (features.length > 0) {
         onTrackSelectRef.current?.(features[0].properties?.id ?? null)
-      } else {
-        onTrackSelectRef.current?.(null)
       }
     })
 
@@ -424,17 +422,18 @@ export function MapView({
         )
       }
 
-      const sid = selectedTrackIdRef.current
-      if (sid) {
+      const sids = selectedTrackIdsRef.current
+      if (sids.length > 0) {
+        const selectionExpr = ["in", ["get", "id"], ["literal", sids]]
         map.setPaintProperty("tracks-layer", "line-width", [
           "case",
-          ["==", ["get", "id"], sid],
+          selectionExpr,
           TRACK_WIDTH_SELECTED,
           TRACK_WIDTH_DEFAULT,
         ])
         map.setPaintProperty("tracks-layer", "line-opacity", [
           "case",
-          ["==", ["get", "id"], sid],
+          selectionExpr,
           TRACK_OPACITY_SELECTED,
           TRACK_OPACITY_DIM,
         ])
@@ -470,7 +469,7 @@ export function MapView({
   useEffect(() => {
     if (!mapStore.sourcesReady || !mapStore.map) return
     const map = mapStore.map
-    if (!selectedTrackId) {
+    if (selectedTrackIds.length === 0) {
       map.setPaintProperty("tracks-layer", "line-width", TRACK_WIDTH_DEFAULT)
       map.setPaintProperty(
         "tracks-layer",
@@ -479,19 +478,20 @@ export function MapView({
       )
       return
     }
+    const selectionExpr = ["in", ["get", "id"], ["literal", selectedTrackIds]]
     map.setPaintProperty("tracks-layer", "line-width", [
       "case",
-      ["==", ["get", "id"], selectedTrackId],
+      selectionExpr,
       TRACK_WIDTH_SELECTED,
       TRACK_WIDTH_DEFAULT,
     ])
     map.setPaintProperty("tracks-layer", "line-opacity", [
       "case",
-      ["==", ["get", "id"], selectedTrackId],
+      selectionExpr,
       TRACK_OPACITY_SELECTED,
       TRACK_OPACITY_DIM,
     ])
-  }, [selectedTrackId])
+  }, [selectedTrackIds])
 
   useEffect(() => {
     clusterCacheRef.current.clear()

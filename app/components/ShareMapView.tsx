@@ -5,32 +5,37 @@ import { MAP_STYLE_URL, TRACK_COLOR } from "~/constants/fog"
 import { CARD_WIDTH, CARD_HEIGHT } from "~/lib/shareCard"
 
 interface ShareMapViewProps {
-  track: ParsedTrack
-  onReady: (baseMap: ImageBitmap, trackPoints: { x: number; y: number }[]) => void
+  tracks: ParsedTrack[]
+  onReady: (
+    baseMap: ImageBitmap,
+    trackPointsPerTrack: Array<{ x: number; y: number }[]>
+  ) => void
 }
 
 /**
- * Renders a clean MapLibre map (no fog, no other tracks) centred on the given
- * track and calls onReady once the map is fully captured.
+ * Renders a clean MapLibre map centred on the given tracks and calls onReady
+ * once the map is fully captured.
  *
  * Two-phase capture:
- * 1. After the base tiles are idle (track layer NOT yet added): capture the base
- *    map bitmap. This bitmap is safe to blur without blurring the track.
- * 2. Add the track layer, wait for the second idle, then project track
- *    coordinates to canvas pixels via map.project(). These pixel coords are
- *    drawn unblurred on top of the blurred base map in drawShareCard.
+ * 1. After base tiles are idle (no track layers): capture the base map bitmap.
+ *    This bitmap is safe to blur without blurring the tracks.
+ * 2. Add one layer per track, wait for the second idle, then project each
+ *    track's coordinates to canvas pixels. One pixel array per track is
+ *    returned so callers can draw them as separate paths.
  *
  * The container is positioned off-screen so the map renders without being
- * visible to the user. WebGL still renders correctly when off-screen as long
- * as the element has real dimensions.
+ * visible to the user.
  */
-export function ShareMapView({ track, onReady }: ShareMapViewProps) {
+export function ShareMapView({ tracks, onReady }: ShareMapViewProps) {
   const containerRef = useRef<HTMLDivElement>(null)
-  // Keep a stable ref to onReady to avoid re-creating the map on every render
   const onReadyRef = useRef(onReady)
   useEffect(() => {
     onReadyRef.current = onReady
   })
+
+  // Stable dep — only rebuild map when the actual track set changes,
+  // not on every parent render (tracks array reference changes each time).
+  const trackIds = tracks.map((t) => t.id).join(",")
 
   useEffect(() => {
     const container = containerRef.current
@@ -50,81 +55,74 @@ export function ShareMapView({ track, onReady }: ShareMapViewProps) {
       if (captured) return
       captured = true
       console.warn("[ShareMapView] map did not reach idle within 10 s — emitting partial capture")
-      // Best-effort: emit whatever we have (empty bitmap fallback, no track points)
-      const canvas = map.getCanvas()
-      createImageBitmap(canvas).then((bitmap) => {
-        onReadyRef.current(bitmap, [])
+      createImageBitmap(map.getCanvas()).then((bitmap) => {
+        onReadyRef.current(bitmap, tracks.map(() => []))
       })
     }, 10_000)
 
     map.once("load", () => {
-      // ── Compute track bounds ──────────────────────────────────────────────
-      const lngs = track.coordinates.map((c) => c[0])
-      const lats = track.coordinates.map((c) => c[1])
-      const bounds: maplibregl.LngLatBoundsLike = [
-        [Math.min(...lngs), Math.min(...lats)],
-        [Math.max(...lngs), Math.max(...lats)],
-      ]
+      // ── Compute combined bounds of all tracks ─────────────────────────────
+      let minLng = Infinity, maxLng = -Infinity, minLat = Infinity, maxLat = -Infinity
+      for (const t of tracks) {
+        for (const [lng, lat] of t.coordinates) {
+          if (lng < minLng) minLng = lng
+          if (lng > maxLng) maxLng = lng
+          if (lat < minLat) minLat = lat
+          if (lat > maxLat) maxLat = lat
+        }
+      }
 
       // Asymmetric padding: reserve bottom ~520px for the stats panel so the
-      // track's bounding box stays in the upper portion of the card.
-      map.fitBounds(bounds, {
+      // track(s) stay in the upper portion of the card.
+      map.fitBounds([[minLng, minLat], [maxLng, maxLat]], {
         padding: { top: 100, bottom: 520, left: 80, right: 80 },
         animate: false,
       })
 
-      // ── Phase 1: base map idle (no track layer yet) ───────────────────────
+      // ── Phase 1: base map idle (no track layers yet) ──────────────────────
       map.once("idle", async () => {
         if (captured) return
 
-        // Capture the base map before the track layer is added.
-        // This bitmap will be blurred in drawShareCard without blurring the track.
         const baseMapBitmap = await createImageBitmap(map.getCanvas())
 
-        // ── Add track source & layer ────────────────────────────────────────
-        map.addSource("share-track", {
-          type: "geojson",
-          data: {
-            type: "Feature",
-            geometry: {
-              type: "LineString",
-              coordinates: track.coordinates as [number, number][],
+        // Add one source + layer per track
+        tracks.forEach((t, i) => {
+          map.addSource(`share-track-${i}`, {
+            type: "geojson",
+            data: {
+              type: "Feature",
+              geometry: { type: "LineString", coordinates: t.coordinates as [number, number][] },
+              properties: {},
             },
-            properties: {},
-          },
+          })
+          map.addLayer({
+            id: `share-track-line-${i}`,
+            type: "line",
+            source: `share-track-${i}`,
+            layout: { "line-cap": "round", "line-join": "round" },
+            paint: { "line-color": TRACK_COLOR, "line-width": 4, "line-opacity": 0.95 },
+          })
         })
 
-        map.addLayer({
-          id: "share-track-line",
-          type: "line",
-          source: "share-track",
-          layout: { "line-cap": "round", "line-join": "round" },
-          paint: {
-            "line-color": TRACK_COLOR,
-            "line-width": 4,
-            "line-opacity": 0.95,
-          },
-        })
-
-        // ── Phase 2: track layer idle → project coordinates ─────────────────
+        // ── Phase 2: all track layers idle → project pixel coords ─────────
         map.once("idle", () => {
           if (captured) return
           captured = true
           clearTimeout(fallbackTimer)
 
-          // Subsample for performance on very long tracks (same limit as drawRoute)
           const MAX_PTS = 2000
-          const coords = track.coordinates
-          const step =
-            coords.length > MAX_PTS ? Math.ceil(coords.length / MAX_PTS) : 1
-          const trackPoints = coords
-            .filter((_, i) => i % step === 0)
-            .map(([lng, lat]) => {
-              const pt = map.project([lng, lat] as [number, number])
-              return { x: pt.x, y: pt.y }
-            })
+          const trackPointsPerTrack = tracks.map((t) => {
+            const { coordinates } = t
+            const step = coordinates.length > MAX_PTS ? Math.ceil(coordinates.length / MAX_PTS) : 1
+            return coordinates
+              .filter((_, i) => i % step === 0)
+              .map(([lng, lat]) => {
+                const pt = map.project([lng, lat] as [number, number])
+                return { x: pt.x, y: pt.y }
+              })
+          })
 
-          onReadyRef.current(baseMapBitmap, trackPoints)
+          onReadyRef.current(baseMapBitmap, trackPointsPerTrack)
         })
       })
     })
@@ -133,7 +131,8 @@ export function ShareMapView({ track, onReady }: ShareMapViewProps) {
       clearTimeout(fallbackTimer)
       map.remove()
     }
-  }, [track])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [trackIds])
 
   return (
     <div

@@ -33,11 +33,12 @@ import {
 import { ElevationChart } from "~/components/ElevationChart"
 import { useDraggable } from "~/lib/useDraggable"
 import { useIsMobile } from "~/lib/useIsMobile"
+import { computeCompositeStats } from "~/lib/shareCard"
 
 interface TrackStatsPanelProps {
-  track: ParsedTrack
-  uniqueKm?: number
+  tracks: ParsedTrack[]
   onClose: () => void
+  onRemoveTrack?: (id: string) => void
   onShare?: () => void
   onDelete?: () => void
 }
@@ -86,25 +87,34 @@ function StatRow({ label, value }: StatRowProps) {
 
 const EMPTY_STATS = {
   distanceKm: 0,
+  uniqueDistanceKm: 0,
   elevationGainM: 0,
   elevationLossM: 0,
   hasElevation: false,
   durationMs: null,
   movingTimeMs: null,
   avgPaceMinPerKm: null,
+  avgMovingPaceMinPerKm: null,
   avgSpeedKmh: null,
+  avgMovingSpeedKmh: null,
   elevationProfile: [],
 } as const
 
+
 export function TrackStatsPanel({
-  track,
-  uniqueKm,
+  tracks,
   onClose,
+  onRemoveTrack,
   onShare,
   onDelete,
 }: TrackStatsPanelProps) {
+  const isMulti = tracks.length > 1
+  const track = tracks[0]
   // stats may be absent on tracks loaded before this field was added (HMR / future compat)
-  const stats = track.stats ?? EMPTY_STATS
+  const stats = track?.stats ?? EMPTY_STATS
+  const uniqueKm = track?.stats.uniqueDistanceKm
+  const composite = isMulti ? computeCompositeStats(tracks) : null
+
   const [isDeleteOpen, setIsDeleteOpen] = useState(false)
   const [isNameCopied, copyName] = useCopyToClipboard()
   // Local open state so the exit animation plays before the parent unmounts
@@ -131,18 +141,20 @@ export function TrackStatsPanel({
 
   const actionButtons = (
     <>
-      <Button
-        variant="ghost"
-        size="icon-sm"
-        onClick={() => copyName(track.name)}
-        aria-label="Copy track name"
-      >
-        {isNameCopied ? (
-          <CheckIcon weight="bold" />
-        ) : (
-          <CopyIcon weight="duotone" />
-        )}
-      </Button>
+      {!isMulti && (
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          onClick={() => copyName(track.name)}
+          aria-label="Copy track name"
+        >
+          {isNameCopied ? (
+            <CheckIcon weight="bold" />
+          ) : (
+            <CopyIcon weight="duotone" />
+          )}
+        </Button>
+      )}
       {onShare && (
         <Button
           variant="ghost"
@@ -153,7 +165,7 @@ export function TrackStatsPanel({
           <ShareNetworkIcon weight="duotone" />
         </Button>
       )}
-      {onDelete && (
+      {onDelete && !isMulti && (
         <Button
           variant="ghost"
           size="icon-sm"
@@ -175,7 +187,7 @@ export function TrackStatsPanel({
     </>
   )
 
-  const statsContent = (
+  const singleStatsContent = (
     <div className="flex flex-col gap-3">
       <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
         <StatRow label="Distance" value={formatDistance(stats.distanceKm)} />
@@ -231,7 +243,63 @@ export function TrackStatsPanel({
     </div>
   )
 
-  const deleteDialog = onDelete && (
+  const multiStatsContent = composite && (
+    <div className="flex flex-col gap-3">
+      <div className="flex flex-col gap-0.5">
+        {tracks.map((t) => (
+          <div key={t.id} className="flex items-center gap-1">
+            <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+              {t.name}
+            </span>
+            {onRemoveTrack && (
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                onClick={() => onRemoveTrack(t.id)}
+                aria-label={`Remove ${t.name}`}
+                className="shrink-0 text-muted-foreground/50 hover:text-foreground"
+              >
+                <XIcon weight="bold" />
+              </Button>
+            )}
+          </div>
+        ))}
+      </div>
+      <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+        <StatRow label="Total distance" value={formatDistance(composite.totalDistanceKm)} />
+        {composite.totalUniqueKm > 0 && composite.totalDistanceKm > 0 && (
+          <StatRow
+            label="Unique distance"
+            value={`${formatDistance(composite.totalUniqueKm)} (${Math.round((composite.totalUniqueKm / composite.totalDistanceKm) * 100)}%)`}
+          />
+        )}
+        {composite.totalDurationMs != null && (
+          <StatRow label="Total duration" value={formatDuration(composite.totalDurationMs)} />
+        )}
+        {composite.totalMovingTimeMs != null && (
+          <StatRow label="Total moving time" value={formatDuration(composite.totalMovingTimeMs)} />
+        )}
+        {composite.avgPaceMinPerKm != null && (
+          <StatRow label="Avg pace" value={formatPace(composite.avgPaceMinPerKm)} />
+        )}
+        {composite.avgMovingSpeedKmh != null && (
+          <StatRow label="Avg moving speed" value={formatSpeed(composite.avgMovingSpeedKmh)} />
+        )}
+        {composite.hasElevation && (
+          <>
+            <StatRow label="Elevation ↑" value={formatElevation(composite.totalElevationGainM)} />
+            <StatRow label="Elevation ↓" value={formatElevation(composite.totalElevationLossM)} />
+          </>
+        )}
+      </div>
+    </div>
+  )
+
+  const statsContent = isMulti ? multiStatsContent : singleStatsContent
+
+  const panelTitle = isMulti ? `${tracks.length} activities` : track.name
+
+  const deleteDialog = onDelete && !isMulti && (
     <Dialog open={isDeleteOpen} onOpenChange={setIsDeleteOpen}>
       <DialogContent showCloseButton={false}>
         <DialogHeader>
@@ -267,12 +335,13 @@ export function TrackStatsPanel({
           onOpenChange={(open) => {
             if (!open) handleDismiss()
           }}
+          modal={false}
         >
           <DrawerContent>
             <DrawerHeader>
               <div className="flex items-center justify-between gap-2">
                 <DrawerTitle className="truncate">
-                  {track.name}
+                  {panelTitle}
                 </DrawerTitle>
                 <div className="flex shrink-0 items-center">
                   {actionButtons}
@@ -295,7 +364,7 @@ export function TrackStatsPanel({
           onTouchStart={onTouchStart}
           className="cursor-grab select-none active:cursor-grabbing"
         >
-          <CardTitle className="truncate">{track.name}</CardTitle>
+          <CardTitle className="truncate">{panelTitle}</CardTitle>
           <CardAction>{actionButtons}</CardAction>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
