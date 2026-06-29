@@ -334,6 +334,7 @@ export function TrackStatsPanel({
           onOpenChange={(open) => {
             if (!open) handleDismiss()
           }}
+          modal={false}
         >
           <DrawerContent>
             <DrawerHeader>
