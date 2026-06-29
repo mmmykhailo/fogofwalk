@@ -303,7 +303,7 @@ export function computePersonalRecords(tracks: ParsedTrack[]): PersonalRecords {
  * to land in an already-marked neighbour cell and be silently dropped, collapsing
  * the entire track's unique distance to nearly zero.
  */
-export function computePerTrackUniqueDistances(
+function computePerTrackUniqueDistances(
   tracks: ParsedTrack[],
 ): Map<string, number> {
   const explored = new Set<string>()
@@ -355,4 +355,12 @@ export function computeUniqueDistance(tracks: ParsedTrack[]): number {
   let total = 0
   for (const km of computePerTrackUniqueDistances(tracks).values()) total += km
   return total
+}
+
+/** Compute unique distances and write them onto each track in place. Mutates the array elements. */
+export function populateUniqueDistances(tracks: ParsedTrack[]): void {
+  const result = computePerTrackUniqueDistances(tracks)
+  for (const track of tracks) {
+    track.stats.uniqueDistanceKm = result.get(track.id) ?? track.stats.distanceKm
+  }
 }

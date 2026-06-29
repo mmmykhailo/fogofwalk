@@ -40,7 +40,7 @@ import {
 import { clearMapPosition } from "~/lib/mapStore"
 import {
   sortTracks,
-  computePerTrackUniqueDistances,
+  populateUniqueDistances,
 } from "~/lib/statsAggregator"
 import type { FogMode, MapMode, ParsedTrack } from "~/types/tracks"
 import type { PhotoEntry, PhotoGroup } from "~/types/photos"
@@ -104,6 +104,7 @@ export async function clientLoader(): Promise<{
 
   if (tracks.length > 0) {
     mapStore.tracks = sortTracks(tracks)
+    populateUniqueDistances(mapStore.tracks)
     const trackIds = tracks.map((t) => t.id).sort()
     if (fogCache && isFogCacheValid(fogCache, trackIds, restoredFogMode)) {
       // Cache hit: restore fog directly — setupMapLayers will use mapStore.fogData
@@ -190,6 +191,7 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
     )
     if (allTracks.length > 0) {
       mapStore.tracks = sortTracks([...mapStore.tracks, ...allTracks])
+      populateUniqueDistances(mapStore.tracks)
       mapStore.worker?.postMessage({
         type: "PROCESS_TRACKS",
         tracks: allTracks,
@@ -230,8 +232,9 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
   if (intent === "delete-track") {
     const trackId = formData.get("trackId") as string
 
-    // Remove from in-memory store
+    // Remove from in-memory store and recompute unique distances for remaining tracks
     mapStore.tracks = mapStore.tracks.filter((t) => t.id !== trackId)
+    populateUniqueDistances(mapStore.tracks)
     mapStore.processedCount = 0
 
     // Reset worker + update map sources immediately
@@ -292,11 +295,6 @@ export default function Home() {
   const [photoErrorOpen, setPhotoErrorOpen] = useState(false)
   const [parseFailedFiles, setParseFailedFiles] = useState<string[]>([])
   const [isParseErrorOpen, setIsParseErrorOpen] = useState(false)
-  // Per-track unique distance map — recomputed whenever mapStore.tracks changes.
-  // Lazy initializer runs once on mount; mapStore.tracks is pre-sorted by clientLoader.
-  const [perTrackUniqueKm, setPerTrackUniqueKm] = useState(() =>
-    computePerTrackUniqueDistances(mapStore.tracks)
-  )
   // Loading overlay: starts visible, fades out when map is ready, then unmounts
   const [overlayDone, setOverlayDone] = useState(false)
 
@@ -444,7 +442,6 @@ export default function Home() {
     if (data.intent === "add-files") {
       prevTrackCountRef.current = trackCount // snapshot pre-upload count for fitBounds fallback
       setShowUploadDialog(false)
-      setPerTrackUniqueKm(computePerTrackUniqueDistances(mapStore.tracks))
       if (data.newTracksCount > 0) {
         isNewUploadRef.current = true // triggers fitBounds in the isProcessing effect below
         setTrackCount(data.trackCount)
@@ -465,14 +462,12 @@ export default function Home() {
       setShowShareDialog(false)
       setPhotos([])
       setSelectedGroup(null)
-      setPerTrackUniqueKm(new Map())
     }
     if (data.intent === "delete-track") {
       setSelectedTrackIds([])
       setPendingTrackId(null)
       setShowShareDialog(false)
       setTrackCount(data.trackCount)
-      setPerTrackUniqueKm(computePerTrackUniqueDistances(mapStore.tracks))
       if (data.trackCount > 0) {
         setIsProcessing(true)
         setProcessedCount(0)
@@ -667,7 +662,6 @@ export default function Home() {
             >
               <TrackStatsPanel
                 tracks={selectedTracks}
-                uniqueKms={perTrackUniqueKm}
                 onRemoveTrack={(id) =>
                   setSelectedTrackIds((prev) => prev.filter((x) => x !== id))
                 }
@@ -693,7 +687,6 @@ export default function Home() {
               open={showShareDialog}
               onOpenChange={setShowShareDialog}
               tracks={selectedTracks}
-              uniqueKms={perTrackUniqueKm}
               photos={photos}
             />
           )}

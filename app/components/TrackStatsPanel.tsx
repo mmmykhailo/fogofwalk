@@ -37,7 +37,6 @@ import { computeCompositeStats } from "~/lib/shareCard"
 
 interface TrackStatsPanelProps {
   tracks: ParsedTrack[]
-  uniqueKms: Map<string, number>
   onClose: () => void
   onRemoveTrack?: (id: string) => void
   onShare?: () => void
@@ -88,20 +87,22 @@ function StatRow({ label, value }: StatRowProps) {
 
 const EMPTY_STATS = {
   distanceKm: 0,
+  uniqueDistanceKm: 0,
   elevationGainM: 0,
   elevationLossM: 0,
   hasElevation: false,
   durationMs: null,
   movingTimeMs: null,
   avgPaceMinPerKm: null,
+  avgMovingPaceMinPerKm: null,
   avgSpeedKmh: null,
+  avgMovingSpeedKmh: null,
   elevationProfile: [],
 } as const
 
 
 export function TrackStatsPanel({
   tracks,
-  uniqueKms,
   onClose,
   onRemoveTrack,
   onShare,
@@ -111,8 +112,8 @@ export function TrackStatsPanel({
   const track = tracks[0]
   // stats may be absent on tracks loaded before this field was added (HMR / future compat)
   const stats = track?.stats ?? EMPTY_STATS
-  const uniqueKm = track ? uniqueKms.get(track.id) : undefined
-  const composite = isMulti ? computeCompositeStats(tracks, uniqueKms) : null
+  const uniqueKm = track?.stats.uniqueDistanceKm
+  const composite = isMulti ? computeCompositeStats(tracks) : null
 
   const [isDeleteOpen, setIsDeleteOpen] = useState(false)
   const [isNameCopied, copyName] = useCopyToClipboard()

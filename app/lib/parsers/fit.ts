@@ -34,6 +34,7 @@ export async function parseFitFile(file: File): Promise<ParsedTrack[]> {
   const ts = rawPoints.map((p) => p.timestampMs)
 
   const validTs = ts.filter((t): t is number => t != null && isFinite(t))
+  const stats = computeTrackStats(rawPoints)
   return [
     {
       id: crypto.randomUUID(),
@@ -42,7 +43,7 @@ export async function parseFitFile(file: File): Promise<ParsedTrack[]> {
       coordinates: coords,
       pointTimestamps: ts.every((t) => t == null) ? undefined : ts.map((t) => t ?? -1),
       format: "fit",
-      stats: computeTrackStats(rawPoints),
+      stats: { ...stats, uniqueDistanceKm: stats.distanceKm },
     },
   ]
 }

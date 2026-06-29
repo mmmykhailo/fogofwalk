@@ -64,11 +64,11 @@ function fmtPace(minPerKm: number): string {
 
 // ─── StatsData converters ─────────────────────────────────────────────────────
 
-export function trackToStatsData(track: ParsedTrack, uniqueDistanceKm: number): StatsData {
+export function trackToStatsData(track: ParsedTrack): StatsData {
   const s = track.stats
   return {
     distanceKm: s.distanceKm,
-    uniqueDistanceKm,
+    uniqueDistanceKm: s.uniqueDistanceKm,
     durationMs: s.durationMs ?? null,
     movingTimeMs: s.movingTimeMs ?? null,
     avgPaceMinPerKm: s.avgPaceMinPerKm ?? null,
@@ -553,10 +553,7 @@ export interface CompositeStats {
   trackCount: number
 }
 
-export function computeCompositeStats(
-  tracks: ParsedTrack[],
-  uniqueKms: Map<string, number>
-): CompositeStats {
+export function computeCompositeStats(tracks: ParsedTrack[]): CompositeStats {
   let totalDistanceKm = 0
   let totalElevationGainM = 0
   let totalElevationLossM = 0
@@ -580,7 +577,7 @@ export function computeCompositeStats(
       timedDistanceKm += s.distanceKm ?? 0
       hasMovingTime = true
     }
-    totalUniqueKm += uniqueKms.get(t.id) ?? 0
+    totalUniqueKm += t.stats.uniqueDistanceKm
   }
 
   const avgPaceMinPerKm =

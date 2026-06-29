@@ -41,7 +41,6 @@ interface ShareDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   tracks: ParsedTrack[]
-  uniqueKms: Map<string, number>
   photos: PhotoEntry[]
 }
 
@@ -101,23 +100,22 @@ export function ShareDialog({
   open,
   onOpenChange,
   tracks,
-  uniqueKms,
   photos,
 }: ShareDialogProps) {
   const isSingle = tracks.length === 1
   const track = tracks[0]
 
   const composite = useMemo(
-    () => (isSingle ? null : computeCompositeStats(tracks, uniqueKms)),
-    [isSingle, tracks, uniqueKms]
+    () => (isSingle ? null : computeCompositeStats(tracks)),
+    [isSingle, tracks]
   )
 
   const statsData: StatsData = useMemo(
     () =>
       isSingle
-        ? trackToStatsData(track, uniqueKms.get(track.id) ?? 0)
+        ? trackToStatsData(track)
         : compositeToStatsData(composite!),
-    [isSingle, track, uniqueKms, composite]
+    [isSingle, track, composite]
   )
 
   const availableStats = useMemo(() => getAvailableStats(statsData), [statsData])
