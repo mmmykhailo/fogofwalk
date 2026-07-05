@@ -95,6 +95,12 @@ export async function saveTracks(tracks: ParsedTrack[]): Promise<void> {
   }
 }
 
+// Fields added after initial release; absent in older IDB records.
+type StoredTrack = Omit<ParsedTrack, "startedAtMs" | "stats"> & {
+  startedAtMs?: number | null
+  stats: Omit<ParsedTrack["stats"], "uniqueDistanceKm"> & { uniqueDistanceKm?: number }
+}
+
 /** Load all persisted tracks. Returns [] on any error. */
 export async function loadTracks(): Promise<ParsedTrack[]> {
   const db = await getDb()
@@ -102,15 +108,19 @@ export async function loadTracks(): Promise<ParsedTrack[]> {
   try {
     const tx = db.transaction("tracks", "readonly")
     const store = tx.objectStore("tracks")
-    const tracks = await promisifyRequest<ParsedTrack[]>(store.getAll())
-    // Read-time migration: populate startedAtMs for tracks saved before this field was added.
+    const tracks = await promisifyRequest<StoredTrack[]>(store.getAll())
     for (const track of tracks) {
-      if ((track as { startedAtMs?: unknown }).startedAtMs === undefined) {
-        const first = track.pointTimestamps?.find((t) => t != null && isFinite(t))
+      if (track.startedAtMs === undefined) {
+        const first = track.pointTimestamps?.find(
+          (t) => t != null && isFinite(t)
+        )
         track.startedAtMs = first ?? null
       }
+      if (track.stats.uniqueDistanceKm === undefined) {
+        track.stats.uniqueDistanceKm = track.stats.distanceKm
+      }
     }
-    return tracks
+    return tracks as ParsedTrack[]
   } catch (err) {
     console.warn("[storage] loadTracks failed:", err)
     return []

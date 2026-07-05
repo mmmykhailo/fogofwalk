@@ -133,6 +133,45 @@
   }
 }
 
+/* Pre-JS loading screen */
+#js-loader {
+  position: fixed;
+  inset: 0;
+  background: #0a0a1e;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+  z-index: 9999;
+  transition: opacity 0.4s ease;
+}
+
+#js-loader h1 {
+  color: #ffffff;
+  font-size: 1.125rem;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  font-family: system-ui, -apple-system, sans-serif;
+  text-transform: uppercase;
+  opacity: 0.9;
+}
+
+@keyframes fow-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+#js-loader .fow-spinner {
+  width: 24px;
+  height: 24px;
+  border: 1.5px solid rgba(255, 255, 255, 0.12);
+  border-top-color: rgba(255, 255, 255, 0.5);
+  border-radius: 50%;
+  animation: fow-spin 0.9s linear infinite;
+}
+
 /* Vaul injects border-radius:8px inline via JS — neutralise it */
 [data-vaul-drawer] {
   border-radius: 0 !important;

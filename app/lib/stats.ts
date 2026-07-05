@@ -29,7 +29,7 @@ export function haversineKm(
   return 2 * EARTH_RADIUS_KM * Math.asin(Math.sqrt(a))
 }
 
-export function computeTrackStats(points: RawPoint[]): TrackStats {
+export function computeTrackStats(points: RawPoint[]): Omit<TrackStats, "uniqueDistanceKm"> {
   if (points.length < 2) {
     return {
       distanceKm: 0,

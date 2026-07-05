@@ -7,6 +7,7 @@ export interface ElevationPoint {
 
 export interface TrackStats {
   distanceKm: number
+  uniqueDistanceKm: number
   elevationGainM: number
   elevationLossM: number
   hasElevation: boolean
