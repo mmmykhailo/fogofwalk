@@ -2,6 +2,8 @@ import type { ElevationPoint, TrackStats } from "~/types/tracks"
 import {
   MOVING_TIME_STOPPED_GAP_MS,
   MOVING_TIME_MIN_SPEED_KMH,
+  ELEVATION_SMOOTHING_WINDOW,
+  ELEVATION_GAIN_STEP_THRESHOLD_M,
 } from "~/constants/fog"
 
 export interface RawPoint {
@@ -13,6 +15,46 @@ export interface RawPoint {
 
 const EARTH_RADIUS_KM = 6371.0088
 const MAX_PROFILE_POINTS = 300
+
+function movingAverage(values: number[], window: number): number[] {
+  const result = new Array<number>(values.length)
+  let sum = 0
+  for (let i = 0; i < values.length; i++) {
+    sum += values[i]!
+    const dropIndex = i - window
+    if (dropIndex >= 0) sum -= values[dropIndex]!
+    const count = Math.min(i + 1, window)
+    result[i] = sum / count
+  }
+  return result
+}
+
+// Normalizes raw elevation gain/loss against GPS/barometric sensor noise:
+// smooths the elevation series, then only registers a gain/loss step once the
+// smoothed trace has drifted past ELEVATION_GAIN_STEP_THRESHOLD_M from the
+// last reference point, resetting the reference there.
+function computeElevationGainLoss(elevations: number[]): {
+  gain: number
+  loss: number
+} {
+  if (elevations.length < 2) return { gain: 0, loss: 0 }
+
+  const smoothed = movingAverage(elevations, ELEVATION_SMOOTHING_WINDOW)
+  let gain = 0
+  let loss = 0
+  let reference = smoothed[0]!
+  for (let i = 1; i < smoothed.length; i++) {
+    const diff = smoothed[i]! - reference
+    if (diff >= ELEVATION_GAIN_STEP_THRESHOLD_M) {
+      gain += diff
+      reference = smoothed[i]!
+    } else if (diff <= -ELEVATION_GAIN_STEP_THRESHOLD_M) {
+      loss += -diff
+      reference = smoothed[i]!
+    }
+  }
+  return { gain, loss }
+}
 
 export function haversineKm(
   lng1: number,
@@ -47,9 +89,6 @@ export function computeTrackStats(points: RawPoint[]): Omit<TrackStats, "uniqueD
   }
 
   let distanceKm = 0
-  let elevationGainM = 0
-  let elevationLossM = 0
-  let hasElevation = false
   let movingTimeMs = 0
   let hasTimestamps = false
 
@@ -63,17 +102,6 @@ export function computeTrackStats(points: RawPoint[]): Omit<TrackStats, "uniqueD
     const segDist = haversineKm(prev.lng, prev.lat, curr.lng, curr.lat)
     distanceKm += segDist
     runningDistKm = distanceKm
-
-    // Elevation
-    if (prev.elevationM != null && curr.elevationM != null) {
-      hasElevation = true
-      const delta = curr.elevationM - prev.elevationM
-      if (delta > 0) {
-        elevationGainM += delta
-      } else {
-        elevationLossM += Math.abs(delta)
-      }
-    }
 
     // Moving time
     if (prev.timestampMs != null && curr.timestampMs != null) {
@@ -100,6 +128,10 @@ export function computeTrackStats(points: RawPoint[]): Omit<TrackStats, "uniqueD
   if (points[0].elevationM != null) {
     rawProfile.unshift({ distanceKm: 0, elevationM: points[0].elevationM })
   }
+
+  const hasElevation = rawProfile.length >= 2
+  const { gain: elevationGainM, loss: elevationLossM } =
+    computeElevationGainLoss(rawProfile.map((p) => p.elevationM))
 
   // Downsample profile if too dense
   const elevationProfile =
