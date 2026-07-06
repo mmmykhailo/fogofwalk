@@ -2,7 +2,7 @@ import type { ElevationPoint, TrackStats } from "~/types/tracks"
 import {
   MOVING_TIME_STOPPED_GAP_MS,
   MOVING_TIME_MIN_SPEED_KMH,
-  ELEVATION_SMOOTHING_WINDOW,
+  ELEVATION_SMOOTHING_DISTANCE_M,
   ELEVATION_GAIN_STEP_THRESHOLD_M,
 } from "~/constants/fog"
 
@@ -16,15 +16,23 @@ export interface RawPoint {
 const EARTH_RADIUS_KM = 6371.0088
 const MAX_PROFILE_POINTS = 300
 
-function movingAverage(values: number[], window: number): number[] {
-  const result = new Array<number>(values.length)
+// Trailing moving average over a distance window: each output value averages
+// all samples within the last `windowKm` of travelled distance, so the
+// smoothing strength does not depend on the track's sampling frequency.
+function movingAverageByDistance(
+  profile: ElevationPoint[],
+  windowKm: number
+): number[] {
+  const result = new Array<number>(profile.length)
   let sum = 0
-  for (let i = 0; i < values.length; i++) {
-    sum += values[i]!
-    const dropIndex = i - window
-    if (dropIndex >= 0) sum -= values[dropIndex]!
-    const count = Math.min(i + 1, window)
-    result[i] = sum / count
+  let start = 0
+  for (let i = 0; i < profile.length; i++) {
+    sum += profile[i]!.elevationM
+    while (profile[i]!.distanceKm - profile[start]!.distanceKm > windowKm) {
+      sum -= profile[start]!.elevationM
+      start++
+    }
+    result[i] = sum / (i - start + 1)
   }
   return result
 }
@@ -33,13 +41,16 @@ function movingAverage(values: number[], window: number): number[] {
 // smooths the elevation series, then only registers a gain/loss step once the
 // smoothed trace has drifted past ELEVATION_GAIN_STEP_THRESHOLD_M from the
 // last reference point, resetting the reference there.
-function computeElevationGainLoss(elevations: number[]): {
+function computeElevationGainLoss(profile: ElevationPoint[]): {
   gain: number
   loss: number
 } {
-  if (elevations.length < 2) return { gain: 0, loss: 0 }
+  if (profile.length < 2) return { gain: 0, loss: 0 }
 
-  const smoothed = movingAverage(elevations, ELEVATION_SMOOTHING_WINDOW)
+  const smoothed = movingAverageByDistance(
+    profile,
+    ELEVATION_SMOOTHING_DISTANCE_M / 1000
+  )
   let gain = 0
   let loss = 0
   let reference = smoothed[0]!
@@ -129,13 +140,10 @@ export function computeTrackStats(points: RawPoint[]): Omit<TrackStats, "uniqueD
     rawProfile.unshift({ distanceKm: 0, elevationM: points[0].elevationM })
   }
 
-  const elevations: number[] = [];
-  for (const p of rawProfile) {
-    if (Number.isFinite(p.elevationM)) elevations.push(p.elevationM as number);
-  }
-  const hasElevation = elevations.length >= 2
+  const finiteProfile = rawProfile.filter((p) => Number.isFinite(p.elevationM))
+  const hasElevation = finiteProfile.length >= 2
   const { gain: elevationGainM, loss: elevationLossM } =
-    computeElevationGainLoss(elevations)
+    computeElevationGainLoss(finiteProfile)
 
   // Downsample profile if too dense
   const elevationProfile =
