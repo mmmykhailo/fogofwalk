@@ -129,9 +129,13 @@ export function computeTrackStats(points: RawPoint[]): Omit<TrackStats, "uniqueD
     rawProfile.unshift({ distanceKm: 0, elevationM: points[0].elevationM })
   }
 
-  const hasElevation = rawProfile.length >= 2
+  const elevations: number[] = [];
+  for (const p of rawProfile) {
+    if (Number.isFinite(p.elevationM)) elevations.push(p.elevationM as number);
+  }
+  const hasElevation = elevations.length >= 2
   const { gain: elevationGainM, loss: elevationLossM } =
-    computeElevationGainLoss(rawProfile.map((p) => p.elevationM))
+    computeElevationGainLoss(elevations)
 
   // Downsample profile if too dense
   const elevationProfile =
