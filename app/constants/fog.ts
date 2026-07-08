@@ -23,3 +23,11 @@ export const TRACK_OPACITY_SELECTED = 1.0
 export const TRACK_OPACITY_DIM = 0.35
 export const MOVING_TIME_STOPPED_GAP_MS = 180_000
 export const MOVING_TIME_MIN_SPEED_KMH = 0.5
+// Elevation gain/loss normalizer: raw point-to-point elevation deltas are
+// dominated by GPS/barometric noise, wildly overstating total ascent/descent.
+// We smooth the elevation series with a distance-windowed moving average
+// (so the result is independent of the track's sampling frequency), then only
+// count a gain/loss "step" once the smoothed trace has drifted past a
+// threshold from the last reference point (hysteresis step filter).
+export const ELEVATION_SMOOTHING_DISTANCE_M = 15
+export const ELEVATION_GAIN_STEP_THRESHOLD_M = 2
