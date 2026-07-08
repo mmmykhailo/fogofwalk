@@ -13,6 +13,10 @@ bun run build      # production build
 bun run format     # prettier
 ```
 
+## Commit messages
+
+Short, lowercase, imperative, no body — e.g. `add loader`, `fix z-index conflict of drawer and dialog`. Match the existing `git log` style; do not add multi-line descriptions.
+
 ## Architecture
 
 ```
