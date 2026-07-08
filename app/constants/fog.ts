@@ -29,5 +29,5 @@ export const MOVING_TIME_MIN_SPEED_KMH = 0.5
 // (so the result is independent of the track's sampling frequency), then only
 // count a gain/loss "step" once the smoothed trace has drifted past a
 // threshold from the last reference point (hysteresis step filter).
-export const ELEVATION_SMOOTHING_DISTANCE_M = 50
+export const ELEVATION_SMOOTHING_DISTANCE_M = 15
 export const ELEVATION_GAIN_STEP_THRESHOLD_M = 2
