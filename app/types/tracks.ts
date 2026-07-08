@@ -1,5 +1,12 @@
 export type TrackCoords = [number, number][]
 
+export type RawPoint = {
+  lng: number
+  lat: number
+  elevationM?: number
+  timestampMs?: number
+}
+
 export interface ElevationPoint {
   distanceKm: number
   elevationM: number

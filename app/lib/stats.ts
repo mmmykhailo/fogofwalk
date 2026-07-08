@@ -1,4 +1,4 @@
-import type { ElevationPoint, TrackStats } from "~/types/tracks"
+import type { ElevationPoint, RawPoint, TrackStats } from "~/types/tracks"
 import {
   MOVING_TIME_STOPPED_GAP_MS,
   MOVING_TIME_MIN_SPEED_KMH,
@@ -6,33 +6,31 @@ import {
   ELEVATION_GAIN_STEP_THRESHOLD_M,
 } from "~/constants/fog"
 
-export interface RawPoint {
-  lng: number
-  lat: number
-  elevationM?: number
-  timestampMs?: number
-}
-
 const EARTH_RADIUS_KM = 6371.0088
 const MAX_PROFILE_POINTS = 300
 
-// Trailing moving average over a distance window: each output value averages
-// all samples within the last `windowKm` of travelled distance, so the
-// smoothing strength does not depend on the track's sampling frequency.
-function movingAverageByDistance(
+// Trailing moving average of elevationM over a distance window: each output
+// point averages all samples within the last `windowKm` of travelled
+// distance, so the smoothing strength does not depend on the track's
+// sampling frequency.
+function smoothElevationByDistance(
   profile: ElevationPoint[],
   windowKm: number
-): number[] {
-  const result = new Array<number>(profile.length)
+): ElevationPoint[] {
+  const result = new Array<ElevationPoint>(profile.length)
   let sum = 0
   let start = 0
   for (let i = 0; i < profile.length; i++) {
-    sum += profile[i]!.elevationM
-    while (profile[i]!.distanceKm - profile[start]!.distanceKm > windowKm) {
-      sum -= profile[start]!.elevationM
+    const point = profile[i]
+    sum += point.elevationM
+    while (point.distanceKm - profile[start].distanceKm > windowKm) {
+      sum -= profile[start].elevationM
       start++
     }
-    result[i] = sum / (i - start + 1)
+    result[i] = {
+      distanceKm: point.distanceKm,
+      elevationM: sum / (i - start + 1),
+    }
   }
   return result
 }
@@ -47,21 +45,22 @@ function computeElevationGainLoss(profile: ElevationPoint[]): {
 } {
   if (profile.length < 2) return { gain: 0, loss: 0 }
 
-  const smoothed = movingAverageByDistance(
+  const smoothedProfile = smoothElevationByDistance(
     profile,
     ELEVATION_SMOOTHING_DISTANCE_M / 1000
   )
   let gain = 0
   let loss = 0
-  let reference = smoothed[0]!
-  for (let i = 1; i < smoothed.length; i++) {
-    const diff = smoothed[i]! - reference
+  let reference = smoothedProfile[0].elevationM
+  for (let i = 1; i < smoothedProfile.length; i++) {
+    const elevationM = smoothedProfile[i].elevationM
+    const diff = elevationM - reference
     if (diff >= ELEVATION_GAIN_STEP_THRESHOLD_M) {
       gain += diff
-      reference = smoothed[i]!
+      reference = elevationM
     } else if (diff <= -ELEVATION_GAIN_STEP_THRESHOLD_M) {
       loss += -diff
-      reference = smoothed[i]!
+      reference = elevationM
     }
   }
   return { gain, loss }
@@ -82,7 +81,9 @@ export function haversineKm(
   return 2 * EARTH_RADIUS_KM * Math.asin(Math.sqrt(a))
 }
 
-export function computeTrackStats(points: RawPoint[]): Omit<TrackStats, "uniqueDistanceKm"> {
+export function computeTrackStats(
+  points: RawPoint[]
+): Omit<TrackStats, "uniqueDistanceKm"> {
   if (points.length < 2) {
     return {
       distanceKm: 0,
@@ -153,10 +154,11 @@ export function computeTrackStats(points: RawPoint[]): Omit<TrackStats, "uniqueD
           (_, i) => i % Math.ceil(rawProfile.length / MAX_PROFILE_POINTS) === 0
         )
 
+  const firstTimestampMs = points[0].timestampMs
+  const lastTimestampMs = points[points.length - 1].timestampMs
   const durationMs =
-    points[0].timestampMs != null &&
-    points[points.length - 1].timestampMs != null
-      ? points[points.length - 1].timestampMs! - points[0].timestampMs!
+    firstTimestampMs != null && lastTimestampMs != null
+      ? lastTimestampMs - firstTimestampMs
       : null
 
   const effectiveTimeMs = hasTimestamps ? movingTimeMs : null

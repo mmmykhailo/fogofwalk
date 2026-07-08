@@ -1,6 +1,6 @@
 import FitParser from "fit-file-parser"
-import type { ParsedTrack, TrackCoords } from "~/types/tracks"
-import { computeTrackStats, type RawPoint } from "~/lib/stats"
+import type { ParsedTrack, RawPoint, TrackCoords } from "~/types/tracks"
+import { computeTrackStats } from "~/lib/stats"
 
 export async function parseFitFile(file: File): Promise<ParsedTrack[]> {
   const buffer = await file.arrayBuffer()
@@ -13,7 +13,8 @@ export async function parseFitFile(file: File): Promise<ParsedTrack[]> {
     const lng = r.position_long
     if (lat == null || lng == null) return false
     // Drop pre-GPS-lock records clustered near null island
-    if (Math.abs(lat as number) < 0.001 && Math.abs(lng as number) < 0.001) return false
+    if (Math.abs(lat as number) < 0.001 && Math.abs(lng as number) < 0.001)
+      return false
     return true
   })
 
@@ -41,7 +42,9 @@ export async function parseFitFile(file: File): Promise<ParsedTrack[]> {
       name: file.name,
       startedAtMs: validTs.length > 0 ? validTs[0] : null,
       coordinates: coords,
-      pointTimestamps: ts.every((t) => t == null) ? undefined : ts.map((t) => t ?? -1),
+      pointTimestamps: ts.every((t) => t == null)
+        ? undefined
+        : ts.map((t) => t ?? -1),
       format: "fit",
       stats: { ...stats, uniqueDistanceKm: stats.distanceKm },
     },
