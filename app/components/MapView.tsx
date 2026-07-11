@@ -297,11 +297,20 @@ export function MapView({
     })
 
     map.on("click", (e) => {
-      const features = map.queryRenderedFeatures(e.point, {
+      const trackFeatures = map.queryRenderedFeatures(e.point, {
         layers: ["tracks-layer"],
       })
-      if (features.length > 0) {
-        onTrackSelectRef.current?.(features[0].properties?.id ?? null)
+      if (trackFeatures.length > 0) {
+        onTrackSelectRef.current?.(trackFeatures[0].properties?.id ?? null)
+        return
+      }
+      if (map.getLayer("fog-layer")) {
+        const fogFeatures = map.queryRenderedFeatures(e.point, {
+          layers: ["fog-layer"],
+        })
+        if (fogFeatures.length > 0) {
+          onTrackSelectRef.current?.(null)
+        }
       }
     })
 
