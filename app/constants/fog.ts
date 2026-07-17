@@ -21,6 +21,9 @@ export const TRACK_WIDTH_SELECTED = 4
 export const TRACK_OPACITY_DEFAULT = 0.85
 export const TRACK_OPACITY_SELECTED = 1.0
 export const TRACK_OPACITY_DIM = 0.35
+// Width (px) of the invisible line layer used for click/tap hit-testing —
+// wider than the visible track line so it's easier to select on touch screens.
+export const TRACK_HIT_WIDTH = 24
 export const MOVING_TIME_STOPPED_GAP_MS = 180_000
 export const MOVING_TIME_MIN_SPEED_KMH = 0.5
 // Elevation gain/loss normalizer: raw point-to-point elevation deltas are

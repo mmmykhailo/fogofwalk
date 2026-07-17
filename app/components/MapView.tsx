@@ -18,6 +18,7 @@ import {
   TRACK_OPACITY_DEFAULT,
   TRACK_OPACITY_SELECTED,
   TRACK_OPACITY_DIM,
+  TRACK_HIT_WIDTH,
 } from "~/constants/fog"
 import type { MapMode, WorkerOutboundMessage } from "~/types/tracks"
 import type { PhotoEntry, PhotoGroup } from "~/types/photos"
@@ -143,11 +144,28 @@ function setupMapLayers(map: maplibregl.Map, mode: MapMode): void {
       "line-opacity": 0.85,
     },
   })
+  // Invisible wide line for hit-testing only — the visible line stays thin
+  // but taps/clicks within TRACK_HIT_WIDTH px of it still register.
+  map.addLayer({
+    id: "tracks-hit-layer",
+    type: "line",
+    source: "tracks-source",
+    layout: {
+      "line-join": "round",
+      "line-cap": "round",
+      visibility: "visible",
+    },
+    paint: {
+      "line-color": TRACK_COLOR,
+      "line-width": TRACK_HIT_WIDTH,
+      "line-opacity": 0,
+    },
+  })
 
-  map.on("mouseenter", "tracks-layer", () => {
+  map.on("mouseenter", "tracks-hit-layer", () => {
     map.getCanvas().style.cursor = "pointer"
   })
-  map.on("mouseleave", "tracks-layer", () => {
+  map.on("mouseleave", "tracks-hit-layer", () => {
     map.getCanvas().style.cursor = ""
   })
 }
@@ -298,7 +316,7 @@ export function MapView({
 
     map.on("click", (e) => {
       const trackFeatures = map.queryRenderedFeatures(e.point, {
-        layers: ["tracks-layer"],
+        layers: ["tracks-hit-layer"],
       })
       if (trackFeatures.length > 0) {
         onTrackSelectRef.current?.(trackFeatures[0].properties?.id ?? null)
@@ -422,6 +440,11 @@ export function MapView({
         "visibility",
         showTracksRef.current ? "visible" : "none"
       )
+      map.setLayoutProperty(
+        "tracks-hit-layer",
+        "visibility",
+        showTracksRef.current ? "visible" : "none"
+      )
 
       if (mapMode !== "relief") {
         map.setLayoutProperty(
@@ -461,6 +484,11 @@ export function MapView({
     if (!mapStore.sourcesReady) return
     mapStore.map?.setLayoutProperty(
       "tracks-layer",
+      "visibility",
+      showTracks ? "visible" : "none"
+    )
+    mapStore.map?.setLayoutProperty(
+      "tracks-hit-layer",
       "visibility",
       showTracks ? "visible" : "none"
     )
