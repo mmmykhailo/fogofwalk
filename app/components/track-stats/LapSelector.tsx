@@ -47,7 +47,12 @@ export function LapSelector({
           }
         </SelectValue>
       </SelectTrigger>
-      <SelectContent>
+      {/* alignItemWithTrigger={false} disables Base UI's "align the selected
+          item over the trigger" mode. That mode is the only path in which
+          SelectTrigger.onFocus closes the popup, so turning it off keeps the
+          dropdown open even if something re-focuses the trigger — belt and
+          braces with the focus guard in ui/drawer.tsx. */}
+      <SelectContent alignItemWithTrigger={false}>
         <SelectItem value={ALL_LAPS}>All laps</SelectItem>
         {laps.map((lap) => (
           <SelectItem key={lap.number} value={String(lap.number)}>
