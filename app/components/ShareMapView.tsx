@@ -54,15 +54,23 @@ export function ShareMapView({ tracks, onReady }: ShareMapViewProps) {
     const fallbackTimer = setTimeout(() => {
       if (captured) return
       captured = true
-      console.warn("[ShareMapView] map did not reach idle within 10 s — emitting partial capture")
+      console.warn(
+        "[ShareMapView] map did not reach idle within 10 s — emitting partial capture"
+      )
       createImageBitmap(map.getCanvas()).then((bitmap) => {
-        onReadyRef.current(bitmap, tracks.map(() => []))
+        onReadyRef.current(
+          bitmap,
+          tracks.map(() => [])
+        )
       })
     }, 10_000)
 
     map.once("load", () => {
       // ── Compute combined bounds of all tracks ─────────────────────────────
-      let minLng = Infinity, maxLng = -Infinity, minLat = Infinity, maxLat = -Infinity
+      let minLng = Infinity,
+        maxLng = -Infinity,
+        minLat = Infinity,
+        maxLat = -Infinity
       for (const t of tracks) {
         for (const [lng, lat] of t.coordinates) {
           if (lng < minLng) minLng = lng
@@ -74,10 +82,19 @@ export function ShareMapView({ tracks, onReady }: ShareMapViewProps) {
 
       // Asymmetric padding: reserve bottom ~520px for the stats panel so the
       // track(s) stay in the upper portion of the card.
-      map.fitBounds([[minLng, minLat], [maxLng, maxLat]], {
-        padding: { top: 100, bottom: 520, left: 80, right: 80 },
-        animate: false,
-      })
+      // maxZoom stops a short subject (e.g. a 200m lap) from zooming past the
+      // basemap's data and rendering a blank card background.
+      map.fitBounds(
+        [
+          [minLng, minLat],
+          [maxLng, maxLat],
+        ],
+        {
+          padding: { top: 100, bottom: 520, left: 80, right: 80 },
+          maxZoom: 16,
+          animate: false,
+        }
+      )
 
       // ── Phase 1: base map idle (no track layers yet) ──────────────────────
       map.once("idle", async () => {
@@ -91,7 +108,10 @@ export function ShareMapView({ tracks, onReady }: ShareMapViewProps) {
             type: "geojson",
             data: {
               type: "Feature",
-              geometry: { type: "LineString", coordinates: t.coordinates as [number, number][] },
+              geometry: {
+                type: "LineString",
+                coordinates: t.coordinates as [number, number][],
+              },
               properties: {},
             },
           })
@@ -100,7 +120,11 @@ export function ShareMapView({ tracks, onReady }: ShareMapViewProps) {
             type: "line",
             source: `share-track-${i}`,
             layout: { "line-cap": "round", "line-join": "round" },
-            paint: { "line-color": TRACK_COLOR, "line-width": 4, "line-opacity": 0.95 },
+            paint: {
+              "line-color": TRACK_COLOR,
+              "line-width": 4,
+              "line-opacity": 0.95,
+            },
           })
         })
 
@@ -113,7 +137,10 @@ export function ShareMapView({ tracks, onReady }: ShareMapViewProps) {
           const MAX_PTS = 2000
           const trackPointsPerTrack = tracks.map((t) => {
             const { coordinates } = t
-            const step = coordinates.length > MAX_PTS ? Math.ceil(coordinates.length / MAX_PTS) : 1
+            const step =
+              coordinates.length > MAX_PTS
+                ? Math.ceil(coordinates.length / MAX_PTS)
+                : 1
             return coordinates
               .filter((_, i) => i % step === 0)
               .map(([lng, lat]) => {

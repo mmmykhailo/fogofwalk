@@ -82,7 +82,8 @@ export function haversineKm(
 }
 
 export function computeTrackStats(
-  points: RawPoint[]
+  points: RawPoint[],
+  maxProfilePoints: number = MAX_PROFILE_POINTS
 ): Omit<TrackStats, "uniqueDistanceKm"> {
   if (points.length < 2) {
     return {
@@ -148,10 +149,10 @@ export function computeTrackStats(
 
   // Downsample profile if too dense
   const elevationProfile =
-    rawProfile.length <= MAX_PROFILE_POINTS
+    rawProfile.length <= maxProfilePoints
       ? rawProfile
       : rawProfile.filter(
-          (_, i) => i % Math.ceil(rawProfile.length / MAX_PROFILE_POINTS) === 0
+          (_, i) => i % Math.ceil(rawProfile.length / maxProfilePoints) === 0
         )
 
   const firstTimestampMs = points[0].timestampMs
