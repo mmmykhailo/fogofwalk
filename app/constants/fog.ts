@@ -21,6 +21,10 @@ export const TRACK_WIDTH_SELECTED = 4
 export const TRACK_OPACITY_DEFAULT = 0.85
 export const TRACK_OPACITY_SELECTED = 1.0
 export const TRACK_OPACITY_DIM = 0.35
+// Colour of unselected tracks while something is selected. Blue-tinted gray so
+// it sits between the navy fog and the light basemap and stays legible on both
+// the flat and satellite styles, leaving TRACK_COLOR as the only saturated hue.
+export const TRACK_COLOR_DIM = "#8b8b9e"
 // Width (px) of the invisible line layer used for click/tap hit-testing —
 // wider than the visible track line so it's easier to select on touch screens.
 export const TRACK_HIT_WIDTH = 24
@@ -34,3 +38,12 @@ export const MOVING_TIME_MIN_SPEED_KMH = 0.5
 // threshold from the last reference point (hysteresis step filter).
 export const ELEVATION_SMOOTHING_DISTANCE_M = 15
 export const ELEVATION_GAIN_STEP_THRESHOLD_M = 2
+
+// Laps. A track's own elevation profile is capped at 300 points; laps get a
+// much smaller cap because an auto-lap run can have dozens of them and every
+// one is structured-cloned into IndexedDB and re-cloned into the fog worker on
+// each reprocess. MAX_LAPS is a sanity bound against pathological files.
+export const LAP_PROFILE_POINTS = 60
+export const MAX_LAPS = 200
+// Width of the highlight line drawn over the selected lap.
+export const LAP_HIGHLIGHT_WIDTH = 6

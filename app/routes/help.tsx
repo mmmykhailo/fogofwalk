@@ -192,8 +192,16 @@ export default function HelpPage() {
               </li>
             </ul>
             <p className="text-xs text-muted-foreground">
-              If your app offers both GPX and FIT, either works — they produce
-              identical results here.
+              FIT files also carry <strong>laps</strong> — the splits your watch
+              recorded, whether you pressed the lap button or it auto-lapped.
+              Select a track and you can switch the stats panel between the
+              whole activity and any single lap, and share that lap on its own.
+              GPX has no lap data, and tracks imported before this was added
+              won&rsquo;t show laps until you re-import them.
+            </p>
+            <p className="text-xs text-muted-foreground">
+              If your app offers both GPX and FIT, either works for the fog map
+              — but only FIT gives you laps.
             </p>
           </CardContent>
         </Card>

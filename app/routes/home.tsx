@@ -1,18 +1,19 @@
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect, useMemo, useRef } from "react"
 import { useFetcher, useLoaderData, useSearchParams } from "react-router"
 import type maplibregl from "maplibre-gl"
 import { featureCollection, lineString } from "@turf/helpers"
 import bbox from "@turf/bbox"
 import type { Route } from "./+types/home"
-import { MapView } from "~/components/MapView"
+import { MapView, setLapHighlightData } from "~/components/MapView"
 import { ControlPanel } from "~/components/ControlPanel"
 import { FileUploadDialog } from "~/components/FileUploadDialog"
 import { PhotoErrorDialog } from "~/components/PhotoErrorDialog"
 import { ParseErrorDialog } from "~/components/ParseErrorDialog"
-import { TrackStatsPanel } from "~/components/TrackStatsPanel"
+import { TrackStatsPanel } from "~/components/track-stats/TrackStatsPanel"
 import { ShareDialog } from "~/components/ShareDialog"
 import { PhotoCard } from "~/components/PhotoCard"
-import { ErrorBoundary, ErrorCard } from "~/components/ErrorBoundary"
+import { ErrorBoundary } from "~/components/ErrorBoundary"
+import { ErrorCard } from "~/components/ErrorCard"
 import {
   Dialog,
   DialogContent,
@@ -23,6 +24,7 @@ import {
 import { Button } from "~/components/ui/button"
 import { mapStore, worldFogGeoJSON } from "~/lib/mapStore"
 import { parseFile } from "~/lib/parsers"
+import { buildLapTrack, lapSubtitle } from "~/lib/laps"
 import { processPhotoFiles } from "~/lib/photos"
 import {
   saveTracks,
@@ -38,10 +40,7 @@ import {
   isFogCacheValid,
 } from "~/lib/storage"
 import { clearMapPosition } from "~/lib/mapStore"
-import {
-  sortTracks,
-  populateUniqueDistances,
-} from "~/lib/statsAggregator"
+import { sortTracks, populateUniqueDistances } from "~/lib/statsAggregator"
 import type { FogMode, MapMode, ParsedTrack } from "~/types/tracks"
 import type { PhotoEntry, PhotoGroup } from "~/types/photos"
 
@@ -223,6 +222,9 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
       ;(map.getSource("tracks-source") as maplibregl.GeoJSONSource)?.setData(
         featureCollection([])
       )
+      // Blanked here too — these run synchronously, before the fetcher effect
+      // resets React state, so the old lap line would otherwise linger a frame.
+      setLapHighlightData(map, null)
     }
     await clearAll()
     clearMapPosition()
@@ -247,6 +249,9 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
       ;(map.getSource("tracks-source") as maplibregl.GeoJSONSource)?.setData(
         featureCollection([])
       )
+      // Blanked here too — these run synchronously, before the fetcher effect
+      // resets React state, so the old lap line would otherwise linger a frame.
+      setLapHighlightData(map, null)
     }
 
     // Replay remaining tracks
@@ -287,6 +292,13 @@ export default function Home() {
   const [showUploadDialog, setShowUploadDialog] = useState(false)
   const [mapReady, setMapReady] = useState(false)
   const [selectedTrackIds, setSelectedTrackIds] = useState<string[]>([])
+  // Keyed by track id, not a bare number: a bare number would still match
+  // during the render in which the selection moves to a different track that
+  // happens to have that lap, flashing the wrong lap and refitting the camera.
+  const [selectedLap, setSelectedLap] = useState<{
+    trackId: string
+    number: number
+  } | null>(null)
   const [pendingTrackId, setPendingTrackId] = useState<string | null>(null)
   const [showShareDialog, setShowShareDialog] = useState(false)
   const [photos, setPhotos] = useState<PhotoEntry[]>(_restoredPhotos)
@@ -563,6 +575,10 @@ export default function Home() {
   }
 
   function handleTrackSelect(id: string | null) {
+    // Dropped on every selection change so reopening a track starts on the
+    // whole activity rather than silently restoring a zoomed-in lap. The
+    // trackId key on selectedLap covers everything this doesn't reach.
+    setSelectedLap(null)
     if (!id) {
       setSelectedTrackIds([])
       setPendingTrackId(null)
@@ -584,8 +600,50 @@ export default function Home() {
     .map((id) => mapStore.tracks.find((t) => t.id === id))
     .filter((t): t is ParsedTrack => t != null)
 
+  // Derived and re-validated every render rather than reset imperatively: a
+  // stale selection, a multi-select, a deleted track or a GPX track all
+  // collapse to null on their own, so none of the many places that mutate
+  // selectedTrackIds need to know laps exist.
+  const activeLap =
+    selectedTracks.length === 1 && selectedLap?.trackId === selectedTracks[0].id
+      ? (selectedTracks[0].laps?.find((l) => l.number === selectedLap.number) ??
+        null)
+      : null
+
+  function handleLapSelect(lapNumber: number | null) {
+    const trackId = selectedTracks[0]?.id
+    setSelectedLap(
+      lapNumber != null && trackId ? { trackId, number: lapNumber } : null
+    )
+  }
+
+  // Memoized: a fresh object each render would invalidate ShareDialog's
+  // statsData/trackPhotos memos and re-fire its preview draw continuously.
+  const activeLapTrack = useMemo(
+    () => (activeLap ? buildLapTrack(selectedTracks[0], activeLap) : null),
+    [selectedTracks[0]?.id, activeLap]
+  )
+
+  // Highlight is lap-only, so picking "All laps" clears lap-layer. Focus is
+  // separate: on "All laps" it points at the whole track, which is what lets
+  // the camera zoom back out. Both null for tracks without laps, so a plain
+  // track selection never becomes a camera target.
+  //
+  // Not gated on isProcessing: an import's whole-library fitBounds runs from
+  // the worker DONE handler, strictly after any render-time fit, so it wins on
+  // its own. Suppressing during processing would only add a second refit after.
+  const focusTrack =
+    selectedTracks.length === 1 && (selectedTracks[0].laps?.length ?? 0) >= 2
+      ? selectedTracks[0]
+      : null
+  const highlightCoordinates = activeLapTrack?.coordinates ?? null
+  const focusCoordinates =
+    activeLapTrack?.coordinates ?? focusTrack?.coordinates ?? null
+  const focusKey =
+    activeLapTrack?.id ?? (focusTrack ? `${focusTrack.id}#all` : null)
+
   const pendingTrack = pendingTrackId
-    ? mapStore.tracks.find((t) => t.id === pendingTrackId) ?? null
+    ? (mapStore.tracks.find((t) => t.id === pendingTrackId) ?? null)
     : null
 
   return (
@@ -610,6 +668,9 @@ export default function Home() {
           photos={photos}
           showPhotos={showPhotos}
           onPhotoSelect={setSelectedGroup}
+          highlightCoordinates={highlightCoordinates}
+          focusCoordinates={focusCoordinates}
+          focusKey={focusKey}
         />
       </ErrorBoundary>
       {mapReady && (
@@ -667,6 +728,7 @@ export default function Home() {
                 }
                 onClose={() => {
                   setSelectedTrackIds([])
+                  setSelectedLap(null)
                   setPendingTrackId(null)
                   setSearchParams(
                     (prev) => {
@@ -678,7 +740,13 @@ export default function Home() {
                   )
                 }}
                 onShare={() => setShowShareDialog(true)}
-                onDelete={selectedTracks.length === 1 ? () => handleDeleteTrack(selectedTracks[0].id) : undefined}
+                onDelete={
+                  selectedTracks.length === 1
+                    ? () => handleDeleteTrack(selectedTracks[0].id)
+                    : undefined
+                }
+                activeLap={activeLap}
+                onLapSelect={handleLapSelect}
               />
             </ErrorBoundary>
           )}
@@ -686,12 +754,22 @@ export default function Home() {
             <ShareDialog
               open={showShareDialog}
               onOpenChange={setShowShareDialog}
-              tracks={selectedTracks}
+              tracks={activeLapTrack ? [activeLapTrack] : selectedTracks}
               photos={photos}
+              subtitle={
+                activeLap
+                  ? lapSubtitle(selectedTracks[0], activeLap)
+                  : undefined
+              }
             />
           )}
           {pendingTrack && (
-            <Dialog open onOpenChange={(open) => { if (!open) setPendingTrackId(null) }}>
+            <Dialog
+              open
+              onOpenChange={(open) => {
+                if (!open) setPendingTrackId(null)
+              }}
+            >
               <DialogContent showCloseButton={false}>
                 <DialogHeader>
                   <DialogTitle>Add to stats?</DialogTitle>
