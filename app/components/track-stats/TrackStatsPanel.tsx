@@ -162,18 +162,9 @@ export function TrackStatsPanel({
       />
     )
 
+  // No lap indicator here — the LapSelector trigger right below already reads
+  // "Lap 3", so repeating it in the title was redundant.
   const panelTitle = isMulti ? `${tracks.length} activities` : track.name
-
-  const titleContent = (
-    <span className="flex min-w-0 items-baseline gap-1.5">
-      <span className="truncate">{panelTitle}</span>
-      {activeLap && (
-        <span className="shrink-0 text-xs font-normal text-muted-foreground">
-          Lap {activeLap.number}
-        </span>
-      )}
-    </span>
-  )
 
   const deleteDialog = onDelete && !isMulti && (
     <DeleteTrackDialog
@@ -197,8 +188,8 @@ export function TrackStatsPanel({
           <DrawerContent>
             <DrawerHeader>
               <div className="flex items-center justify-between gap-2">
-                <DrawerTitle className="min-w-0 flex-1">
-                  {titleContent}
+                <DrawerTitle className="min-w-0 flex-1 truncate">
+                  {panelTitle}
                 </DrawerTitle>
                 <div className="flex shrink-0 items-center">
                   {actionButtons}
@@ -221,7 +212,7 @@ export function TrackStatsPanel({
           onTouchStart={onTouchStart}
           className="cursor-grab select-none active:cursor-grabbing"
         >
-          <CardTitle className="min-w-0">{titleContent}</CardTitle>
+          <CardTitle className="truncate">{panelTitle}</CardTitle>
           <CardAction>{actionButtons}</CardAction>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
