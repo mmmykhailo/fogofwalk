@@ -22,7 +22,12 @@ import {
   DialogFooter,
 } from "~/components/ui/dialog"
 import { Button } from "~/components/ui/button"
-import { mapStore, worldFogGeoJSON } from "~/lib/mapStore"
+import {
+  mapStore,
+  worldFogGeoJSON,
+  startFogRun,
+  postToFogWorker,
+} from "~/lib/mapStore"
 import { parseFile } from "~/lib/parsers"
 import { buildLapTrack, lapSubtitle } from "~/lib/laps"
 import { processPhotoFiles } from "~/lib/photos"
@@ -191,7 +196,9 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
     if (allTracks.length > 0) {
       mapStore.tracks = sortTracks([...mapStore.tracks, ...allTracks])
       populateUniqueDistances(mapStore.tracks)
-      mapStore.worker?.postMessage({
+      // Joins the current run rather than starting one: only the new tracks are
+      // posted, so this depends on the worker's accumulated state surviving.
+      postToFogWorker({
         type: "PROCESS_TRACKS",
         tracks: allTracks,
         mode,
@@ -213,7 +220,10 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
     mapStore.fogData = null
     mapStore.tracks = []
     mapStore.processedCount = 0
-    mapStore.worker?.postMessage({ type: "RESET" })
+    // Abandons the in-flight run so its FOG_UPDATEs cannot repaint the map
+    // we just cleared, and its DONE cannot save a stale fog cache.
+    startFogRun()
+    postToFogWorker({ type: "RESET" })
     const map = mapStore.map
     if (map && mapStore.sourcesReady) {
       ;(map.getSource("fog-source") as maplibregl.GeoJSONSource)?.setData(
@@ -240,7 +250,10 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
     mapStore.processedCount = 0
 
     // Reset worker + update map sources immediately
-    mapStore.worker?.postMessage({ type: "RESET" })
+    // Abandons the in-flight run so its FOG_UPDATEs cannot repaint the map
+    // we just cleared, and its DONE cannot save a stale fog cache.
+    startFogRun()
+    postToFogWorker({ type: "RESET" })
     const map = mapStore.map
     if (map && mapStore.sourcesReady) {
       ;(map.getSource("fog-source") as maplibregl.GeoJSONSource)?.setData(
@@ -256,7 +269,7 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
 
     // Replay remaining tracks
     if (mapStore.tracks.length > 0) {
-      mapStore.worker?.postMessage({
+      postToFogWorker({
         type: "PROCESS_TRACKS",
         tracks: mapStore.tracks,
         mode: mapStore.fogMode,
@@ -389,7 +402,7 @@ export default function Home() {
     if (mapStore.tracks.length === 0) return
     setIsProcessing(true)
     setProcessedCount(0)
-    mapStore.worker?.postMessage({
+    postToFogWorker({
       type: "PROCESS_TRACKS",
       tracks: mapStore.tracks,
       mode: loaderData.restoredFogMode,
@@ -552,12 +565,21 @@ export default function Home() {
     mapStore.fogMode = newMode
     saveFogMode(newMode) // fire-and-forget
     clearFogCache() // will be rebuilt after reprocessing
-    if (mapStore.tracks.length === 0) return
-    // Reset worker and re-process all stored tracks with the new mode
-    mapStore.worker?.postMessage({ type: "RESET" })
+    // Abandon whatever the worker is still chewing on: a rapid corridor↔fill
+    // toggle must start the new mode immediately rather than queue behind the
+    // old one. Replies from the abandoned run are dropped by their stale runId.
+    startFogRun()
+    postToFogWorker({ type: "RESET" })
+    if (mapStore.tracks.length === 0) {
+      // Nothing to replay — clear the bar the abandoned run's DONE will no
+      // longer clear.
+      setIsProcessing(false)
+      setProcessedCount(0)
+      return
+    }
     setIsProcessing(true)
     setProcessedCount(0)
-    mapStore.worker?.postMessage({
+    postToFogWorker({
       type: "PROCESS_TRACKS",
       tracks: mapStore.tracks,
       mode: newMode,

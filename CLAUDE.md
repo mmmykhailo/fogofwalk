@@ -168,6 +168,14 @@ from one file — that's the registry's layout and splitting it would break `sha
 
 **Mode change triggers reprocess**: toggling corridor/fill in the UI sends RESET then re-sends all `mapStore.tracks` with the new mode. `mapStore.tracks` persists across resets so it can be replayed.
 
+**`runId` cancels in-flight worker runs**: every worker message carries a generation token. `startFogRun()` (`lib/mapStore.ts`) bumps `mapStore.runId`; the worker bails out of its loop at the next checkpoint once its captured id stops matching, and MapView drops any reply whose `runId` is stale. Post everything through `postToFogWorker()` so the stamp is never forgotten.
+
+- Call `startFogRun()` **only where prior work is genuinely discarded** — fog-mode toggle, `delete-track`, `clear-all`. `add-files` and the restore-reprocess must *join* the current run: they post only the new tracks and depend on the worker's accumulated `fogPolygon`/`accumulated` surviving.
+- `startFogRun()` must always be followed by `postToFogWorker({ type: "RESET" })`. That is how the worker learns the new id; without it the old loop keeps running while every reply is dropped, and the progress bar sticks forever.
+- The worker's loop `await`s a **macrotask** (`MessageChannel`) once per track. `await Promise.resolve()` would not work — it drains only microtasks, so a queued RESET would never be dispatched. The loop is parked exactly at that await whenever the message handler runs, which is why `resetState()` can never land mid-track.
+- `jobChain` serializes same-run batches. Once the loop yields, two `PROCESS_TRACKS` for one run could otherwise interleave over the shared accumulators.
+- This also fixes two older bugs: an abandoned run's `DONE` used to write a fog cache pairing the *new* `mapStore.fogMode` with the *old* mode's polygon, and `clear-all`/`delete-track` used to get repainted by the doomed run's `FOG_UPDATE`s.
+
 **`mapStore.fogMode`**: kept in sync with the React `fogMode` state (updated in `handleFogModeChange`). MapView reads it from mapStore in the worker DONE handler to save the fog cache — avoids threading it as a prop.
 
 **`mapStore.isRestoreReprocess`**: set `true` when tracks are restored from IDB but fog cache is stale. Causes DONE handler to skip `fitBounds` so the saved map position is preserved. Reset to `false` after the first DONE.

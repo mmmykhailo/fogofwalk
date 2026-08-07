@@ -68,15 +68,27 @@ export interface ParsedTrack {
 export type FogMode = "corridor" | "fill"
 export type MapMode = "flat" | "relief"
 
+/**
+ * Every worker message carries a `runId` generation token. Bumping it (via
+ * `startFogRun`) abandons whatever the worker is mid-way through: the worker
+ * bails out at its next checkpoint, and the main thread drops replies stamped
+ * with a stale id so an abandoned run cannot repaint the fog or save its cache.
+ */
 export type WorkerInboundMessage =
-  | { type: "PROCESS_TRACKS"; tracks: ParsedTrack[]; mode: FogMode }
-  | { type: "RESET" }
+  | {
+      type: "PROCESS_TRACKS"
+      tracks: ParsedTrack[]
+      mode: FogMode
+      runId: number
+    }
+  | { type: "RESET"; runId: number }
 
 export type WorkerOutboundMessage =
   | {
       type: "FOG_UPDATE"
       fogData: GeoJSON.Feature<GeoJSON.Polygon | GeoJSON.MultiPolygon>
       processedCount: number
+      runId: number
     }
-  | { type: "ERROR"; file: string; message: string }
-  | { type: "DONE"; processedCount: number }
+  | { type: "ERROR"; file: string; message: string; runId: number }
+  | { type: "DONE"; processedCount: number; runId: number }

@@ -468,6 +468,12 @@ export function MapView({
       const msg = e.data
       const map = mapStore.map
 
+      // Replies from an abandoned run (fog-mode toggle, delete-track,
+      // clear-all) must not repaint the fog, save its cache, or clear the
+      // progress bar — messages already queued on this thread still arrive
+      // after the worker has bailed out.
+      if (msg.runId !== mapStore.runId) return
+
       // DONE: always notify the UI so the spinner and track count are updated
       // even if map sources are temporarily unavailable (e.g. during a style switch).
       // fitBounds is handled in handleProcessingUpdate (home.tsx) — it only needs the

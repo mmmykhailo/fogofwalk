@@ -1,5 +1,5 @@
 import type maplibregl from "maplibre-gl"
-import type { ParsedTrack, FogMode } from "~/types/tracks"
+import type { ParsedTrack, FogMode, WorkerInboundMessage } from "~/types/tracks"
 
 // ─── Map position persistence (localStorage — synchronous, survives page unload) ──
 
@@ -32,7 +32,11 @@ function readSavedMapPosition(): SavedMapPosition | null {
     const raw = localStorage.getItem(MAP_POSITION_KEY)
     if (!raw) return null
     const { center, zoom } = JSON.parse(raw)
-    if (Array.isArray(center) && center.length === 2 && typeof zoom === "number") {
+    if (
+      Array.isArray(center) &&
+      center.length === 2 &&
+      typeof zoom === "number"
+    ) {
       return { center: center as [number, number], zoom }
     }
     return null
@@ -68,6 +72,12 @@ interface MapStore {
    */
   isRestoreReprocess: boolean
   /**
+   * Generation token for fog-worker runs. Bumped by `startFogRun()` wherever
+   * the app abandons in-flight work (fog-mode toggle, delete-track, clear-all).
+   * Every message to and from the worker carries it.
+   */
+  runId: number
+  /**
    * In-memory cache of the last share-card map render. Avoids re-creating a
    * WebGL context on every dialog open. Keyed by trackId. The ImageBitmap is
    * owned by this cache — call .close() before replacing or clearing it.
@@ -91,7 +101,36 @@ export const mapStore: MapStore = {
   initialCenter: _savedPosition?.center ?? null,
   initialZoom: _savedPosition?.zoom ?? null,
   isRestoreReprocess: false,
+  runId: 0,
   shareCardCache: null,
+}
+
+type DistributiveOmit<T, K extends keyof T> = T extends unknown
+  ? Omit<T, K>
+  : never
+
+/**
+ * Begins a new fog-worker generation, abandoning whatever is in flight.
+ *
+ * The caller MUST post a RESET immediately after — that is how the worker
+ * learns the new id and stops the old loop. Without it the worker keeps running
+ * and every reply is dropped, leaving the progress bar stuck.
+ *
+ * Only call this where the app genuinely discards prior work. `add-files` posts
+ * just the new tracks and relies on the worker's accumulated state, so it must
+ * join the current run rather than start one.
+ */
+export function startFogRun(): number {
+  mapStore.runId++
+  mapStore.isRestoreReprocess = false
+  return mapStore.runId
+}
+
+/** Posts to the fog worker, stamping the current run id. */
+export function postToFogWorker(
+  msg: DistributiveOmit<WorkerInboundMessage, "runId">
+): void {
+  mapStore.worker?.postMessage({ ...msg, runId: mapStore.runId })
 }
 
 export function worldFogGeoJSON(): GeoJSON.Feature<GeoJSON.Polygon> {
