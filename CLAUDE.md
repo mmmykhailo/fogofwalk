@@ -13,6 +13,19 @@ bun run build      # production build
 bun run format     # prettier
 ```
 
+`bun run format` rewrites the whole tree and the repo has drifted from the current prettier
+config, so it produces churn in files you did not touch. Format only what you changed:
+`bunx prettier --write <paths>`.
+
+Optional sync server (separate package, see "Sync server" below):
+
+```bash
+cd server && bun install
+bun run dev        # bun --hot src/index.ts
+bun run typecheck  # tsc --noEmit — the root typecheck excludes server/
+bun test           # runs against the in-memory store driver
+```
+
 ## Commit messages
 
 Short, lowercase, imperative, no body — e.g. `add loader`, `fix z-index conflict of drawer and dialog`. Match the existing `git log` style; do not add multi-line descriptions.

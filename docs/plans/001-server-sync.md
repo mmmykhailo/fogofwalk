@@ -1,6 +1,7 @@
 # Plan 001 — Optional sync server: GitHub OAuth, allowlist, track synchronisation
 
-Status: approved, not yet implemented.
+Status: **implemented**. Phases 0–5 are done; see "Deviations from the plan" at the end for
+where the built code differs from what was designed here and why.
 
 ## Context
 
@@ -487,9 +488,53 @@ Also confirm no `shared/` type survives into the client bundle
 
 **Bun-only.** `server/` has no `node_modules` entry for `better-sqlite3`, `pg`, `dotenv` or
 `@hono/node-server`; `bun src/index.ts` boots with no build step; `bun test` passes against the
-`memory` driver; `docker build server/` on `oven/bun:1-alpine` runs the same command.
+`memory` driver; `docker build -f server/Dockerfile .` **from the repository root** on
+`oven/bun:1-alpine` runs the same command (the image needs `shared/`, so the build context has to
+be the repo, not `server/`).
 
 **Every step:** `bun run typecheck` in both packages, `bun run format`.
+
+---
+
+## 10. Deviations from the plan
+
+Recorded after implementation. Everything else was built as designed.
+
+- **`~shared/*`, not `#shared/*`.** A `#`-prefixed specifier is Node/Bun package-imports syntax,
+  resolved before tsconfig paths are consulted. `~shared/*` also matches the existing `~/*`
+  house style. Verified working in Bun across the package boundary and in the Vite build.
+- **The root `tsconfig.json` had to `exclude` `server/`.** Its `include` is `**/*`, so the
+  server's Bun-typed files were being dragged into the client typecheck.
+- **`createApp(store)` lives in `src/app.ts`,** and the routers are factories over the store, so
+  tests exercise the real routes against the `memory` driver through `app.request()` — no socket,
+  no global singleton. `src/index.ts` is the thin Bun entry.
+- **The store interface grew** `getTrack`, `setUserStatus`, `touchSession`, `findPrimaryIdentity`
+  and an optional `close()`. No cross-user read path was added; every track method still takes
+  `userId` first.
+- **`ServerUser.provider` comes from the user's earliest identity**, not the session — the
+  `sessions` table has no provider column and the schema was kept exactly as specified.
+- **Upload decompression uses `DecompressionStream`, not `Bun.gunzipSync`.** The sync API has no
+  output cap, so an 8 MB body could inflate to gigabytes; the streaming form is capped. Gzip is
+  detected by magic number rather than `Content-Encoding`, because a proxy that inflates the body
+  leaves the header behind.
+- **The manifest cursor never splits a millisecond.** It is an inclusive lower bound over
+  `(updated_at, content_hash)`; a page stops before a timestamp it would have to cut, and the
+  window widens if one millisecond holds more rows than a page. Tracks and tombstones share one
+  wire cursor: the min of the boundaries of streams that still have more. See
+  `server/src/store/manifestPaging.ts`.
+- **The client persists `serverHashes` in `syncState`.** The plan's diff assumed the manifest
+  described the whole server, but it is incremental — with a non-zero cursor, older tracks would
+  look absent and be re-uploaded on every sync. The known set carries forward and is rebuilt
+  whenever the cursor resets to 0.
+- **OAuth callback failures 302 back to `<redirect>/auth/callback?error=<reason>`** rather than
+  rendering JSON on the API origin, so the user lands back in the app. `routes/auth-callback.tsx`
+  reads the `error` param.
+- **Offline placeholders were added** (not in the original plan): `serverHealth.ts` tracks
+  reachability as a by-product of every request, and `ServerUnavailableNotice` is the shared
+  placeholder used by the drawer row, the sign-in dialog, the account dialog and the OAuth
+  callback. "Delete account" is disabled while offline; "Log out" stays enabled because it only
+  drops the local session.
+- **The Dockerfile builds from the repository root**, since the image needs `shared/`.
 
 ---
 
