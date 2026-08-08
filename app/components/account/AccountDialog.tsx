@@ -12,6 +12,7 @@ import { signOut, useAuth } from "~/lib/server/authStore"
 import {
   describeSyncStatus,
   requestSync,
+  useIsAutoSyncSuspended,
   useSyncStatus,
 } from "~/lib/server/syncEngine"
 import { useServerHealth } from "~/lib/server/serverHealth"
@@ -28,6 +29,7 @@ interface AccountDialogProps {
 export function AccountDialog({ open, onOpenChange }: AccountDialogProps) {
   const auth = useAuth()
   const syncStatus = useSyncStatus()
+  const isSuspended = useIsAutoSyncSuspended()
   const health = useServerHealth(true)
   const isOffline = health === "offline"
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false)
@@ -96,16 +98,23 @@ export function AccountDialog({ open, onOpenChange }: AccountDialogProps) {
             <div className="min-w-0 flex-1">
               <p className="text-xs font-medium">Track sync</p>
               <p className="truncate text-xs text-muted-foreground">
-                {describeSyncStatus(syncStatus) ?? "Not synced yet"}
+                {isSuspended
+                  ? "Paused after a local delete"
+                  : (describeSyncStatus(syncStatus) ?? "Not synced yet")}
               </p>
             </div>
             <Button
               variant="outline"
               size="sm"
-              onClick={() => requestSync("manual")}
+              // The one way back: an explicit request resumes a suspension.
+              onClick={() => requestSync("manual", { manual: true })}
               disabled={syncStatus.phase === "syncing"}
             >
-              {syncStatus.phase === "syncing" ? "Syncing…" : "Sync now"}
+              {syncStatus.phase === "syncing"
+                ? "Syncing…"
+                : isSuspended
+                  ? "Resume sync"
+                  : "Sync now"}
             </Button>
           </div>
         )}

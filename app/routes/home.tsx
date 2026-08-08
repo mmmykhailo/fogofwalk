@@ -52,6 +52,7 @@ import {
   requestSync,
   setSyncChangeHandler,
   startSyncScheduler,
+  suspendAutoSync,
 } from "~/lib/server/syncEngine"
 import { sortTracks, populateUniqueDistances } from "~/lib/statsAggregator"
 import type { FogMode, MapMode, ParsedTrack } from "~/types/tracks"
@@ -246,10 +247,11 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
     }
     await clearAll()
     clearMapPosition()
-    // `clearAll` dropped syncState, so this walks the manifest from scratch and
-    // repopulates the device. Immediate rather than on the next focus/poll tick,
-    // so the restore is something the user watches happen.
-    void requestSync("clear-all")
+    // Pause automatic syncing. `clearAll` dropped syncState, so the next sync
+    // walks from scratch and would download everything straight back — the
+    // clear would undo itself within seconds. It resumes on reload, or when
+    // the user asks for it with "Sync now".
+    suspendAutoSync("clear-all")
     return { intent: "clear-all" as const, trackCount: 0 }
   }
 
@@ -300,6 +302,7 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
         // Local-only: the server copy stays, so this device has to remember
         // not to download it back on the next sync.
         await ignoreTrackLocally(deletedTrack)
+        suspendAutoSync("local-only-delete")
       } else {
         // Writes the tombstone that removes it from the user's other devices.
         await pushTrackDeletion(deletedTrack)

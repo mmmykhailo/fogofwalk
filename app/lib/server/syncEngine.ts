@@ -39,20 +39,68 @@ export type SyncStatus =
 let status: SyncStatus = { phase: "idle", lastSyncAt: null }
 const listeners = new Set<() => void>()
 
+function notify() {
+  for (const listener of listeners) listener()
+}
+
+function subscribe(listener: () => void): () => void {
+  listeners.add(listener)
+  return () => listeners.delete(listener)
+}
+
 function setStatus(next: SyncStatus) {
   status = next
-  for (const listener of listeners) listener()
+  notify()
 }
 
 export function useSyncStatus(): SyncStatus {
   return useSyncExternalStore(
-    (listener) => {
-      listeners.add(listener)
-      return () => listeners.delete(listener)
-    },
+    subscribe,
     () => status,
     () => status
   )
+}
+
+// ─── Suspension ───────────────────────────────────────────────────────────────
+
+/**
+ * Deliberately in-memory, so a reload clears it.
+ *
+ * Deleting tracks locally while leaving them on the server is a legitimate
+ * thing to want, but the next automatic sync would faithfully download them
+ * straight back — the delete would look like it never happened. Pausing until
+ * the page is reloaded makes the local state stick for as long as the user is
+ * looking at it, without inventing a persistent "don't sync" mode they would
+ * then have to discover how to turn off.
+ */
+let isSuspended = false
+
+export function isAutoSyncSuspended(): boolean {
+  return isSuspended
+}
+
+export function useIsAutoSyncSuspended(): boolean {
+  return useSyncExternalStore(
+    subscribe,
+    () => isSuspended,
+    () => isSuspended
+  )
+}
+
+/** Pause automatic syncing until the page reloads. */
+export function suspendAutoSync(reason: string): void {
+  if (isSuspended) return
+  isSuspended = true
+  console.debug("[sync] auto-sync suspended:", reason)
+  notify()
+}
+
+/** Resume. Only ever called by an explicit user action. */
+export function resumeAutoSync(): void {
+  if (!isSuspended) return
+  isSuspended = false
+  console.debug("[sync] auto-sync resumed")
+  notify()
 }
 
 // ─── Change notification ──────────────────────────────────────────────────────
@@ -109,9 +157,23 @@ let isRerunQueued = false
 /**
  * Ask for a sync. Cheap and safe to call from anywhere — it no-ops when the
  * user is signed out or not allowlisted, and coalesces concurrent requests.
+ *
+ * Pass `manual` for a request the user made explicitly (the "Sync now"
+ * button). Only that clears a suspension; every automatic trigger is dropped
+ * while one is in effect.
  */
-export function requestSync(reason: string): void {
+export function requestSync(
+  reason: string,
+  options: { manual?: boolean } = {}
+): void {
   if (!canSync()) return
+  if (isSuspended) {
+    if (!options.manual) {
+      console.debug("[sync] skipped while suspended:", reason)
+      return
+    }
+    resumeAutoSync()
+  }
   if (isRunning) {
     isRerunQueued = true
     return

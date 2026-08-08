@@ -301,10 +301,19 @@ to survive. Deletions arriving from a tombstone *do* need the full reset-and-rep
 `syncEngine` hands them to the `setSyncChangeHandler` callback in `home.tsx` instead of doing it
 itself — rebuilding fog and fixing `selectedTrackIds` are React concerns.
 
-**`clear-all` is local only.** It resets *this device*; the server copies are untouched and the
-sync it triggers pulls them straight back. Deleting server data is a separate, explicit action
-("Remove all" in the account dialog). An earlier version wrote a tombstone per track here, which
-silently destroyed the user's server library and made the restore impossible.
+**`clear-all` is local only.** It resets *this device*; the server copies are untouched. Deleting
+server data is a separate, explicit action ("Remove all" in the account dialog). An earlier
+version wrote a tombstone per track here, which silently destroyed the user's server library and
+made a restore impossible.
+
+**A local-only deletion suspends automatic sync until reload** (`suspendAutoSync`, called by
+`clear-all` and by a track delete with the server switch off). Otherwise the next sync — which
+`clear-all` in particular triggers from scratch — downloads everything straight back and the
+delete undoes itself within seconds. The flag is module state, never persisted, so a reload always
+resumes; that is deliberate, so there is no hidden "sync is off" mode to discover how to undo.
+`requestSync(reason, { manual: true })` is the only thing that clears it, and only the account
+dialog's button passes it. Note this also holds back uploads of anything imported while
+suspended.
 
 **Sync has to be *scheduled*, not just triggered.** `startSyncScheduler()` (focus,
 `visibilitychange`, `online`, plus a 5-minute poll while visible) is what makes another device's

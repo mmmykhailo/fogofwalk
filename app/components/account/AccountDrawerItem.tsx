@@ -12,7 +12,11 @@ import {
 } from "~/components/ui/item"
 import { useAuth } from "~/lib/server/authStore"
 import { useServerHealth } from "~/lib/server/serverHealth"
-import { describeSyncStatus, useSyncStatus } from "~/lib/server/syncEngine"
+import {
+  describeSyncStatus,
+  useIsAutoSyncSuspended,
+  useSyncStatus,
+} from "~/lib/server/syncEngine"
 import { AccountAvatar } from "./AccountAvatar"
 
 interface AccountDrawerItemProps {
@@ -39,6 +43,7 @@ export function AccountDrawerItem({
   // without this the row could not tell "no account" from "server is down".
   const health = useServerHealth(true)
   const syncStatus = useSyncStatus()
+  const isSuspended = useIsAutoSyncSuspended()
 
   if (auth.status === "disabled") return null
 
@@ -51,6 +56,7 @@ export function AccountDrawerItem({
   let description: string | null = null
   if (auth.status === "signedIn") {
     if (!auth.canSync) description = "Not enabled for sync"
+    else if (isSuspended) description = "Sync paused — reload to resume"
     else if (isOffline) description = "Offline — will sync later"
     else description = describeSyncStatus(syncStatus)
   }
