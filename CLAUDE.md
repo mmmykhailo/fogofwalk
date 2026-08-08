@@ -345,8 +345,12 @@ device no longer has. `clear-all` drops `syncState`, which would otherwise repla
 the account ever wrote. From-scratch converges toward the *union* of local and server; only
 incremental walks propagate deletions.
 
-**`ingestTracks` drops tracks whose `contentHash` is already held.** Re-importing a file — or
-importing one sync had just restored — must not yield two identical tracks.
+**`ingestTracks` drops tracks whose `contentHash` is already held** and **returns what it actually
+took**. Re-importing a file — or importing one sync had just restored — must not yield two
+identical tracks. `add-files` must report *that* count as `newTracksCount`, never the parsed
+count: the progress UI waits for a worker `DONE`, and when every track is a duplicate nothing is
+posted, so reporting the parsed count strands "Processing 0 of N…" on screen forever. When
+nothing was added and nothing failed, `DuplicateTracksDialog` explains why the map did not change.
 
 `ignoredHashes` (in `syncState`) means "this device deliberately stopped syncing this hash" and
 suppresses **both** download and upload. The server purge adds every local hash to it — relying on

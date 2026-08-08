@@ -9,6 +9,7 @@ import { ControlPanel } from "~/components/ControlPanel"
 import { FileUploadDialog } from "~/components/FileUploadDialog"
 import { PhotoErrorDialog } from "~/components/PhotoErrorDialog"
 import { ParseErrorDialog } from "~/components/ParseErrorDialog"
+import { DuplicateTracksDialog } from "~/components/DuplicateTracksDialog"
 import { TrackStatsPanel } from "~/components/track-stats/TrackStatsPanel"
 import { ShareDialog } from "~/components/ShareDialog"
 import { PhotoCard } from "~/components/PhotoCard"
@@ -207,17 +208,20 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
       "worker ready:",
       !!mapStore.worker
     )
-    if (allTracks.length > 0) {
-      // Shared with the sync engine's downloads — merge, recompute, post to the
-      // worker (joining the current run), persist, invalidate the fog cache.
-      await ingestTracks(allTracks, mode)
-      void requestSync("add-files")
-    }
+    // Shared with the sync engine's downloads — merge, recompute, post to the
+    // worker (joining the current run), persist, invalidate the fog cache.
+    // Returns only the tracks that were genuinely new.
+    const added = await ingestTracks(allTracks, mode)
+    if (added.length > 0) void requestSync("add-files")
+
     return {
       intent: "add-files" as const,
       count: files.length,
       trackCount: mapStore.tracks.length,
-      newTracksCount: allTracks.length,
+      // Must be what was ingested, not what was parsed — the progress UI waits
+      // on a worker DONE that only arrives if something was actually posted.
+      newTracksCount: added.length,
+      duplicateCount: allTracks.length - added.length,
       failedFiles,
     }
   }
@@ -349,6 +353,8 @@ export default function Home() {
   const [photoErrorOpen, setPhotoErrorOpen] = useState(false)
   const [parseFailedFiles, setParseFailedFiles] = useState<string[]>([])
   const [isParseErrorOpen, setIsParseErrorOpen] = useState(false)
+  const [duplicateCount, setDuplicateCount] = useState(0)
+  const [isDuplicateOpen, setIsDuplicateOpen] = useState(false)
   // Loading overlay: starts visible, fades out when map is ready, then unmounts
   const [overlayDone, setOverlayDone] = useState(false)
 
@@ -505,6 +511,11 @@ export default function Home() {
       if (data.failedFiles.length > 0) {
         setParseFailedFiles(data.failedFiles)
         setIsParseErrorOpen(true)
+      } else if (data.newTracksCount === 0 && data.duplicateCount > 0) {
+        // Nothing was added and nothing failed — say so, or the import looks
+        // like it silently did nothing.
+        setDuplicateCount(data.duplicateCount)
+        setIsDuplicateOpen(true)
       }
     }
     if (data.intent === "clear-all") {
@@ -812,6 +823,11 @@ export default function Home() {
             open={isParseErrorOpen}
             onOpenChange={setIsParseErrorOpen}
             failedFiles={parseFailedFiles}
+          />
+          <DuplicateTracksDialog
+            open={isDuplicateOpen}
+            onOpenChange={setIsDuplicateOpen}
+            duplicateCount={duplicateCount}
           />
           <PhotoCard
             group={selectedGroup}

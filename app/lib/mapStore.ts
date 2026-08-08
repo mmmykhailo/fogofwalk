@@ -150,7 +150,7 @@ export function postToFogWorker(
 export async function ingestTracks(
   newTracks: ParsedTrack[],
   mode: FogMode = mapStore.fogMode
-): Promise<void> {
+): Promise<ParsedTrack[]> {
   // Drop anything already held under the same content hash. Re-importing a
   // file, or importing one the server had just restored, must not produce two
   // identical tracks — content-addressing is what makes that detectable.
@@ -158,19 +158,25 @@ export async function ingestTracks(
   const present = new Set(
     mapStore.tracks.map((t) => t.contentHash).filter(Boolean)
   )
-  newTracks = newTracks.filter((t) => {
+  const added = newTracks.filter((t) => {
     if (!t.contentHash) return true
     if (present.has(t.contentHash)) return false
     present.add(t.contentHash)
     return true
   })
 
-  if (newTracks.length === 0) return
-  mapStore.tracks = sortTracks([...mapStore.tracks, ...newTracks])
+  // Returns what was actually taken, never what was offered. Callers drive the
+  // progress UI off this: reporting the offered count when everything was a
+  // duplicate leaves "Processing 0 of N…" on screen forever, because no
+  // PROCESS_TRACKS was posted and so no DONE ever comes back.
+  if (added.length === 0) return added
+
+  mapStore.tracks = sortTracks([...mapStore.tracks, ...added])
   populateUniqueDistances(mapStore.tracks)
-  postToFogWorker({ type: "PROCESS_TRACKS", tracks: newTracks, mode })
-  await saveTracks(newTracks)
+  postToFogWorker({ type: "PROCESS_TRACKS", tracks: added, mode })
+  await saveTracks(added)
   await clearFogCache()
+  return added
 }
 
 export function worldFogGeoJSON(): GeoJSON.Feature<GeoJSON.Polygon> {
