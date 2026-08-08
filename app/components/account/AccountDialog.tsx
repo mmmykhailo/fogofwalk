@@ -104,6 +104,7 @@ export function AccountDialog({ open, onOpenChange }: AccountDialogProps) {
               </p>
             </div>
             <Button
+              data-testid="sync-now"
               variant="outline"
               size="sm"
               // The one way back: an explicit request resumes a suspension.

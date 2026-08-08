@@ -172,6 +172,7 @@ export function MoreDrawer({
                 <Switch
                   checked={showTracks}
                   onCheckedChange={onShowTracksChange}
+                  aria-label="Show tracks"
                 />
               </div>
               <div className="flex items-center px-3 py-2.5">
@@ -180,7 +181,11 @@ export function MoreDrawer({
                   className="mr-3 size-5 shrink-0 text-muted-foreground"
                 />
                 <span className="flex-1 text-sm">Show fog</span>
-                <Switch checked={showFog} onCheckedChange={onShowFogChange} />
+                <Switch
+                  checked={showFog}
+                  onCheckedChange={onShowFogChange}
+                  aria-label="Show fog"
+                />
               </div>
               <div className="flex items-center px-3 py-2.5">
                 <PathIcon
@@ -193,6 +198,7 @@ export function MoreDrawer({
                   onCheckedChange={(checked) =>
                     onFogModeChange(checked ? "fill" : "corridor")
                   }
+                  aria-label="Fill loops"
                 />
               </div>
               {photoCount > 0 && (
@@ -205,6 +211,7 @@ export function MoreDrawer({
                   <Switch
                     checked={showPhotos}
                     onCheckedChange={onShowPhotosChange}
+                    aria-label="Show photos"
                   />
                 </div>
               )}
@@ -302,7 +309,10 @@ export function MoreDrawer({
 
             {/* 5. Status */}
             {(isProcessing || trackCount > 0 || photoCount > 0) && (
-              <p className="py-1 text-center text-xs text-muted-foreground">
+              <p
+                data-testid="drawer-status"
+                className="py-1 text-center text-xs text-muted-foreground"
+              >
                 {isProcessing
                   ? `Processing ${processedCount} of ${trackCount}…`
                   : [

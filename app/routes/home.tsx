@@ -505,7 +505,8 @@ export default function Home() {
       if (data.newTracksCount > 0) {
         isNewUploadRef.current = true // triggers fitBounds in the isProcessing effect below
         setTrackCount(data.trackCount)
-        setIsProcessing(true)
+        // Only if the worker has not already finished — see isFogRunInFlight.
+        setIsProcessing(mapStore.isFogRunInFlight)
         setProcessedCount(0)
       }
       if (data.failedFiles.length > 0) {
@@ -533,13 +534,8 @@ export default function Home() {
       setPendingTrackId(null)
       setShowShareDialog(false)
       setTrackCount(data.trackCount)
-      if (data.trackCount > 0) {
-        setIsProcessing(true)
-        setProcessedCount(0)
-      } else {
-        setIsProcessing(false)
-        setProcessedCount(0)
-      }
+      setProcessedCount(0)
+      setIsProcessing(data.trackCount > 0 && mapStore.isFogRunInFlight)
     }
   }, [fetcher.data])
 
@@ -579,7 +575,7 @@ export default function Home() {
 
       if (downloadedCount > 0 || deletedIds.length > 0) {
         setProcessedCount(0)
-        setIsProcessing(mapStore.tracks.length > 0)
+        setIsProcessing(mapStore.tracks.length > 0 && mapStore.isFogRunInFlight)
       }
     })
     return () => setSyncChangeHandler(null)

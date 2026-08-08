@@ -80,6 +80,17 @@ interface MapStore {
    */
   runId: number
   /**
+   * True between posting PROCESS_TRACKS and the matching DONE.
+   *
+   * The progress UI cannot just assume work is outstanding after an action:
+   * the worker can finish a small batch *before* the action returns, since the
+   * action still has IDB writes (and, when signed in, a network round trip) to
+   * get through. Setting `isProcessing` unconditionally in that window strands
+   * "Processing 0 of N…" forever, because the only thing that clears it — DONE
+   * — has already been and gone.
+   */
+  isFogRunInFlight: boolean
+  /**
    * In-memory cache of the last share-card map render. Avoids re-creating a
    * WebGL context on every dialog open. Keyed by trackId. The ImageBitmap is
    * owned by this cache — call .close() before replacing or clearing it.
@@ -104,6 +115,7 @@ export const mapStore: MapStore = {
   initialZoom: _savedPosition?.zoom ?? null,
   isRestoreReprocess: false,
   runId: 0,
+  isFogRunInFlight: false,
   shareCardCache: null,
 }
 
@@ -132,6 +144,8 @@ export function startFogRun(): number {
 export function postToFogWorker(
   msg: DistributiveOmit<WorkerInboundMessage, "runId">
 ): void {
+  if (msg.type === "PROCESS_TRACKS") mapStore.isFogRunInFlight = true
+  if (msg.type === "RESET") mapStore.isFogRunInFlight = false
   mapStore.worker?.postMessage({ ...msg, runId: mapStore.runId })
 }
 

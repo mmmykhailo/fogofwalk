@@ -113,6 +113,7 @@ export function AccountDrawerItem({
 
       {auth.status === "signedIn" && (
         <Item
+          data-testid="account-row"
           variant="muted"
           render={<button type="button" />}
           onClick={onOpenAccount}
