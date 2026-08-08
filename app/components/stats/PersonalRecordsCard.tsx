@@ -56,13 +56,13 @@ export function PersonalRecordsCard({ records }: PersonalRecordsCardProps) {
                 value={formatPace(records.fastestPace.paceMinPerKm)}
               />
             )}
-            {records.fastestSpeed && (
+            {records.fastestAvgSpeed && (
               <RecordRow
                 divider
                 label="Fastest avg speed"
-                trackId={records.fastestSpeed.track.id}
-                trackName={records.fastestSpeed.track.name}
-                value={`${records.fastestSpeed.speedKmh.toFixed(1)} km/h`}
+                trackId={records.fastestAvgSpeed.track.id}
+                trackName={records.fastestAvgSpeed.track.name}
+                value={`${records.fastestAvgSpeed.avgSpeedKmh.toFixed(1)} km/h`}
               />
             )}
             {records.longestMovingTime && (

@@ -121,8 +121,10 @@ export function computeTrackStats(
       hasTimestamps = true
       const dt = curr.timestampMs - prev.timestampMs
       if (dt > 0 && dt <= MOVING_TIME_STOPPED_GAP_MS) {
-        const speedKmh = segDist / (dt / 3_600_000)
-        if (speedKmh >= MOVING_TIME_MIN_SPEED_KMH) {
+        // Instantaneous speed over this one segment — deliberately NOT an
+        // average. It only gates whether the segment counts as moving.
+        const segmentSpeedKmh = segDist / (dt / 3_600_000)
+        if (segmentSpeedKmh >= MOVING_TIME_MIN_SPEED_KMH) {
           movingTimeMs += dt
         }
       }

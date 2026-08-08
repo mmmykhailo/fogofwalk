@@ -202,7 +202,9 @@ client-side — `clientLoader` calls `loadTracks()` then runs the four aggregato
 | `computeLifetimeTotals` | Distance, elevation, moving time, track count, active days |
 | `computeWeeklyBars` | One `WeeklyBar` per ISO week between first and last activity; gaps filled with zero |
 | `computeStreaks` | Current/longest streak, 84-day active-day set, this-week/last-week km, active-day count |
-| `computePersonalRecords` | Best single-activity records: distance, elevation, pace, speed, moving time |
+| `computePersonalRecords` | Best single-activity records: distance, elevation, pace, avg speed, moving time |
+
+**Naming: `avgSpeed` vs `avgMovingSpeed`.** `avgSpeedKmh` is distance ÷ *elapsed* time; `avgMovingSpeedKmh` is distance ÷ *moving* time (stopped segments excluded — see `MOVING_TIME_STOPPED_GAP_MS`). Never introduce a bare `speed`/`speedKmh` identifier — always qualify which one it is. The one exception is `segmentSpeedKmh` in `lib/stats.ts`, an instantaneous per-segment speed that only gates whether a segment counts as moving. `PersonalRecords.fastestAvgSpeed` uses the elapsed-time average; `fastestPace` uses moving pace, so the two are independent records rather than reciprocals of one another.
 
 `computeStreaks` uses **local calendar dates** (not UTC) so days match what the user sees on their device.
 

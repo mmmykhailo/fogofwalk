@@ -40,7 +40,7 @@ export interface PersonalRecords {
   longestActivity: { track: ParsedTrack; distanceKm: number } | null
   mostElevation: { track: ParsedTrack; elevationGainM: number } | null
   fastestPace: { track: ParsedTrack; paceMinPerKm: number } | null
-  fastestSpeed: { track: ParsedTrack; speedKmh: number } | null
+  fastestAvgSpeed: { track: ParsedTrack; avgSpeedKmh: number } | null
   longestMovingTime: { track: ParsedTrack; movingTimeMs: number } | null
 }
 
@@ -57,7 +57,9 @@ function toISOWeek(ms: number): string {
   tmp.setUTCDate(tmp.getUTCDate() + 4 - day)
   const year = tmp.getUTCFullYear()
   const startOfYear = new Date(Date.UTC(year, 0, 1))
-  const week = Math.ceil(((tmp.getTime() - startOfYear.getTime()) / 86_400_000 + 1) / 7)
+  const week = Math.ceil(
+    ((tmp.getTime() - startOfYear.getTime()) / 86_400_000 + 1) / 7
+  )
   return `${year}-W${String(week).padStart(2, "0")}`
 }
 
@@ -161,7 +163,12 @@ export function computeWeeklyBars(tracks: ParsedTrack[]): WeeklyBar[] {
   while (cursor <= end) {
     const week = toISOWeek(cursor)
     result.push(
-      byStart.get(cursor) ?? { week, startMs: cursor, distanceKm: 0, trackCount: 0 }
+      byStart.get(cursor) ?? {
+        week,
+        startMs: cursor,
+        distanceKm: 0,
+        trackCount: 0,
+      }
     )
     cursor += ONE_WEEK_MS
   }
@@ -169,7 +176,10 @@ export function computeWeeklyBars(tracks: ParsedTrack[]): WeeklyBar[] {
   return result
 }
 
-export function computeStreaks(tracks: ParsedTrack[], todayMs: number): Streaks {
+export function computeStreaks(
+  tracks: ParsedTrack[],
+  todayMs: number
+): Streaks {
   const dated = tracks.filter((t) => t.startedAtMs != null)
   if (dated.length === 0) {
     return {
@@ -232,28 +242,50 @@ export function computeStreaks(tracks: ParsedTrack[], todayMs: number): Streaks 
     else if (w === lastWeek) lastWeekKm += t.stats.distanceKm
   }
 
-  return { currentStreakDays, longestStreakDays, recentDays, thisWeekKm, lastWeekKm, activeInWindowCount }
+  return {
+    currentStreakDays,
+    longestStreakDays,
+    recentDays,
+    thisWeekKm,
+    lastWeekKm,
+    activeInWindowCount,
+  }
 }
 
 export function computePersonalRecords(tracks: ParsedTrack[]): PersonalRecords {
   if (tracks.length === 0) {
-    return { longestActivity: null, mostElevation: null, fastestPace: null, fastestSpeed: null, longestMovingTime: null }
+    return {
+      longestActivity: null,
+      mostElevation: null,
+      fastestPace: null,
+      fastestAvgSpeed: null,
+      longestMovingTime: null,
+    }
   }
 
   let longestActivity: PersonalRecords["longestActivity"] = null
   let mostElevation: PersonalRecords["mostElevation"] = null
   let fastestPace: PersonalRecords["fastestPace"] = null
-  let fastestSpeed: PersonalRecords["fastestSpeed"] = null
+  let fastestAvgSpeed: PersonalRecords["fastestAvgSpeed"] = null
   let longestMovingTime: PersonalRecords["longestMovingTime"] = null
 
   for (const t of tracks) {
-    const { distanceKm, elevationGainM, avgMovingPaceMinPerKm, avgMovingSpeedKmh, movingTimeMs } = t.stats
+    const {
+      distanceKm,
+      elevationGainM,
+      avgMovingPaceMinPerKm,
+      avgSpeedKmh,
+      movingTimeMs,
+    } = t.stats
 
     if (longestActivity == null || distanceKm > longestActivity.distanceKm) {
       longestActivity = { track: t, distanceKm }
     }
 
-    if (mostElevation == null || elevationGainM > mostElevation.elevationGainM) {
+    if (
+      mostElevation == null ||
+      elevationGainM > mostElevation.elevationGainM
+    ) {
       mostElevation = { track: t, elevationGainM }
     }
 
@@ -266,23 +298,30 @@ export function computePersonalRecords(tracks: ParsedTrack[]): PersonalRecords {
     }
 
     if (
-      avgMovingSpeedKmh != null &&
-      avgMovingSpeedKmh > 0 &&
-      (fastestSpeed == null || avgMovingSpeedKmh > fastestSpeed.speedKmh)
+      avgSpeedKmh != null &&
+      avgSpeedKmh > 0 &&
+      (fastestAvgSpeed == null || avgSpeedKmh > fastestAvgSpeed.avgSpeedKmh)
     ) {
-      fastestSpeed = { track: t, speedKmh: avgMovingSpeedKmh }
+      fastestAvgSpeed = { track: t, avgSpeedKmh }
     }
 
     if (
       movingTimeMs != null &&
       movingTimeMs > 0 &&
-      (longestMovingTime == null || movingTimeMs > longestMovingTime.movingTimeMs)
+      (longestMovingTime == null ||
+        movingTimeMs > longestMovingTime.movingTimeMs)
     ) {
       longestMovingTime = { track: t, movingTimeMs }
     }
   }
 
-  return { longestActivity, mostElevation, fastestPace, fastestSpeed, longestMovingTime }
+  return {
+    longestActivity,
+    mostElevation,
+    fastestPace,
+    fastestAvgSpeed,
+    longestMovingTime,
+  }
 }
 
 /**
@@ -304,7 +343,7 @@ export function computePersonalRecords(tracks: ParsedTrack[]): PersonalRecords {
  * the entire track's unique distance to nearly zero.
  */
 function computePerTrackUniqueDistances(
-  tracks: ParsedTrack[],
+  tracks: ParsedTrack[]
 ): Map<string, number> {
   const explored = new Set<string>()
   const result = new Map<string, number>()
@@ -361,6 +400,7 @@ export function computeUniqueDistance(tracks: ParsedTrack[]): number {
 export function populateUniqueDistances(tracks: ParsedTrack[]): void {
   const result = computePerTrackUniqueDistances(tracks)
   for (const track of tracks) {
-    track.stats.uniqueDistanceKm = result.get(track.id) ?? track.stats.distanceKm
+    track.stats.uniqueDistanceKm =
+      result.get(track.id) ?? track.stats.distanceKm
   }
 }
