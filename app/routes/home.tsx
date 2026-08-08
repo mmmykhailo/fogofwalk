@@ -45,6 +45,7 @@ import {
   isFogCacheValid,
 } from "~/lib/storage"
 import { clearMapPosition } from "~/lib/mapStore"
+import { initAuth } from "~/lib/server/authStore"
 import { sortTracks, populateUniqueDistances } from "~/lib/statsAggregator"
 import type { FogMode, MapMode, ParsedTrack } from "~/types/tracks"
 import type { PhotoEntry, PhotoGroup } from "~/types/photos"
@@ -93,6 +94,11 @@ export async function clientLoader(): Promise<{
     mapStore.worker.onerror = (e) => console.error("[worker] uncaught error", e)
     console.debug("[clientLoader] worker created", mapStore.worker)
   }
+
+  // Restore + revalidate the sync session. Deliberately not awaited: the map
+  // must never wait on the network, and it is a no-op when the build has no
+  // server. Signing in later re-renders the drawer through the auth store.
+  void initAuth()
 
   // Restore persisted data in parallel
   const [tracks, photos, fogMode, fogCache] = await Promise.all([

@@ -5,6 +5,8 @@
     "**/.client/**/*",
     ".react-router/types/**/*"
   ],
+  "//": "server/ is an independent Bun package with its own tsconfig — typecheck it with `cd server && bun run typecheck`.",
+  "exclude": ["node_modules", "build", "server"],
   "compilerOptions": {
     "lib": ["DOM", "DOM.Iterable", "ES2022"],
     "types": ["node", "vite/client"],

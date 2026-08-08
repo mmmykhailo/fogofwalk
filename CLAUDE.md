@@ -17,6 +17,8 @@ bun run format     # prettier
 
 Short, lowercase, imperative, no body — e.g. `add loader`, `fix z-index conflict of drawer and dialog`. Match the existing `git log` style; do not add multi-line descriptions.
 
+**Never add `Co-Authored-By:` trailers** (or any other trailer) to commits. Single-line subject only.
+
 ## Architecture
 
 ```

@@ -20,6 +20,9 @@ import { Item, ItemContent, ItemMedia, ItemTitle } from "~/components/ui/item"
 import { Switch } from "~/components/ui/switch"
 import { Button } from "~/components/ui/button"
 import { ClearAllDialog } from "~/components/ClearAllDialog"
+import { AccountDrawerItem } from "~/components/account/AccountDrawerItem"
+import { AccountDialog } from "~/components/account/AccountDialog"
+import { SignInDialog } from "~/components/account/SignInDialog"
 import type { FogMode, MapMode } from "~/types/tracks"
 
 interface MoreDrawerProps {
@@ -69,7 +72,19 @@ export function MoreDrawer({
 }: MoreDrawerProps) {
   const close = () => onOpenChange(false)
   const [isClearAllOpen, setIsClearAllOpen] = useState(false)
+  const [isSignInOpen, setIsSignInOpen] = useState(false)
+  const [isAccountOpen, setIsAccountOpen] = useState(false)
   const isMobile = useIsMobile()
+
+  /**
+   * Close the drawer before opening a dialog, then wait out the close
+   * animation. Base UI popups portal outside vaul's Radix focus scope, so
+   * overlapping the two fights over focus — see the drawer note in CLAUDE.md.
+   */
+  const closeThenOpen = (open: (v: boolean) => void) => {
+    close()
+    setTimeout(() => open(true), 300)
+  }
 
   return (
     <>
@@ -224,6 +239,10 @@ export function MoreDrawer({
 
             {/* 3. Navigation */}
             <div className="overflow-hidden ring-1 ring-foreground/10">
+              <AccountDrawerItem
+                onSignIn={() => closeThenOpen(setIsSignInOpen)}
+                onOpenAccount={() => closeThenOpen(setIsAccountOpen)}
+              />
               <Item
                 variant="muted"
                 render={<Link to="/stats" />}
@@ -307,6 +326,9 @@ export function MoreDrawer({
         photoCount={photoCount}
         onConfirm={onClearAll}
       />
+
+      <SignInDialog open={isSignInOpen} onOpenChange={setIsSignInOpen} />
+      <AccountDialog open={isAccountOpen} onOpenChange={setIsAccountOpen} />
     </>
   )
 }
