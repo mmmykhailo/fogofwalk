@@ -13,23 +13,37 @@ bun run build      # production build
 bun run format     # prettier
 ```
 
+## Commit messages
+
+Short, lowercase, imperative, no body — e.g. `add loader`, `fix z-index conflict of drawer and dialog`. Match the existing `git log` style; do not add multi-line descriptions.
+
 ## Architecture
 
 ```
 routes/home.tsx          clientLoader (creates worker, restores IDB state) + clientAction (parses files)
-  └─ MapView.tsx         mounts MapLibre, owns fog-source + tracks-source, handles worker messages
+  └─ MapView.tsx         mounts MapLibre, owns fog-source + tracks-source + lap-source,
+                         handles worker messages
   └─ ControlPanel.tsx    add files / add photos / clear all / show tracks / fill loops / fog toggle
   └─ FileUploadDialog    shown on first load if no tracks
-  └─ TrackStatsPanel     right-side panel for selected track stats + elevation chart
+  └─ components/track-stats/
+       TrackStatsPanel.tsx    panel chrome — vaul Drawer on mobile, draggable Card on desktop
+       SingleTrackStats.tsx   lap selector + stat grid + elevation chart for one track
+       MultiTrackStats.tsx    track list + composite totals for a multi-select
+       LapSelector.tsx        lap dropdown (Base UI Select)
+       DeleteTrackDialog.tsx  delete confirmation
+       StatRow.tsx            one label/value pair (renders a fragment into the parent grid)
+       formatters.ts          panel-local number formats — see the note in the file
   └─ PhotoCard           draggable panel showing photo viewer for a selected cluster
 
 routes/stats.tsx         clientLoader (loads IDB tracks, runs all aggregators) + StatsPage
   └─ components/stats/
        StatCards.tsx          8 lifetime metric cards (distance, elevation, activities, …)
        WeeklyChart.tsx        Recharts BarChart of weekly km — uses --chart-1 color
+       WeekTooltip.tsx        custom Recharts tooltip for WeeklyChart
        StreaksCard.tsx        12-week activity grid + this-week/active/streak stats
        ActivityGrid.tsx       GitHub-style 12×7 dot grid; active dots use --chart-1
        PersonalRecordsCard.tsx  5 per-activity PRs (distance, elevation, pace, speed, time)
+       RecordRow.tsx          one PR row, links back to /?track=<id>
 
 routes/help.tsx          static help page
 
@@ -40,6 +54,8 @@ lib/statsAggregator.ts   pure aggregation functions over ParsedTrack[]: computeL
                          computeWeeklyBars, computeStreaks, computePersonalRecords
 lib/statsFormatters.ts   pure display formatters: formatKm, formatElevation, formatPace,
                          formatMovingTime, formatXAxisTick, formatWeekRange
+lib/laps.ts              format-agnostic lap helpers: buildLapTrack (synthetic track for sharing),
+                         lapSubtitle, stripExt. FIT lap extraction lives in parsers/fit.ts
 workers/fogWorker.ts     ALL geometry: simplify → buffer → union/difference → emit fog polygon
 lib/parsers/
   index.ts               routes by extension
@@ -100,7 +116,41 @@ Photos do **not** need GPS/geotag data. Location is determined entirely by match
 6. Clicking a cluster opens `PhotoCard` (draggable panel) with per-photo viewer
 7. Photo-to-track matching requires `pointTimestamps?: number[]` on `ParsedTrack` — populated by GPX/FIT parsers from coordinate timestamps; if a track has no timestamps, no photos can be matched to it
 
+## Laps
+
+FIT-only. `fit-file-parser`'s default `mode: 'list'` puts a flat `data.laps` array at the root, so no parser option change was needed. GPX never gets laps (Garmin Connect GPX doesn't encode them — `<trkseg>` splits are pause/resume boundaries).
+
+`ParsedTrack.laps?: TrackLap[]` stores **index ranges** (`startIndex`/`endIndex` into `coordinates`), not geometry, so IndexedDB holds no duplicated coordinates. Lap geometry is `coordinates.slice(startIndex, endIndex + 1)`.
+
+**Lap stats are computed at parse time** (`buildLapsFromFit` in `parsers/fit.ts` → `computeTrackStats(rawPoints.slice(...), LAP_PROFILE_POINTS)`). They cannot be recomputed after a reload: per-point elevation lives only in the parser-internal `RawPoint[]` and is never persisted.
+
+**Lap extraction is parser work, lap presentation is not.** `parsers/fit.ts` owns `buildLapsFromFit` and `fitTimeToMs` (the latter exists because `fit-file-parser` decodes `date_time` into `Date` objects, and `Date.parse(dateObj)` silently truncates ms). `lib/laps.ts` owns only the format-agnostic render-path helpers.
+
+**Adjacent laps share their boundary point** (`laps[k].startIndex === laps[k-1].endIndex`) so highlighted polylines are contiguous and lap distances sum to the track distance. The cost is that a naive `durationMs` would include the bridging gap, so the device's `total_elapsed_time` overrides it when present (which also makes the numbers match the watch and Strava).
+
+**Point→lap assignment is a monotone forward sweep bounded by the *next* lap's `start_time`** — never a `ts >= start && ts <= end` range filter. `lap.timestamp` is the lap *end* and is inclusive, so a range filter double-counts boundary points, drops auto-pause gaps into no lap at all, and yields a set rather than a contiguous range. The sweep runs over `rawPoints`, not raw FIT records, because `fit.ts` filters null-lat/lng and null-island records first so the two index spaces don't line up.
+
+**Lap stats do NOT all sum to the track total** — `elevationGainM` won't, because `computeElevationGainLoss` resets its hysteresis reference and distance-window smoother at each slice boundary. Same for moving time near boundaries. This is expected, not a bug to fix.
+
+**`lap.stats.uniqueDistanceKm` is always 0.** Real unique distance is a library-wide grid computation (`populateUniqueDistances`) re-run on every load/add/delete, so a per-lap share would shift whenever an unrelated track is imported. Consumers must hide the stat — `TrackStatsPanel` gates on `> 0` and `getAvailableStats` already does.
+
+**Sharing a lap uses a synthetic `ParsedTrack`.** `buildLapTrack(track, lap)` returns id `${track.id}#lap${n}` with sliced coordinates, so `ShareDialog` / `drawShareCard` / `ShareMapView` / `filterPhotosForTrack` all work unmodified (photos even narrow to the lap for free). It is **render-path only** — never let it reach `mapStore.tracks`, `saveTracks`, `populateUniqueDistances` or the fog worker. `onDelete` in particular must stay bound to the real track id; `deleteTrack("uuid#lap3")` is a silent IDB no-op.
+
+**The share card draws no track name** — only stat cells, `subtitle` and the watermark. `ShareDialog`'s computed subtitle is `null` for a single track, so a lap card would have nothing identifying it; that's what the optional `subtitle` prop is for.
+
+**Lap state is derived, not reset.** `home.tsx` holds a raw `selectedLapNumber` but everything downstream uses `activeLap`, re-validated each render against the selected track's `laps`. A stale number, a multi-select, a deleted track or a GPX track all collapse to `null` without any of the 8+ `selectedTrackIds` mutation sites knowing laps exist.
+
+**No IDB version bump** — `laps?:` is additive and optional, and structured clone handles it. Tracks imported before the feature existed simply show no selector and cannot be backfilled (`saveTracks` only runs on add-files, and the per-record detail is gone).
+
 ## Key gotchas
+
+**One component per file** — outside `components/ui/`. Sub-components get their own file next to
+their parent (`StatRow.tsx`, `WeekTooltip.tsx`, `RecordRow.tsx`), and a feature with several parts
+gets a folder (`components/track-stats/`, `components/stats/`). The exception is `components/ui/`,
+where shadcn's generated files export a whole part family (`Card` + `CardHeader` + `CardTitle` …)
+from one file — that's the registry's layout and splitting it would break `shadcn add` updates.
+
+**Base UI popups inside a vaul Drawer need care**: vaul renders a Radix `Dialog.Root` but never forwards its own `modal` prop to it, so a drawer is **always** a trapped Radix `FocusScope` — `modal={false}` only makes vaul `preventDefault()` the outside-press/focus-out events. Base UI popups portal to `<body>`, outside that scope, so when one focuses its content Radix's `focusout` handler yanks focus back into the drawer. For `Select` that is fatal: `SelectTrigger.onFocus` closes the popup whenever `alignItemWithTrigger` is active, so it opens and dismisses itself in the same frame (looks like "the dropdown flickers and won't open"). Two guards are in place — `useBaseUiPortalFocusGuard` in `ui/drawer.tsx` (fixes the root cause for any Base UI popup) and `alignItemWithTrigger={false}` on `LapSelector`'s `SelectContent`. Related, already-existing workarounds: the `[data-base-ui-portal]` check in `DrawerContent`'s `onPointerDownOutside` and the focus-restore effect in `ui/dialog.tsx`. Do **not** try to fix this by portalling the popup into the drawer — vaul puts a `transform` on the drawer content, which makes it a containing block for `position: fixed` and sends the popup off-screen.
 
 **Boolean state variables use the `is` prefix**: `useState<boolean>` variables should be named `isFoo` / `setIsFoo` — e.g. `isDeleteOpen`, `isCopied`, `isExporting`. Never use bare adjectives like `deleteOpen` or `copied`.
 
@@ -119,6 +169,14 @@ Photos do **not** need GPS/geotag data. Location is determined entirely by match
 **Single useFetcher**: all form submissions go through one `useFetcher` in `home.tsx`; results in `fetcher.data`. Children receive callbacks, not their own fetcher instances.
 
 **Mode change triggers reprocess**: toggling corridor/fill in the UI sends RESET then re-sends all `mapStore.tracks` with the new mode. `mapStore.tracks` persists across resets so it can be replayed.
+
+**`runId` cancels in-flight worker runs**: every worker message carries a generation token. `startFogRun()` (`lib/mapStore.ts`) bumps `mapStore.runId`; the worker bails out of its loop at the next checkpoint once its captured id stops matching, and MapView drops any reply whose `runId` is stale. Post everything through `postToFogWorker()` so the stamp is never forgotten.
+
+- Call `startFogRun()` **only where prior work is genuinely discarded** — fog-mode toggle, `delete-track`, `clear-all`. `add-files` and the restore-reprocess must *join* the current run: they post only the new tracks and depend on the worker's accumulated `fogPolygon`/`accumulated` surviving.
+- `startFogRun()` must always be followed by `postToFogWorker({ type: "RESET" })`. That is how the worker learns the new id; without it the old loop keeps running while every reply is dropped, and the progress bar sticks forever.
+- The worker's loop `await`s a **macrotask** (`MessageChannel`) once per track. `await Promise.resolve()` would not work — it drains only microtasks, so a queued RESET would never be dispatched. The loop is parked exactly at that await whenever the message handler runs, which is why `resetState()` can never land mid-track.
+- `jobChain` serializes same-run batches. Once the loop yields, two `PROCESS_TRACKS` for one run could otherwise interleave over the shared accumulators.
+- This also fixes two older bugs: an abandoned run's `DONE` used to write a fog cache pairing the *new* `mapStore.fogMode` with the *old* mode's polygon, and `clear-all`/`delete-track` used to get repainted by the doomed run's `FOG_UPDATE`s.
 
 **`mapStore.fogMode`**: kept in sync with the React `fogMode` state (updated in `handleFogModeChange`). MapView reads it from mapStore in the worker DONE handler to save the fog cache — avoids threading it as a prop.
 
@@ -144,7 +202,9 @@ client-side — `clientLoader` calls `loadTracks()` then runs the four aggregato
 | `computeLifetimeTotals` | Distance, elevation, moving time, track count, active days |
 | `computeWeeklyBars` | One `WeeklyBar` per ISO week between first and last activity; gaps filled with zero |
 | `computeStreaks` | Current/longest streak, 84-day active-day set, this-week/last-week km, active-day count |
-| `computePersonalRecords` | Best single-activity records: distance, elevation, pace, speed, moving time |
+| `computePersonalRecords` | Best single-activity records: distance, elevation, pace, avg speed, moving time |
+
+**Naming: `avgSpeed` vs `avgMovingSpeed`.** `avgSpeedKmh` is distance ÷ *elapsed* time; `avgMovingSpeedKmh` is distance ÷ *moving* time (stopped segments excluded — see `MOVING_TIME_STOPPED_GAP_MS`). Never introduce a bare `speed`/`speedKmh` identifier — always qualify which one it is. The one exception is `segmentSpeedKmh` in `lib/stats.ts`, an instantaneous per-segment speed that only gates whether a segment counts as moving. `PersonalRecords.fastestAvgSpeed` uses the elapsed-time average; `fastestPace` uses moving pace, so the two are independent records rather than reciprocals of one another.
 
 `computeStreaks` uses **local calendar dates** (not UTC) so days match what the user sees on their device.
 
@@ -167,7 +227,7 @@ re-derive from `pointTimestamps` elsewhere.
 | Format | Parser | Notes |
 |---|---|---|
 | `.gpx` | `@tmcw/togeojson` | Handles LineString + MultiLineString features |
-| `.fit` | `fit-file-parser` v3 | Returns degrees directly, filter near-(0,0) records |
+| `.fit` | `fit-file-parser` v3 | Returns degrees directly, filter near-(0,0) records; also the only source of laps |
 
 To add a new format: create `app/lib/parsers/newformat.ts` + one line in `parsers/index.ts`. Worker, clientAction, and UI are untouched.
 
@@ -181,4 +241,7 @@ MAP_STYLE_URL           = "https://tiles.openfreemap.org/styles/liberty"
 FOG_COLOR               = "#0a0a1e"
 FOG_OPACITY             = 0.8
 TRACK_COLOR             = "#ff6b35"
+LAP_PROFILE_POINTS      = 60    // per-lap elevation profile cap (track's is 300)
+MAX_LAPS                = 200   // give up on pathological FIT files above this
+LAP_HIGHLIGHT_WIDTH     = 6     // selected-lap line width
 ```

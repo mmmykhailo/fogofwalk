@@ -1,10 +1,10 @@
 import { gpx } from "@tmcw/togeojson"
-import type { ParsedTrack, TrackCoords } from "~/types/tracks"
-import { computeTrackStats, type RawPoint } from "~/lib/stats"
+import type { ParsedTrack, RawPoint, TrackCoords } from "~/types/tracks"
+import { computeTrackStats } from "~/lib/stats"
 
 function buildRawPoints(
   coords: [number, number, number?][],
-  times?: string[],
+  times?: string[]
 ): RawPoint[] {
   return coords.map((c, i) => ({
     lng: c[0],
@@ -36,7 +36,9 @@ export async function parseGpxFile(file: File): Promise<ParsedTrack[]> {
           name: file.name,
           startedAtMs: validTs.length > 0 ? validTs[0] : null,
           coordinates: rawCoords.map((c) => [c[0], c[1]]) as TrackCoords,
-          pointTimestamps: ts.every((t) => t == null) ? undefined : ts.map((t) => t ?? -1),
+          pointTimestamps: ts.every((t) => t == null)
+            ? undefined
+            : ts.map((t) => t ?? -1),
           format: "gpx",
           stats: { ...stats, uniqueDistanceKm: stats.distanceKm },
         })
@@ -49,14 +51,18 @@ export async function parseGpxFile(file: File): Promise<ParsedTrack[]> {
           const rawCoords = coords as [number, number, number?][]
           const rawPoints = buildRawPoints(rawCoords, allTimes?.[i])
           const ts = rawPoints.map((p) => p.timestampMs)
-          const validTs = ts.filter((t): t is number => t != null && isFinite(t))
+          const validTs = ts.filter(
+            (t): t is number => t != null && isFinite(t)
+          )
           const stats = computeTrackStats(rawPoints)
           tracks.push({
             id: crypto.randomUUID(),
             name: `${file.name}[${i}]`,
             startedAtMs: validTs.length > 0 ? validTs[0] : null,
             coordinates: rawCoords.map((c) => [c[0], c[1]]) as TrackCoords,
-            pointTimestamps: ts.every((t) => t == null) ? undefined : ts.map((t) => t ?? -1),
+            pointTimestamps: ts.every((t) => t == null)
+              ? undefined
+              : ts.map((t) => t ?? -1),
             format: "gpx",
             stats: { ...stats, uniqueDistanceKm: stats.distanceKm },
           })

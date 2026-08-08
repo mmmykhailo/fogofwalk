@@ -43,12 +43,47 @@ function DrawerOverlay({
   )
 }
 
+/**
+ * vaul renders a Radix `Dialog.Root` but never forwards its own `modal` prop to
+ * it (vaul/dist/index.mjs — only defaultOpen/onOpenChange/open are passed), so
+ * the drawer is *always* a trapped Radix `FocusScope`, even with modal={false}.
+ *
+ * Base UI popups (Select, …) portal to `<body>`, outside that scope. When one
+ * focuses its content, FocusScope's document-level focusout handler yanks focus
+ * straight back into the drawer — and Base UI's `SelectTrigger.onFocus` closes
+ * the popup whenever `alignItemWithTrigger` is active, so the dropdown opens and
+ * dismisses itself in the same frame.
+ *
+ * Swallowing focus events that belong to a Base UI portal before Radix's
+ * document listeners see them fixes the class of bug rather than one instance.
+ * Scoped to `[data-base-ui-portal]`, so it only affects Base UI popups opened
+ * while a drawer is mounted.
+ */
+function useBaseUiPortalFocusGuard() {
+  React.useEffect(() => {
+    const isBaseUi = (node: EventTarget | null) =>
+      node instanceof Element && node.closest("[data-base-ui-portal]") != null
+    const stop = (e: FocusEvent) => {
+      if (isBaseUi(e.target) || isBaseUi(e.relatedTarget)) {
+        e.stopImmediatePropagation()
+      }
+    }
+    document.addEventListener("focusin", stop, true)
+    document.addEventListener("focusout", stop, true)
+    return () => {
+      document.removeEventListener("focusin", stop, true)
+      document.removeEventListener("focusout", stop, true)
+    }
+  }, [])
+}
+
 function DrawerContent({
   className,
   children,
   onPointerDownOutside,
   ...props
 }: React.ComponentProps<typeof DrawerPrimitive.Content>) {
+  useBaseUiPortalFocusGuard()
   return (
     <DrawerPortal data-slot="drawer-portal">
       <DrawerOverlay />

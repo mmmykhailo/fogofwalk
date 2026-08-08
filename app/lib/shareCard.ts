@@ -176,13 +176,13 @@ const STAT_PRIORITY: StatKey[] = [
   "distance",
   "duration",
   "elevationGain",
-  "avgMovingPace",
-  "movingTime",
   "avgMovingSpeed",
+  "movingTime",
   "elevationLoss",
   "uniqueDistance",
-  "avgPace",
   "avgSpeed",
+  "avgPace",
+  "avgMovingPace",
 ]
 
 export function getDefaultStats(s: StatsData): StatKey[] {
