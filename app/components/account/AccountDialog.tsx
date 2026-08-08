@@ -9,8 +9,15 @@ import {
 } from "~/components/ui/dialog"
 import { friendlyMessage } from "~/lib/server/apiClient"
 import { signOut, useAuth } from "~/lib/server/authStore"
+import {
+  describeSyncStatus,
+  requestSync,
+  useSyncStatus,
+} from "~/lib/server/syncEngine"
+import { useServerHealth } from "~/lib/server/serverHealth"
 import { AccountAvatar } from "./AccountAvatar"
 import { DeleteAccountBlock } from "./DeleteAccountBlock"
+import { ServerUnavailableNotice } from "./ServerUnavailableNotice"
 
 interface AccountDialogProps {
   open: boolean
@@ -19,6 +26,9 @@ interface AccountDialogProps {
 
 export function AccountDialog({ open, onOpenChange }: AccountDialogProps) {
   const auth = useAuth()
+  const syncStatus = useSyncStatus()
+  const health = useServerHealth(true)
+  const isOffline = health === "offline"
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false)
   const [isSigningOut, setIsSigningOut] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -68,7 +78,34 @@ export function AccountDialog({ open, onOpenChange }: AccountDialogProps) {
           </div>
         </div>
 
-        {!auth.canSync && (
+        {isOffline && (
+          <ServerUnavailableNotice
+            onRetry={() => {
+              if (auth.canSync) requestSync("retry-after-offline")
+            }}
+          />
+        )}
+
+        {auth.canSync && !isOffline && (
+          <div className="flex items-center gap-3 p-3 ring-1 ring-foreground/10">
+            <div className="min-w-0 flex-1">
+              <p className="text-xs font-medium">Track sync</p>
+              <p className="truncate text-xs text-muted-foreground">
+                {describeSyncStatus(syncStatus) ?? "Not synced yet"}
+              </p>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => requestSync("manual")}
+              disabled={syncStatus.phase === "syncing"}
+            >
+              {syncStatus.phase === "syncing" ? "Syncing…" : "Sync now"}
+            </Button>
+          </div>
+        )}
+
+        {!auth.canSync && !isOffline && (
           <p className="p-3 text-xs/relaxed text-muted-foreground ring-1 ring-foreground/10">
             Your account isn&rsquo;t enabled for sync yet. You&rsquo;re signed
             in, but tracks stay on this device until an admin enables it.
@@ -94,7 +131,14 @@ export function AccountDialog({ open, onOpenChange }: AccountDialogProps) {
             <Button
               variant="destructive"
               onClick={() => setIsDeleteConfirmOpen(true)}
-              disabled={isSigningOut}
+              // Deletion is server-side only; offer it only when it can work.
+              // Logging out stays available — it just drops the local session.
+              disabled={isSigningOut || isOffline}
+              title={
+                isOffline
+                  ? "Can't delete your account while the server is unreachable"
+                  : undefined
+              }
             >
               Delete account
             </Button>

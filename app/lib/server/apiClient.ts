@@ -8,6 +8,7 @@
 
 import type { ApiError, ApiErrorCode } from "~shared/api"
 import { apiUrl } from "./config"
+import { reportServerReachable, reportServerUnreachable } from "./serverHealth"
 
 let authToken: string | null = null
 let onUnauthorized: (() => void) | null = null
@@ -84,8 +85,12 @@ async function request(path: string, opts: RequestOptions): Promise<Response> {
     })
   } catch (err) {
     if (err instanceof DOMException && err.name === "AbortError") throw err
+    reportServerUnreachable()
     throw new ApiRequestError(0, "network", "Network request failed")
   }
+
+  // A response — even an error one — proves the server is up.
+  reportServerReachable()
 
   if (res.ok) return res
 

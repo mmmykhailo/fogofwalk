@@ -4,7 +4,9 @@ import type { AuthExchangeResponse } from "~shared/api"
 import { apiPost, friendlyMessage } from "~/lib/server/apiClient"
 import { completeSignIn, setSignedOut } from "~/lib/server/authStore"
 import { isServerEnabled } from "~/lib/server/config"
+import { useServerHealth } from "~/lib/server/serverHealth"
 import { AppLink } from "~/components/AppLink"
+import { ServerUnavailableNotice } from "~/components/account/ServerUnavailableNotice"
 
 /**
  * Landing point for the OAuth redirect. The server sends a single-use handoff
@@ -15,6 +17,7 @@ export default function AuthCallbackPage() {
   const [searchParams] = useSearchParams()
   const navigate = useNavigate()
   const [error, setError] = useState<string | null>(null)
+  const health = useServerHealth()
   // The handoff code is single-use; React 19 StrictMode double-effects would
   // burn it on the first call and fail on the second.
   const hasRunRef = useRef(false)
@@ -64,10 +67,14 @@ export default function AuthCallbackPage() {
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-6 text-foreground">
-      <div className="flex flex-col items-center gap-4 text-center">
+      <div className="flex w-full max-w-sm flex-col items-center gap-4 text-center">
         {error ? (
           <>
-            <p className="text-sm text-destructive">{error}</p>
+            {health === "offline" ? (
+              <ServerUnavailableNotice action="finish signing in" />
+            ) : (
+              <p className="text-sm text-destructive">{error}</p>
+            )}
             <AppLink to="/" variant="nav">
               Back to map
             </AppLink>

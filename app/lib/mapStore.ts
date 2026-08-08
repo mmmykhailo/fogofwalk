@@ -1,5 +1,7 @@
 import type maplibregl from "maplibre-gl"
 import type { ParsedTrack, FogMode, WorkerInboundMessage } from "~/types/tracks"
+import { sortTracks, populateUniqueDistances } from "~/lib/statsAggregator"
+import { saveTracks, clearFogCache } from "~/lib/storage"
 
 // ─── Map position persistence (localStorage — synchronous, survives page unload) ──
 
@@ -131,6 +133,30 @@ export function postToFogWorker(
   msg: DistributiveOmit<WorkerInboundMessage, "runId">
 ): void {
   mapStore.worker?.postMessage({ ...msg, runId: mapStore.runId })
+}
+
+/**
+ * Add newly-acquired tracks to the library: merge, recompute unique distances,
+ * hand them to the fog worker, persist, invalidate the fog cache.
+ *
+ * Both entry points for new tracks go through here — the `add-files` action and
+ * the sync engine's downloads — so a downloaded track is indistinguishable from
+ * an imported one.
+ *
+ * Note it **joins** the current fog run rather than calling `startFogRun()`:
+ * only the new tracks are posted, and the worker's accumulated fog polygon has
+ * to survive for that to be correct.
+ */
+export async function ingestTracks(
+  newTracks: ParsedTrack[],
+  mode: FogMode = mapStore.fogMode
+): Promise<void> {
+  if (newTracks.length === 0) return
+  mapStore.tracks = sortTracks([...mapStore.tracks, ...newTracks])
+  populateUniqueDistances(mapStore.tracks)
+  postToFogWorker({ type: "PROCESS_TRACKS", tracks: newTracks, mode })
+  await saveTracks(newTracks)
+  await clearFogCache()
 }
 
 export function worldFogGeoJSON(): GeoJSON.Feature<GeoJSON.Polygon> {

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import { GithubLogoIcon, SignInIcon } from "@phosphor-icons/react"
 import type { AuthProviderInfo } from "~shared/api"
 import { Button } from "~/components/ui/button"
@@ -12,6 +12,8 @@ import {
 import { friendlyMessage } from "~/lib/server/apiClient"
 import { fetchProviders } from "~/lib/server/authStore"
 import { signInUrl } from "~/lib/server/config"
+import { useServerHealth } from "~/lib/server/serverHealth"
+import { ServerUnavailableNotice } from "./ServerUnavailableNotice"
 
 interface SignInDialogProps {
   open: boolean
@@ -25,11 +27,18 @@ const PROVIDER_ICONS: Record<string, typeof GithubLogoIcon> = {
 export function SignInDialog({ open, onOpenChange }: SignInDialogProps) {
   const [providers, setProviders] = useState<AuthProviderInfo[] | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const health = useServerHealth()
+  const [attempt, setAttempt] = useState(0)
+
+  const load = useCallback(() => {
+    setProviders(null)
+    setError(null)
+    setAttempt((n) => n + 1)
+  }, [])
 
   useEffect(() => {
     if (!open) return
     let isStale = false
-    setError(null)
     fetchProviders()
       .then((res) => {
         if (!isStale) setProviders(res.providers)
@@ -40,7 +49,11 @@ export function SignInDialog({ open, onOpenChange }: SignInDialogProps) {
     return () => {
       isStale = true
     }
-  }, [open])
+  }, [open, attempt])
+
+  // Network failure, not a server-side error — show the offline placeholder
+  // rather than a raw message the user can do nothing with.
+  const isUnreachable = health === "offline" && providers === null
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -54,14 +67,24 @@ export function SignInDialog({ open, onOpenChange }: SignInDialogProps) {
         </DialogHeader>
 
         <div className="space-y-2">
-          {providers === null && !error && (
-            <p className="text-xs text-muted-foreground">Loading providers…</p>
+          {isUnreachable && (
+            <ServerUnavailableNotice action="sign in" onRetry={load} />
           )}
-          {providers?.length === 0 && (
-            <p className="text-xs text-muted-foreground">
-              The server has no sign-in providers configured.
+
+          {!isUnreachable && providers === null && !error && (
+            // Placeholder shaped like the buttons it is standing in for.
+            <>
+              <div className="h-9 w-full animate-pulse bg-foreground/5" />
+              <div className="h-9 w-full animate-pulse bg-foreground/5" />
+            </>
+          )}
+
+          {!isUnreachable && providers?.length === 0 && (
+            <p className="p-3 text-xs/relaxed text-muted-foreground ring-1 ring-foreground/10">
+              The server has no sign-in providers configured yet.
             </p>
           )}
+
           {providers?.map((provider) => {
             const Icon = PROVIDER_ICONS[provider.id] ?? SignInIcon
             return (
@@ -80,7 +103,9 @@ export function SignInDialog({ open, onOpenChange }: SignInDialogProps) {
           })}
         </div>
 
-        {error && <p className="text-xs text-destructive">{error}</p>}
+        {error && !isUnreachable && (
+          <p className="text-xs text-destructive">{error}</p>
+        )}
       </DialogContent>
     </Dialog>
   )

@@ -1,4 +1,8 @@
-import { CaretRightIcon, SignInIcon } from "@phosphor-icons/react"
+import {
+  CaretRightIcon,
+  CloudSlashIcon,
+  SignInIcon,
+} from "@phosphor-icons/react"
 import {
   Item,
   ItemContent,
@@ -7,6 +11,8 @@ import {
   ItemTitle,
 } from "~/components/ui/item"
 import { useAuth } from "~/lib/server/authStore"
+import { useServerHealth } from "~/lib/server/serverHealth"
+import { describeSyncStatus, useSyncStatus } from "~/lib/server/syncEngine"
 import { AccountAvatar } from "./AccountAvatar"
 
 interface AccountDrawerItemProps {
@@ -14,8 +20,6 @@ interface AccountDrawerItemProps {
   onSignIn: () => void
   /** Opens the account modal. */
   onOpenAccount: () => void
-  /** Sync status line, when the sync engine has something to say. */
-  syncStatus?: string | null
 }
 
 /**
@@ -29,26 +33,59 @@ interface AccountDrawerItemProps {
 export function AccountDrawerItem({
   onSignIn,
   onOpenAccount,
-  syncStatus,
 }: AccountDrawerItemProps) {
   const auth = useAuth()
+  // Probe when the drawer opens: a signed-out user makes no requests, so
+  // without this the row could not tell "no account" from "server is down".
+  const health = useServerHealth(true)
+  const syncStatus = useSyncStatus()
 
   if (auth.status === "disabled") return null
+
+  const isOffline = health === "offline"
+
+  // Signed out with no reachable server: sign-in cannot work, so say so
+  // instead of offering a button that opens an empty provider list.
+  const isSignInBlocked = auth.status === "signedOut" && isOffline
+
+  let description: string | null = null
+  if (auth.status === "signedIn") {
+    if (!auth.canSync) description = "Not enabled for sync"
+    else if (isOffline) description = "Offline — will sync later"
+    else description = describeSyncStatus(syncStatus)
+  }
 
   return (
     <>
       {auth.status === "loading" && (
         <Item variant="muted" className="opacity-50">
           <ItemMedia variant="icon">
-            <span className="size-5" />
+            <span className="size-5 animate-pulse rounded-full bg-foreground/10" />
           </ItemMedia>
           <ItemContent>
-            <ItemTitle>Checking sign-in…</ItemTitle>
+            <ItemTitle>
+              <span className="inline-block h-3 w-24 animate-pulse rounded bg-foreground/10 align-middle" />
+            </ItemTitle>
           </ItemContent>
         </Item>
       )}
 
-      {auth.status === "signedOut" && (
+      {isSignInBlocked && (
+        <Item variant="muted" className="opacity-60">
+          <ItemMedia variant="icon">
+            <CloudSlashIcon
+              weight="duotone"
+              className="size-5 text-muted-foreground"
+            />
+          </ItemMedia>
+          <ItemContent>
+            <ItemTitle>Sign in unavailable</ItemTitle>
+            <ItemDescription>Server unreachable</ItemDescription>
+          </ItemContent>
+        </Item>
+      )}
+
+      {auth.status === "signedOut" && !isSignInBlocked && (
         <Item
           variant="muted"
           render={<button type="button" />}
@@ -83,11 +120,7 @@ export function AccountDrawerItem({
           </ItemMedia>
           <ItemContent>
             <ItemTitle className="truncate">{auth.user.displayName}</ItemTitle>
-            {(auth.canSync ? syncStatus : "Not enabled for sync") && (
-              <ItemDescription>
-                {auth.canSync ? syncStatus : "Not enabled for sync"}
-              </ItemDescription>
-            )}
+            {description && <ItemDescription>{description}</ItemDescription>}
           </ItemContent>
           <CaretRightIcon className="size-4 shrink-0 text-muted-foreground" />
         </Item>

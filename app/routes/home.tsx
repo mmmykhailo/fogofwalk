@@ -27,12 +27,12 @@ import {
   worldFogGeoJSON,
   startFogRun,
   postToFogWorker,
+  ingestTracks,
 } from "~/lib/mapStore"
 import { parseFile } from "~/lib/parsers"
 import { buildLapTrack, lapSubtitle } from "~/lib/laps"
 import { processPhotoFiles } from "~/lib/photos"
 import {
-  saveTracks,
   loadTracks,
   savePhotos,
   loadPhotos,
@@ -45,7 +45,13 @@ import {
   isFogCacheValid,
 } from "~/lib/storage"
 import { clearMapPosition } from "~/lib/mapStore"
-import { initAuth } from "~/lib/server/authStore"
+import { initAuth, useAuth } from "~/lib/server/authStore"
+import {
+  pushClearAll,
+  pushTrackDeletion,
+  requestSync,
+  setSyncChangeHandler,
+} from "~/lib/server/syncEngine"
 import { sortTracks, populateUniqueDistances } from "~/lib/statsAggregator"
 import type { FogMode, MapMode, ParsedTrack } from "~/types/tracks"
 import type { PhotoEntry, PhotoGroup } from "~/types/photos"
@@ -200,18 +206,10 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
       !!mapStore.worker
     )
     if (allTracks.length > 0) {
-      mapStore.tracks = sortTracks([...mapStore.tracks, ...allTracks])
-      populateUniqueDistances(mapStore.tracks)
-      // Joins the current run rather than starting one: only the new tracks are
-      // posted, so this depends on the worker's accumulated state surviving.
-      postToFogWorker({
-        type: "PROCESS_TRACKS",
-        tracks: allTracks,
-        mode,
-      })
-      // Persist new tracks and invalidate stale fog cache
-      await saveTracks(allTracks)
-      await clearFogCache()
+      // Shared with the sync engine's downloads — merge, recompute, post to the
+      // worker (joining the current run), persist, invalidate the fog cache.
+      await ingestTracks(allTracks, mode)
+      void requestSync("add-files")
     }
     return {
       intent: "add-files" as const,
@@ -223,6 +221,9 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
   }
 
   if (intent === "clear-all") {
+    // Propagate before the list is emptied. "Clear all" means all of them —
+    // leaving the server copies would resurrect every track on the next sync.
+    await pushClearAll(mapStore.tracks)
     mapStore.fogData = null
     mapStore.tracks = []
     mapStore.processedCount = 0
@@ -249,6 +250,9 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
 
   if (intent === "delete-track") {
     const trackId = formData.get("trackId") as string
+
+    // Captured before the filter — the content hash is what the server keys on.
+    const deletedTrack = mapStore.tracks.find((t) => t.id === trackId)
 
     // Remove from in-memory store and recompute unique distances for remaining tracks
     mapStore.tracks = mapStore.tracks.filter((t) => t.id !== trackId)
@@ -285,6 +289,9 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
     // Persist and invalidate fog cache
     await deleteTrack(trackId)
     await clearFogCache()
+
+    // Writes the tombstone that removes it from the user's other devices.
+    if (deletedTrack) await pushTrackDeletion(deletedTrack)
 
     return {
       intent: "delete-track" as const,
@@ -508,6 +515,55 @@ export default function Home() {
       }
     }
   }, [fetcher.data])
+
+  // Sync mutates mapStore directly; reconcile the React state it can't reach.
+  useEffect(() => {
+    setSyncChangeHandler(({ downloadedCount, deletedIds }) => {
+      setTrackCount(mapStore.tracks.length)
+
+      if (deletedIds.length > 0) {
+        // A removal invalidates the accumulated fog, so the run is abandoned
+        // and the survivors replayed — the same dance as `delete-track`.
+        setSelectedTrackIds((prev) =>
+          prev.filter((id) => !deletedIds.includes(id))
+        )
+        setPendingTrackId(null)
+        mapStore.processedCount = 0
+        startFogRun()
+        postToFogWorker({ type: "RESET" })
+        const map = mapStore.map
+        if (map && mapStore.sourcesReady) {
+          ;(map.getSource("fog-source") as maplibregl.GeoJSONSource)?.setData(
+            worldFogGeoJSON()
+          )
+          ;(
+            map.getSource("tracks-source") as maplibregl.GeoJSONSource
+          )?.setData(featureCollection([]))
+          setLapHighlightData(map, null)
+        }
+        if (mapStore.tracks.length > 0) {
+          postToFogWorker({
+            type: "PROCESS_TRACKS",
+            tracks: mapStore.tracks,
+            mode: mapStore.fogMode,
+          })
+        }
+      }
+
+      if (downloadedCount > 0 || deletedIds.length > 0) {
+        setProcessedCount(0)
+        setIsProcessing(mapStore.tracks.length > 0)
+      }
+    })
+    return () => setSyncChangeHandler(null)
+  }, [])
+
+  // Fires on a restored session and on a fresh sign-in alike.
+  const auth = useAuth()
+  const isSyncEnabled = auth.status === "signedIn" && auth.canSync
+  useEffect(() => {
+    if (isSyncEnabled) requestSync("auth-ready")
+  }, [isSyncEnabled])
 
   function handleAddFiles(files: FileList, mode: FogMode = fogMode) {
     const formData = new FormData()
