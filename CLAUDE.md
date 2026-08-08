@@ -2,7 +2,7 @@
 
 ## What this is
 
-Browser-only SPA. Users import GPX/FIT activity files and geotagged photos; fog of war clears along their routes. No server — everything runs in the browser. State is persisted in IndexedDB (tracks, photos, fog cache, fogMode) and localStorage (map position).
+Browser-only SPA with an **optional** sync server. Users import GPX/FIT activity files and geotagged photos; fog of war clears along their routes. No server — everything runs in the browser. State is persisted in IndexedDB (tracks, photos, fog cache, fogMode) and localStorage (map position).
 
 ## Commands
 
@@ -49,9 +49,20 @@ routes/stats.tsx         clientLoader (loads IDB tracks, runs all aggregators) +
 
 routes/help.tsx          static help page
 
+routes/auth-callback.tsx OAuth landing — trades the single-use handoff code for a bearer token
+  └─ components/account/
+       AccountDrawerItem.tsx     the row in MoreDrawer's nav card (null when no server)
+       SignInDialog.tsx          provider list
+       AccountDialog.tsx         identity + sync status + log out + delete
+       DeleteAccountBlock.tsx    in-place second verification, NOT a nested dialog
+       ServerUnavailableNotice.tsx  the offline placeholder, shared by every server surface
+       AccountAvatar.tsx         provider image with initials fallback
+
 lib/mapStore.ts          module-level singleton — map instance, worker ref, fog data, track list,
-                         fogMode, initialCenter/Zoom (from localStorage), isRestoreReprocess flag
-lib/storage.ts           IndexedDB layer — tracks, photos (File objects), fog cache, fogMode pref
+                         fogMode, initialCenter/Zoom (from localStorage), isRestoreReprocess flag,
+                         ingestTracks() (shared by add-files and sync downloads)
+lib/storage.ts           IndexedDB layer — tracks, photos (File objects), fog cache, fogMode pref,
+                         session + syncState (both in the generic `prefs` KV)
 lib/statsAggregator.ts   pure aggregation functions over ParsedTrack[]: computeLifetimeTotals,
                          computeWeeklyBars, computeStreaks, computePersonalRecords
 lib/statsFormatters.ts   pure display formatters: formatKm, formatElevation, formatPace,
@@ -232,6 +243,61 @@ re-derive from `pointTimestamps` elsewhere.
 | `.fit` | `fit-file-parser` v3 | Returns degrees directly, filter near-(0,0) records; also the only source of laps |
 
 To add a new format: create `app/lib/parsers/newformat.ts` + one line in `parsers/index.ts`. Worker, clientAction, and UI are untouched.
+
+## Sync server (optional)
+
+`server/` is an **independent Bun package** — not a workspace. `bun install` at the root must keep
+working for people who only want the static app, and the GitHub Pages workflow must never pull
+server dependencies. Typecheck it with `cd server && bun run typecheck`; the root `tsconfig.json`
+excludes `server/` for exactly that reason.
+
+**Server-optional is the load-bearing invariant.** `VITE_API_URL` unset → `isServerEnabled` false
+→ `AccountDrawerItem` returns null, `initAuth()` returns immediately, `requestSync()` no-ops.
+Nothing under `app/lib/server/` may run a network request without that guard.
+
+```
+shared/                  types + constants compiled by BOTH tsconfigs — no DOM, no Bun globals
+  tracks.ts              ParsedTrack & friends; re-exported by app/types/tracks.ts
+  api.ts                 every request/response body — the single wire contract
+  constants.ts           MAX_TRACK_BYTES, SYNC_PAGE_SIZE, SESSION_TTL_MS, …
+app/lib/server/
+  config.ts              API_URL, isServerEnabled, signInUrl
+  apiClient.ts           bearer header, ApiRequestError, reports into serverHealth
+  authStore.ts           module singleton + useAuth() — the mapStore idiom, not Context
+  serverHealth.ts        online/offline/unknown, drives the "Server unavailable" placeholders
+  syncEngine.ts          manifest diff → upload/download/tombstone
+app/lib/trackHash.ts     SHA-256 over canonical geometry
+```
+
+**The alias is `~shared/*`, not `#shared/*`.** A `#`-prefixed specifier is Node/Bun package-imports
+syntax and is resolved before tsconfig paths are consulted.
+
+**`canonicalTrackString` is duplicated on the server** (it recomputes the hash to verify what a
+client claims). Changing it is a wire-format change — both sides, same commit, or devices silently
+stop deduping.
+
+**Content hash excludes `name`, `id` and `stats`.** Renaming a file must not mint a new track, ids
+are per-device `randomUUID()`, and `stats.uniqueDistanceKm` is library-relative — it shifts when an
+unrelated track is imported, so it can never be part of an identity. It is also zeroed on upload
+and recomputed by the receiving device.
+
+**Downloaded tracks go through `mapStore.ingestTracks()`** — the same function `add-files` uses, so
+a synced track is indistinguishable from an imported one. It **joins** the current fog run rather
+than calling `startFogRun()`: only the new tracks are posted and the worker's accumulated fog has
+to survive. Deletions arriving from a tombstone *do* need the full reset-and-replay, which is why
+`syncEngine` hands them to the `setSyncChangeHandler` callback in `home.tsx` instead of doing it
+itself — rebuilding fog and fixing `selectedTrackIds` are React concerns.
+
+**`clear-all` propagates to the server** (`pushClearAll`). Without it the next sync would
+faithfully re-download everything the user just cleared.
+
+**Session = opaque bearer token in the `prefs` store**, not a cookie: the static client is on a
+different origin from the API, and third-party cookies are blocked by Safari and being phased out
+by Chrome. The OAuth callback hands over a single-use 60-second code, never the token, so the
+long-lived credential never touches a URL, history entry or `Referer`.
+
+**Login is not authorisation.** Anyone who completes OAuth gets a `pending` user row; only
+`allowed` reaches `/api/tracks/*`. The UI shows the signed-in name either way and gates only sync.
 
 ## Constants (`app/constants/fog.ts`)
 

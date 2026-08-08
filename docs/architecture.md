@@ -2,7 +2,9 @@
 
 ## Overview
 
-Fog of Walk is a client-only SPA. All computation happens in the browser; there is no server. GPX/FIT files are loaded from the local filesystem, processed in a Web Worker, and rendered on a MapLibre GL map.
+Fog of Walk is a client-only SPA. All computation happens in the browser. GPX/FIT files are loaded from the local filesystem, processed in a Web Worker, and rendered on a MapLibre GL map.
+
+There is an **optional** sync server (`server/`, see `docs/plans/001-server-sync.md`). It is never required: the client is built without `VITE_API_URL` for the GitHub Pages deployment, which makes `isServerEnabled` false and hides every account and sync surface. All computation stays in the browser either way — the server only stores tracks, it never processes them.
 
 ## Data Flow
 
