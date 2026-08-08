@@ -10,7 +10,12 @@
  */
 
 import { useSyncExternalStore } from "react"
-import type { ManifestPage, TrackMeta, TrackUploadPayload } from "~shared/api"
+import type {
+  ManifestPage,
+  TrackMeta,
+  TrackTombstone,
+  TrackUploadPayload,
+} from "~shared/api"
 import { MAX_TRACK_BYTES, SYNC_CONCURRENCY } from "~shared/constants"
 import type { ParsedTrack } from "~/types/tracks"
 import {
@@ -179,18 +184,53 @@ async function syncOnce(reason: string): Promise<void> {
     // `since`, so the previously-known set has to carry forward.
     const serverHashes = new Set(since === 0 ? [] : (state?.serverHashes ?? []))
     for (const t of serverTracks) serverHashes.add(t.contentHash)
-    const deletedHashes = new Set(deletions)
-    for (const hash of deletedHashes) serverHashes.delete(hash)
+    for (const tomb of deletions) serverHashes.delete(tomb.contentHash)
 
     // Tracks this device deleted locally while choosing to leave the server
     // copy alone. Without this they would be downloaded straight back.
     const ignoredHashes = new Set(state?.ignoredHashes ?? [])
 
+    /**
+     * A from-scratch walk converges toward the union of local and server —
+     * never toward deletion.
+     *
+     * With no cursor there is no prior shared state to reconcile against, so a
+     * tombstone says nothing about *this* device: it describes a deletion
+     * relative to a history it no longer has. `clear-all` drops syncState, so
+     * every tombstone the account ever wrote replays here. Honouring them would
+     * delete tracks the user had just re-imported and refuse to upload them.
+     *
+     * Incremental walks keep the real semantics — that is where a delete on one
+     * device has to reach the others.
+     */
+    const isFromScratch = since === 0
+
+    /**
+     * A tombstone must be acted on exactly once per device.
+     *
+     * The server's cursor is an *inclusive* lower bound (deliberately — it is
+     * how a row written in the same millisecond as the read is not lost), so
+     * the newest tombstones are re-served on the following sync. Without this
+     * memory, re-importing a file you had just deleted gets it silently deleted
+     * again and refused for upload, because the same tombstone applies twice.
+     */
+    const applied = new Map<string, number>(
+      Object.entries(state?.appliedTombstones ?? {})
+    )
+    const freshTombstones = deletions.filter(
+      (tomb) => applied.get(tomb.contentHash) !== tomb.deletedAt
+    )
+    const freshDeletedHashes = new Set(
+      freshTombstones.map((tomb) => tomb.contentHash)
+    )
+
     const toUpload = [...localByHash.values()].filter(
       (t) =>
         t.contentHash &&
         !serverHashes.has(t.contentHash) &&
-        !deletedHashes.has(t.contentHash) &&
+        // Suppressed only while the deletion is still being applied. Once it
+        // has been, a local copy means a deliberate re-import — resurrect it.
+        (isFromScratch || !freshDeletedHashes.has(t.contentHash)) &&
         // Deliberately unsynced (a server purge, or a local-only delete that
         // was later re-imported). Never push these back up.
         !ignoredHashes.has(t.contentHash)
@@ -199,11 +239,17 @@ async function syncOnce(reason: string): Promise<void> {
       (t) =>
         !localByHash.has(t.contentHash) && !ignoredHashes.has(t.contentHash)
     )
-    const toDelete = [...deletedHashes].filter((h) => localByHash.has(h))
+    const toDelete = isFromScratch
+      ? []
+      : [...freshDeletedHashes].filter((h) => localByHash.has(h))
+
+    // Recorded even when not acted on, so a from-scratch walk cannot leave the
+    // whole backlog primed to fire on the next incremental sync.
+    for (const tomb of deletions) applied.set(tomb.contentHash, tomb.deletedAt)
 
     const total = toUpload.length + toDownload.length + toDelete.length
     if (total === 0) {
-      await finish(cursor, serverHashes, ignoredHashes)
+      await finish(cursor, serverHashes, ignoredHashes, applied)
       return
     }
 
@@ -247,7 +293,7 @@ async function syncOnce(reason: string): Promise<void> {
       // Hold the cursor where it was. Advancing past a track we failed to
       // fetch would skip it forever — the window never covers it again.
       console.warn(`[sync] ${downloadFailures} download(s) failed; cursor held`)
-      await finish(since, serverHashes, ignoredHashes)
+      await finish(since, serverHashes, ignoredHashes, applied)
       setStatus({
         phase: "error",
         message: "Some tracks couldn't be downloaded",
@@ -256,7 +302,7 @@ async function syncOnce(reason: string): Promise<void> {
       return
     }
 
-    await finish(cursor, serverHashes, ignoredHashes)
+    await finish(cursor, serverHashes, ignoredHashes, applied)
     if (uploadFailures > 0) {
       setStatus({
         phase: "error",
@@ -270,17 +316,31 @@ async function syncOnce(reason: string): Promise<void> {
   }
 }
 
+/**
+ * Tombstones older than this are dropped from the applied-set. Only the newest
+ * are ever re-served (the cursor is an inclusive bound), so the memory needs to
+ * cover the boundary, not all history — otherwise it grows without limit.
+ */
+const TOMBSTONE_MEMORY_MS = 7 * 24 * 60 * 60 * 1000
+
 async function finish(
   cursor: number,
   serverHashes: Set<string>,
-  ignoredHashes: Set<string>
+  ignoredHashes: Set<string>,
+  applied: Map<string, number>
 ): Promise<void> {
   const lastSyncAt = Date.now()
+  const cutoff = cursor - TOMBSTONE_MEMORY_MS
+  const appliedTombstones: Record<string, number> = {}
+  for (const [hash, deletedAt] of applied) {
+    if (deletedAt >= cutoff) appliedTombstones[hash] = deletedAt
+  }
   await saveSyncState({
     cursor,
     lastSyncAt,
     serverHashes: [...serverHashes],
     ignoredHashes: [...ignoredHashes],
+    appliedTombstones,
   })
   setStatus({ phase: "idle", lastSyncAt })
   console.debug("[sync] done")
@@ -321,11 +381,11 @@ async function pooled<T>(
 
 async function fetchManifest(since: number): Promise<{
   serverTracks: TrackMeta[]
-  deletions: string[]
+  deletions: TrackTombstone[]
   cursor: number
 }> {
   const serverTracks: TrackMeta[] = []
-  const deletions: string[] = []
+  const deletions: TrackTombstone[] = []
   let cursor = since
 
   // Follow `hasMore` to the end; the server pages by (updatedAt, contentHash).
@@ -336,7 +396,7 @@ async function fetchManifest(since: number): Promise<{
     )
     const page = (await res.json()) as ManifestPage
     serverTracks.push(...page.tracks)
-    deletions.push(...page.deletions.map((d) => d.contentHash))
+    deletions.push(...page.deletions)
     cursor = page.cursor
     if (!page.hasMore) break
   }
@@ -403,15 +463,6 @@ export async function pushTrackDeletion(track: ParsedTrack): Promise<void> {
   } catch (err) {
     console.warn("[sync] failed to propagate deletion:", err)
   }
-}
-
-/** Propagate a clear-all. Deletes every synced track the server still holds. */
-export async function pushClearAll(tracks: ParsedTrack[]): Promise<void> {
-  if (!canSync()) return
-  await pooled(
-    tracks.filter((t) => t.contentHash),
-    (track) => pushTrackDeletion(track)
-  )
 }
 
 /**

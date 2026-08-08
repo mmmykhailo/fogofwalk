@@ -301,8 +301,10 @@ to survive. Deletions arriving from a tombstone *do* need the full reset-and-rep
 `syncEngine` hands them to the `setSyncChangeHandler` callback in `home.tsx` instead of doing it
 itself — rebuilding fog and fixing `selectedTrackIds` are React concerns.
 
-**`clear-all` propagates to the server** (`pushClearAll`). Without it the next sync would
-faithfully re-download everything the user just cleared.
+**`clear-all` is local only.** It resets *this device*; the server copies are untouched and the
+sync it triggers pulls them straight back. Deleting server data is a separate, explicit action
+("Remove all" in the account dialog). An earlier version wrote a tombstone per track here, which
+silently destroyed the user's server library and made the restore impossible.
 
 **Sync has to be *scheduled*, not just triggered.** `startSyncScheduler()` (focus,
 `visibilitychange`, `online`, plus a 5-minute poll while visible) is what makes another device's
@@ -320,6 +322,22 @@ for exactly this; on download failures the cursor is re-saved at `since`.
 | Delete track, "delete from server" **on** (default) | deleted | yes | delete their copy |
 | Delete track, "delete from server" **off** | kept | no | unaffected; this device records the hash in `ignoredHashes` so it is not re-downloaded |
 | "Remove all" in the account dialog (`DELETE /api/tracks`) | all deleted | **no** | keep everything; they simply stop syncing it |
+| "Clear all" in the drawer | untouched | no | unaffected; this device re-downloads everything |
+
+**Tombstones are applied at most once per device** (`syncState.appliedTombstones`, hash →
+`deletedAt`). The server's manifest cursor is an *inclusive* lower bound — that is how a row
+written in the same millisecond as a read is not lost — so the newest tombstones are re-served on
+the following sync. Applying one twice silently re-deletes a file the user had just re-imported
+and refuses to upload it. A tombstone is recorded even when it is not acted on.
+
+**A from-scratch walk (`since === 0`) never deletes local data.** With no cursor there is no prior
+shared state to reconcile against, so a tombstone describes a deletion relative to a history this
+device no longer has. `clear-all` drops `syncState`, which would otherwise replay every tombstone
+the account ever wrote. From-scratch converges toward the *union* of local and server; only
+incremental walks propagate deletions.
+
+**`ingestTracks` drops tracks whose `contentHash` is already held.** Re-importing a file — or
+importing one sync had just restored — must not yield two identical tracks.
 
 `ignoredHashes` (in `syncState`) means "this device deliberately stopped syncing this hash" and
 suppresses **both** download and upload. The server purge adds every local hash to it — relying on

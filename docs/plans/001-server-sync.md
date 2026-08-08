@@ -535,6 +535,17 @@ Recorded after implementation. Everything else was built as designed.
   callback. "Delete account" is disabled while offline; "Log out" stays enabled because it only
   drops the local session.
 - **The Dockerfile builds from the repository root**, since the image needs `shared/`.
+- **`clear-all` is local-only.** §4 had it propagating deletions to the server, which destroyed
+  the user's server library and made "clear locally, then re-sync" impossible. It now leaves the
+  server alone and triggers a sync that restores the device; wiping server data is the account
+  dialog's separate "Remove all".
+- **Tombstones are applied at most once per device**, tracked in `syncState.appliedTombstones`.
+  The inclusive manifest cursor re-serves recent tombstones, so without this a delete-then-
+  re-import of the same file was silently deleted a second time and blocked from uploading.
+- **A from-scratch walk never deletes local data**, since `clear-all` drops `syncState` and would
+  otherwise replay the account's entire tombstone history against a freshly re-imported library.
+- **`ingestTracks` deduplicates on `contentHash`**, so a re-import cannot duplicate a track that
+  sync already restored.
 
 ---
 

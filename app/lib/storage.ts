@@ -381,6 +381,14 @@ export interface SyncState {
    * back, and "delete" would look broken.
    */
   ignoredHashes?: string[]
+  /**
+   * Tombstones already acted on, hash → its `deletedAt`.
+   *
+   * The manifest cursor is an inclusive lower bound, so the newest tombstones
+   * come back on the next sync. Without this the same deletion is applied
+   * twice, which silently re-deletes a file the user just re-imported.
+   */
+  appliedTombstones?: Record<string, number>
 }
 
 export async function saveSyncState(state: SyncState): Promise<void> {

@@ -48,7 +48,6 @@ import { clearMapPosition } from "~/lib/mapStore"
 import { initAuth, useAuth } from "~/lib/server/authStore"
 import {
   ignoreTrackLocally,
-  pushClearAll,
   pushTrackDeletion,
   requestSync,
   setSyncChangeHandler,
@@ -223,9 +222,9 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
   }
 
   if (intent === "clear-all") {
-    // Propagate before the list is emptied. "Clear all" means all of them —
-    // leaving the server copies would resurrect every track on the next sync.
-    await pushClearAll(mapStore.tracks)
+    // Local only, deliberately. This resets *this device*; the server copies
+    // are left alone and sync pulls them back. Deleting them is a separate,
+    // explicit action — "Remove all" in the account dialog.
     mapStore.fogData = null
     mapStore.tracks = []
     mapStore.processedCount = 0
@@ -247,6 +246,10 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
     }
     await clearAll()
     clearMapPosition()
+    // `clearAll` dropped syncState, so this walks the manifest from scratch and
+    // repopulates the device. Immediate rather than on the next focus/poll tick,
+    // so the restore is something the user watches happen.
+    void requestSync("clear-all")
     return { intent: "clear-all" as const, trackCount: 0 }
   }
 

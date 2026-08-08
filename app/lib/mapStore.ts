@@ -151,6 +151,20 @@ export async function ingestTracks(
   newTracks: ParsedTrack[],
   mode: FogMode = mapStore.fogMode
 ): Promise<void> {
+  // Drop anything already held under the same content hash. Re-importing a
+  // file, or importing one the server had just restored, must not produce two
+  // identical tracks — content-addressing is what makes that detectable.
+  // Tracks with no hash (imported before sync existed) are always kept.
+  const present = new Set(
+    mapStore.tracks.map((t) => t.contentHash).filter(Boolean)
+  )
+  newTracks = newTracks.filter((t) => {
+    if (!t.contentHash) return true
+    if (present.has(t.contentHash)) return false
+    present.add(t.contentHash)
+    return true
+  })
+
   if (newTracks.length === 0) return
   mapStore.tracks = sortTracks([...mapStore.tracks, ...newTracks])
   populateUniqueDistances(mapStore.tracks)
