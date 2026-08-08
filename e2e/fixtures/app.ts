@@ -1,6 +1,16 @@
-import { test as base, expect, type BrowserContext, type Page } from "@playwright/test"
+import {
+  test as base,
+  expect,
+  type BrowserContext,
+  type Page,
+} from "@playwright/test"
 
-import { API_URL, ALLOWED_LOGIN_POOL, WEB_URL } from "./ports"
+import {
+  ALLOWED_LOGIN_POOL,
+  API_URL,
+  LOGINS_PER_WORKER,
+  WEB_URL,
+} from "./ports"
 import { AppPage } from "./app-page"
 
 export { expect }
@@ -33,7 +43,9 @@ const OFFLINE_STYLE = {
   version: 8,
   name: "e2e-offline",
   sources: {},
-  layers: [{ id: "bg", type: "background", paint: { "background-color": "#0a0a1e" } }],
+  layers: [
+    { id: "bg", type: "background", paint: { "background-color": "#0a0a1e" } },
+  ],
 }
 
 async function stubMapTiles(context: BrowserContext) {
@@ -52,7 +64,10 @@ async function stubMapTiles(context: BrowserContext) {
     return route.abort()
   })
 
-  for (const host of ["https://server.arcgisonline.com/**", "https://s3.amazonaws.com/**"]) {
+  for (const host of [
+    "https://server.arcgisonline.com/**",
+    "https://s3.amazonaws.com/**",
+  ]) {
     await context.route(host, (route) => route.abort())
   }
 }
@@ -104,19 +119,30 @@ async function stubOAuthRedirect(context: BrowserContext, login: string) {
   })
 
   // Nothing in a test should ever reach the real site.
-  await context.route(/^https:\/\/(github|api\.github|github\.githubassets)\.com\//, (route) =>
-    route.abort()
+  await context.route(
+    /^https:\/\/(github|api\.github|github\.githubassets)\.com\//,
+    (route) => route.abort()
   )
 }
 
+// Per worker process; combined with the worker index below.
 let loginCursor = 0
 
 export const test = base.extend<Fixtures>({
   login: async ({}, use, testInfo) => {
-    // Claimed per test, wrapping around the pool. Parallel workers each get
-    // their own slice because the cursor is per-process and the pool is large.
-    const index = (loginCursor++ * (testInfo.workerIndex + 1)) % ALLOWED_LOGIN_POOL.length
-    await use(ALLOWED_LOGIN_POOL[index])
+    // Each worker owns a disjoint slice of the pool. Multiplying the cursor by
+    // the worker index (the previous attempt) overlaps — worker 0 takes 0,1,2…
+    // and worker 1 takes 0,2,4… — so two tests shared a user and each other's
+    // tracks, which surfaced as unexplained duplicate-import dialogs.
+    const offset = loginCursor++
+    if (offset >= LOGINS_PER_WORKER) {
+      throw new Error(
+        `worker ${testInfo.workerIndex} ran more than ${LOGINS_PER_WORKER} tests; widen the login pool`
+      )
+    }
+    await use(
+      ALLOWED_LOGIN_POOL[testInfo.workerIndex * LOGINS_PER_WORKER + offset]
+    )
   },
 
   app: async ({ page, context, login }, use) => {
@@ -170,6 +196,7 @@ export async function readSessionToken(page: Page): Promise<string> {
       get.onerror = () => resolve(null)
     })
   })
-  if (!token) throw new Error("no session token in IndexedDB — is the page signed in?")
+  if (!token)
+    throw new Error("no session token in IndexedDB — is the page signed in?")
   return token
 }

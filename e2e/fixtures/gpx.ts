@@ -39,7 +39,11 @@ ${trkpts}
   </trk>
 </gpx>
 `
-  return { name, buffer: Buffer.from(xml, "utf8"), mimeType: "application/gpx+xml" }
+  return {
+    name,
+    buffer: Buffer.from(xml, "utf8"),
+    mimeType: "application/gpx+xml",
+  }
 }
 
 /** `count` distinct tracks, named `t1.gpx`…, each with its own geometry. */

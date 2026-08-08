@@ -255,14 +255,16 @@ export class MemoryStore implements ServerStore {
     return this.tracks.get(userId)?.get(contentHash)?.blob ?? null
   }
 
-  async deleteTrack(userId: string, contentHash: string): Promise<void> {
+  async deleteTrack(userId: string, contentHash: string): Promise<number> {
     this.tracks.get(userId)?.delete(contentHash)
     let byHash = this.tombstones.get(userId)
     if (!byHash) {
       byHash = new Map<string, number>()
       this.tombstones.set(userId, byHash)
     }
-    byHash.set(contentHash, Date.now())
+    const deletedAt = Date.now()
+    byHash.set(contentHash, deletedAt)
+    return deletedAt
   }
 
   async purgeTracks(userId: string): Promise<number> {

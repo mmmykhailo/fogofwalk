@@ -29,11 +29,11 @@ const repoRoot = join(here, "..")
 export default async function globalSetup() {
   const dataDir = mkdtempSync(join(tmpdir(), "fogofwalk-e2e-"))
 
-  const idp = spawn(
-    "bun",
-    [join(here, "fixtures", "fake-idp.ts")],
-    { cwd: repoRoot, stdio: "inherit", env: { ...process.env, IDP_PORT: String(IDP_PORT) } }
-  )
+  const idp = spawn("bun", [join(here, "fixtures", "fake-idp.ts")], {
+    cwd: repoRoot,
+    stdio: "inherit",
+    env: { ...process.env, IDP_PORT: String(IDP_PORT) },
+  })
 
   const server = spawn(
     "bun",

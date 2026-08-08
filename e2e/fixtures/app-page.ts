@@ -32,7 +32,9 @@ export class AppPage {
   }
 
   async waitUntilReady() {
-    const uploadDialog = this.page.getByRole("dialog", { name: /Load activity files/i })
+    const uploadDialog = this.page.getByRole("dialog", {
+      name: /Load activity files/i,
+    })
 
     // On an empty library `FileUploadDialog` auto-opens. It is modal, so Base UI
     // marks the rest of the page aria-hidden — which means the readiness button
@@ -54,8 +56,14 @@ export class AppPage {
     return this.page.getByRole("button", { name: "Open controls" })
   }
 
+  /**
+   * Scoped to `data-state="open"`. vaul keeps the drawer mounted while it
+   * animates out, so a bare `[data-vaul-drawer]` reads as visible during the
+   * close — which made `openDrawer` skip its click and every subsequent lookup
+   * inside the drawer hang.
+   */
   get drawer(): Locator {
-    return this.page.locator("[data-vaul-drawer]")
+    return this.page.locator('[data-vaul-drawer][data-state="open"]')
   }
 
   async openDrawer() {
@@ -101,7 +109,11 @@ export class AppPage {
       .locator('input[type="file"][accept=".gpx,.fit"]')
       .first()
       .setInputFiles(
-        files.map((f) => ({ name: f.name, mimeType: f.mimeType, buffer: f.buffer }))
+        files.map((f) => ({
+          name: f.name,
+          mimeType: f.mimeType,
+          buffer: f.buffer,
+        }))
       )
   }
 
@@ -179,7 +191,9 @@ export class AppPage {
     const dialog = await this.openAccountDialog()
     await dialog.getByRole("button", { name: "Remove all" }).click()
     await dialog.getByRole("button", { name: /Remove from server/ }).click()
-    await expect(dialog.getByText(/Removed \d+ track/)).toBeVisible({ timeout: 30_000 })
+    await expect(dialog.getByText(/Removed \d+ track/)).toBeVisible({
+      timeout: 30_000,
+    })
     await this.page.keyboard.press("Escape")
     await expect(dialog).toBeHidden()
   }
@@ -243,7 +257,9 @@ export class AppPage {
 
     const dialog = this.page.getByRole("dialog", { name: /Delete this track/ })
     await expect(dialog).toBeVisible()
-    const toggle = dialog.getByRole("switch", { name: "Delete from the server too" })
+    const toggle = dialog.getByRole("switch", {
+      name: "Delete from the server too",
+    })
     if (await toggle.isVisible().catch(() => false)) {
       const isOn = (await toggle.getAttribute("data-checked")) !== null
       if (isOn !== alsoOnServer) await toggle.click()

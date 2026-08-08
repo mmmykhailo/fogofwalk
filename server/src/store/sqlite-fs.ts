@@ -470,10 +470,10 @@ export class SqliteFsStore implements ServerStore {
     return new Uint8Array(await file.arrayBuffer())
   }
 
-  async deleteTrack(userId: string, contentHash: string): Promise<void> {
-    if (!isSafeContentHash(contentHash)) return
-
+  async deleteTrack(userId: string, contentHash: string): Promise<number> {
     const now = Date.now()
+    if (!isSafeContentHash(contentHash)) return now
+
     this.db.transaction(() => {
       this.db
         .query(`DELETE FROM tracks WHERE user_id = ? AND content_hash = ?`)
@@ -491,6 +491,7 @@ export class SqliteFsStore implements ServerStore {
     await Bun.file(blobPath(this.dataDir, userId, contentHash))
       .delete()
       .catch(() => {})
+    return now
   }
 
   async purgeTracks(userId: string): Promise<number> {

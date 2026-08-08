@@ -17,6 +17,12 @@ bun run format     # prettier
 config, so it produces churn in files you did not touch. Format only what you changed:
 `bunx prettier --write <paths>`.
 
+E2E tests (separate package — Playwright, real browser against the real server):
+
+```bash
+bun run test:e2e   # or: cd e2e && bun run test
+```
+
 Optional sync server (separate package, see "Sync server" below):
 
 ```bash
@@ -356,6 +362,25 @@ nothing was added and nothing failed, `DuplicateTracksDialog` explains why the m
 suppresses **both** download and upload. The server purge adds every local hash to it — relying on
 the cached `serverHashes` to prevent a re-upload would break the moment the cursor resets and that
 cache is rebuilt from an empty server.
+
+**Sync is covered by Playwright E2E tests** in `e2e/` — every regression listed above has a spec,
+and `e2e/README.md` records which spec fails when each fix is reverted. Add one for any new sync
+behaviour; the whole point is that these bugs stopped being caught by hand. Three rig constraints
+worth knowing before touching it: the map style request must be *fulfilled* (blocking it hangs the
+app, because every control waits on MapLibre's `load`), OAuth is faked in two halves because
+Playwright cannot route a redirect hop, and per-test isolation comes from each test claiming its
+own login out of `ALLOWED_LOGINS`.
+
+**The progress indicator must never assume work is outstanding.** `isProcessing` is only set when
+`mapStore.isFogRunInFlight` says a run is genuinely open. The fog worker can finish before the
+action that started it returns — the action still has IDB writes and, when signed in, a network
+round trip to get through — and the only thing that clears the flag is the DONE that has already
+been and gone. This has stranded "Processing 0 of N…" twice: once via duplicate-import dedupe and
+once on delete.
+
+**`DELETE /api/tracks/:hash` returns the tombstone's `deletedAt`**, and the deleting device records
+it in `appliedTombstones`. Otherwise its own tombstone comes back in the next manifest as news and
+deletes a copy the user has since re-imported.
 
 **Server tests must be hermetic.** Bun auto-loads `server/.env`, so `tests/setup.ts` assigns the
 test environment unconditionally and deletes the GitHub credentials. Using `??=` there meant a

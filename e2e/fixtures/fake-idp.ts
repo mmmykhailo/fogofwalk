@@ -30,7 +30,10 @@ export function createFakeIdp(port: number = IDP_PORT) {
         const body = new URLSearchParams(await request.text())
         const login = loginFrom(body.get("code") ?? "", LOGIN_FROM_CODE)
         if (!login) {
-          return Response.json({ error: "bad_verification_code" }, { status: 400 })
+          return Response.json(
+            { error: "bad_verification_code" },
+            { status: 400 }
+          )
         }
         return Response.json({
           access_token: `token:${login}`,
@@ -42,8 +45,12 @@ export function createFakeIdp(port: number = IDP_PORT) {
       // Stands in for https://api.github.com/user
       if (url.pathname === "/user") {
         const auth = request.headers.get("authorization") ?? ""
-        const login = loginFrom(auth.replace(/^Bearer\s+/i, ""), LOGIN_FROM_TOKEN)
-        if (!login) return Response.json({ message: "Bad credentials" }, { status: 401 })
+        const login = loginFrom(
+          auth.replace(/^Bearer\s+/i, ""),
+          LOGIN_FROM_TOKEN
+        )
+        if (!login)
+          return Response.json({ message: "Bad credentials" }, { status: 401 })
         return Response.json({
           id: hashToNumber(login),
           login,

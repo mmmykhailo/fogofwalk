@@ -12,6 +12,7 @@
 import { useSyncExternalStore } from "react"
 import type {
   ManifestPage,
+  TrackDeleteResponse,
   TrackMeta,
   TrackTombstone,
   TrackUploadPayload,
@@ -521,10 +522,33 @@ async function removeLocalTrack(track: ParsedTrack): Promise<void> {
 export async function pushTrackDeletion(track: ParsedTrack): Promise<void> {
   if (!canSync() || !track.contentHash) return
   try {
-    await apiSend("DELETE", `/api/tracks/${track.contentHash}`)
+    const res = await apiRaw("DELETE", `/api/tracks/${track.contentHash}`)
+    const { deletedAt } = (await res.json()) as TrackDeleteResponse
+    // Record our own tombstone as already applied. Without this the next sync
+    // reads it back out of the manifest as news and deletes the track again —
+    // including a copy the user has deliberately re-imported since.
+    await recordAppliedTombstone(track.contentHash, deletedAt)
   } catch (err) {
     console.warn("[sync] failed to propagate deletion:", err)
   }
+}
+
+async function recordAppliedTombstone(
+  contentHash: string,
+  deletedAt: number
+): Promise<void> {
+  const state = (await loadSyncState()) ?? {
+    cursor: 0,
+    lastSyncAt: 0,
+    serverHashes: [],
+  }
+  await saveSyncState({
+    ...state,
+    appliedTombstones: {
+      ...(state.appliedTombstones ?? {}),
+      [contentHash]: deletedAt,
+    },
+  })
 }
 
 /**

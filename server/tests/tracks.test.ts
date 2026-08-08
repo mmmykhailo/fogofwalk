@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test } from "bun:test"
 
-import type { ManifestPage, TrackMeta } from "~shared/api"
+import type { ManifestPage, TrackDeleteResponse, TrackMeta } from "~shared/api"
 
 import { resetRateLimits } from "../src/tracks/rateLimit"
 import { computeContentHash } from "../src/tracks/contentHash"
@@ -232,7 +232,7 @@ describe("cross-user isolation", () => {
       method: "DELETE",
       headers: authHeaders(b.token),
     })
-    expect(deleted.status).toBe(204)
+    expect(deleted.status).toBe(200)
 
     const stillThere = await app.request(`/api/tracks/${hash}`, {
       headers: authHeaders(a.token),
@@ -254,7 +254,10 @@ describe("delete", () => {
       method: "DELETE",
       headers: authHeaders(token),
     })
-    expect(response.status).toBe(204)
+    expect(response.status).toBe(200)
+    // The timestamp lets the deleting device mark its own tombstone applied.
+    const deleteBody = (await response.json()) as TrackDeleteResponse
+    expect(deleteBody.deletedAt).toBeGreaterThan(0)
 
     const manifest = (await (
       await app.request("/api/tracks/manifest", { headers: authHeaders(token) })
@@ -282,7 +285,7 @@ describe("delete", () => {
         method: "DELETE",
         headers: authHeaders(token),
       })
-      expect(response.status).toBe(204)
+      expect(response.status).toBe(200)
     }
 
     const manifest = (await (

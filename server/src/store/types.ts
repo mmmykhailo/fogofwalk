@@ -79,8 +79,12 @@ export interface ServerStore {
   putTrack(userId: string, meta: TrackMeta, blob: Uint8Array): Promise<void>
   getTrack(userId: string, contentHash: string): Promise<TrackMeta | null>
   getTrackBlob(userId: string, contentHash: string): Promise<Uint8Array | null>
-  /** Removes the row and the blob and writes a tombstone. Idempotent. */
-  deleteTrack(userId: string, contentHash: string): Promise<void>
+  /**
+   * Removes the row and the blob and writes a tombstone. Idempotent.
+   * Returns the tombstone's `deletedAt`, which the caller reports back so the
+   * deleting device can record its own tombstone as already applied.
+   */
+  deleteTrack(userId: string, contentHash: string): Promise<number>
   /**
    * Removes every track row and blob for the user and returns how many went.
    *

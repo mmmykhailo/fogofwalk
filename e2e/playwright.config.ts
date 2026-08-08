@@ -12,9 +12,16 @@ export default defineConfig({
   testDir: "./specs",
   globalSetup: "./global-setup.ts",
   // Sync is inherently timing-sensitive; give a run room without hiding hangs.
-  timeout: 60_000,
-  expect: { timeout: 15_000 },
+  timeout: 120_000,
+  expect: { timeout: 20_000 },
   fullyParallel: true,
+  /**
+   * Deliberately modest. Every worker drives a full browser through one shared
+   * Vite dev server, and each test loads the page several times; at the default
+   * worker count the dev server becomes the bottleneck and tests fail on page
+   * load rather than on anything they are actually asserting.
+   */
+  workers: process.env.CI ? 2 : 4,
   forbidOnly: !!process.env.CI,
   retries: 0,
   reporter: [["list"], ["html", { open: "never" }]],

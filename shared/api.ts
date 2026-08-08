@@ -78,6 +78,17 @@ export interface TrackTombstone {
   deletedAt: number
 }
 
+/**
+ * Answer to `DELETE /api/tracks/:contentHash`.
+ *
+ * The timestamp matters: the deleting device has to record its own tombstone as
+ * already applied, or its next sync re-applies it and deletes a track the user
+ * has since deliberately re-imported.
+ */
+export interface TrackDeleteResponse {
+  deletedAt: number
+}
+
 export interface ManifestPage {
   tracks: TrackMeta[]
   deletions: TrackTombstone[]

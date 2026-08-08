@@ -18,7 +18,10 @@ if (!IDP_URL) {
 }
 
 const REWRITES: Array<[prefix: string, target: string]> = [
-  ["https://github.com/login/oauth/access_token", `${IDP_URL}/login/oauth/access_token`],
+  [
+    "https://github.com/login/oauth/access_token",
+    `${IDP_URL}/login/oauth/access_token`,
+  ],
   ["https://api.github.com/user", `${IDP_URL}/user`],
 ]
 

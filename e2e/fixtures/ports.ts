@@ -22,8 +22,11 @@ export const WEB_URL_SERVERLESS = `http://localhost:${WEB_PORT_SERVERLESS}`
  * index, which is what gives per-test isolation: every store method is scoped by
  * user id, so two tests using different logins cannot see each other's tracks.
  */
+export const LOGINS_PER_WORKER = 64
+const MAX_WORKERS = 16
+
 export const ALLOWED_LOGIN_POOL = Array.from(
-  { length: 64 },
+  { length: LOGINS_PER_WORKER * MAX_WORKERS },
   (_, i) => `e2e-${i}`
 )
 

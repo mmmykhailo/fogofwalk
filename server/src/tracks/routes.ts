@@ -12,7 +12,7 @@
 
 import { Hono } from "hono"
 
-import type { TrackMeta } from "~shared/api"
+import type { TrackDeleteResponse, TrackMeta } from "~shared/api"
 
 import { createRequireSession, requireAllowed } from "../auth/middleware"
 import type { AuthEnv } from "../auth/middleware"
@@ -165,8 +165,10 @@ export function createTrackRoutes(store: ServerStore) {
     }
     // Idempotent: deleting an unknown hash still writes the tombstone, so a
     // retry after a dropped response is a no-op rather than an error.
-    await store.deleteTrack(c.get("user").id, contentHash)
-    return c.body(null, 204)
+    const deletedAt = await store.deleteTrack(c.get("user").id, contentHash)
+    // The timestamp goes back so the deleting device can mark its own tombstone
+    // as applied; otherwise its next sync deletes a re-imported copy.
+    return c.json({ deletedAt } satisfies TrackDeleteResponse)
   })
 
   return app
