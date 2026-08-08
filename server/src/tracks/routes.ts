@@ -146,6 +146,18 @@ export function createTrackRoutes(store: ServerStore) {
     })
   })
 
+  /**
+   * Wipe every track this user has on the server, keeping the account.
+   *
+   * Writes no tombstones on purpose: this is "clear the server", not "delete
+   * everywhere". Devices keep their local libraries. Registered before
+   * `/:contentHash` so the bare path is not swallowed as a hash.
+   */
+  app.delete("/", async (c) => {
+    const deleted = await store.purgeTracks(c.get("user").id)
+    return c.json({ deleted })
+  })
+
   app.delete("/:contentHash", async (c) => {
     const contentHash = c.req.param("contentHash")
     if (!isContentHash(contentHash)) {

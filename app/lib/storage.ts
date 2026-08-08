@@ -375,6 +375,12 @@ export interface SyncState {
    * scratch whenever the cursor resets to 0.
    */
   serverHashes: string[]
+  /**
+   * Tracks this device deleted locally while deliberately leaving the server
+   * copy in place. Without this the next sync would download them straight
+   * back, and "delete" would look broken.
+   */
+  ignoredHashes?: string[]
 }
 
 export async function saveSyncState(state: SyncState): Promise<void> {

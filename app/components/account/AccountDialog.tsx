@@ -17,6 +17,7 @@ import {
 import { useServerHealth } from "~/lib/server/serverHealth"
 import { AccountAvatar } from "./AccountAvatar"
 import { DeleteAccountBlock } from "./DeleteAccountBlock"
+import { PurgeServerBlock } from "./PurgeServerBlock"
 import { ServerUnavailableNotice } from "./ServerUnavailableNotice"
 
 interface AccountDialogProps {
@@ -30,6 +31,8 @@ export function AccountDialog({ open, onOpenChange }: AccountDialogProps) {
   const health = useServerHealth(true)
   const isOffline = health === "offline"
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false)
+  const [isPurgeConfirmOpen, setIsPurgeConfirmOpen] = useState(false)
+  const [purgedCount, setPurgedCount] = useState<number | null>(null)
   const [isSigningOut, setIsSigningOut] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -37,6 +40,8 @@ export function AccountDialog({ open, onOpenChange }: AccountDialogProps) {
   useEffect(() => {
     if (!open) {
       setIsDeleteConfirmOpen(false)
+      setIsPurgeConfirmOpen(false)
+      setPurgedCount(null)
       setError(null)
     }
   }, [open])
@@ -105,6 +110,37 @@ export function AccountDialog({ open, onOpenChange }: AccountDialogProps) {
           </div>
         )}
 
+        {auth.canSync && !isOffline && !isDeleteConfirmOpen && (
+          <div className="flex items-center gap-3 p-3 ring-1 ring-foreground/10">
+            <div className="min-w-0 flex-1">
+              <p className="text-xs font-medium">Server storage</p>
+              <p className="text-xs text-muted-foreground">
+                {purgedCount === null
+                  ? "Remove every track from the server, keep your account"
+                  : `Removed ${purgedCount} track${purgedCount === 1 ? "" : "s"} from the server`}
+              </p>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setIsPurgeConfirmOpen(true)}
+              disabled={isPurgeConfirmOpen}
+            >
+              Remove all
+            </Button>
+          </div>
+        )}
+
+        {isPurgeConfirmOpen && (
+          <PurgeServerBlock
+            onCancel={() => setIsPurgeConfirmOpen(false)}
+            onPurged={(deleted) => {
+              setPurgedCount(deleted)
+              setIsPurgeConfirmOpen(false)
+            }}
+          />
+        )}
+
         {!auth.canSync && !isOffline && (
           <p className="p-3 text-xs/relaxed text-muted-foreground ring-1 ring-foreground/10">
             Your account isn&rsquo;t enabled for sync yet. You&rsquo;re signed
@@ -114,7 +150,7 @@ export function AccountDialog({ open, onOpenChange }: AccountDialogProps) {
 
         {error && <p className="text-xs text-destructive">{error}</p>}
 
-        {isDeleteConfirmOpen ? (
+        {isPurgeConfirmOpen ? null : isDeleteConfirmOpen ? (
           <DeleteAccountBlock
             onCancel={() => setIsDeleteConfirmOpen(false)}
             onDeleted={() => onOpenChange(false)}

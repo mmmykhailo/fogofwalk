@@ -114,6 +114,37 @@ export function requestSync(reason: string): void {
   void runSync(reason)
 }
 
+/** How often to poll for other devices' changes while the tab is visible. */
+const SYNC_POLL_MS = 5 * 60 * 1000
+
+/**
+ * Keep a long-lived tab up to date.
+ *
+ * Without this, sync only ran at sign-in and after an import, so a track added
+ * on another device never appeared until a reload — which reads exactly like
+ * "sync doesn't download anything". Focus covers the common case (switch back
+ * to the tab), the interval covers a tab left open.
+ */
+export function startSyncScheduler(): () => void {
+  const onFocus = () => {
+    if (document.visibilityState === "visible") requestSync("focus")
+  }
+  window.addEventListener("focus", onFocus)
+  document.addEventListener("visibilitychange", onFocus)
+  window.addEventListener("online", onFocus)
+
+  const timer = window.setInterval(() => {
+    if (document.visibilityState === "visible") requestSync("poll")
+  }, SYNC_POLL_MS)
+
+  return () => {
+    window.removeEventListener("focus", onFocus)
+    document.removeEventListener("visibilitychange", onFocus)
+    window.removeEventListener("online", onFocus)
+    window.clearInterval(timer)
+  }
+}
+
 async function runSync(reason: string): Promise<void> {
   isRunning = true
   try {
@@ -151,20 +182,28 @@ async function syncOnce(reason: string): Promise<void> {
     const deletedHashes = new Set(deletions)
     for (const hash of deletedHashes) serverHashes.delete(hash)
 
+    // Tracks this device deleted locally while choosing to leave the server
+    // copy alone. Without this they would be downloaded straight back.
+    const ignoredHashes = new Set(state?.ignoredHashes ?? [])
+
     const toUpload = [...localByHash.values()].filter(
       (t) =>
         t.contentHash &&
         !serverHashes.has(t.contentHash) &&
-        !deletedHashes.has(t.contentHash)
+        !deletedHashes.has(t.contentHash) &&
+        // Deliberately unsynced (a server purge, or a local-only delete that
+        // was later re-imported). Never push these back up.
+        !ignoredHashes.has(t.contentHash)
     )
     const toDownload = serverTracks.filter(
-      (t) => !localByHash.has(t.contentHash)
+      (t) =>
+        !localByHash.has(t.contentHash) && !ignoredHashes.has(t.contentHash)
     )
     const toDelete = [...deletedHashes].filter((h) => localByHash.has(h))
 
     const total = toUpload.length + toDownload.length + toDelete.length
     if (total === 0) {
-      await finish(cursor, serverHashes)
+      await finish(cursor, serverHashes, ignoredHashes)
       return
     }
 
@@ -183,7 +222,7 @@ async function syncOnce(reason: string): Promise<void> {
       step()
     }
 
-    await pooled(toUpload, async (track) => {
+    const uploadFailures = await pooled(toUpload, async (track) => {
       await uploadTrack(track)
       // Only on success: a failed upload must be retried next run.
       if (track.contentHash) serverHashes.add(track.contentHash)
@@ -191,7 +230,7 @@ async function syncOnce(reason: string): Promise<void> {
     })
 
     const downloaded: ParsedTrack[] = []
-    await pooled(toDownload, async (meta) => {
+    const downloadFailures = await pooled(toDownload, async (meta) => {
       const track = await downloadTrack(meta)
       if (track) downloaded.push(track)
       step()
@@ -204,7 +243,27 @@ async function syncOnce(reason: string): Promise<void> {
       onChanged?.({ downloadedCount: downloaded.length, deletedIds })
     }
 
-    await finish(cursor, serverHashes)
+    if (downloadFailures > 0) {
+      // Hold the cursor where it was. Advancing past a track we failed to
+      // fetch would skip it forever — the window never covers it again.
+      console.warn(`[sync] ${downloadFailures} download(s) failed; cursor held`)
+      await finish(since, serverHashes, ignoredHashes)
+      setStatus({
+        phase: "error",
+        message: "Some tracks couldn't be downloaded",
+        lastSyncAt,
+      })
+      return
+    }
+
+    await finish(cursor, serverHashes, ignoredHashes)
+    if (uploadFailures > 0) {
+      setStatus({
+        phase: "error",
+        message: "Some tracks couldn't be uploaded",
+        lastSyncAt: Date.now(),
+      })
+    }
   } catch (err) {
     console.warn("[sync] failed:", err)
     setStatus({ phase: "error", message: friendlyMessage(err), lastSyncAt })
@@ -213,20 +272,33 @@ async function syncOnce(reason: string): Promise<void> {
 
 async function finish(
   cursor: number,
-  serverHashes: Set<string>
+  serverHashes: Set<string>,
+  ignoredHashes: Set<string>
 ): Promise<void> {
   const lastSyncAt = Date.now()
-  await saveSyncState({ cursor, lastSyncAt, serverHashes: [...serverHashes] })
+  await saveSyncState({
+    cursor,
+    lastSyncAt,
+    serverHashes: [...serverHashes],
+    ignoredHashes: [...ignoredHashes],
+  })
   setStatus({ phase: "idle", lastSyncAt })
   console.debug("[sync] done")
 }
 
-/** Runs `fn` over `items` with a bounded number in flight. */
+/**
+ * Runs `fn` over `items` with a bounded number in flight.
+ *
+ * Returns the number that failed rather than swallowing it. The caller needs
+ * that: advancing the manifest cursor past a track that failed to download
+ * would skip it permanently, turning one transient error into missing data.
+ */
 async function pooled<T>(
   items: T[],
   fn: (item: T) => Promise<void>
-): Promise<void> {
+): Promise<number> {
   let next = 0
+  let failed = 0
   const workers = Array.from(
     { length: Math.min(SYNC_CONCURRENCY, items.length) },
     async () => {
@@ -235,13 +307,14 @@ async function pooled<T>(
         try {
           await fn(item)
         } catch (err) {
-          // Per-track failure: the next run retries it.
+          failed++
           console.warn("[sync] item failed:", err)
         }
       }
     }
   )
   await Promise.all(workers)
+  return failed
 }
 
 // ─── Manifest ─────────────────────────────────────────────────────────────────
@@ -339,4 +412,60 @@ export async function pushClearAll(tracks: ParsedTrack[]): Promise<void> {
     tracks.filter((t) => t.contentHash),
     (track) => pushTrackDeletion(track)
   )
+}
+
+/**
+ * Record that this device dropped a track locally but left the server copy
+ * alone, so the next sync does not download it straight back.
+ */
+export async function ignoreTrackLocally(track: ParsedTrack): Promise<void> {
+  if (!canSync() || !track.contentHash) return
+  await addIgnoredHashes([track.contentHash])
+}
+
+/**
+ * Mark hashes as deliberately unsynced on this device.
+ *
+ * Creates the sync state when there is none: a device that has never completed
+ * a sync still has to record the decision, or the very first sync would undo it.
+ */
+async function addIgnoredHashes(hashes: string[]): Promise<void> {
+  if (hashes.length === 0) return
+  const state = (await loadSyncState()) ?? {
+    cursor: 0,
+    lastSyncAt: 0,
+    serverHashes: [],
+  }
+  const ignored = new Set(state.ignoredHashes ?? [])
+  const before = ignored.size
+  for (const hash of hashes) ignored.add(hash)
+  if (ignored.size === before) return
+  await saveSyncState({ ...state, ignoredHashes: [...ignored] })
+}
+
+/**
+ * Wipe every track from the server while leaving local libraries intact.
+ *
+ * No tombstones are written, which is what makes this "server only": other
+ * devices never learn of it, so they keep their tracks. They also keep their
+ * cached `serverHashes`, so they believe those tracks are still stored and do
+ * not re-upload them — sync simply goes quiet for everything that existed at
+ * this moment. `syncState` here is left untouched for exactly that reason.
+ */
+export async function purgeServerTracks(): Promise<number> {
+  const res = await apiRaw("DELETE", "/api/tracks")
+  const body = (await res.json()) as { deleted: number }
+
+  // Record every track currently held here as unsynced. Relying on the cached
+  // `serverHashes` to suppress a re-upload would be an accident waiting to
+  // happen: the moment the cursor resets that cache is rebuilt from an empty
+  // server and this device would helpfully upload everything straight back.
+  await addIgnoredHashes(
+    mapStore.tracks
+      .map((t) => t.contentHash)
+      .filter((h): h is string => Boolean(h))
+  )
+
+  requestSync("after-purge")
+  return body.deleted
 }

@@ -81,6 +81,16 @@ export interface ServerStore {
   getTrackBlob(userId: string, contentHash: string): Promise<Uint8Array | null>
   /** Removes the row and the blob and writes a tombstone. Idempotent. */
   deleteTrack(userId: string, contentHash: string): Promise<void>
+  /**
+   * Removes every track row and blob for the user and returns how many went.
+   *
+   * Deliberately writes **no tombstones**: this is the "wipe the server, keep
+   * my devices" action. A tombstone would tell every other device to delete
+   * its local copy, which is the opposite of what this is for. Other devices
+   * keep their cached view that these tracks are stored, so they also do not
+   * re-upload them.
+   */
+  purgeTracks(userId: string): Promise<number>
 
   /** Release file handles / connections. Tests call it; the server never does. */
   close?(): void

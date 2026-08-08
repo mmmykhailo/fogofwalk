@@ -34,7 +34,8 @@ interface TrackStatsPanelProps {
   onClose: () => void
   onRemoveTrack?: (id: string) => void
   onShare?: () => void
-  onDelete?: () => void
+  /** Receives whether the server copy should go too. */
+  onDelete?: (alsoOnServer: boolean) => void
   /** The selected lap, already validated by the parent. Null = whole track. */
   activeLap?: TrackLap | null
   onLapSelect?: (lapNumber: number | null) => void

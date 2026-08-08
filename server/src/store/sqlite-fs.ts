@@ -493,6 +493,24 @@ export class SqliteFsStore implements ServerStore {
       .catch(() => {})
   }
 
+  async purgeTracks(userId: string): Promise<number> {
+    const rows = this.db
+      .query(`SELECT content_hash FROM tracks WHERE user_id = ?`)
+      .all(userId) as { content_hash: string }[]
+
+    // No tombstone writes — see the interface docs. This wipes the server's
+    // copy only; other devices keep their tracks and their cached view.
+    this.db.query(`DELETE FROM tracks WHERE user_id = ?`).run(userId)
+
+    for (const row of rows) {
+      if (!isSafeContentHash(row.content_hash)) continue
+      await Bun.file(blobPath(this.dataDir, userId, row.content_hash))
+        .delete()
+        .catch(() => {})
+    }
+    return rows.length
+  }
+
   close(): void {
     this.db.close()
   }

@@ -47,10 +47,12 @@ import {
 import { clearMapPosition } from "~/lib/mapStore"
 import { initAuth, useAuth } from "~/lib/server/authStore"
 import {
+  ignoreTrackLocally,
   pushClearAll,
   pushTrackDeletion,
   requestSync,
   setSyncChangeHandler,
+  startSyncScheduler,
 } from "~/lib/server/syncEngine"
 import { sortTracks, populateUniqueDistances } from "~/lib/statsAggregator"
 import type { FogMode, MapMode, ParsedTrack } from "~/types/tracks"
@@ -290,8 +292,16 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
     await deleteTrack(trackId)
     await clearFogCache()
 
-    // Writes the tombstone that removes it from the user's other devices.
-    if (deletedTrack) await pushTrackDeletion(deletedTrack)
+    if (deletedTrack) {
+      if (formData.get("alsoOnServer") === "0") {
+        // Local-only: the server copy stays, so this device has to remember
+        // not to download it back on the next sync.
+        await ignoreTrackLocally(deletedTrack)
+      } else {
+        // Writes the tombstone that removes it from the user's other devices.
+        await pushTrackDeletion(deletedTrack)
+      }
+    }
 
     return {
       intent: "delete-track" as const,
@@ -558,11 +568,14 @@ export default function Home() {
     return () => setSyncChangeHandler(null)
   }, [])
 
-  // Fires on a restored session and on a fresh sign-in alike.
+  // Fires on a restored session and on a fresh sign-in alike, then keeps the
+  // tab current — otherwise another device's uploads only ever arrive on reload.
   const auth = useAuth()
   const isSyncEnabled = auth.status === "signedIn" && auth.canSync
   useEffect(() => {
-    if (isSyncEnabled) requestSync("auth-ready")
+    if (!isSyncEnabled) return
+    requestSync("auth-ready")
+    return startSyncScheduler()
   }, [isSyncEnabled])
 
   function handleAddFiles(files: FileList, mode: FogMode = fogMode) {
@@ -587,10 +600,11 @@ export default function Home() {
     fetcher.submit(formData, { method: "post" })
   }
 
-  function handleDeleteTrack(trackId: string) {
+  function handleDeleteTrack(trackId: string, alsoOnServer = true) {
     const fd = new FormData()
     fd.set("intent", "delete-track")
     fd.set("trackId", trackId)
+    fd.set("alsoOnServer", alsoOnServer ? "1" : "0")
     fetcher.submit(fd, { method: "post" })
   }
 
@@ -826,7 +840,8 @@ export default function Home() {
                 onShare={() => setShowShareDialog(true)}
                 onDelete={
                   selectedTracks.length === 1
-                    ? () => handleDeleteTrack(selectedTracks[0].id)
+                    ? (alsoOnServer) =>
+                        handleDeleteTrack(selectedTracks[0].id, alsoOnServer)
                     : undefined
                 }
                 activeLap={activeLap}

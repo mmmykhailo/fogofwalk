@@ -304,6 +304,32 @@ itself — rebuilding fog and fixing `selectedTrackIds` are React concerns.
 **`clear-all` propagates to the server** (`pushClearAll`). Without it the next sync would
 faithfully re-download everything the user just cleared.
 
+**Sync has to be *scheduled*, not just triggered.** `startSyncScheduler()` (focus,
+`visibilitychange`, `online`, plus a 5-minute poll while visible) is what makes another device's
+uploads appear. Sign-in and add-files triggers alone meant a tab open on device B never saw
+device A's imports until a reload — which reads as "sync doesn't download anything".
+
+**The manifest cursor must not advance past a failed download.** The window never covers that
+track again, so one transient error would drop it permanently. `pooled()` returns a failure count
+for exactly this; on download failures the cursor is re-saved at `since`.
+
+**Three deletion semantics, and they are not interchangeable:**
+
+| Action | Server row | Tombstone | Other devices |
+|---|---|---|---|
+| Delete track, "delete from server" **on** (default) | deleted | yes | delete their copy |
+| Delete track, "delete from server" **off** | kept | no | unaffected; this device records the hash in `ignoredHashes` so it is not re-downloaded |
+| "Remove all" in the account dialog (`DELETE /api/tracks`) | all deleted | **no** | keep everything; they simply stop syncing it |
+
+`ignoredHashes` (in `syncState`) means "this device deliberately stopped syncing this hash" and
+suppresses **both** download and upload. The server purge adds every local hash to it — relying on
+the cached `serverHashes` to prevent a re-upload would break the moment the cursor resets and that
+cache is rebuilt from an empty server.
+
+**Server tests must be hermetic.** Bun auto-loads `server/.env`, so `tests/setup.ts` assigns the
+test environment unconditionally and deletes the GitHub credentials. Using `??=` there meant a
+developer with real credentials in `.env` failed the "no providers configured" assertions.
+
 **Session = opaque bearer token in the `prefs` store**, not a cookie: the static client is on a
 different origin from the API, and third-party cookies are blocked by Safari and being phased out
 by Chrome. The OAuth callback hands over a single-use 60-second code, never the token, so the

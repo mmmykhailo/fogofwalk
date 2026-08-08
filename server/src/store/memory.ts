@@ -265,6 +265,14 @@ export class MemoryStore implements ServerStore {
     byHash.set(contentHash, Date.now())
   }
 
+  async purgeTracks(userId: string): Promise<number> {
+    const tracks = this.tracks.get(userId)
+    const count = tracks?.size ?? 0
+    // No tombstones — see the interface docs.
+    tracks?.clear()
+    return count
+  }
+
   close(): void {
     this.users.clear()
     this.identities.clear()
