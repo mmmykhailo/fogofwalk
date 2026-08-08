@@ -442,9 +442,15 @@ interface against a permissively licensed database instead.
 ## 8. Verification
 
 **Server-less regression (the critical one).** `bun run build` with `VITE_API_URL` unset →
-`bun run typecheck` clean, `grep -r "auth" build/assets` finds no auth UI strings, app loads,
-imports a GPX, clears fog, and `MoreDrawer` shows exactly today's five sections. The GitHub
+`bun run typecheck` clean, app loads, imports a GPX, clears fog, `MoreDrawer` shows exactly
+today's five sections, and the Network tab shows **no request to any API origin**. The GitHub
 Pages workflow is not modified.
+
+Note the account code is still *present* in the bundle, just inert: `MoreDrawer` imports
+`AccountDrawerItem` unconditionally, so the modules are reachable and only the runtime flag
+(`isServerEnabled`, folded to false) stops them. The guarantee being verified is behavioural —
+no requests, no UI, no stored state — not bundle exclusion. Stripping the bytes as well would
+mean a conditional dynamic import, which is not worth the complexity for a few KB.
 
 **Auth.** Register a GitHub OAuth app with callback
 `http://localhost:8787/api/auth/github/callback`. `cd server && bun run dev`; client
@@ -476,8 +482,8 @@ still on screen after a reload.
 **Type sharing.** Rename a field in `shared/api.ts` (e.g. `ManifestPage.cursor`) and confirm
 that *both* `bun run typecheck` at the root and `bun run typecheck` in `server/` fail — that is
 the proof the two sides are typed from one declaration rather than two copies that drifted.
-Also confirm no `shared/` value survives into the client bundle beyond the constants
-(`grep -r "ManifestPage" build/assets` → nothing; types are erased).
+Also confirm no `shared/` type survives into the client bundle
+(`grep -r "ManifestPage" build/assets` → nothing; types are erased, constants are not).
 
 **Bun-only.** `server/` has no `node_modules` entry for `better-sqlite3`, `pg`, `dotenv` or
 `@hono/node-server`; `bun src/index.ts` boots with no build step; `bun test` passes against the
