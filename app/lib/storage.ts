@@ -366,6 +366,15 @@ export interface SyncState {
   /** Feed back as `?since=` on the next manifest call. */
   cursor: number
   lastSyncAt: number
+  /**
+   * Every content hash known to exist on the server.
+   *
+   * Required because the manifest is incremental: a page fetched with a
+   * non-zero cursor only lists *recent* tracks, so without this the older ones
+   * would look absent and be re-uploaded on every single sync. Rebuilt from
+   * scratch whenever the cursor resets to 0.
+   */
+  serverHashes: string[]
 }
 
 export async function saveSyncState(state: SyncState): Promise<void> {

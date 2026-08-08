@@ -136,16 +136,20 @@ async function syncOnce(reason: string): Promise<void> {
     if (backfilled.length > 0) await saveTracks(backfilled)
 
     const state = await loadSyncState()
-    const { serverTracks, deletions, cursor } = await fetchManifest(
-      state?.cursor ?? 0
-    )
+    const since = state?.cursor ?? 0
+    const { serverTracks, deletions, cursor } = await fetchManifest(since)
 
     const localByHash = new Map<string, ParsedTrack>()
     for (const track of mapStore.tracks) {
       if (track.contentHash) localByHash.set(track.contentHash, track)
     }
-    const serverHashes = new Set(serverTracks.map((t) => t.contentHash))
+
+    // Accumulated across syncs — this window only describes what changed since
+    // `since`, so the previously-known set has to carry forward.
+    const serverHashes = new Set(since === 0 ? [] : (state?.serverHashes ?? []))
+    for (const t of serverTracks) serverHashes.add(t.contentHash)
     const deletedHashes = new Set(deletions)
+    for (const hash of deletedHashes) serverHashes.delete(hash)
 
     const toUpload = [...localByHash.values()].filter(
       (t) =>
@@ -160,7 +164,7 @@ async function syncOnce(reason: string): Promise<void> {
 
     const total = toUpload.length + toDownload.length + toDelete.length
     if (total === 0) {
-      await finish(cursor)
+      await finish(cursor, serverHashes)
       return
     }
 
@@ -181,6 +185,8 @@ async function syncOnce(reason: string): Promise<void> {
 
     await pooled(toUpload, async (track) => {
       await uploadTrack(track)
+      // Only on success: a failed upload must be retried next run.
+      if (track.contentHash) serverHashes.add(track.contentHash)
       step()
     })
 
@@ -198,16 +204,19 @@ async function syncOnce(reason: string): Promise<void> {
       onChanged?.({ downloadedCount: downloaded.length, deletedIds })
     }
 
-    await finish(cursor)
+    await finish(cursor, serverHashes)
   } catch (err) {
     console.warn("[sync] failed:", err)
     setStatus({ phase: "error", message: friendlyMessage(err), lastSyncAt })
   }
 }
 
-async function finish(cursor: number): Promise<void> {
+async function finish(
+  cursor: number,
+  serverHashes: Set<string>
+): Promise<void> {
   const lastSyncAt = Date.now()
-  await saveSyncState({ cursor, lastSyncAt })
+  await saveSyncState({ cursor, lastSyncAt, serverHashes: [...serverHashes] })
   setStatus({ phase: "idle", lastSyncAt })
   console.debug("[sync] done")
 }
