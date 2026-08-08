@@ -3,6 +3,8 @@ import {
   formatKm,
   formatElevation,
   formatMovingTime,
+  formatPace,
+  formatSpeed,
 } from "~/lib/statsFormatters"
 import {
   Card,
@@ -94,6 +96,48 @@ export function StatCards({ totals, uniqueDistanceKm }: StatCardsProps) {
           <CardDescription>Avg elevation gain</CardDescription>
           <CardTitle className="text-2xl tabular-nums">
             {formatElevation(avgElevationM)}
+          </CardTitle>
+        </CardHeader>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardDescription>Avg speed</CardDescription>
+          <CardTitle className="text-2xl tabular-nums">
+            {totals.avgSpeedKmh != null ? formatSpeed(totals.avgSpeedKmh) : "—"}
+          </CardTitle>
+        </CardHeader>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardDescription>Avg moving speed</CardDescription>
+          <CardTitle className="text-2xl tabular-nums">
+            {totals.avgMovingSpeedKmh != null
+              ? formatSpeed(totals.avgMovingSpeedKmh)
+              : "—"}
+          </CardTitle>
+        </CardHeader>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardDescription>Avg pace</CardDescription>
+          <CardTitle className="text-2xl tabular-nums">
+            {totals.avgPaceMinPerKm != null
+              ? formatPace(totals.avgPaceMinPerKm)
+              : "—"}
+          </CardTitle>
+        </CardHeader>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardDescription>Avg moving pace</CardDescription>
+          <CardTitle className="text-2xl tabular-nums">
+            {totals.avgMovingPaceMinPerKm != null
+              ? formatPace(totals.avgMovingPaceMinPerKm)
+              : "—"}
           </CardTitle>
         </CardHeader>
       </Card>

@@ -12,6 +12,16 @@ export interface LifetimeTotals {
   totalMovingTimeMs: number
   totalTracks: number
   activeDays: number
+  /**
+   * Library-wide averages — total distance ÷ total time, not the mean of the
+   * per-track averages, so long activities weigh more than short ones. Null
+   * when no track carries the matching time. See the `avgSpeed` vs
+   * `avgMovingSpeed` note in CLAUDE.md.
+   */
+  avgSpeedKmh: number | null
+  avgMovingSpeedKmh: number | null
+  avgPaceMinPerKm: number | null
+  avgMovingPaceMinPerKm: number | null
 }
 
 export interface WeeklyBar {
@@ -105,14 +115,31 @@ export function computeLifetimeTotals(tracks: ParsedTrack[]): LifetimeTotals {
   let totalDistanceKm = 0
   let totalElevationGainM = 0
   let totalMovingTimeMs = 0
+  let totalDurationMs = 0
+  // Distance is accumulated per time kind so each average divides the distance
+  // that actually produced the time — a GPX without timestamps must not inflate
+  // the numerator of a ratio whose denominator it contributed nothing to.
+  let timedDistanceKm = 0
+  let movingDistanceKm = 0
   const daySet = new Set<string>()
 
   for (const t of tracks) {
-    totalDistanceKm += t.stats.distanceKm
+    const { distanceKm, durationMs, movingTimeMs } = t.stats
+    totalDistanceKm += distanceKm
     totalElevationGainM += t.stats.elevationGainM
-    totalMovingTimeMs += t.stats.movingTimeMs ?? 0
+    totalMovingTimeMs += movingTimeMs ?? 0
+    if (durationMs != null && durationMs > 0) {
+      totalDurationMs += durationMs
+      timedDistanceKm += distanceKm
+    }
+    if (movingTimeMs != null && movingTimeMs > 0) {
+      movingDistanceKm += distanceKm
+    }
     if (t.startedAtMs != null) daySet.add(toLocalDateStr(t.startedAtMs))
   }
+
+  const hasElapsed = totalDurationMs > 0 && timedDistanceKm > 0
+  const hasMoving = totalMovingTimeMs > 0 && movingDistanceKm > 0
 
   return {
     totalDistanceKm,
@@ -120,6 +147,18 @@ export function computeLifetimeTotals(tracks: ParsedTrack[]): LifetimeTotals {
     totalMovingTimeMs,
     totalTracks: tracks.length,
     activeDays: daySet.size,
+    avgSpeedKmh: hasElapsed
+      ? timedDistanceKm / (totalDurationMs / 3_600_000)
+      : null,
+    avgMovingSpeedKmh: hasMoving
+      ? movingDistanceKm / (totalMovingTimeMs / 3_600_000)
+      : null,
+    avgPaceMinPerKm: hasElapsed
+      ? totalDurationMs / 60_000 / timedDistanceKm
+      : null,
+    avgMovingPaceMinPerKm: hasMoving
+      ? totalMovingTimeMs / 60_000 / movingDistanceKm
+      : null,
   }
 }
 

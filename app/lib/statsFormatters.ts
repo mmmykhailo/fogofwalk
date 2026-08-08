@@ -16,6 +16,10 @@ export function formatPace(minPerKm: number): string {
   return `${m}:${String(s).padStart(2, "0")}/km`
 }
 
+export function formatSpeed(kmh: number): string {
+  return `${kmh.toFixed(1)} km/h`
+}
+
 export function formatMovingTime(ms: number): string {
   const totalH = ms / 3_600_000
   if (totalH >= 100) return `${Math.round(totalH)} h`
