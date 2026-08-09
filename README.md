@@ -2,7 +2,7 @@
 
 Import your GPS activity files and geotagged photos, and watch the fog of war lift over every trail you've run, every road you've cycled, every path you've ever walked.
 
-**Browser-only.** No account, no server, no data leaves your device. Everything is stored locally in your browser.
+**Local-first.** All parsing, geometry and rendering happen in your browser, and the app is fully usable with no account and no server — that is how the public build is deployed. An **optional** sync server (`server/`) can be added to sync tracks between your own devices; photos never leave the device that imported them.
 
 ---
 
@@ -11,14 +11,18 @@ Import your GPS activity files and geotagged photos, and watch the fog of war li
 - Import `.gpx` and `.fit` activity files
 - Import `.jpg` / `.heic` photos taken during your activities — automatically placed on the map by matching the photo's timestamp to your tracks (no GPS in the photo required)
 - Two fog modes:
-  - **Corridor** — clears a 100 m band along each route
+  - **Corridor** — clears everything within 100 m of your route (a ~200 m-wide band)
   - **Fill** — also clears the interior of closed loops
 - Real-time fog rendering as files are processed
-- Track stats with elevation profile
+- Track stats with elevation profile — single track or a multi-select of several
+- **FIT laps** — the splits your watch recorded, with per-lap stats and per-lap sharing
+- Lifetime statistics page: totals, unique distance, weekly chart, streaks, personal records
+- Shareable 3:4 stat cards rendered from a map snapshot or one of your photos
 - **Persistent** — tracks, photos, and fog survive page reloads (IndexedDB + localStorage)
 - Map position and zoom remembered between sessions
 - Satellite / terrain map mode
-- Works offline after first load
+- Installable PWA — share a GPX or FIT straight from another app into Fog of Walk, and keep working offline after the first load
+- Optional GitHub sign-in and cross-device track sync when a server is configured
 
 ## Getting started
 
@@ -27,7 +31,7 @@ bun install
 bun run dev
 ```
 
-Open `http://localhost:5173`, import some activity files, watch the fog clear.
+Open `http://localhost:5173`, import some activity files, watch the fog clear. There is a **Try a sample run** button in the first-run dialog if you don't have a file to hand.
 
 ## Commands
 
@@ -35,37 +39,36 @@ Open `http://localhost:5173`, import some activity files, watch the fog clear.
 bun run dev        # dev server
 bun run build      # production build
 bun run typecheck  # type-check (react-router typegen + tsc)
-bun run format     # prettier
+bun run format     # prettier over ts/tsx
+bun run test:e2e   # Playwright end-to-end suite (see e2e/README.md)
 ```
 
 ## Deploy
 
-A Dockerfile is included for self-hosting:
+`bun run build` produces a fully static SPA in `build/` (the script flattens `build/client/*` up a
+level and writes a `404.html` so client-side routing works on static hosts). Drop that directory on
+GitHub Pages, Cloudflare Pages, Vercel, S3 — anything that serves files. No server is required.
 
-```bash
-docker build -t fogofwalk .
-docker run -p 3000:3000 fogofwalk
-```
+`.github/workflows/deploy.yml` does exactly this on every push to `master`, deploying to GitHub
+Pages without `VITE_API_URL` set — which compiles out every account and sync surface.
 
-The build output is a fully static SPA served by `@react-router/serve`. You can also drop the `build/client/` directory on any static host (Vercel, Cloudflare Pages, S3, etc.) — no server required.
+To build with sync enabled, set `VITE_API_URL` to your API origin at build time. The server itself
+is a separate package with its own image and deployment notes — see [`server/README.md`](server/README.md).
 
 ## Architecture
 
-```
-routes/home.tsx      clientLoader (worker setup + IDB restore) + clientAction (file parsing)
-  MapView.tsx        MapLibre GL map, fog source, track source, photo markers, worker messages
-  ControlPanel.tsx   file import, photo import, clear, mode toggles
-  TrackStatsPanel    per-track distance, elevation, pace, elevation chart
-  PhotoCard          draggable photo viewer for map marker clusters
+Parsing runs on the main thread (it needs browser APIs — `DOMParser` for GPX); all geometry runs
+in a Web Worker. The fog is a single GeoJSON polygon covering the world with your explored areas
+cut out of it, re-emitted at most every 300 ms as tracks are processed. Tracks, photos and the fog
+cache live in IndexedDB; map position is written to localStorage on every move, synchronously, so
+it survives a reload mid-transaction.
 
-lib/mapStore.ts      module singleton — map, worker, fog data, tracks, persistence helpers
-lib/storage.ts       IndexedDB layer — tracks, photos (File objects), fog cache, fogMode
-lib/photos.ts        EXIF timestamp extraction + timestamp-based photo-to-track matching
-workers/fogWorker.ts all geometry: simplify → buffer → union/difference → fog polygon
-lib/parsers/         gpx.ts (@tmcw/togeojson) + fit.ts (fit-file-parser)
-```
+An optional sync server lives in `server/` and is compiled out entirely when `VITE_API_URL` is
+unset.
 
-Parsing runs on the main thread (browser APIs required), geometry runs in a Web Worker. The fog polygon is a GeoJSON `Polygon` covering the world with holes cut out for explored areas, updated every 300 ms. Tracks and photos are persisted to IndexedDB; map position is saved to localStorage on every move.
+For the full module map, the fog algorithm in detail, and the gotchas that matter before changing
+any of it, see [`CLAUDE.md`](CLAUDE.md) — and [`server/README.md`](server/README.md) for the sync
+API.
 
 ## Stack
 
@@ -73,5 +76,7 @@ Parsing runs on the main thread (browser APIs required), geometry runs in a Web 
 - [MapLibre GL JS](https://maplibre.org/) + [OpenFreeMap](https://openfreemap.org/) tiles via [PMTiles](https://protomaps.com/docs/pmtiles)
 - [Turf.js](https://turfjs.org/) for geometry
 - [exifr](https://github.com/MikeKovarik/exifr) for EXIF parsing
-- [Tailwind CSS v4](https://tailwindcss.com/) + [shadcn/ui](https://ui.shadcn.com/)
+- [Tailwind CSS v4](https://tailwindcss.com/) + [shadcn/ui](https://ui.shadcn.com/) + [Base UI](https://base-ui.com/)
+- [Recharts](https://recharts.org/) for the elevation and weekly charts
 - [Vite](https://vitejs.dev/) + [Bun](https://bun.sh/)
+- Optional server: [Hono](https://hono.dev/), [Arctic](https://arcticjs.dev/), [Zod](https://zod.dev/) on Bun
