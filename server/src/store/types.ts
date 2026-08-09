@@ -1,7 +1,7 @@
 /**
  * The storage seam. Everything above this interface is transport and policy;
- * everything below it is a driver (`sqlite-fs`, `memory`, and the documented
- * extension points in plan §2).
+ * everything below it is a driver (`sqlite-fs`, `memory`, and the extension
+ * points documented in `server/README.md`).
  *
  * Every track method takes `userId` first and filters on it. There is
  * deliberately no method that can read a track without naming its owner —

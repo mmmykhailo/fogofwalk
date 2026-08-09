@@ -1,8 +1,9 @@
 /**
  * Driver factory — the only module that imports a concrete store.
  *
- * To add a driver (plan §2 lists `sqlite-blob`, `postgres-bytea` and
- * `postgres-s3` as the intended next ones):
+ * To add a driver (the Storage drivers table in `server/README.md` lists
+ * `sqlite-blob`, `postgres-bytea` and `postgres-s3` as the intended next
+ * ones):
  *   1. implement `ServerStore` in `src/store/<driver>.ts` — Bun ships
  *      `bun:sqlite`, `Bun.sql` and `Bun.s3`, so none of them needs a
  *      dependency;
@@ -32,8 +33,8 @@ export async function createStore(
         `Unknown STORE_DRIVER "${driver}". Implemented drivers: ` +
           `${IMPLEMENTED.join(", ")}. ` +
           `sqlite-blob, postgres-bytea and postgres-s3 are documented ` +
-          `extension points — see docs/plans/001-server-sync.md §2 and add a ` +
-          `case in server/src/store/index.ts.`
+          `extension points — see the Storage drivers table in ` +
+          `server/README.md and add a case in server/src/store/index.ts.`
       )
   }
 }

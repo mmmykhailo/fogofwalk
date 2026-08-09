@@ -1,5 +1,5 @@
 /**
- * Server-side recomputation of a track's content hash (plan §4).
+ * Server-side recomputation of a track's content hash.
  *
  * The client sends the hash in the URL, but the server must never take its
  * word for it: the hash is the primary key, so a client that could declare an

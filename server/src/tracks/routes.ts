@@ -1,5 +1,5 @@
 /**
- * Track sync (plan §3). Every route here is behind `requireSession` +
+ * Track sync. Every route here is behind `requireSession` +
  * `requireAllowed` and is scoped to `c.var.user.id`; the store interface has
  * no cross-user read path, so a hash belonging to somebody else is a 404 and
  * never a 200.

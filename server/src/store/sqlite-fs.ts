@@ -4,8 +4,9 @@
  *   DATA_DIR/fogofwalk.db          metadata (WAL)
  *   DATA_DIR/blobs/<userId>/<contentHash>.json.gz
  *
- * One file plus one folder to back up. See plan §2 for the alternatives
- * (`sqlite-blob`, `postgres-bytea`, `postgres-s3`).
+ * One file plus one folder to back up. See the Storage drivers table in
+ * `server/README.md` for the alternatives (`sqlite-blob`, `postgres-bytea`,
+ * `postgres-s3`).
  */
 
 import { Database } from "bun:sqlite"

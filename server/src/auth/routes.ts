@@ -1,5 +1,5 @@
 /**
- * OAuth routes (plan §3).
+ * OAuth routes.
  *
  *   GET  /api/auth/providers
  *   GET  /api/auth/:provider/start?redirect=<client origin>

@@ -1,6 +1,7 @@
 /**
- * The OAuth seam (plan §3). Adding Google/Strava later is one file plus one
- * registry line plus two env vars — no route or middleware change.
+ * The OAuth seam. Adding Google/Strava later is one file plus one registry
+ * line plus two env vars — no route or middleware change. The step-by-step is
+ * under "Adding another OAuth provider" in `server/README.md`.
  */
 
 export interface OAuthProfile {

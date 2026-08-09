@@ -20,7 +20,7 @@ import { parseTrackUpload } from "../src/tracks/payload"
 import { makeStats, makeTrack } from "./helpers"
 
 describe("content hash", () => {
-  test("uses the canonical form from plan §4", () => {
+  test("uses the canonical form shared with the client", () => {
     expect(
       canonicalHashString({
         format: "gpx",
