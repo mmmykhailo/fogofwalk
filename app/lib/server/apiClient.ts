@@ -26,12 +26,20 @@ export function setUnauthorizedHandler(handler: (() => void) | null) {
 export class ApiRequestError extends Error {
   readonly status: number
   readonly code: ApiErrorCode | "network"
+  /** How long to wait before retrying. Only ever set on `rate_limited`. */
+  readonly retryAfterMs: number | null
 
-  constructor(status: number, code: ApiErrorCode | "network", message: string) {
+  constructor(
+    status: number,
+    code: ApiErrorCode | "network",
+    message: string,
+    retryAfterMs: number | null = null
+  ) {
     super(message)
     this.name = "ApiRequestError"
     this.status = status
     this.code = code
+    this.retryAfterMs = retryAfterMs
   }
 }
 
@@ -97,12 +105,24 @@ async function request(path: string, opts: RequestOptions): Promise<Response> {
   // Read the error body defensively — a proxy or a crash may return HTML.
   let code: ApiErrorCode = "server_error"
   let message = `Request failed with ${res.status}`
+  let retryAfterMs: number | null = null
   try {
     const parsed = (await res.json()) as ApiError
     if (parsed?.error) code = parsed.error
     if (parsed?.message) message = parsed.message
+    if (typeof parsed?.retryAfterMs === "number") {
+      retryAfterMs = parsed.retryAfterMs
+    }
   } catch {
     /* non-JSON error body — keep the defaults */
+  }
+
+  // Fall back to the standard header. Readable only because the server lists
+  // it in `Access-Control-Expose-Headers`; a proxy-generated 429 may be the
+  // only place the wait appears.
+  if (retryAfterMs === null) {
+    const seconds = Number(res.headers.get("Retry-After"))
+    if (Number.isFinite(seconds) && seconds > 0) retryAfterMs = seconds * 1000
   }
 
   if (res.status === 401) {
@@ -110,7 +130,7 @@ async function request(path: string, opts: RequestOptions): Promise<Response> {
     onUnauthorized?.()
   }
 
-  throw new ApiRequestError(res.status, code, message)
+  throw new ApiRequestError(res.status, code, message, retryAfterMs)
 }
 
 export async function apiGet<T>(

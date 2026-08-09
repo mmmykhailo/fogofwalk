@@ -41,3 +41,23 @@ export function jsonError(
 ): Response {
   return c.json(errorBody(code, message), statusFor(code))
 }
+
+/**
+ * A 429 that says when to come back.
+ *
+ * The wait goes in the body *and* in `Retry-After`: the header is the standard
+ * one and is what a proxy or a non-browser client looks at, but a browser on
+ * another origin cannot read it unless CORS exposes it, so the body carries the
+ * authoritative value.
+ */
+export function rateLimited(
+  c: Context,
+  message: string,
+  retryAfterMs: number
+): Response {
+  return c.json(
+    { ...errorBody("rate_limited", message), retryAfterMs },
+    statusFor("rate_limited"),
+    { "Retry-After": String(Math.max(1, Math.ceil(retryAfterMs / 1000))) }
+  )
+}

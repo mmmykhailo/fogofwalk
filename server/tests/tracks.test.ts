@@ -1,6 +1,15 @@
 import { beforeEach, describe, expect, test } from "bun:test"
 
-import type { ManifestPage, TrackDeleteResponse, TrackMeta } from "~shared/api"
+import type {
+  ApiError,
+  ManifestPage,
+  TrackDeleteResponse,
+  TrackMeta,
+} from "~shared/api"
+import {
+  UPLOAD_RATE_MAX_PER_WINDOW,
+  UPLOAD_RATE_WINDOW_MS,
+} from "~shared/constants"
 
 import { resetRateLimits } from "../src/tracks/rateLimit"
 import { computeContentHash } from "../src/tracks/contentHash"
@@ -182,6 +191,36 @@ describe("upload", () => {
     const json = JSON.parse(new TextDecoder().decode(Bun.gunzipSync(bytes)))
     expect(json.name).toBe(track.name)
     expect(json.coordinates).toEqual(track.coordinates)
+  })
+
+  test("past the rate limit, the 429 says how long to wait", async () => {
+    const { store, app } = setup()
+    const { token } = await signIn(store)
+
+    // Distinct geometry per upload so nothing is deduped away before the
+    // limiter is reached.
+    for (let i = 0; i < UPLOAD_RATE_MAX_PER_WINDOW; i++) {
+      const response = await putTrack(
+        app,
+        token,
+        makeTrack({ coordinates: [[13.4 + i / 10_000, 52.5]] })
+      )
+      expect(response.status).toBe(200)
+    }
+
+    const response = await putTrack(app, token, makeTrack())
+    expect(response.status).toBe(429)
+
+    // The client pauses every in-flight upload for `retryAfterMs`, so it has to
+    // be present and inside the window — an absent one falls back to a guess.
+    const body = (await response.json()) as ApiError
+    expect(body.error).toBe("rate_limited")
+    expect(body.retryAfterMs).toBeGreaterThan(0)
+    expect(body.retryAfterMs).toBeLessThanOrEqual(UPLOAD_RATE_WINDOW_MS)
+
+    // The standard header too, for anything that is not this client.
+    const retryAfter = Number(response.headers.get("Retry-After"))
+    expect(retryAfter).toBeGreaterThanOrEqual(1)
   })
 })
 

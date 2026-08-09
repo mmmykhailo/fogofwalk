@@ -200,7 +200,12 @@ Backing up `sqlite-fs` is one file plus one folder: `DATA_DIR/fogofwalk.db*`
   nor a zip bomb gets buffered.
 - The `PUT` rate limit is per-user and **in-process**: it protects one server
   from a runaway client, not from a distributed attacker. Running more than one
-  instance would need a shared limiter.
+  instance would need a shared limiter. The window and the cap live in
+  `shared/constants.ts` because the client paces itself against the same numbers
+  — a 429 is the fallback, not the mechanism. When one is returned it carries
+  `retryAfterMs` in the body *and* a standard `Retry-After` header; the body is
+  what the browser client reads, since a cross-origin response header is
+  invisible to JS unless CORS exposes it.
 
 ## Deployment
 

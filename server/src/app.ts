@@ -24,6 +24,10 @@ export function createApp(store: ServerStore) {
       origin: env.ALLOWED_ORIGINS,
       allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
       allowHeaders: ["Authorization", "Content-Type", "Content-Encoding"],
+      // So a 429's standard header is readable cross-origin. The client reads
+      // `retryAfterMs` out of the body instead, but exposing this keeps the
+      // header honest for anything else that speaks HTTP.
+      exposeHeaders: ["Retry-After"],
       // The bearer token travels in a header, so no cookie ever needs to
       // cross origins.
       credentials: false,

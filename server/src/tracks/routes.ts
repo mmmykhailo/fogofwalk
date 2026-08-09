@@ -16,7 +16,7 @@ import type { TrackDeleteResponse, TrackMeta } from "~shared/api"
 
 import { createRequireSession, requireAllowed } from "../auth/middleware"
 import type { AuthEnv } from "../auth/middleware"
-import { jsonError } from "../errors"
+import { jsonError, rateLimited } from "../errors"
 import type { ServerStore } from "../store/types"
 import {
   BodyTooLargeError,
@@ -53,11 +53,12 @@ export function createTrackRoutes(store: ServerStore) {
     if (!isContentHash(contentHash)) {
       return jsonError(c, "bad_request", "Content hash must be 64 hex digits.")
     }
-    if (!checkRateLimit(user.id)) {
-      return jsonError(
+    const limit = checkRateLimit(user.id)
+    if (!limit.ok) {
+      return rateLimited(
         c,
-        "rate_limited",
-        "Too many uploads. Try again shortly."
+        "Too many uploads. Try again shortly.",
+        limit.retryAfterMs
       )
     }
 

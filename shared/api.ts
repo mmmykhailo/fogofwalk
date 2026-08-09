@@ -119,4 +119,12 @@ export type ApiErrorCode =
 export interface ApiError {
   error: ApiErrorCode
   message?: string
+  /**
+   * How long to wait before retrying, on `rate_limited`.
+   *
+   * In the body rather than only in `Retry-After` because the client is
+   * cross-origin: a response header is unreadable from JS unless CORS exposes
+   * it, and this number has to survive any proxy in between.
+   */
+  retryAfterMs?: number
 }

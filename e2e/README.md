@@ -17,7 +17,7 @@ Or from the repo root: `bun run test:e2e`.
 
 ## What is covered
 
-Five specs, one per area of sync behaviour:
+Six specs, one per area of sync behaviour:
 
 | Spec | Covers |
 |---|---|
@@ -26,6 +26,7 @@ Five specs, one per area of sync behaviour:
 | `deletion.spec.ts` | the three deletion semantics — per-track with and without the server switch, purge-all, clear-all |
 | `suspension.spec.ts` | auto-sync suspension after a local-only delete, and that only a manual sync clears it |
 | `serverless.spec.ts` | the `VITE_API_URL`-unset build: no account surfaces, no requests, everything else still works |
+| `rate-limit.spec.ts` | a 429 upload is retried inside the same sync run, and the retry is bounded |
 
 ## How the rig fits together
 
@@ -62,10 +63,11 @@ method is scoped by user id. Workers own disjoint slices of the pool.
 ## Keeping it honest
 
 The suite exists because sync shipped several regressions in a row. Re-break one
-and check the matching spec fails — all five below were verified to do so:
+and check the matching spec fails — all six below were verified to do so:
 
 | Break | Spec that must fail |
 |---|---|
+| dropping the 429 retry in `uploadTrack` | a 429 is retried within the same sync |
 | `newTracksCount: allTracks.length` in `add-files` | re-importing the same files … does not hang |
 | `clear-all` propagating deletions to the server | clear all leaves the server untouched |
 | dropping `appliedTombstones` freshness check | a deleted track can be re-imported |

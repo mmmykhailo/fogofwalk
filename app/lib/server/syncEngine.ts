@@ -29,6 +29,12 @@ import { ingestTracks, mapStore } from "~/lib/mapStore"
 import { backfillContentHashes } from "~/lib/trackHash"
 import { apiRaw, apiSend, ApiRequestError, friendlyMessage } from "./apiClient"
 import { canSync } from "./authStore"
+import {
+  acquireUploadSlot,
+  fallbackBackoffMs,
+  MAX_UPLOAD_RETRIES,
+  penalizeUploads,
+} from "./uploadGate"
 
 // ─── Status, published to the drawer ──────────────────────────────────────────
 
@@ -484,18 +490,35 @@ async function uploadTrack(track: ParsedTrack): Promise<void> {
     return
   }
 
-  try {
-    await apiSend("PUT", `/api/tracks/${track.contentHash}`, {
-      rawBody: body,
-      headers: {
-        "Content-Type": "application/json",
-        "Content-Encoding": "gzip",
-      },
-    })
-  } catch (err) {
-    // Another device won the race and stored the identical bytes first.
-    if (err instanceof ApiRequestError && err.status === 409) return
-    throw err
+  // Bounded retry rather than one shot: the only expected failure here is the
+  // upload rate limit, and dropping the track for the whole run over it means
+  // waiting for a later sync trigger to try again. `acquireUploadSlot` should
+  // keep us under the limit in the first place — this is the fallback for when
+  // the client's view of the window and the server's disagree.
+  for (let attempt = 0; ; attempt++) {
+    await acquireUploadSlot()
+    try {
+      await apiSend("PUT", `/api/tracks/${track.contentHash}`, {
+        rawBody: body,
+        headers: {
+          "Content-Type": "application/json",
+          "Content-Encoding": "gzip",
+        },
+      })
+      return
+    } catch (err) {
+      // Another device won the race and stored the identical bytes first.
+      if (err instanceof ApiRequestError && err.status === 409) return
+      if (
+        err instanceof ApiRequestError &&
+        err.status === 429 &&
+        attempt < MAX_UPLOAD_RETRIES - 1
+      ) {
+        penalizeUploads(err.retryAfterMs ?? fallbackBackoffMs(attempt))
+        continue
+      }
+      throw err
+    }
   }
 }
 

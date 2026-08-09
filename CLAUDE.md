@@ -422,6 +422,25 @@ once on delete.
 it in `appliedTombstones`. Otherwise its own tombstone comes back in the next manifest as news and
 deletes a copy the user has since re-imported.
 
+**Uploads are paced client-side, not just retried.** The server caps uploads per user
+(`UPLOAD_RATE_MAX_PER_WINDOW` / `UPLOAD_RATE_WINDOW_MS` in `shared/constants.ts`, enforced only on
+`PUT /api/tracks/:hash`), and `app/lib/server/uploadGate.ts` mirrors that window locally so a bulk
+import stays under it instead of discovering it by failing. Three things about it are load-bearing:
+- The client's budget (`UPLOAD_RATE_CLIENT_BUDGET`) is deliberately **below** the server's. The two
+  windows are measured at opposite ends of the request, so the client's view drifts ahead.
+- The gate's state is **module-level, not per-run**. `runSync` re-enters `syncOnce` immediately when
+  a trigger fires mid-run, and a fresh budget there would re-storm a limiter that is already full.
+- A 429 pauses **every** worker (`penalizeUploads`), and `uploadTrack` retries the track in-run up to
+  `MAX_UPLOAD_RETRIES`. Backing off per-request would leave the other two `pooled` workers hammering
+  a limiter that has already tripped — which is what produced hundreds of
+  `[sync] item failed: Too many uploads` lines and left most of a bulk import unsynced until later
+  polls. The retry has to be bounded, or a server that keeps saying no parks sync forever.
+
+The wait travels in the **JSON error body** (`ApiError.retryAfterMs`), not only in `Retry-After`: the
+app is cross-origin to the API, so a response header is unreadable from JS unless CORS exposes it.
+The header is still sent, and `app.ts` lists it in `exposeHeaders`, for everything that is not this
+client.
+
 **Server tests must be hermetic.** Bun auto-loads `server/.env`, so `tests/setup.ts` assigns the
 test environment unconditionally and deletes the GitHub credentials. Using `??=` there meant a
 developer with real credentials in `.env` failed the "no providers configured" assertions.
