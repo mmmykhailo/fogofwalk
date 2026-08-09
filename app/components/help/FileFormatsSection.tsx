@@ -1,11 +1,18 @@
 import { Badge } from "~/components/ui/badge"
+
+/** Anchor targets for the nested contents entries; see `sections.ts`. */
+export const FILE_FORMAT_ANCHORS = [
+  { id: "format-gpx", title: "GPX" },
+  { id: "format-fit", title: "FIT" },
+]
+
 import { Card, CardContent, CardHeader, CardTitle } from "~/components/ui/card"
 import { InlineCode } from "~/components/help/InlineCode"
 
 export function FileFormatsSection() {
   return (
     <>
-      <Card className="mb-4">
+      <Card id="format-gpx" className="mb-4 scroll-mt-6">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Badge className="text-base">GPX</Badge>
@@ -51,7 +58,7 @@ export function FileFormatsSection() {
         </CardContent>
       </Card>
 
-      <Card>
+      <Card id="format-fit" className="scroll-mt-6">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Badge className="text-base">FIT</Badge>

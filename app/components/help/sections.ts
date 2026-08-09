@@ -1,6 +1,9 @@
 import { WhatIsItSection } from "~/components/help/WhatIsItSection"
 import { WorkflowSection } from "~/components/help/WorkflowSection"
-import { FileFormatsSection } from "~/components/help/FileFormatsSection"
+import {
+  FileFormatsSection,
+  FILE_FORMAT_ANCHORS,
+} from "~/components/help/FileFormatsSection"
 import { PhotosSection } from "~/components/help/PhotosSection"
 import { TrackStatsSection } from "~/components/help/TrackStatsSection"
 import { StatisticsSection } from "~/components/help/StatisticsSection"
@@ -8,8 +11,20 @@ import { SharingSection } from "~/components/help/SharingSection"
 import { MapControlsSection } from "~/components/help/MapControlsSection"
 import { InstallSection } from "~/components/help/InstallSection"
 import { SyncSection } from "~/components/help/SyncSection"
-import { RemovingSection } from "~/components/help/RemovingSection"
-import { TroubleshootingSection } from "~/components/help/TroubleshootingSection"
+import {
+  RemovingSection,
+  REMOVAL_KINDS,
+} from "~/components/help/RemovingSection"
+import {
+  TroubleshootingSection,
+  TROUBLESHOOTING_ITEMS,
+} from "~/components/help/TroubleshootingSection"
+
+/** A heading *inside* a section, rendered as a nested contents entry. */
+export interface HelpSubsection {
+  id: string
+  title: string
+}
 
 export interface HelpSection {
   /** Anchor id — also the `#fragment` the contents list links to. */
@@ -17,6 +32,8 @@ export interface HelpSection {
   title: string
   /** Renders the section body only; `help.tsx` supplies the heading. */
   Body: () => React.ReactElement
+  /** Only for sections with enough internal structure to be worth listing. */
+  children?: HelpSubsection[]
 }
 
 /**
@@ -24,6 +41,10 @@ export interface HelpSection {
  * reading order, and both the rendered headings and the contents list are
  * generated from it. Titles deliberately live here rather than inside each
  * component, so a renamed heading can never drift from its contents entry.
+ *
+ * Nested entries go the other way — the sub-headings are content, so they are
+ * owned by the section that renders them and merely *derived* here. Same
+ * guarantee, opposite direction.
  */
 export const HELP_SECTIONS: HelpSection[] = [
   { id: "what-is-it", title: "What is Fog of Walk?", Body: WhatIsItSection },
@@ -32,6 +53,7 @@ export const HELP_SECTIONS: HelpSection[] = [
     id: "file-formats",
     title: "Supported file formats",
     Body: FileFormatsSection,
+    children: FILE_FORMAT_ANCHORS,
   },
   { id: "photos", title: "Adding photos", Body: PhotosSection },
   {
@@ -48,10 +70,16 @@ export const HELP_SECTIONS: HelpSection[] = [
     title: "Syncing across devices (optional)",
     Body: SyncSection,
   },
-  { id: "removing", title: "Removing things", Body: RemovingSection },
+  {
+    id: "removing",
+    title: "Removing things",
+    Body: RemovingSection,
+    children: REMOVAL_KINDS.map(({ id, title }) => ({ id, title })),
+  },
   {
     id: "troubleshooting",
     title: "Troubleshooting",
     Body: TroubleshootingSection,
+    children: TROUBLESHOOTING_ITEMS.map(({ id, q }) => ({ id, title: q })),
   },
 ]

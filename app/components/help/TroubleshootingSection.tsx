@@ -1,5 +1,17 @@
-const ITEMS: { q: string; a: React.ReactNode }[] = [
+import { HelpSubheading } from "~/components/help/HelpSubheading"
+
+/**
+ * Exported so `sections.ts` can derive the nested contents entries from the
+ * same strings that render as headings — a reworded question can't drift out of
+ * sync with its contents entry.
+ */
+export const TROUBLESHOOTING_ITEMS: {
+  id: string
+  q: string
+  a: React.ReactNode
+}[] = [
   {
+    id: "in-app-browser",
     q: "File picker doesn't open / nothing happens after selecting files",
     a: (
       <>
@@ -12,6 +24,7 @@ const ITEMS: { q: string; a: React.ReactNode }[] = [
     ),
   },
   {
+    id: "duplicate-import",
     q: "I re-imported a file and nothing happened",
     a: (
       <>
@@ -25,6 +38,7 @@ const ITEMS: { q: string; a: React.ReactNode }[] = [
     ),
   },
   {
+    id: "track-incomplete",
     q: "Track looks wrong or incomplete",
     a: (
       <>
@@ -37,6 +51,7 @@ const ITEMS: { q: string; a: React.ReactNode }[] = [
     ),
   },
   {
+    id: "data-disappeared",
     q: "My data disappeared after closing the tab",
     a: (
       <>
@@ -48,6 +63,7 @@ const ITEMS: { q: string; a: React.ReactNode }[] = [
     ),
   },
   {
+    id: "photos-vanished",
     q: "Some photos vanished after a reload",
     a: (
       <>
@@ -60,6 +76,7 @@ const ITEMS: { q: string; a: React.ReactNode }[] = [
     ),
   },
   {
+    id: "loop-not-filled",
     q: "Fill loops didn't fill my loop",
     a: (
       <>
@@ -76,9 +93,9 @@ const ITEMS: { q: string; a: React.ReactNode }[] = [
 export function TroubleshootingSection() {
   return (
     <div className="space-y-4 text-sm text-muted-foreground">
-      {ITEMS.map(({ q, a }) => (
-        <div key={q}>
-          <p className="mb-1 font-medium text-foreground">{q}</p>
+      {TROUBLESHOOTING_ITEMS.map(({ id, q, a }) => (
+        <div key={id}>
+          <HelpSubheading id={id}>{q}</HelpSubheading>
           <p className="leading-relaxed">{a}</p>
         </div>
       ))}

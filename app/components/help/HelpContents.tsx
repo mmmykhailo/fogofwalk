@@ -1,12 +1,6 @@
 import { HELP_SECTIONS } from "~/components/help/sections"
+import { HelpContentsLink } from "~/components/help/HelpContentsLink"
 
-/**
- * Plain `#fragment` anchors — no click handler and no router navigation, so
- * they keep working with JS off, honour middle-click and "open in new tab",
- * and land correctly when someone arrives on /help#photos from outside.
- * Smooth scrolling comes from `scroll-behavior` in app.css, which is gated on
- * `prefers-reduced-motion`.
- */
 export function HelpContents() {
   return (
     <nav aria-labelledby="contents-heading" className="mb-10">
@@ -16,18 +10,31 @@ export function HelpContents() {
       >
         Contents
       </h2>
-      <ol className="grid gap-x-6 gap-y-1 text-sm sm:grid-cols-2">
-        {HELP_SECTIONS.map(({ id, title }, i) => (
-          <li key={id} className="flex gap-2">
-            <span className="w-5 shrink-0 text-right text-muted-foreground tabular-nums">
-              {i + 1}.
-            </span>
-            <a
-              href={`#${id}`}
-              className="text-muted-foreground underline-offset-4 transition-colors hover:text-foreground hover:underline"
+      <ol className="space-y-1.5 text-sm">
+        {HELP_SECTIONS.map(({ id, title, children }, sectionIndex) => (
+          <li key={id}>
+            <HelpContentsLink
+              targetId={id}
+              marker={`${sectionIndex + 1}.`}
+              markerWidth="w-7"
             >
               {title}
-            </a>
+            </HelpContentsLink>
+            {children && (
+              <ol className="mt-1 space-y-1">
+                {children.map((child, childIndex) => (
+                  <li key={child.id}>
+                    <HelpContentsLink
+                      targetId={child.id}
+                      marker={`${sectionIndex + 1}.${childIndex + 1}`}
+                      markerWidth="w-11"
+                    >
+                      {child.title}
+                    </HelpContentsLink>
+                  </li>
+                ))}
+              </ol>
+            )}
           </li>
         ))}
       </ol>
