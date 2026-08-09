@@ -2,7 +2,7 @@
 
 ## What this is
 
-Browser-only SPA with an **optional** sync server. Users import GPX/FIT activity files and geotagged photos; fog of war clears along their routes. No server — everything runs in the browser. State is persisted in IndexedDB (tracks, photos, fog cache, fogMode) and localStorage (map position).
+Browser-only SPA with an **optional** sync server. Users import GPX/FIT activity files and geotagged photos; fog of war clears along their routes. No server is *required* — all parsing, geometry and rendering run in the browser, and the GitHub Pages build ships without a server at all. State is persisted in IndexedDB (tracks, photos, fog cache, fogMode, session, syncState) and localStorage (map position). It is also an installable PWA — see "PWA and offline" below.
 
 ## Commands
 
@@ -13,14 +13,15 @@ bun run build      # production build
 bun run format     # prettier
 ```
 
-`bun run format` rewrites the whole tree and the repo has drifted from the current prettier
-config, so it produces churn in files you did not touch. Format only what you changed:
-`bunx prettier --write <paths>`.
+`bun run format` is `prettier --write "**/*.{ts,tsx}"` — it rewrites every ts/tsx file in the
+tree (not css/md/json), and the repo has drifted from the current prettier config, so it produces
+churn in files you did not touch. Format only what you changed: `bunx prettier --write <paths>`.
 
 E2E tests (separate package — Playwright, real browser against the real server):
 
 ```bash
 bun run test:e2e   # or: cd e2e && bun run test
+cd e2e && bun run typecheck   # the root typecheck excludes e2e/ too
 ```
 
 Optional sync server (separate package, see "Sync server" below):
@@ -44,8 +45,17 @@ Short, lowercase, imperative, no body — e.g. `add loader`, `fix z-index confli
 routes/home.tsx          clientLoader (creates worker, restores IDB state) + clientAction (parses files)
   └─ MapView.tsx         mounts MapLibre, owns fog-source + tracks-source + lap-source,
                          handles worker messages
-  └─ ControlPanel.tsx    add files / add photos / clear all / show tracks / fill loops / fog toggle
-  └─ FileUploadDialog    shown on first load if no tracks
+  └─ ControlPanel.tsx    the two hidden file inputs, the progress pill, and the FAB that opens
+                         MoreDrawer. It owns no switches — they all live in MoreDrawer.
+  └─ MoreDrawer.tsx      the actual control surface: add files / add photos, show tracks / show fog /
+                         show photos / fill loops switches, flat-vs-relief map style, nav card
+                         (account, /stats, /help), clear all
+  └─ MapCompass.tsx      bearing/pitch indicator, click to reset north
+  └─ FileUploadDialog    shown on first load if no tracks — also offers sign-in and a sample run
+  └─ ShareDialog.tsx     3:4 share card builder (background mode, blur, up to 4 stats, copy/download)
+       ShareMapView.tsx  offscreen MapLibre instance used to snapshot the map for the card
+  └─ ClearAllDialog / DuplicateTracksDialog / ParseErrorDialog / PhotoErrorDialog
+                         the four outcome dialogs home.tsx drives off fetcher.data
   └─ components/track-stats/
        TrackStatsPanel.tsx    panel chrome — vaul Drawer on mobile, draggable Card on desktop
        SingleTrackStats.tsx   lap selector + stat grid + elevation chart for one track
@@ -58,7 +68,8 @@ routes/home.tsx          clientLoader (creates worker, restores IDB state) + cli
 
 routes/stats.tsx         clientLoader (loads IDB tracks, runs all aggregators) + StatsPage
   └─ components/stats/
-       StatCards.tsx          8 lifetime metric cards (distance, elevation, activities, …)
+       StatCards.tsx          12 lifetime metric cards (distance, unique distance, moving time,
+                              elevation, activities, active days, and six averages)
        WeeklyChart.tsx        Recharts BarChart of weekly km — uses --chart-1 color
        WeekTooltip.tsx        custom Recharts tooltip for WeeklyChart
        StreaksCard.tsx        12-week activity grid + this-week/active/streak stats
@@ -66,7 +77,13 @@ routes/stats.tsx         clientLoader (loads IDB tracks, runs all aggregators) +
        PersonalRecordsCard.tsx  5 per-activity PRs (distance, elevation, pace, speed, time)
        RecordRow.tsx          one PR row, links back to /?track=<id>
 
-routes/help.tsx          static help page
+routes/help.tsx          static help page — section composition only
+  └─ components/help/     one component per section (see "One component per file")
+
+components/PageShell.tsx / PageSection.tsx / AppLink.tsx
+                         shared chrome for the non-map routes (/help, /stats)
+components/ErrorBoundary.tsx / ErrorCard.tsx   route-level error UI
+components/ElevationChart.tsx  Recharts area chart, used by both track stats and laps
 
 routes/auth-callback.tsx OAuth landing — trades the single-use handoff code for a bearer token
   └─ components/account/
@@ -75,6 +92,7 @@ routes/auth-callback.tsx OAuth landing — trades the single-use handoff code fo
        AccountDialog.tsx         identity + sync status + log out + delete
        DeleteAccountBlock.tsx    in-place second verification, NOT a nested dialog
        ServerUnavailableNotice.tsx  the offline placeholder, shared by every server surface
+       PurgeServerBlock.tsx      in-place verification for "Remove all" (DELETE /api/tracks)
        AccountAvatar.tsx         provider image with initials fallback
 
 lib/mapStore.ts          module-level singleton — map instance, worker ref, fog data, track list,
@@ -83,9 +101,10 @@ lib/mapStore.ts          module-level singleton — map instance, worker ref, fo
 lib/storage.ts           IndexedDB layer — tracks, photos (File objects), fog cache, fogMode pref,
                          session + syncState (both in the generic `prefs` KV)
 lib/statsAggregator.ts   pure aggregation functions over ParsedTrack[]: computeLifetimeTotals,
-                         computeWeeklyBars, computeStreaks, computePersonalRecords
+                         computeWeeklyBars, computeStreaks, computePersonalRecords,
+                         computeUniqueDistance; plus sortTracks and populateUniqueDistances
 lib/statsFormatters.ts   pure display formatters: formatKm, formatElevation, formatPace,
-                         formatMovingTime, formatXAxisTick, formatWeekRange
+                         formatSpeed, formatMovingTime, formatXAxisTick, formatWeekRange
 lib/laps.ts              format-agnostic lap helpers: buildLapTrack (synthetic track for sharing),
                          lapSubtitle, stripExt. FIT lap extraction lives in parsers/fit.ts
 workers/fogWorker.ts     ALL geometry: simplify → buffer → union/difference → emit fog polygon
@@ -95,15 +114,26 @@ lib/parsers/
   fit.ts                 fit-file-parser parseAsync (main thread)
 lib/photos.ts            EXIF timestamp extraction + timestamp-based photo-to-track matching (no GPS needed)
 lib/stats.ts             haversine distance, elevation gain/loss, pace, elevation profile
+lib/shareCard.ts         drawShareCard — canvas rendering of the 3:4 share image
+lib/trackHash.ts         SHA-256 over canonical geometry (the sync identity of a track)
+lib/useDraggable.ts / useIsMobile.ts / useCopyToClipboard.ts / utils.ts    small shared hooks
+sw.ts                    Workbox service worker — see "PWA and offline"
+routes.ts                explicit route table (see the gotcha below)
 ```
 
 ## Fog algorithm
 
 1. Main thread parses files → `ParsedTrack[]` (unified type, format-agnostic)
 2. Sent to worker via `postMessage({ type: "PROCESS_TRACKS", tracks, mode })`
-3. Worker: `simplify → buffer` per track, accumulated into `pendingBuffer` (corridor) or `accumulated` (fill)
-4. Every 300 ms: flush pending into fog polygon via `@turf/difference`, emit `FOG_UPDATE { fogData }`
+3. Worker: `simplify` (at `TRACK_SIMPLIFY_TOLERANCE`) → `buffer` (`FOG_CLEAR_RADIUS_METERS`, `BUFFER_STEPS`) per track, accumulated into `pendingBuffer` (corridor) or `accumulated` (fill)
+4. Every 300 ms: flush pending into fog polygon via `@turf/difference`, simplify the *result* at `SIMPLIFY_TOLERANCE`, emit `FOG_UPDATE { fogData }`
 5. MapView calls `fogSource.setData(msg.fogData)` — the fog IS the GeoJSON, sent directly
+
+**Two different simplify tolerances, and mixing them up is a visible bug.**
+`TRACK_SIMPLIFY_TOLERANCE` (0.0005, ~55 m) is applied to the *track* before buffering — it can be
+coarse because the 100 m buffer swallows the corner-cutting. `SIMPLIFY_TOLERANCE` (0.0001, ~11 m)
+is applied to the *emitted fog polygon* and controls the visual precision of the fog edge.
+Swapping them either ruins the fog boundary or wastes an order of magnitude of vertex budget.
 
 ### Corridor vs Fill mode
 
@@ -111,7 +141,7 @@ lib/stats.ts             haversine distance, elevation gain/loss, pace, elevatio
 |---|---|---|
 | Worker state | `fogPolygon` + `pendingBuffer` | `accumulated` (persistent across emits) |
 | How applied | `difference(fog, pendingBuffer)` per emit | `difference(worldFog, stripInnerRings(accumulated))` per emit |
-| Loop behavior | Only 50m corridor cleared | Interior of closed loops also cleared |
+| Loop behavior | Only the 100 m corridor cleared | Interior of closed loops also cleared |
 | Multi-file loops | Corridors only | Detected — `accumulated` holds all tracks |
 
 `stripInnerRings` removes inner rings from the union polygon, turning an annulus into a filled disk.
@@ -125,7 +155,10 @@ Three object stores opened via a raw IDB wrapper (no external library):
 |---|---|---|
 | `tracks` | `"id"` | `ParsedTrack` objects (JSON) |
 | `photos` | `"id"` | `{ id, file: File, takenAtMs, lng, lat }` — File/Blob stored directly |
-| `prefs` | `"key"` | `"fogMode"` (FogMode) + `"fogCache"` (fog GeoJSON + mode + trackIds) |
+| `prefs` | `"key"` | four keys: `"fogMode"` (FogMode), `"fogCache"` (fog GeoJSON + mode + trackIds), `"session"` (bearer token + user), `"syncState"` (cursor, appliedTombstones, ignoredHashes) |
+
+`prefSet`/`prefGet` are module-private, so that list is exhaustive. `clearAll()` drops everything
+except `"session"` — a clear-all must not sign you out.
 
 **Restore flow (clientLoader):** loads tracks → photos → fogMode → fogCache in parallel, populates `mapStore` before component mounts. `setupMapLayers` in MapView reads `mapStore.fogData` and `mapStore.tracks` automatically. If fog cache is stale, `mapStore.isRestoreReprocess = true` and the worker reprocesses after map ready — `fitBounds` is suppressed in this case so saved map position is preserved.
 
@@ -178,7 +211,7 @@ FIT-only. `fit-file-parser`'s default `mode: 'list'` puts a flat `data.laps` arr
 
 **One component per file** — outside `components/ui/`. Sub-components get their own file next to
 their parent (`StatRow.tsx`, `WeekTooltip.tsx`, `RecordRow.tsx`), and a feature with several parts
-gets a folder (`components/track-stats/`, `components/stats/`). The exception is `components/ui/`,
+gets a folder (`components/track-stats/`, `components/stats/`, `components/help/`). The exception is `components/ui/`,
 where shadcn's generated files export a whole part family (`Card` + `CardHeader` + `CardTitle` …)
 from one file — that's the registry's layout and splitting it would break `shadcn add` updates.
 
@@ -220,12 +253,18 @@ from one file — that's the registry's layout and splitting it would break `sha
 
 **Explicit route registration**: Routes are NOT auto-discovered from the filesystem. Every route must be added to `app/routes.ts` or it will 404 and `react-router typegen` will not generate its `+types/` file.
 
-**`startedAtMs` read-time migration**: `loadTracks()` checks for the field being `undefined` (tracks saved before it was added) and back-fills it from `pointTimestamps[0]`. The fix is applied in memory only — no re-save — so old IDB data stays untouched.
+**Two read-time migrations in `loadTracks()`**, both applied in memory only — no re-save — so old IDB data stays untouched:
+- `startedAtMs === undefined` (tracks saved before the field existed) → back-filled from `pointTimestamps[0]`.
+- `stats.uniqueDistanceKm === undefined` → seeded from `stats.distanceKm`. It is immediately overwritten by `populateUniqueDistances`, so the value only has to be non-`undefined` for the interim render.
+
+**PWA and offline**: `vite-plugin-pwa` builds `app/sw.ts` (Workbox) into `sw.js`; `app/root.tsx` registers it. Map tiles are `CacheFirst` for 30 days (200 entries), style JSON is `StaleWhileRevalidate`, and the app shell is precached — which is what makes it usable offline after a first load. The manifest also declares a **Web Share Target** (`public/site.webmanifest`): the OS share sheet can POST `.gpx`/`.fit` files to `/?share-target`, the service worker buffers them into the `share-target-queue` cache and redirects to `/?from-share`, and `home.tsx` drains that queue on load. Changing the share-target contract means changing all three of manifest, `sw.ts` and `home.tsx` together.
+
+**Map style modes**: `MapMode = "flat" | "relief"` (`app/types/tracks.ts`). `flat` is `MAP_STYLE_URL` (OpenFreeMap vector); `relief` swaps in `SATELLITE_STYLE` (Esri raster) via `map.setStyle` and adds a terrain DEM source with `exaggeration: 2.5`. `setStyle` destroys all custom sources and layers, so `setupMapLayers` has to run again after the style loads — the fog, tracks, laps and photo layers are re-added, not preserved.
 
 ## Stats page
 
 `/stats` is a separate full-page route (registered in `app/routes.ts`). It is entirely
-client-side — `clientLoader` calls `loadTracks()` then runs the four aggregators.
+client-side — `clientLoader` calls `loadTracks()` then runs the five aggregators.
 
 ### Aggregators (`lib/statsAggregator.ts`)
 
@@ -235,6 +274,7 @@ client-side — `clientLoader` calls `loadTracks()` then runs the four aggregato
 | `computeWeeklyBars` | One `WeeklyBar` per ISO week between first and last activity; gaps filled with zero |
 | `computeStreaks` | Current/longest streak, 84-day active-day set, this-week/last-week km, active-day count |
 | `computePersonalRecords` | Best single-activity records: distance, elevation, pace, avg speed, moving time |
+| `computeUniqueDistance` | Library-wide unique km — a grid dedupe across every track, so it is not a sum of per-track values |
 
 **Naming: `avgSpeed` vs `avgMovingSpeed`.** `avgSpeedKmh` is distance ÷ *elapsed* time; `avgMovingSpeedKmh` is distance ÷ *moving* time (stopped segments excluded — see `MOVING_TIME_STOPPED_GAP_MS`). Never introduce a bare `speed`/`speedKmh` identifier — always qualify which one it is. The one exception is `segmentSpeedKmh` in `lib/stats.ts`, an instantaneous per-segment speed that only gates whether a segment counts as moving. `PersonalRecords.fastestAvgSpeed` uses the elapsed-time average; `fastestPace` uses moving pace, so the two are independent records rather than reciprocals of one another.
 
@@ -397,9 +437,11 @@ long-lived credential never touches a URL, history entry or `Referer`.
 ## Constants (`app/constants/fog.ts`)
 
 ```ts
-FOG_CLEAR_RADIUS_METERS = 100   // buffer radius around each track
-FOG_EMIT_INTERVAL_MS    = 300   // max fog update frequency
-SIMPLIFY_TOLERANCE      = 0.00005  // ~5m at equator (Ramer-Douglas-Peucker)
+FOG_CLEAR_RADIUS_METERS  = 100   // buffer RADIUS each side — the corridor is ~200 m wide
+FOG_EMIT_INTERVAL_MS     = 300   // max fog update frequency
+SIMPLIFY_TOLERANCE       = 0.0001   // ~11m — applied to the EMITTED fog polygon
+TRACK_SIMPLIFY_TOLERANCE = 0.0005   // ~55m — applied to the TRACK before buffering
+BUFFER_STEPS             = 16    // arc segments per buffer; 4× fewer vertices than the default 64
 MAP_STYLE_URL           = "https://tiles.openfreemap.org/styles/liberty"
 FOG_COLOR               = "#0a0a1e"
 FOG_OPACITY             = 0.8
@@ -408,3 +450,9 @@ LAP_PROFILE_POINTS      = 60    // per-lap elevation profile cap (track's is 300
 MAX_LAPS                = 200   // give up on pathological FIT files above this
 LAP_HIGHLIGHT_WIDTH     = 6     // selected-lap line width
 ```
+
+Not an exhaustive list — `fog.ts` also holds the track line widths/opacities/dim colour,
+`TRACK_HIT_WIDTH` (24 px invisible hit-test line, for touch), and the stats tuning constants
+`MOVING_TIME_STOPPED_GAP_MS`, `MOVING_TIME_MIN_SPEED_KMH`, `ELEVATION_SMOOTHING_DISTANCE_M` and
+`ELEVATION_GAIN_STEP_THRESHOLD_M`. Read the file; every one of them carries a comment explaining
+why it has the value it has.
