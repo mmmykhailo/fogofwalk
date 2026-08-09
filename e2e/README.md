@@ -9,11 +9,23 @@ cd e2e
 bun install
 bunx playwright install chromium   # once
 bun run test                       # headless
-bun run test:ui                    # watch mode
+bun run test:ui                    # Playwright UI mode (pick tests, watch, time-travel)
 bun run test:headed                # watch it happen
 ```
 
 Or from the repo root: `bun run test:e2e`.
+
+## What is covered
+
+Five specs, one per area of sync behaviour:
+
+| Spec | Covers |
+|---|---|
+| `auth.spec.ts` | sign-in through the fake IdP, session persistence, pending-vs-allowed, log out, delete account |
+| `track-sync.spec.ts` | upload, download onto a second device, content-hash dedupe, the scheduler, manifest paging |
+| `deletion.spec.ts` | the three deletion semantics — per-track with and without the server switch, purge-all, clear-all |
+| `suspension.spec.ts` | auto-sync suspension after a local-only delete, and that only a manual sync clears it |
+| `serverless.spec.ts` | the `VITE_API_URL`-unset build: no account surfaces, no requests, everything else still works |
 
 ## How the rig fits together
 

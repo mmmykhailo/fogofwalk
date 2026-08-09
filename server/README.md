@@ -7,8 +7,11 @@ and background track sync.
 
 It is a standalone **Bun** package — not a workspace of the client. `bun
 install` at the repository root never pulls these dependencies, and the GitHub
-Pages workflow is untouched. The only thing the two sides share is `../shared`,
-which holds types and constants and nothing that survives into a bundle.
+Pages workflow is untouched. The only thing the two sides share is `../shared`.
+`shared/tracks.ts` and `shared/api.ts` are type-only and vanish at compile time;
+`shared/constants.ts` is not — the client imports `HASH_COORD_PRECISION`,
+`MAX_TRACK_BYTES` and `SYNC_CONCURRENCY` as runtime values, so those literals do
+reach the browser bundle. Keep it free of anything heavier than a constant.
 
 Runtime dependencies are `hono`, `arctic` and `zod` (all MIT). Everything else
 — HTTP, SQLite, gzip, hashing, tests, env loading — is the Bun runtime itself.
@@ -28,7 +31,7 @@ curl localhost:8787/health   # {"ok":true}
 | `bun run dev` | `bun --hot src/index.ts` |
 | `bun run start` | `bun src/index.ts` |
 | `bun run typecheck` | `tsc --noEmit` (run after every change) |
-| `bun run test` | `bun test` against the in-memory driver |
+| `bun run test` | `bun test` — mostly against the in-memory driver; `tests/sqliteFs.test.ts` exercises the real `sqlite-fs` one |
 
 Run the client against it with `VITE_API_URL=http://localhost:8787 bun run dev`
 from the repository root.
@@ -65,7 +68,8 @@ a missing or malformed one aborts startup with a message naming it.
 | GET | `/api/tracks/manifest?since=<cursor>` | allowed | Metadata + tombstones page. |
 | PUT | `/api/tracks/:contentHash` | allowed | Gzipped upload, idempotent. |
 | GET | `/api/tracks/:contentHash` | allowed | The gzipped track JSON. |
-| DELETE | `/api/tracks/:contentHash` | allowed | Delete + tombstone. |
+| DELETE | `/api/tracks` | allowed | Purge every track for this user. **No tombstones** — other devices keep their copies. Backs "Remove all". |
+| DELETE | `/api/tracks/:contentHash` | allowed | Delete + tombstone. Returns the tombstone's `deletedAt`. |
 
 Non-2xx bodies are always `{ error, message? }` with `error` drawn from
 `ApiErrorCode` in `shared/api.ts`.
@@ -105,10 +109,14 @@ To allowlist a user:
 1. Add `provider:login` to `ALLOWED_LOGINS` and restart, then have them sign in
    again — the promotion happens at sign-in.
 2. Or edit the database directly, which takes effect immediately and needs no
-   redeploy — the database is authoritative:
+   redeploy — the database is authoritative. Match on `identities.provider_login`,
+   the same key the allowlist uses; `users.display_name` is a free-text profile
+   name and is often not the login at all:
    ```bash
    sqlite3 data/fogofwalk.db \
-     "UPDATE users SET status='allowed' WHERE display_name='alice';"
+     "UPDATE users SET status='allowed' WHERE id = (
+        SELECT user_id FROM identities
+        WHERE provider='github' AND provider_login='alice');"
    ```
 
 Blocking works the same way (`status='blocked'`), and the env var can never
