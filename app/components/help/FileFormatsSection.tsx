@@ -1,11 +1,10 @@
-import { PageSection } from "~/components/PageSection"
 import { Badge } from "~/components/ui/badge"
 import { Card, CardContent, CardHeader, CardTitle } from "~/components/ui/card"
 import { InlineCode } from "~/components/help/InlineCode"
 
 export function FileFormatsSection() {
   return (
-    <PageSection title="Supported file formats">
+    <>
       <Card className="mb-4">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
@@ -104,6 +103,6 @@ export function FileFormatsSection() {
           </p>
         </CardContent>
       </Card>
-    </PageSection>
+    </>
   )
 }

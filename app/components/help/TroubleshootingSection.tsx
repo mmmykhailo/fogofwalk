@@ -1,5 +1,3 @@
-import { PageSection } from "~/components/PageSection"
-
 const ITEMS: { q: string; a: React.ReactNode }[] = [
   {
     q: "File picker doesn't open / nothing happens after selecting files",
@@ -77,15 +75,13 @@ const ITEMS: { q: string; a: React.ReactNode }[] = [
 
 export function TroubleshootingSection() {
   return (
-    <PageSection title="Troubleshooting">
-      <div className="space-y-4 text-sm text-muted-foreground">
-        {ITEMS.map(({ q, a }) => (
-          <div key={q}>
-            <p className="mb-1 font-medium text-foreground">{q}</p>
-            <p className="leading-relaxed">{a}</p>
-          </div>
-        ))}
-      </div>
-    </PageSection>
+    <div className="space-y-4 text-sm text-muted-foreground">
+      {ITEMS.map(({ q, a }) => (
+        <div key={q}>
+          <p className="mb-1 font-medium text-foreground">{q}</p>
+          <p className="leading-relaxed">{a}</p>
+        </div>
+      ))}
+    </div>
   )
 }

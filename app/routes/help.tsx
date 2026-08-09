@@ -1,18 +1,9 @@
 import type { Route } from "./+types/help"
 import { PageShell } from "~/components/PageShell"
+import { PageSection } from "~/components/PageSection"
 import { AppLink } from "~/components/AppLink"
-import { WhatIsItSection } from "~/components/help/WhatIsItSection"
-import { WorkflowSection } from "~/components/help/WorkflowSection"
-import { FileFormatsSection } from "~/components/help/FileFormatsSection"
-import { PhotosSection } from "~/components/help/PhotosSection"
-import { TrackStatsSection } from "~/components/help/TrackStatsSection"
-import { StatisticsSection } from "~/components/help/StatisticsSection"
-import { SharingSection } from "~/components/help/SharingSection"
-import { MapControlsSection } from "~/components/help/MapControlsSection"
-import { InstallSection } from "~/components/help/InstallSection"
-import { SyncSection } from "~/components/help/SyncSection"
-import { RemovingSection } from "~/components/help/RemovingSection"
-import { TroubleshootingSection } from "~/components/help/TroubleshootingSection"
+import { HelpContents } from "~/components/help/HelpContents"
+import { HELP_SECTIONS } from "~/components/help/sections"
 
 export function meta({}: Route.MetaArgs) {
   return [
@@ -25,33 +16,18 @@ export function meta({}: Route.MetaArgs) {
   ]
 }
 
-/**
- * Rendered in order, separated by a rule — array order is the reading order.
- * Keys are explicit rather than derived from `Section.name`, which minification
- * is free to rewrite.
- */
-const SECTIONS: { id: string; Section: () => React.ReactElement }[] = [
-  { id: "what", Section: WhatIsItSection },
-  { id: "workflow", Section: WorkflowSection },
-  { id: "formats", Section: FileFormatsSection },
-  { id: "photos", Section: PhotosSection },
-  { id: "track-stats", Section: TrackStatsSection },
-  { id: "statistics", Section: StatisticsSection },
-  { id: "sharing", Section: SharingSection },
-  { id: "map-controls", Section: MapControlsSection },
-  { id: "install", Section: InstallSection },
-  { id: "sync", Section: SyncSection },
-  { id: "removing", Section: RemovingSection },
-  { id: "troubleshooting", Section: TroubleshootingSection },
-]
-
 export default function HelpPage() {
   return (
     <PageShell title="How Fog of Walk works">
-      {SECTIONS.map(({ id, Section }, i) => (
+      <HelpContents />
+      <hr className="mb-10 border-border" />
+
+      {HELP_SECTIONS.map(({ id, title, Body }, i) => (
         <div key={id}>
           {i > 0 && <hr className="mb-10 border-border" />}
-          <Section />
+          <PageSection id={id} title={title}>
+            <Body />
+          </PageSection>
         </div>
       ))}
 

@@ -1,4 +1,3 @@
-import { PageSection } from "~/components/PageSection"
 import { Badge } from "~/components/ui/badge"
 import { InlineCode } from "~/components/help/InlineCode"
 
@@ -59,19 +58,17 @@ const STEPS = [
 
 export function WorkflowSection() {
   return (
-    <PageSection title="Workflow">
-      <ol className="space-y-3 text-sm leading-relaxed text-muted-foreground">
-        {STEPS.map(({ title, body }, i) => (
-          <li key={title} className="flex gap-3">
-            <Badge variant="secondary" className="shrink-0 tabular-nums">
-              {i + 1}
-            </Badge>
-            <span>
-              <strong className="text-foreground">{title}</strong> — {body}
-            </span>
-          </li>
-        ))}
-      </ol>
-    </PageSection>
+    <ol className="space-y-3 text-sm leading-relaxed text-muted-foreground">
+      {STEPS.map(({ title, body }, i) => (
+        <li key={title} className="flex gap-3">
+          <Badge variant="secondary" className="shrink-0 tabular-nums">
+            {i + 1}
+          </Badge>
+          <span>
+            <strong className="text-foreground">{title}</strong> — {body}
+          </span>
+        </li>
+      ))}
+    </ol>
   )
 }
