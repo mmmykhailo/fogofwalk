@@ -61,8 +61,8 @@ export function SignInDialog({ open, onOpenChange }: SignInDialogProps) {
         <DialogHeader>
           <DialogTitle>Sign in</DialogTitle>
           <DialogDescription>
-            Sign in to sync your tracks across devices. Your tracks stay private
-            — only you can read them.
+            Sign in to sync your tracks across devices. Photos are never
+            uploaded — they stay on this device.
           </DialogDescription>
         </DialogHeader>
 
@@ -90,7 +90,6 @@ export function SignInDialog({ open, onOpenChange }: SignInDialogProps) {
             return (
               <Button
                 key={provider.id}
-                variant="outline"
                 className="w-full"
                 onClick={() => {
                   window.location.href = signInUrl(provider.id)
@@ -102,6 +101,14 @@ export function SignInDialog({ open, onOpenChange }: SignInDialogProps) {
             )
           })}
         </div>
+
+        {!isUnreachable && (
+          <p className="p-3 text-xs/relaxed text-muted-foreground ring-1 ring-foreground/10">
+            Synced tracks are stored on the server without encryption, so
+            whoever runs it can read where you have been. Don&rsquo;t use sync
+            unless you trust the developer of Fog of Walk.
+          </p>
+        )}
 
         {error && !isUnreachable && (
           <p className="text-xs text-destructive">{error}</p>
