@@ -1,4 +1,5 @@
 import type { ParsedTrack, FogMode } from "~/types/tracks"
+import type { ServerUser, UserCapabilities } from "~shared/api"
 import type { PhotoEntry } from "~/types/photos"
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -98,7 +99,9 @@ export async function saveTracks(tracks: ParsedTrack[]): Promise<void> {
 // Fields added after initial release; absent in older IDB records.
 type StoredTrack = Omit<ParsedTrack, "startedAtMs" | "stats"> & {
   startedAtMs?: number | null
-  stats: Omit<ParsedTrack["stats"], "uniqueDistanceKm"> & { uniqueDistanceKm?: number }
+  stats: Omit<ParsedTrack["stats"], "uniqueDistanceKm"> & {
+    uniqueDistanceKm?: number
+  }
 }
 
 /** Load all persisted tracks. Returns [] on any error. */
@@ -330,14 +333,91 @@ export function isFogCacheValid(
   return currentTrackIds.every((id) => cacheSet.has(id))
 }
 
+// ─── Sync session ─────────────────────────────────────────────────────────────
+
+/**
+ * The signed-in session, persisted so the drawer can render the user's name on
+ * first paint without waiting for `/api/me`. The stored user is a cache — the
+ * server's answer always wins once it arrives.
+ */
+export interface StoredSession {
+  token: string
+  expiresAt: number
+  user: ServerUser
+  capabilities: UserCapabilities
+}
+
+export async function saveSession(session: StoredSession): Promise<void> {
+  return prefSet("session", session)
+}
+
+export async function loadSession(): Promise<StoredSession | null> {
+  return prefGet<StoredSession>("session")
+}
+
+export async function clearSession(): Promise<void> {
+  return prefDelete("session")
+}
+
+// ─── Sync state ───────────────────────────────────────────────────────────────
+
+/** Where the last successful manifest walk got to. */
+export interface SyncState {
+  /** Feed back as `?since=` on the next manifest call. */
+  cursor: number
+  lastSyncAt: number
+  /**
+   * Every content hash known to exist on the server.
+   *
+   * Required because the manifest is incremental: a page fetched with a
+   * non-zero cursor only lists *recent* tracks, so without this the older ones
+   * would look absent and be re-uploaded on every single sync. Rebuilt from
+   * scratch whenever the cursor resets to 0.
+   */
+  serverHashes: string[]
+  /**
+   * Tracks this device deleted locally while deliberately leaving the server
+   * copy in place. Without this the next sync would download them straight
+   * back, and "delete" would look broken.
+   */
+  ignoredHashes?: string[]
+  /**
+   * Tombstones already acted on, hash → its `deletedAt`.
+   *
+   * The manifest cursor is an inclusive lower bound, so the newest tombstones
+   * come back on the next sync. Without this the same deletion is applied
+   * twice, which silently re-deletes a file the user just re-imported.
+   */
+  appliedTombstones?: Record<string, number>
+}
+
+export async function saveSyncState(state: SyncState): Promise<void> {
+  return prefSet("syncState", state)
+}
+
+export async function loadSyncState(): Promise<SyncState | null> {
+  return prefGet<SyncState>("syncState")
+}
+
+export async function clearSyncState(): Promise<void> {
+  return prefDelete("syncState")
+}
+
 // ─── Clear all ────────────────────────────────────────────────────────────────
 
-/** Wipe all persisted data (tracks, photos, IDB prefs). Used by "clear-all". */
+/**
+ * Wipe all persisted data (tracks, photos, IDB prefs). Used by "clear-all".
+ *
+ * The session is deliberately kept: clearing the map is not signing out. The
+ * sync cursor *is* dropped, so the next sync re-walks the manifest from zero
+ * rather than believing it is already up to date with tracks that are gone.
+ */
 export async function clearAll(): Promise<void> {
   await Promise.all([
     clearTracks(),
     clearPhotos(),
     prefDelete("fogMode"),
     prefDelete("fogCache"),
+    prefDelete("syncState"),
   ])
 }

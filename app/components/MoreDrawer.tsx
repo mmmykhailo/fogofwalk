@@ -20,6 +20,9 @@ import { Item, ItemContent, ItemMedia, ItemTitle } from "~/components/ui/item"
 import { Switch } from "~/components/ui/switch"
 import { Button } from "~/components/ui/button"
 import { ClearAllDialog } from "~/components/ClearAllDialog"
+import { AccountDrawerItem } from "~/components/account/AccountDrawerItem"
+import { AccountDialog } from "~/components/account/AccountDialog"
+import { SignInDialog } from "~/components/account/SignInDialog"
 import type { FogMode, MapMode } from "~/types/tracks"
 
 interface MoreDrawerProps {
@@ -69,7 +72,19 @@ export function MoreDrawer({
 }: MoreDrawerProps) {
   const close = () => onOpenChange(false)
   const [isClearAllOpen, setIsClearAllOpen] = useState(false)
+  const [isSignInOpen, setIsSignInOpen] = useState(false)
+  const [isAccountOpen, setIsAccountOpen] = useState(false)
   const isMobile = useIsMobile()
+
+  /**
+   * Close the drawer before opening a dialog, then wait out the close
+   * animation. Base UI popups portal outside vaul's Radix focus scope, so
+   * overlapping the two fights over focus — see the drawer note in CLAUDE.md.
+   */
+  const closeThenOpen = (open: (v: boolean) => void) => {
+    close()
+    setTimeout(() => open(true), 300)
+  }
 
   return (
     <>
@@ -157,6 +172,7 @@ export function MoreDrawer({
                 <Switch
                   checked={showTracks}
                   onCheckedChange={onShowTracksChange}
+                  aria-label="Show tracks"
                 />
               </div>
               <div className="flex items-center px-3 py-2.5">
@@ -165,7 +181,11 @@ export function MoreDrawer({
                   className="mr-3 size-5 shrink-0 text-muted-foreground"
                 />
                 <span className="flex-1 text-sm">Show fog</span>
-                <Switch checked={showFog} onCheckedChange={onShowFogChange} />
+                <Switch
+                  checked={showFog}
+                  onCheckedChange={onShowFogChange}
+                  aria-label="Show fog"
+                />
               </div>
               <div className="flex items-center px-3 py-2.5">
                 <PathIcon
@@ -178,6 +198,7 @@ export function MoreDrawer({
                   onCheckedChange={(checked) =>
                     onFogModeChange(checked ? "fill" : "corridor")
                   }
+                  aria-label="Fill loops"
                 />
               </div>
               {photoCount > 0 && (
@@ -190,6 +211,7 @@ export function MoreDrawer({
                   <Switch
                     checked={showPhotos}
                     onCheckedChange={onShowPhotosChange}
+                    aria-label="Show photos"
                   />
                 </div>
               )}
@@ -224,6 +246,10 @@ export function MoreDrawer({
 
             {/* 3. Navigation */}
             <div className="overflow-hidden ring-1 ring-foreground/10">
+              <AccountDrawerItem
+                onSignIn={() => closeThenOpen(setIsSignInOpen)}
+                onOpenAccount={() => closeThenOpen(setIsAccountOpen)}
+              />
               <Item
                 variant="muted"
                 render={<Link to="/stats" />}
@@ -283,7 +309,10 @@ export function MoreDrawer({
 
             {/* 5. Status */}
             {(isProcessing || trackCount > 0 || photoCount > 0) && (
-              <p className="py-1 text-center text-xs text-muted-foreground">
+              <p
+                data-testid="drawer-status"
+                className="py-1 text-center text-xs text-muted-foreground"
+              >
                 {isProcessing
                   ? `Processing ${processedCount} of ${trackCount}…`
                   : [
@@ -307,6 +336,9 @@ export function MoreDrawer({
         photoCount={photoCount}
         onConfirm={onClearAll}
       />
+
+      <SignInDialog open={isSignInOpen} onOpenChange={setIsSignInOpen} />
+      <AccountDialog open={isAccountOpen} onOpenChange={setIsAccountOpen} />
     </>
   )
 }

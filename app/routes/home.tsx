@@ -9,6 +9,7 @@ import { ControlPanel } from "~/components/ControlPanel"
 import { FileUploadDialog } from "~/components/FileUploadDialog"
 import { PhotoErrorDialog } from "~/components/PhotoErrorDialog"
 import { ParseErrorDialog } from "~/components/ParseErrorDialog"
+import { DuplicateTracksDialog } from "~/components/DuplicateTracksDialog"
 import { TrackStatsPanel } from "~/components/track-stats/TrackStatsPanel"
 import { ShareDialog } from "~/components/ShareDialog"
 import { PhotoCard } from "~/components/PhotoCard"
@@ -27,12 +28,12 @@ import {
   worldFogGeoJSON,
   startFogRun,
   postToFogWorker,
+  ingestTracks,
 } from "~/lib/mapStore"
 import { parseFile } from "~/lib/parsers"
 import { buildLapTrack, lapSubtitle } from "~/lib/laps"
 import { processPhotoFiles } from "~/lib/photos"
 import {
-  saveTracks,
   loadTracks,
   savePhotos,
   loadPhotos,
@@ -45,6 +46,15 @@ import {
   isFogCacheValid,
 } from "~/lib/storage"
 import { clearMapPosition } from "~/lib/mapStore"
+import { initAuth, useAuth } from "~/lib/server/authStore"
+import {
+  ignoreTrackLocally,
+  pushTrackDeletion,
+  requestSync,
+  setSyncChangeHandler,
+  startSyncScheduler,
+  suspendAutoSync,
+} from "~/lib/server/syncEngine"
 import { sortTracks, populateUniqueDistances } from "~/lib/statsAggregator"
 import type { FogMode, MapMode, ParsedTrack } from "~/types/tracks"
 import type { PhotoEntry, PhotoGroup } from "~/types/photos"
@@ -93,6 +103,11 @@ export async function clientLoader(): Promise<{
     mapStore.worker.onerror = (e) => console.error("[worker] uncaught error", e)
     console.debug("[clientLoader] worker created", mapStore.worker)
   }
+
+  // Restore + revalidate the sync session. Deliberately not awaited: the map
+  // must never wait on the network, and it is a no-op when the build has no
+  // server. Signing in later re-renders the drawer through the auth store.
+  void initAuth()
 
   // Restore persisted data in parallel
   const [tracks, photos, fogMode, fogCache] = await Promise.all([
@@ -193,30 +208,28 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
       "worker ready:",
       !!mapStore.worker
     )
-    if (allTracks.length > 0) {
-      mapStore.tracks = sortTracks([...mapStore.tracks, ...allTracks])
-      populateUniqueDistances(mapStore.tracks)
-      // Joins the current run rather than starting one: only the new tracks are
-      // posted, so this depends on the worker's accumulated state surviving.
-      postToFogWorker({
-        type: "PROCESS_TRACKS",
-        tracks: allTracks,
-        mode,
-      })
-      // Persist new tracks and invalidate stale fog cache
-      await saveTracks(allTracks)
-      await clearFogCache()
-    }
+    // Shared with the sync engine's downloads — merge, recompute, post to the
+    // worker (joining the current run), persist, invalidate the fog cache.
+    // Returns only the tracks that were genuinely new.
+    const added = await ingestTracks(allTracks, mode)
+    if (added.length > 0) void requestSync("add-files")
+
     return {
       intent: "add-files" as const,
       count: files.length,
       trackCount: mapStore.tracks.length,
-      newTracksCount: allTracks.length,
+      // Must be what was ingested, not what was parsed — the progress UI waits
+      // on a worker DONE that only arrives if something was actually posted.
+      newTracksCount: added.length,
+      duplicateCount: allTracks.length - added.length,
       failedFiles,
     }
   }
 
   if (intent === "clear-all") {
+    // Local only, deliberately. This resets *this device*; the server copies
+    // are left alone and sync pulls them back. Deleting them is a separate,
+    // explicit action — "Remove all" in the account dialog.
     mapStore.fogData = null
     mapStore.tracks = []
     mapStore.processedCount = 0
@@ -238,11 +251,19 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
     }
     await clearAll()
     clearMapPosition()
+    // Pause automatic syncing. `clearAll` dropped syncState, so the next sync
+    // walks from scratch and would download everything straight back — the
+    // clear would undo itself within seconds. It resumes on reload, or when
+    // the user asks for it with "Sync now".
+    suspendAutoSync("clear-all")
     return { intent: "clear-all" as const, trackCount: 0 }
   }
 
   if (intent === "delete-track") {
     const trackId = formData.get("trackId") as string
+
+    // Captured before the filter — the content hash is what the server keys on.
+    const deletedTrack = mapStore.tracks.find((t) => t.id === trackId)
 
     // Remove from in-memory store and recompute unique distances for remaining tracks
     mapStore.tracks = mapStore.tracks.filter((t) => t.id !== trackId)
@@ -279,6 +300,18 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
     // Persist and invalidate fog cache
     await deleteTrack(trackId)
     await clearFogCache()
+
+    if (deletedTrack) {
+      if (formData.get("alsoOnServer") === "0") {
+        // Local-only: the server copy stays, so this device has to remember
+        // not to download it back on the next sync.
+        await ignoreTrackLocally(deletedTrack)
+        suspendAutoSync("local-only-delete")
+      } else {
+        // Writes the tombstone that removes it from the user's other devices.
+        await pushTrackDeletion(deletedTrack)
+      }
+    }
 
     return {
       intent: "delete-track" as const,
@@ -320,6 +353,8 @@ export default function Home() {
   const [photoErrorOpen, setPhotoErrorOpen] = useState(false)
   const [parseFailedFiles, setParseFailedFiles] = useState<string[]>([])
   const [isParseErrorOpen, setIsParseErrorOpen] = useState(false)
+  const [duplicateCount, setDuplicateCount] = useState(0)
+  const [isDuplicateOpen, setIsDuplicateOpen] = useState(false)
   // Loading overlay: starts visible, fades out when map is ready, then unmounts
   const [overlayDone, setOverlayDone] = useState(false)
 
@@ -470,12 +505,18 @@ export default function Home() {
       if (data.newTracksCount > 0) {
         isNewUploadRef.current = true // triggers fitBounds in the isProcessing effect below
         setTrackCount(data.trackCount)
-        setIsProcessing(true)
+        // Only if the worker has not already finished — see isFogRunInFlight.
+        setIsProcessing(mapStore.isFogRunInFlight)
         setProcessedCount(0)
       }
       if (data.failedFiles.length > 0) {
         setParseFailedFiles(data.failedFiles)
         setIsParseErrorOpen(true)
+      } else if (data.newTracksCount === 0 && data.duplicateCount > 0) {
+        // Nothing was added and nothing failed — say so, or the import looks
+        // like it silently did nothing.
+        setDuplicateCount(data.duplicateCount)
+        setIsDuplicateOpen(true)
       }
     }
     if (data.intent === "clear-all") {
@@ -493,15 +534,62 @@ export default function Home() {
       setPendingTrackId(null)
       setShowShareDialog(false)
       setTrackCount(data.trackCount)
-      if (data.trackCount > 0) {
-        setIsProcessing(true)
-        setProcessedCount(0)
-      } else {
-        setIsProcessing(false)
-        setProcessedCount(0)
-      }
+      setProcessedCount(0)
+      setIsProcessing(data.trackCount > 0 && mapStore.isFogRunInFlight)
     }
   }, [fetcher.data])
+
+  // Sync mutates mapStore directly; reconcile the React state it can't reach.
+  useEffect(() => {
+    setSyncChangeHandler(({ downloadedCount, deletedIds }) => {
+      setTrackCount(mapStore.tracks.length)
+
+      if (deletedIds.length > 0) {
+        // A removal invalidates the accumulated fog, so the run is abandoned
+        // and the survivors replayed — the same dance as `delete-track`.
+        setSelectedTrackIds((prev) =>
+          prev.filter((id) => !deletedIds.includes(id))
+        )
+        setPendingTrackId(null)
+        mapStore.processedCount = 0
+        startFogRun()
+        postToFogWorker({ type: "RESET" })
+        const map = mapStore.map
+        if (map && mapStore.sourcesReady) {
+          ;(map.getSource("fog-source") as maplibregl.GeoJSONSource)?.setData(
+            worldFogGeoJSON()
+          )
+          ;(
+            map.getSource("tracks-source") as maplibregl.GeoJSONSource
+          )?.setData(featureCollection([]))
+          setLapHighlightData(map, null)
+        }
+        if (mapStore.tracks.length > 0) {
+          postToFogWorker({
+            type: "PROCESS_TRACKS",
+            tracks: mapStore.tracks,
+            mode: mapStore.fogMode,
+          })
+        }
+      }
+
+      if (downloadedCount > 0 || deletedIds.length > 0) {
+        setProcessedCount(0)
+        setIsProcessing(mapStore.tracks.length > 0 && mapStore.isFogRunInFlight)
+      }
+    })
+    return () => setSyncChangeHandler(null)
+  }, [])
+
+  // Fires on a restored session and on a fresh sign-in alike, then keeps the
+  // tab current — otherwise another device's uploads only ever arrive on reload.
+  const auth = useAuth()
+  const isSyncEnabled = auth.status === "signedIn" && auth.canSync
+  useEffect(() => {
+    if (!isSyncEnabled) return
+    requestSync("auth-ready")
+    return startSyncScheduler()
+  }, [isSyncEnabled])
 
   function handleAddFiles(files: FileList, mode: FogMode = fogMode) {
     const formData = new FormData()
@@ -525,10 +613,11 @@ export default function Home() {
     fetcher.submit(formData, { method: "post" })
   }
 
-  function handleDeleteTrack(trackId: string) {
+  function handleDeleteTrack(trackId: string, alsoOnServer = true) {
     const fd = new FormData()
     fd.set("intent", "delete-track")
     fd.set("trackId", trackId)
+    fd.set("alsoOnServer", alsoOnServer ? "1" : "0")
     fetcher.submit(fd, { method: "post" })
   }
 
@@ -731,6 +820,11 @@ export default function Home() {
             onOpenChange={setIsParseErrorOpen}
             failedFiles={parseFailedFiles}
           />
+          <DuplicateTracksDialog
+            open={isDuplicateOpen}
+            onOpenChange={setIsDuplicateOpen}
+            duplicateCount={duplicateCount}
+          />
           <PhotoCard
             group={selectedGroup}
             onClose={() => setSelectedGroup(null)}
@@ -764,7 +858,8 @@ export default function Home() {
                 onShare={() => setShowShareDialog(true)}
                 onDelete={
                   selectedTracks.length === 1
-                    ? () => handleDeleteTrack(selectedTracks[0].id)
+                    ? (alsoOnServer) =>
+                        handleDeleteTrack(selectedTracks[0].id, alsoOnServer)
                     : undefined
                 }
                 activeLap={activeLap}

@@ -1,0 +1,4 @@
+[test]
+# env.ts parses Bun.env at import time, so the test environment has to exist
+# before the first module is loaded.
+preload = ["./tests/setup.ts"]

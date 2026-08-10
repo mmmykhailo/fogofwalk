@@ -131,6 +131,15 @@
   html {
     @apply font-mono;
   }
+  /* In-page anchors (the /help contents list) glide instead of jumping. Has to
+     sit on the scrolling element, which is `html` — a `scroll-smooth` class on
+     a page wrapper would do nothing. Gated so it never overrides a stated
+     preference for less motion. */
+  @media (prefers-reduced-motion: no-preference) {
+    html {
+      scroll-behavior: smooth;
+    }
+  }
 }
 
 /* Pre-JS loading screen */

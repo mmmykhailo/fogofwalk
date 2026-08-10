@@ -479,6 +479,7 @@ export function MapView({
       // fitBounds is handled in handleProcessingUpdate (home.tsx) — it only needs the
       // map object, not sourcesReady.
       if (msg.type === "DONE") {
+        mapStore.isFogRunInFlight = false
         onProcessingUpdateRef.current?.(msg.processedCount, true)
 
         // Persist the computed fog cache (requires live sources)

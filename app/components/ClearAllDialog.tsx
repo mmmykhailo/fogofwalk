@@ -1,4 +1,5 @@
 import { Button } from "~/components/ui/button"
+import { useAuth } from "~/lib/server/authStore"
 import {
   Dialog,
   DialogContent,
@@ -23,6 +24,9 @@ export function ClearAllDialog({
   photoCount,
   onConfirm,
 }: ClearAllDialogProps) {
+  const auth = useAuth()
+  const isSynced = auth.status === "signedIn" && auth.canSync
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent showCloseButton={false}>
@@ -33,10 +37,19 @@ export function ClearAllDialog({
             {photoCount > 0
               ? ` and ${photoCount} photo${photoCount !== 1 ? "s" : ""}`
               : ""}{" "}
-            will be removed and the fog map will be reset. This cannot be
-            undone.
+            will be removed from this device and the fog map will be reset.
+            {photoCount > 0 &&
+              " Photos are not synced — those are gone for good."}
           </DialogDescription>
         </DialogHeader>
+
+        {isSynced && (
+          <p className="p-3 text-xs/relaxed text-muted-foreground ring-1 ring-foreground/10">
+            Your tracks stay on the server and will sync back to this device. To
+            delete them there as well, use <strong>Remove all</strong> in your
+            account.
+          </p>
+        )}
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel

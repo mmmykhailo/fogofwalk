@@ -3,6 +3,15 @@ name: Deploy to GitHub Pages
 on:
   push:
     branches: [master]
+    # A server-only commit has nothing to rebuild here. `shared/**` is
+    # deliberately absent: app/types/tracks.ts re-exports it, so the frontend
+    # genuinely does depend on it.
+    paths-ignore:
+      - "server/**"
+      - "e2e/**"
+      - ".github/workflows/deploy-server.yml"
+      - "**/*.md"
+  workflow_dispatch:
 
 # Sets permissions of the GITHUB_TOKEN to allow deployment to GitHub Pages
 permissions:
@@ -34,8 +43,9 @@ jobs:
       - name: Build
         run: bun run build
         env:
-          # Set the base path for GitHub Pages
-          PUBLIC_URL: /${{ github.event.repository.name }}
+          # The sync server's origin. Unset (or blank) compiles out every
+          # account and sync surface — see app/lib/server/config.ts.
+          VITE_API_URL: ${{ vars.VITE_API_URL }}
 
       - name: Setup Pages
         uses: actions/configure-pages@v4

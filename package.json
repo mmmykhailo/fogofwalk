@@ -5,9 +5,9 @@
   "scripts": {
     "build": "react-router build && mv build/client/* build && rm -rf build/client && cp build/index.html build/404.html",
     "dev": "react-router dev",
-    "start": "react-router-serve ./build/server/index.js",
     "typecheck": "react-router typegen && tsc",
-    "format": "prettier --write \"**/*.{ts,tsx}\""
+    "format": "prettier --write \"**/*.{ts,tsx}\"",
+    "test:e2e": "cd e2e && bun run test"
   },
   "dependencies": {
     "@base-ui/react": "^1.4.1",

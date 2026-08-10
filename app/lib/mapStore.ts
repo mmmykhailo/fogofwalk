@@ -1,5 +1,7 @@
 import type maplibregl from "maplibre-gl"
 import type { ParsedTrack, FogMode, WorkerInboundMessage } from "~/types/tracks"
+import { sortTracks, populateUniqueDistances } from "~/lib/statsAggregator"
+import { saveTracks, clearFogCache } from "~/lib/storage"
 
 // ─── Map position persistence (localStorage — synchronous, survives page unload) ──
 
@@ -78,6 +80,17 @@ interface MapStore {
    */
   runId: number
   /**
+   * True between posting PROCESS_TRACKS and the matching DONE.
+   *
+   * The progress UI cannot just assume work is outstanding after an action:
+   * the worker can finish a small batch *before* the action returns, since the
+   * action still has IDB writes (and, when signed in, a network round trip) to
+   * get through. Setting `isProcessing` unconditionally in that window strands
+   * "Processing 0 of N…" forever, because the only thing that clears it — DONE
+   * — has already been and gone.
+   */
+  isFogRunInFlight: boolean
+  /**
    * In-memory cache of the last share-card map render. Avoids re-creating a
    * WebGL context on every dialog open. Keyed by trackId. The ImageBitmap is
    * owned by this cache — call .close() before replacing or clearing it.
@@ -102,6 +115,7 @@ export const mapStore: MapStore = {
   initialZoom: _savedPosition?.zoom ?? null,
   isRestoreReprocess: false,
   runId: 0,
+  isFogRunInFlight: false,
   shareCardCache: null,
 }
 
@@ -130,7 +144,53 @@ export function startFogRun(): number {
 export function postToFogWorker(
   msg: DistributiveOmit<WorkerInboundMessage, "runId">
 ): void {
+  if (msg.type === "PROCESS_TRACKS") mapStore.isFogRunInFlight = true
+  if (msg.type === "RESET") mapStore.isFogRunInFlight = false
   mapStore.worker?.postMessage({ ...msg, runId: mapStore.runId })
+}
+
+/**
+ * Add newly-acquired tracks to the library: merge, recompute unique distances,
+ * hand them to the fog worker, persist, invalidate the fog cache.
+ *
+ * Both entry points for new tracks go through here — the `add-files` action and
+ * the sync engine's downloads — so a downloaded track is indistinguishable from
+ * an imported one.
+ *
+ * Note it **joins** the current fog run rather than calling `startFogRun()`:
+ * only the new tracks are posted, and the worker's accumulated fog polygon has
+ * to survive for that to be correct.
+ */
+export async function ingestTracks(
+  newTracks: ParsedTrack[],
+  mode: FogMode = mapStore.fogMode
+): Promise<ParsedTrack[]> {
+  // Drop anything already held under the same content hash. Re-importing a
+  // file, or importing one the server had just restored, must not produce two
+  // identical tracks — content-addressing is what makes that detectable.
+  // Tracks with no hash (imported before sync existed) are always kept.
+  const present = new Set(
+    mapStore.tracks.map((t) => t.contentHash).filter(Boolean)
+  )
+  const added = newTracks.filter((t) => {
+    if (!t.contentHash) return true
+    if (present.has(t.contentHash)) return false
+    present.add(t.contentHash)
+    return true
+  })
+
+  // Returns what was actually taken, never what was offered. Callers drive the
+  // progress UI off this: reporting the offered count when everything was a
+  // duplicate leaves "Processing 0 of N…" on screen forever, because no
+  // PROCESS_TRACKS was posted and so no DONE ever comes back.
+  if (added.length === 0) return added
+
+  mapStore.tracks = sortTracks([...mapStore.tracks, ...added])
+  populateUniqueDistances(mapStore.tracks)
+  postToFogWorker({ type: "PROCESS_TRACKS", tracks: added, mode })
+  await saveTracks(added)
+  await clearFogCache()
+  return added
 }
 
 export function worldFogGeoJSON(): GeoJSON.Feature<GeoJSON.Polygon> {
