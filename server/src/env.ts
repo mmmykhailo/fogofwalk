@@ -14,6 +14,12 @@ const csv = (raw: string | undefined): string[] =>
 
 const envSchema = z.object({
   PORT: z.coerce.number().int().positive().default(8787),
+  /**
+   * Interface to bind. The default reaches the whole network, which is what a
+   * container wants; behind a reverse proxy set it to 127.0.0.1 so the port is
+   * unreachable from outside the box whatever the firewall says.
+   */
+  HOST: z.string().min(1).default("0.0.0.0"),
   DATA_DIR: z.string().min(1).default("./data"),
   STORE_DRIVER: z.string().min(1).default("sqlite-fs"),
   /** Exact client origins allowed by CORS and by the OAuth redirect guard. */
@@ -36,6 +42,7 @@ const envSchema = z.object({
 
 export interface Env {
   PORT: number
+  HOST: string
   DATA_DIR: string
   STORE_DRIVER: string
   /** Normalised: no trailing slash, lowercased. */
@@ -91,6 +98,7 @@ export function parseEnv(source: Record<string, string | undefined>): Env {
 
   return {
     PORT: parsed.PORT,
+    HOST: parsed.HOST,
     DATA_DIR: parsed.DATA_DIR,
     STORE_DRIVER: parsed.STORE_DRIVER,
     ALLOWED_ORIGINS: origins,

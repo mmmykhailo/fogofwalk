@@ -44,6 +44,7 @@ a missing or malformed one aborts startup with a message naming it.
 | Variable | Required | Default | Purpose |
 | --- | --- | --- | --- |
 | `PORT` | no | `8787` | Port `Bun.serve` listens on. |
+| `HOST` | no | `0.0.0.0` | Interface to bind. Right for a container; behind a reverse proxy use `127.0.0.1` so the port is unreachable from the network. |
 | `DATA_DIR` | no | `./data` | SQLite file + blob tree (`sqlite-fs`). |
 | `STORE_DRIVER` | no | `sqlite-fs` | `sqlite-fs` or `memory`. |
 | `ALLOWED_ORIGINS` | **yes** | — | Comma-separated exact client origins. Drives CORS *and* the OAuth redirect allowlist. Never `*`. |
@@ -209,6 +210,103 @@ Backing up `sqlite-fs` is one file plus one folder: `DATA_DIR/fogofwalk.db*`
 
 ## Deployment
 
+Production runs on a Debian VPS as a plain systemd unit — Bun executing the
+TypeScript directly, Caddy in front for TLS. `.github/workflows/deploy-server.yml`
+does it on every push to `master` that touches `server/**` or `shared/**`, and on
+manual dispatch. Everything the VPS needs is in [`deploy/`](deploy/).
+
+### Layout on the box
+
+```
+/srv/fogofwalk/
+  releases/<sha>/{server,shared}   # one directory per deploy, rsync'd from CI
+  current -> releases/<sha>        # the symlink the unit's WorkingDirectory follows
+  data/                            # DATA_DIR — survives every deploy and rollback
+  cache/                           # HOME for the service (the unit blocks the real one)
+  server.env                       # rendered from GitHub secrets each deploy, 0600
+```
+
+Two accounts: `fogofwalk` runs the process (no shell, can write only `data/` and
+`cache/`), `deploy` receives the SSH connection and may restart exactly one unit
+via a narrow sudoers rule. Port 8787 is never opened — `HOST=127.0.0.1` means
+Caddy is the only way in.
+
+### First-time setup
+
+1. Point `api.<your-domain>` at the VPS with an `A` record, and leave ports 80
+   and 443 open. Caddy needs 80 for the ACME challenge even though nothing is
+   served there.
+2. Register a **production** GitHub OAuth app — keep the dev one on localhost.
+   Homepage is the client origin; the authorization callback URL must be exactly
+   `${PUBLIC_URL}/api/auth/github/callback`, since that is what `redirectUriFor()`
+   builds.
+3. Generate a CI keypair: `ssh-keygen -t ed25519 -C github-actions -f deploy_key`,
+   no passphrase.
+4. Provision the box:
+   ```bash
+   scp -r server/deploy root@<vps>:/tmp/fow-deploy
+   ssh root@<vps> 'DEPLOY_SSH_KEY="$(cat deploy_key.pub)" bash /tmp/fow-deploy/provision.sh'
+   ```
+   Idempotent — re-run it after editing `fogofwalk.service` or the `Caddyfile`.
+   It installs Bun (pinned by `BUN_VERSION`; keep it in step with the
+   `bun-version` in the workflow), Caddy, both users, the layout, the unit, the
+   sudoers rule and the firewall. It does not start the service: there is no
+   release yet, so the unit will show as failed until the first deploy.
+5. Add the repo secrets and variables:
+
+   | Kind | Name | Example |
+   | --- | --- | --- |
+   | secret | `VPS_SSH_KEY` | private half of the CI keypair |
+   | secret | `VPS_KNOWN_HOSTS` | output of `ssh-keyscan <vps>` |
+   | secret | `SESSION_SECRET` | ≥ 32 chars, **not** the one in your local `.env` |
+   | secret | `OAUTH_GITHUB_CLIENT_SECRET` | from the production OAuth app |
+   | variable | `VPS_HOST` | VPS IP or hostname |
+   | variable | `VPS_USER` | `deploy` |
+   | variable | `API_PUBLIC_URL` | `https://api.fog-of-walk.mykhailo.net` |
+   | variable | `ALLOWED_ORIGINS` | `https://fog-of-walk.mykhailo.net` |
+   | variable | `ALLOWED_LOGINS` | `github:your-login` |
+   | variable | `OAUTH_GITHUB_CLIENT_ID` | from the production OAuth app |
+   | variable | `VITE_API_URL` | same as `API_PUBLIC_URL` — read by the Pages build |
+
+   The `OAUTH_` prefix is not decoration: GitHub refuses secret and variable
+   names beginning with `GITHUB_`. The workflow maps them back to
+   `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` when it renders `server.env`.
+6. Run the workflow from the Actions tab (`workflow_dispatch`) rather than
+   waiting for a push, so a configuration mistake is isolated from a code change.
+
+### What a deploy does
+
+Typecheck and tests first — a red suite never reaches the VPS. Then the env file
+is rendered and piped over stdin (so no secret appears in the remote command
+line), `server/` and `shared/` are rsync'd into a new release directory, and
+[`deploy/release.sh`](deploy/release.sh) installs dependencies, swaps the
+`current` symlink, restarts the unit and polls `/health`. If it does not come up
+the previous release is put back and the job fails. Old releases are pruned to
+the newest three.
+
+`env.ts` validates with Zod at import time, so a malformed `server.env` kills
+the process at boot — which the health check catches and rolls back.
+
+### Operating it
+
+```bash
+journalctl -u fogofwalk -f                  # logs
+sudo systemctl restart fogofwalk            # restart
+ls -l /srv/fogofwalk/current                # which release is live
+ln -sfn /srv/fogofwalk/releases/<sha> /srv/fogofwalk/current \
+  && sudo systemctl restart fogofwalk       # manual rollback
+```
+
+State is `/srv/fogofwalk/data`: `fogofwalk.db` (plus `-wal`/`-shm`) and
+`blobs/`. To back it up, use `sqlite3 fogofwalk.db ".backup out.db"` rather than
+copying the file under WAL, and tar `blobs/` alongside it.
+
+Note the `PUT` rate limiter and the 60-second OAuth handoff codes are
+in-process, so this is a **single-instance** deployment by design. Running two
+copies against one data directory is not supported.
+
+### Docker, as an alternative
+
 ```bash
 docker build -f server/Dockerfile -t fogofwalk-server .   # from the repo root
 docker run -p 8787:8787 -v fogofwalk-data:/data --env-file server/.env \
@@ -220,6 +318,6 @@ needs `shared/`. The container runs as the non-root `bun` user and keeps its
 state in the `/data` volume (`DATA_DIR=/data`). There is no build step: Bun
 executes the TypeScript directly.
 
-Behind a reverse proxy, make sure `PUBLIC_URL` matches the public https URL —
+Behind any reverse proxy, make sure `PUBLIC_URL` matches the public https URL —
 the OAuth callback and the state cookie's `Secure` flag are both derived from
 it.

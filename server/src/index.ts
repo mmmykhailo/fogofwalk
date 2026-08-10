@@ -13,7 +13,7 @@ const app = createApp(store)
 
 const enabled = listProviders().map((provider) => provider.id)
 console.log(
-  `fogofwalk-server on :${env.PORT} — driver ${env.STORE_DRIVER}, ` +
+  `fogofwalk-server on ${env.HOST}:${env.PORT} — driver ${env.STORE_DRIVER}, ` +
     `origins ${env.ALLOWED_ORIGINS.join(", ")}, ` +
     `providers ${enabled.length > 0 ? enabled.join(", ") : "(none configured)"}`
 )
@@ -21,4 +21,5 @@ console.log(
 export default {
   fetch: app.fetch,
   port: env.PORT,
+  hostname: env.HOST,
 }

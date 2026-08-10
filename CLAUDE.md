@@ -331,6 +331,16 @@ app/lib/trackHash.ts     SHA-256 over canonical geometry
 **The alias is `~shared/*`, not `#shared/*`.** A `#`-prefixed specifier is Node/Bun package-imports
 syntax and is resolved before tsconfig paths are consulted.
 
+**Two deploy workflows, path-filtered against each other.** `deploy.yml` builds the SPA to GitHub
+Pages and now passes `VITE_API_URL` from a repo variable, so the public site does have sync;
+`deploy-server.yml` rsyncs `server/` + `shared/` to a Debian VPS (bare Bun + systemd behind Caddy,
+releases under `/srv/fogofwalk`, artifacts in `server/deploy/`). `shared/**` fires *both* — the
+frontend re-exports it through `app/types/tracks.ts`. Server-optional is still the invariant: no
+code path changed, only the build now sets the var, and clearing the variable restores the
+server-less bundle. `server.env` is rendered from GitHub secrets on every deploy, so a config
+change is a workflow re-run, not an SSH session. `HOST` (new, defaults to `0.0.0.0`) is what lets
+the VPS bind loopback-only; Docker and the e2e rig rely on the default.
+
 **`canonicalTrackString` is duplicated on the server** (it recomputes the hash to verify what a
 client claims). Changing it is a wire-format change — both sides, same commit, or devices silently
 stop deduping.

@@ -49,11 +49,14 @@ bun run test:e2e   # Playwright end-to-end suite (see e2e/README.md)
 level and writes a `404.html` so client-side routing works on static hosts). Drop that directory on
 GitHub Pages, Cloudflare Pages, Vercel, S3 — anything that serves files. No server is required.
 
-`.github/workflows/deploy.yml` does exactly this on every push to `master`, deploying to GitHub
-Pages without `VITE_API_URL` set — which compiles out every account and sync surface.
+`.github/workflows/deploy.yml` does exactly this on every push to `master` that touches the client,
+deploying to GitHub Pages with `VITE_API_URL` taken from the repository variable of the same name.
+Leave that variable unset and the build is server-less again: every account and sync surface is
+compiled out.
 
-To build with sync enabled, set `VITE_API_URL` to your API origin at build time. The server itself
-is a separate package with its own image and deployment notes — see [`server/README.md`](server/README.md).
+The API deploys separately — `.github/workflows/deploy-server.yml` ships `server/` to a Debian VPS
+(Bun + systemd behind Caddy) whenever `server/**` or `shared/**` changes. Setup, secrets and the
+rollback path are in [`server/README.md`](server/README.md).
 
 ## Architecture
 
