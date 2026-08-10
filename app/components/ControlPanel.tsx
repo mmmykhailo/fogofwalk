@@ -22,6 +22,9 @@ interface ControlPanelProps {
   onAddPhotos: (files: FileList) => void
   showPhotos: boolean
   onShowPhotosChange: (value: boolean) => void
+  showMyLocation: boolean
+  onShowMyLocationChange: (value: boolean) => void
+  locationPermissionDenied: boolean
 }
 
 export function ControlPanel({
@@ -42,6 +45,9 @@ export function ControlPanel({
   onAddPhotos,
   showPhotos,
   onShowPhotosChange,
+  showMyLocation,
+  onShowMyLocationChange,
+  locationPermissionDenied,
 }: ControlPanelProps) {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const photoInputRef = useRef<HTMLInputElement>(null)
@@ -133,6 +139,9 @@ export function ControlPanel({
         onMapModeChange={onMapModeChange}
         showPhotos={showPhotos}
         onShowPhotosChange={onShowPhotosChange}
+        showMyLocation={showMyLocation}
+        onShowMyLocationChange={onShowMyLocationChange}
+        locationPermissionDenied={locationPermissionDenied}
       />
     </>
   )

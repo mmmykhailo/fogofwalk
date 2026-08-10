@@ -56,6 +56,7 @@ import {
   suspendAutoSync,
 } from "~/lib/server/syncEngine"
 import { sortTracks, populateUniqueDistances } from "~/lib/statsAggregator"
+import { useMyLocation } from "~/lib/useMyLocation"
 import type { FogMode, MapMode, ParsedTrack } from "~/types/tracks"
 import type { PhotoEntry, PhotoGroup } from "~/types/photos"
 
@@ -349,6 +350,12 @@ export default function Home() {
   const [showShareDialog, setShowShareDialog] = useState(false)
   const [photos, setPhotos] = useState<PhotoEntry[]>(_restoredPhotos)
   const [showPhotos, setShowPhotos] = useState(true)
+  const {
+    showMyLocation,
+    permissionDenied: locationPermissionDenied,
+    position: myLocationPosition,
+    toggle: handleShowMyLocationChange,
+  } = useMyLocation()
   const [selectedGroup, setSelectedGroup] = useState<PhotoGroup | null>(null)
   const [photoErrorOpen, setPhotoErrorOpen] = useState(false)
   const [parseFailedFiles, setParseFailedFiles] = useState<string[]>([])
@@ -779,6 +786,8 @@ export default function Home() {
           photos={photos}
           showPhotos={showPhotos}
           onPhotoSelect={setSelectedGroup}
+          showMyLocation={showMyLocation}
+          myLocation={myLocationPosition}
           highlightCoordinates={highlightCoordinates}
           focusCoordinates={focusCoordinates}
           focusKey={focusKey}
@@ -804,6 +813,9 @@ export default function Home() {
             onAddPhotos={handleAddPhotos}
             showPhotos={showPhotos}
             onShowPhotosChange={setShowPhotos}
+            showMyLocation={showMyLocation}
+            onShowMyLocationChange={handleShowMyLocationChange}
+            locationPermissionDenied={locationPermissionDenied}
           />
           <FileUploadDialog
             open={showUploadDialog}

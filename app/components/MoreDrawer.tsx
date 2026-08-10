@@ -13,6 +13,7 @@ import {
   CloudIcon,
   GlobeIcon,
   MountainsIcon,
+  NavigationArrowIcon,
   XIcon,
 } from "@phosphor-icons/react"
 import { Drawer, DrawerContent, DrawerClose } from "~/components/ui/drawer"
@@ -46,6 +47,9 @@ interface MoreDrawerProps {
   onMapModeChange: (mode: MapMode) => void
   showPhotos: boolean
   onShowPhotosChange: (v: boolean) => void
+  showMyLocation: boolean
+  onShowMyLocationChange: (v: boolean) => void
+  locationPermissionDenied: boolean
 }
 
 export function MoreDrawer({
@@ -69,11 +73,15 @@ export function MoreDrawer({
   onMapModeChange,
   showPhotos,
   onShowPhotosChange,
+  showMyLocation,
+  onShowMyLocationChange,
+  locationPermissionDenied,
 }: MoreDrawerProps) {
   const close = () => onOpenChange(false)
   const [isClearAllOpen, setIsClearAllOpen] = useState(false)
   const [isSignInOpen, setIsSignInOpen] = useState(false)
   const [isAccountOpen, setIsAccountOpen] = useState(false)
+  const [isLocationHintOpen, setIsLocationHintOpen] = useState(false)
   const isMobile = useIsMobile()
 
   /**
@@ -215,6 +223,37 @@ export function MoreDrawer({
                   />
                 </div>
               )}
+              <div className="flex items-center px-3 py-2.5">
+                <NavigationArrowIcon
+                  weight="duotone"
+                  className="mr-3 size-5 shrink-0 text-muted-foreground"
+                />
+                <span className="flex-1 text-sm">Show my location</span>
+                <div className="relative">
+                  {isLocationHintOpen && (
+                    <div className="absolute right-0 bottom-full z-10 mb-2 w-max rounded bg-foreground px-2 py-1 text-xs text-nowrap text-background shadow-md">
+                      Location permission denied
+                    </div>
+                  )}
+                  <Switch
+                    checked={showMyLocation}
+                    onCheckedChange={(checked) => {
+                      if (locationPermissionDenied) {
+                        setIsLocationHintOpen(true)
+                        setTimeout(() => setIsLocationHintOpen(false), 2500)
+                        return
+                      }
+                      onShowMyLocationChange(checked)
+                    }}
+                    className={
+                      locationPermissionDenied
+                        ? "cursor-pointer opacity-50"
+                        : undefined
+                    }
+                    aria-label="Show my location"
+                  />
+                </div>
+              </div>
               <div className="flex items-center px-3 py-2.5">
                 <GlobeIcon
                   weight="duotone"
