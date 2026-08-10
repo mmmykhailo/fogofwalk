@@ -81,6 +81,16 @@ jobs:
           chmod 700 ~/.ssh
           printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/id_deploy
           chmod 600 ~/.ssh/id_deploy
+          # Derives the public half — fails loudly if the secret is truncated,
+          # in the wrong format or passphrase-protected. The fingerprint is
+          # what you compare against `ssh-keygen -l -f ~deploy/.ssh/authorized_keys`
+          # on the VPS when authentication is refused.
+          if ! ssh-keygen -y -f ~/.ssh/id_deploy > ~/.ssh/id_deploy.pub; then
+            echo "VPS_SSH_KEY is not a usable private key (truncated, or has a passphrase)." >&2
+            exit 1
+          fi
+          echo "deploying with key:"
+          ssh-keygen -l -f ~/.ssh/id_deploy.pub
           # Pinned host key rather than StrictHostKeyChecking=no — otherwise the
           # first hop of every run trusts whatever answers on that address.
           printf '%s\n' "$VPS_KNOWN_HOSTS" > ~/.ssh/known_hosts
@@ -91,9 +101,37 @@ jobs:
             IdentitiesOnly yes
             StrictHostKeyChecking yes
             ServerAliveInterval 30
+            # Without these a refused key falls through to keyboard-interactive
+            # and the job reports "Permission denied, please try again" twice
+            # before the real reason.
+            BatchMode yes
+            PreferredAuthentications publickey
           EOF
           printf '  HostName %s\n  User %s\n' "$VPS_HOST" "$VPS_USER" >> ~/.ssh/config
           chmod 600 ~/.ssh/config
+
+          # known_hosts is matched against the exact name ssh is given, so a
+          # secret scanned from the IP does not cover the hostname (and vice
+          # versa). Without this check the first SSH step just dies with
+          # "Host key verification failed" and exit 255.
+          if ! ssh-keygen -F "$VPS_HOST" -f ~/.ssh/known_hosts >/dev/null; then
+            echo "VPS_KNOWN_HOSTS has no entry for '$VPS_HOST' (the value of VPS_HOST)." >&2
+            echo "Regenerate it so it covers that exact name:" >&2
+            echo "  ssh-keyscan $VPS_HOST" >&2
+            echo "Entries currently pinned:" >&2
+            ssh-keygen -l -f ~/.ssh/known_hosts >&2 || true
+            exit 1
+          fi
+
+          # One cheap round trip, so an authentication problem is reported here
+          # rather than by whichever step happens to SSH first.
+          if ! ssh vps true; then
+            echo "Cannot authenticate as '$VPS_USER' on '$VPS_HOST'." >&2
+            echo "On the VPS, check the fingerprint above appears in:" >&2
+            echo "  ssh-keygen -l -f ~$VPS_USER/.ssh/authorized_keys" >&2
+            echo "If it is empty, provision.sh ran without DEPLOY_SSH_KEY set." >&2
+            exit 1
+          fi
 
       # Rendered from the environment, not from ${{ }} interpolation, so no
       # secret is ever substituted into the script text itself.

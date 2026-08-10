@@ -4,8 +4,13 @@
 # fresh Debian box:
 #
 #   scp -r server/deploy root@<vps>:/tmp/fow-deploy
-#   ssh root@<vps> 'DEPLOY_SSH_KEY="ssh-ed25519 AAAA... github-actions" \
+#   scp deploy_key.pub root@<vps>:/tmp/fow-deploy/
+#   ssh root@<vps> 'DEPLOY_SSH_KEY="$(cat /tmp/fow-deploy/deploy_key.pub)" \
 #     bash /tmp/fow-deploy/provision.sh'
+#
+# Copy the .pub file over rather than interpolating it: inside '...' the
+# $(cat) runs on the VPS, and inside "..." the local shell would expand
+# $DEPLOY_SSH_KEY before ssh ever saw it.
 #
 # Idempotent: safe to re-run after editing the unit file or the Caddyfile.
 # It does NOT start the service — there is no release on disk until the
@@ -66,15 +71,28 @@ fi
 # So a failed deploy can print the service's own logs back to the workflow.
 usermod -aG systemd-journal "$DEPLOY_USER"
 
+say "authorized_keys"
+deploy_home="$(getent passwd "$DEPLOY_USER" | cut -d: -f6)"
+install -d -m 700 -o "$DEPLOY_USER" -g "$DEPLOY_USER" "$deploy_home/.ssh"
 if [[ -n "${DEPLOY_SSH_KEY:-}" ]]; then
-	say "authorized_keys"
-	deploy_home="$(getent passwd "$DEPLOY_USER" | cut -d: -f6)"
-	install -d -m 700 -o "$DEPLOY_USER" -g "$DEPLOY_USER" "$deploy_home/.ssh"
 	touch "$deploy_home/.ssh/authorized_keys"
 	grep -qxF "$DEPLOY_SSH_KEY" "$deploy_home/.ssh/authorized_keys" ||
 		echo "$DEPLOY_SSH_KEY" >>"$deploy_home/.ssh/authorized_keys"
 	chown "$DEPLOY_USER:$DEPLOY_USER" "$deploy_home/.ssh/authorized_keys"
 	chmod 600 "$deploy_home/.ssh/authorized_keys"
+elif [[ ! -s "$deploy_home/.ssh/authorized_keys" ]]; then
+	# Skipping this silently is how you get "Permission denied (publickey)"
+	# from the workflow half an hour later. Note that quoting the ssh command
+	# with '...' evaluates $(cat ...) on THIS machine, where the .pub file
+	# does not exist — which is the usual way DEPLOY_SSH_KEY ends up empty.
+	echo
+	echo "WARNING: DEPLOY_SSH_KEY was not set and ${DEPLOY_USER} has no" >&2
+	echo "authorized_keys. The deploy workflow cannot log in. Re-run with:" >&2
+	echo "  DEPLOY_SSH_KEY=\"\$(cat /tmp/fow-deploy/deploy_key.pub)\" bash provision.sh" >&2
+fi
+if [[ -s "$deploy_home/.ssh/authorized_keys" ]]; then
+	echo "keys authorised for ${DEPLOY_USER}:"
+	ssh-keygen -l -f "$deploy_home/.ssh/authorized_keys" || true
 fi
 
 say "layout"

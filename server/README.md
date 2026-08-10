@@ -245,8 +245,15 @@ Caddy is the only way in.
 4. Provision the box:
    ```bash
    scp -r server/deploy root@<vps>:/tmp/fow-deploy
-   ssh root@<vps> 'DEPLOY_SSH_KEY="$(cat deploy_key.pub)" bash /tmp/fow-deploy/provision.sh'
+   scp deploy_key.pub root@<vps>:/tmp/fow-deploy/
+   ssh root@<vps> 'DEPLOY_SSH_KEY="$(cat /tmp/fow-deploy/deploy_key.pub)" bash /tmp/fow-deploy/provision.sh'
    ```
+   Copy the `.pub` file across rather than interpolating it into the command:
+   inside `'...'` the `$(cat)` runs on the VPS, and inside `"..."` your local
+   shell would expand `$DEPLOY_SSH_KEY` first. Either mistake leaves the deploy
+   user with no authorized key, and the workflow fails with
+   `Permission denied (publickey)`. The script prints the authorised
+   fingerprints at the end — check yours is there.
    Idempotent — re-run it after editing `fogofwalk.service` or the `Caddyfile`.
    It installs Bun (pinned by `BUN_VERSION`; keep it in step with the
    `bun-version` in the workflow), Caddy, both users, the layout, the unit, the
@@ -257,7 +264,7 @@ Caddy is the only way in.
    | Kind | Name | Example |
    | --- | --- | --- |
    | secret | `VPS_SSH_KEY` | private half of the CI keypair |
-   | secret | `VPS_KNOWN_HOSTS` | output of `ssh-keyscan <vps>` |
+   | secret | `VPS_KNOWN_HOSTS` | output of `ssh-keyscan <the exact value of VPS_HOST>` |
    | secret | `SESSION_SECRET` | ≥ 32 chars, **not** the one in your local `.env` |
    | secret | `OAUTH_GITHUB_CLIENT_SECRET` | from the production OAuth app |
    | variable | `VPS_HOST` | VPS IP or hostname |
@@ -271,6 +278,16 @@ Caddy is the only way in.
    The `OAUTH_` prefix is not decoration: GitHub refuses secret and variable
    names beginning with `GITHUB_`. The workflow maps them back to
    `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` when it renders `server.env`.
+
+   `VPS_KNOWN_HOSTS` has to cover **the exact name `VPS_HOST` holds** — ssh
+   matches `known_hosts` against the name it is given, so a key scanned from the
+   IP does not cover the hostname. The workflow checks this before its first SSH
+   and tells you what to re-scan. `ssh-keyscan` is trust-on-first-use, so verify
+   the fingerprint against the box itself:
+   ```bash
+   ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub          # on the VPS
+   ssh-keygen -lf <(ssh-keyscan -t ed25519 "$VPS_HOST")      # locally, must match
+   ```
 6. Run the workflow from the Actions tab (`workflow_dispatch`) rather than
    waiting for a push, so a configuration mistake is isolated from a code change.
 
