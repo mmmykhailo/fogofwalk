@@ -26,7 +26,7 @@ Six specs, one per area of sync behaviour:
 | `deletion.spec.ts` | the three deletion semantics — per-track with and without the server switch, purge-all, clear-all |
 | `suspension.spec.ts` | auto-sync suspension after a local-only delete, and that only a manual sync clears it |
 | `serverless.spec.ts` | the `VITE_API_URL`-unset build: no account surfaces, no requests, everything else still works |
-| `rate-limit.spec.ts` | a 429 upload is retried inside the same sync run, and the retry is bounded |
+| `rate-limit.spec.ts` | a 429 upload is retried inside the same sync run, the retry is bounded, and both account surfaces count an upload hold down |
 
 ## How the rig fits together
 
@@ -68,6 +68,8 @@ and check the matching spec fails — all six below were verified to do so:
 | Break | Spec that must fail |
 |---|---|
 | dropping the 429 retry in `uploadTrack` | a 429 is retried within the same sync |
+| dropping `announceHold` from the pacing branch of `acquireUploadSlot` | self-paced holds are announced too |
+| `useUploadHoldNotice` not rendered by the account surfaces | the account surfaces explain the hold and count down |
 | `newTracksCount: allTracks.length` in `add-files` | re-importing the same files … does not hang |
 | `clear-all` propagating deletions to the server | clear all leaves the server untouched |
 | dropping `appliedTombstones` freshness check | a deleted track can be re-imported |

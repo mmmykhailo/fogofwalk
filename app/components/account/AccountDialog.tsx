@@ -16,6 +16,7 @@ import {
   useSyncStatus,
 } from "~/lib/server/syncEngine"
 import { useServerHealth } from "~/lib/server/serverHealth"
+import { useUploadHoldNotice } from "~/lib/server/useUploadHoldNotice"
 import { AccountAvatar } from "./AccountAvatar"
 import { DeleteAccountBlock } from "./DeleteAccountBlock"
 import { PurgeServerBlock } from "./PurgeServerBlock"
@@ -32,6 +33,7 @@ export function AccountDialog({ open, onOpenChange }: AccountDialogProps) {
   const isSuspended = useIsAutoSyncSuspended()
   const health = useServerHealth(true)
   const isOffline = health === "offline"
+  const holdNotice = useUploadHoldNotice()
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false)
   const [isPurgeConfirmOpen, setIsPurgeConfirmOpen] = useState(false)
   const [purgedCount, setPurgedCount] = useState<number | null>(null)
@@ -97,10 +99,20 @@ export function AccountDialog({ open, onOpenChange }: AccountDialogProps) {
           <div className="flex items-center gap-3 p-3 ring-1 ring-foreground/10">
             <div className="min-w-0 flex-1">
               <p className="text-xs font-medium">Track sync</p>
-              <p className="truncate text-xs text-muted-foreground">
-                {isSuspended
-                  ? "Paused after a local delete"
-                  : (describeSyncStatus(syncStatus) ?? "Not synced yet")}
+              {/*
+                Wraps rather than truncating: the throttle notice is a whole
+                sentence with a countdown at the end, and an ellipsis would cut
+                off the one number the user is waiting on. Every other status is
+                short enough to stay on one line anyway.
+              */}
+              <p
+                data-testid="sync-status"
+                className="text-xs break-words text-muted-foreground"
+              >
+                {holdNotice ??
+                  (isSuspended
+                    ? "Paused after a local delete"
+                    : (describeSyncStatus(syncStatus) ?? "Not synced yet"))}
               </p>
             </div>
             <Button

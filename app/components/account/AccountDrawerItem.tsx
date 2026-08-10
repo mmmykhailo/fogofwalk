@@ -17,6 +17,7 @@ import {
   useIsAutoSyncSuspended,
   useSyncStatus,
 } from "~/lib/server/syncEngine"
+import { useUploadHoldNotice } from "~/lib/server/useUploadHoldNotice"
 import { AccountAvatar } from "./AccountAvatar"
 
 interface AccountDrawerItemProps {
@@ -44,6 +45,7 @@ export function AccountDrawerItem({
   const health = useServerHealth(true)
   const syncStatus = useSyncStatus()
   const isSuspended = useIsAutoSyncSuspended()
+  const holdNotice = useUploadHoldNotice()
 
   if (auth.status === "disabled") return null
 
@@ -58,7 +60,9 @@ export function AccountDrawerItem({
     if (!auth.canSync) description = "Not enabled for sync"
     else if (isSuspended) description = "Sync paused — reload to resume"
     else if (isOffline) description = "Offline — will sync later"
-    else description = describeSyncStatus(syncStatus)
+    // Ahead of the plain status: "Syncing 108 of 195…" is true during a hold
+    // but reads as a hang, because that count is exactly what does not move.
+    else description = holdNotice ?? describeSyncStatus(syncStatus)
   }
 
   return (

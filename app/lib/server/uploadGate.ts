@@ -16,6 +16,7 @@
  * would re-storm a limiter that is already full.
  */
 
+import { useEffect, useState, useSyncExternalStore } from "react"
 import {
   UPLOAD_RATE_CLIENT_BUDGET,
   UPLOAD_RATE_WINDOW_MS,
@@ -34,12 +35,52 @@ const MAX_UPLOAD_BACKOFF_MS = UPLOAD_RATE_WINDOW_MS
 /** Small padding so a slot is genuinely free by the time we wake up. */
 const WAKE_MARGIN_MS = 25
 
+/**
+ * Shortest hold worth telling the user about.
+ *
+ * The pacer waits constantly in small increments once the budget is tight;
+ * surfacing those would flash a one-second countdown at somebody watching a
+ * sync that is in fact progressing normally.
+ */
+const HOLD_NOTICE_MIN_MS = 2000
+
 /** Send timestamps inside the current window, oldest first. */
 const sent: number[] = []
 /** Set by a 429: every worker holds off until this passes. */
-let pausedUntil = 0
+let penaltyUntil = 0
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+
+// ─── Published hold, for the account surfaces ─────────────────────────────────
+
+/**
+ * When uploads are expected to resume, if the wait is long enough to explain.
+ *
+ * Separate from `penaltyUntil` because the two answer different questions: that
+ * one is *why the 429 path sleeps*, this one is *what to tell the user*. The
+ * commonest long hold is not a 429 at all — it is the pacer, which spends the
+ * whole first burst of a large import and then waits out a full window.
+ */
+let noticeUntil = 0
+
+const listeners = new Set<() => void>()
+
+function subscribe(listener: () => void): () => void {
+  listeners.add(listener)
+  return () => listeners.delete(listener)
+}
+
+function getNoticeUntil(): number {
+  return noticeUntil
+}
+
+/** Publish a hold, if it is long enough to be worth a line of UI. */
+function announceHold(resumeAt: number): void {
+  if (resumeAt - Date.now() < HOLD_NOTICE_MIN_MS) return
+  if (resumeAt <= noticeUntil) return
+  noticeUntil = resumeAt
+  for (const listener of listeners) listener()
+}
 
 /**
  * Resolve once this upload fits inside the budget.
@@ -51,8 +92,9 @@ export async function acquireUploadSlot(): Promise<void> {
   for (;;) {
     const now = Date.now()
 
-    if (now < pausedUntil) {
-      await sleep(pausedUntil - now)
+    if (now < penaltyUntil) {
+      announceHold(penaltyUntil)
+      await sleep(penaltyUntil - now)
       continue
     }
 
@@ -64,8 +106,13 @@ export async function acquireUploadSlot(): Promise<void> {
       return
     }
 
-    // Full. The oldest send is the first to leave the window.
-    await sleep(sent[0] - cutoff + WAKE_MARGIN_MS)
+    // Full. The oldest send is the first to leave the window — and because a
+    // fresh page spends its whole budget in one burst, that first wait is very
+    // nearly the entire window. Announcing it is the difference between a
+    // countdown and a minute of "Syncing 108 of 195…" with nothing moving.
+    const resumeAt = sent[0] + UPLOAD_RATE_WINDOW_MS
+    announceHold(resumeAt)
+    await sleep(resumeAt - now + WAKE_MARGIN_MS)
   }
 }
 
@@ -79,11 +126,12 @@ export async function acquireUploadSlot(): Promise<void> {
  */
 export function penalizeUploads(retryAfterMs: number): void {
   const wait = Math.min(Math.max(retryAfterMs, 0), MAX_UPLOAD_BACKOFF_MS)
-  pausedUntil = Math.max(pausedUntil, Date.now() + wait)
+  penaltyUntil = Math.max(penaltyUntil, Date.now() + wait)
   // Our view of the window was wrong, and the server has just told us when it
   // next has room. Start counting again from there rather than carrying
   // estimates we know to be bad.
   sent.length = 0
+  announceHold(penaltyUntil)
 }
 
 /**
@@ -94,8 +142,32 @@ export function fallbackBackoffMs(attempt: number): number {
   return Math.min(1000 * 2 ** attempt, MAX_UPLOAD_BACKOFF_MS)
 }
 
-/** Test seam: drop all pacing state. */
-export function resetUploadGate(): void {
-  sent.length = 0
-  pausedUntil = 0
+/**
+ * Whole seconds until uploads resume, or `null` when nothing is holding them.
+ *
+ * `noticeUntil` is a fixed instant, so subscribing to it alone would render the
+ * countdown once and leave it frozen. The interval is what makes it tick, and it
+ * stops itself at zero rather than re-rendering forever.
+ */
+export function useUploadHoldSeconds(): number | null {
+  const holdUntil = useSyncExternalStore(
+    subscribe,
+    getNoticeUntil,
+    getNoticeUntil
+  )
+  const [now, setNow] = useState(() => Date.now())
+
+  useEffect(() => {
+    if (holdUntil <= Date.now()) return
+    setNow(Date.now())
+    const timer = window.setInterval(() => {
+      const tick = Date.now()
+      setNow(tick)
+      if (tick >= holdUntil) window.clearInterval(timer)
+    }, 1000)
+    return () => window.clearInterval(timer)
+  }, [holdUntil])
+
+  const remainingMs = holdUntil - now
+  return remainingMs > 0 ? Math.ceil(remainingMs / 1000) : null
 }

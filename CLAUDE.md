@@ -436,6 +436,26 @@ import stays under it instead of discovering it by failing. Three things about i
   `[sync] item failed: Too many uploads` lines and left most of a bulk import unsynced until later
   polls. The retry has to be bounded, or a server that keeps saying no parks sync forever.
 
+The hold is published (`useUploadHoldSeconds`) and worded once in `useUploadHoldNotice`, which both
+`AccountDialog` and `AccountDrawerItem` render — a silent minute-long stall reads as a hang. Four
+things about it:
+- **Both hold paths announce, not just the 429 one.** The commonest long hold is the pacer: a fresh
+  page spends its whole budget in one burst and then waits out a full window, with the server never
+  saying no. Reporting only on `penalizeUploads` left the first sync of a large library showing
+  "Syncing 108 of 195…" for a minute — the one number that cannot move — and the notice appeared
+  only after a reload, when the client's fresh budget collided with the server's window.
+- `noticeUntil` is separate from `penaltyUntil` because they answer different questions: one is why
+  the 429 path sleeps, the other is what to tell the user. Holds under `HOLD_NOTICE_MIN_MS` are not
+  announced, or the pacer's ordinary sub-second waits would flash a countdown during a healthy sync.
+- The notice shows only while `syncStatus.phase === "syncing"`. Once the retries are spent the
+  deadline still gates the next attempt, but nothing resumes on its own, so a countdown would
+  promise something false.
+- The "Sync now" button deliberately keeps saying "Syncing…" through a hold — `AppPage.syncNow` in
+  the e2e rig treats any other label as "the run is over".
+
+`useUploadHoldNotice` is its own module rather than a member of `uploadGate`: the gate knows when
+uploads resume but nothing about sync runs, and importing `syncEngine` there would close a cycle.
+
 The wait travels in the **JSON error body** (`ApiError.retryAfterMs`), not only in `Retry-After`: the
 app is cross-origin to the API, so a response header is unreadable from JS unless CORS exposes it.
 The header is still sent, and `app.ts` lists it in `exposeHeaders`, for everything that is not this
