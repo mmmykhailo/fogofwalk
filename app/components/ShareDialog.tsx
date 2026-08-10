@@ -12,6 +12,7 @@ import { mapStore } from "~/lib/mapStore"
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogFooter,
@@ -317,6 +318,9 @@ export function ShareDialog({
                 ? "Share activity"
                 : `Share ${tracks.length} activities`}
             </DialogTitle>
+            <DialogDescription className="sr-only">
+              Customize and export a shareable image of this activity
+            </DialogDescription>
             <Button
               variant="ghost"
               size="icon-xs"

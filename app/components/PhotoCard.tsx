@@ -11,6 +11,7 @@ import { Button } from "~/components/ui/button"
 import {
   Drawer,
   DrawerContent,
+  DrawerDescription,
   DrawerHeader,
   DrawerTitle,
 } from "~/components/ui/drawer"
@@ -96,6 +97,9 @@ export function PhotoCard({ group, onClose }: PhotoCardProps) {
         }}
       >
         <DrawerContent>
+          <DrawerDescription className="sr-only">
+            Photo viewer
+          </DrawerDescription>
           <DrawerHeader>
             <div className="flex items-center justify-between gap-2">
               <DrawerTitle className="truncate text-xs">

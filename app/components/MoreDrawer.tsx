@@ -16,7 +16,13 @@ import {
   NavigationArrowIcon,
   XIcon,
 } from "@phosphor-icons/react"
-import { Drawer, DrawerContent, DrawerClose } from "~/components/ui/drawer"
+import {
+  Drawer,
+  DrawerContent,
+  DrawerClose,
+  DrawerTitle,
+  DrawerDescription,
+} from "~/components/ui/drawer"
 import { Item, ItemContent, ItemMedia, ItemTitle } from "~/components/ui/item"
 import { Switch } from "~/components/ui/switch"
 import { Button } from "~/components/ui/button"
@@ -102,6 +108,10 @@ export function MoreDrawer({
         direction={isMobile ? "bottom" : "right"}
       >
         <DrawerContent className="overflow-hidden">
+          <DrawerTitle className="sr-only">Menu</DrawerTitle>
+          <DrawerDescription className="sr-only">
+            App settings, file actions, and account options
+          </DrawerDescription>
           {!isMobile && (
             <div className="flex shrink-0 items-center justify-end border-b border-foreground/10 px-3 py-2">
               <DrawerClose asChild>

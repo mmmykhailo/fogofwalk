@@ -19,6 +19,7 @@ import { Button } from "~/components/ui/button"
 import {
   Drawer,
   DrawerContent,
+  DrawerDescription,
   DrawerHeader,
   DrawerTitle,
 } from "~/components/ui/drawer"
@@ -187,6 +188,9 @@ export function TrackStatsPanel({
           modal={false}
         >
           <DrawerContent>
+            <DrawerDescription className="sr-only">
+              Track statistics
+            </DrawerDescription>
             <DrawerHeader>
               <div className="flex items-center justify-between gap-2">
                 <DrawerTitle className="min-w-0 flex-1 truncate">

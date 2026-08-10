@@ -20,6 +20,7 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
+  DialogDescription,
   DialogFooter,
 } from "~/components/ui/dialog"
 import { Button } from "~/components/ui/button"
@@ -902,10 +903,10 @@ export default function Home() {
               <DialogContent showCloseButton={false}>
                 <DialogHeader>
                   <DialogTitle>Add to stats?</DialogTitle>
+                  <DialogDescription>
+                    &ldquo;{pendingTrack.name}&rdquo;
+                  </DialogDescription>
                 </DialogHeader>
-                <p className="text-sm text-muted-foreground">
-                  &ldquo;{pendingTrack.name}&rdquo;
-                </p>
                 <DialogFooter className="flex-col gap-2 sm:flex-row">
                   <Button
                     variant="outline"

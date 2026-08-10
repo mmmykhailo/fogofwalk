@@ -3,6 +3,7 @@ import { Button } from "~/components/ui/button"
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -69,6 +70,9 @@ export function AccountDialog({ open, onOpenChange }: AccountDialogProps) {
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>Account</DialogTitle>
+          <DialogDescription className="sr-only">
+            Manage your account, sync status, and server data
+          </DialogDescription>
         </DialogHeader>
 
         <div className="flex items-center gap-3">
