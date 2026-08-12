@@ -105,6 +105,30 @@ export interface ManifestPage {
  */
 export type TrackUploadPayload = Omit<ParsedTrack, "id">
 
+// ─── Data Export (GDPR Right of Access) ────────────────────────────────────────
+
+export interface ExportedIdentity {
+  provider: string
+  providerUserId: string
+  login: string | null
+  email: string | null
+  createdAt: number
+}
+
+export interface ExportedSession {
+  createdAt: number
+  expiresAt: number
+  lastUsedAt: number
+}
+
+export interface DataExportResponse {
+  exportedAt: string
+  account: ServerUser & { createdAt: number }
+  identities: ExportedIdentity[]
+  sessions: ExportedSession[]
+  tracks: ParsedTrack[]
+}
+
 // ─── Errors ────────────────────────────────────────────────────────────────────
 
 export type ApiErrorCode =
