@@ -60,6 +60,8 @@ export interface ServerStore {
    * is what `ServerUser.provider` reports.
    */
   findPrimaryIdentity(userId: string): Promise<Identity | null>
+  /** All identities linked to the user (for data export). */
+  findIdentitiesForUser(userId: string): Promise<Identity[]>
   /** Cascades identities, sessions, tracks, tombstones and geometry blobs. */
   deleteUser(userId: string): Promise<void>
 
@@ -73,6 +75,8 @@ export interface ServerStore {
   touchSession(tokenHash: string, lastUsedAt: number): Promise<void>
   deleteSession(tokenHash: string): Promise<void>
   deleteSessionsForUser(userId: string): Promise<void>
+  /** All sessions for the user (for data export). */
+  findSessionsForUser(userId: string): Promise<Session[]>
 
   // ── tracks ──────────────────────────────────────────────────────────────
   listManifest(userId: string, sinceCursor: number): Promise<ManifestPage>
@@ -85,6 +89,8 @@ export interface ServerStore {
    * deleting device can record its own tombstone as already applied.
    */
   deleteTrack(userId: string, contentHash: string): Promise<number>
+  /** All tracks for the user with full geometry (for data export). */
+  listAllTracksForUser(userId: string): Promise<Array<any>>
   /**
    * Removes every track row and blob for the user and returns how many went.
    *

@@ -8,7 +8,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "~/components/ui/dialog"
-import { friendlyMessage } from "~/lib/server/apiClient"
+import { apiGet, friendlyMessage } from "~/lib/server/apiClient"
 import { signOut, useAuth } from "~/lib/server/authStore"
 import {
   describeSyncStatus,
@@ -28,6 +28,19 @@ interface AccountDialogProps {
   onOpenChange: (open: boolean) => void
 }
 
+function downloadFile(data: unknown, filename: string): void {
+  const json = JSON.stringify(data, null, 2)
+  const blob = new Blob([json], { type: "application/json" })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement("a")
+  link.href = url
+  link.download = filename
+  document.body.appendChild(link)
+  link.click()
+  document.body.removeChild(link)
+  URL.revokeObjectURL(url)
+}
+
 export function AccountDialog({ open, onOpenChange }: AccountDialogProps) {
   const auth = useAuth()
   const syncStatus = useSyncStatus()
@@ -39,6 +52,8 @@ export function AccountDialog({ open, onOpenChange }: AccountDialogProps) {
   const [isPurgeConfirmOpen, setIsPurgeConfirmOpen] = useState(false)
   const [purgedCount, setPurgedCount] = useState<number | null>(null)
   const [isSigningOut, setIsSigningOut] = useState(false)
+  const [isExporting, setIsExporting] = useState(false)
+  const [exportSuccess, setExportSuccess] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   // Never reopen onto a half-finished destructive flow.
@@ -47,9 +62,28 @@ export function AccountDialog({ open, onOpenChange }: AccountDialogProps) {
       setIsDeleteConfirmOpen(false)
       setIsPurgeConfirmOpen(false)
       setPurgedCount(null)
+      setExportSuccess(false)
       setError(null)
     }
   }, [open])
+
+  async function handleExport() {
+    setIsExporting(true)
+    setError(null)
+    setExportSuccess(false)
+    try {
+      const response = await apiGet("/api/account/export")
+      const filename = `fogofwalk-export-${new Date().toISOString().split("T")[0]}.json`
+      downloadFile(response, filename)
+      setExportSuccess(true)
+      // Reset success message after 3 seconds
+      setTimeout(() => setExportSuccess(false), 3000)
+    } catch (err) {
+      setError(friendlyMessage(err))
+    } finally {
+      setIsExporting(false)
+    }
+  }
 
   if (auth.status !== "signedIn") return null
 
@@ -136,24 +170,47 @@ export function AccountDialog({ open, onOpenChange }: AccountDialogProps) {
           </div>
         )}
 
-        {auth.canSync && !isOffline && !isDeleteConfirmOpen && (
+        {!isDeleteConfirmOpen && (
           <div className="flex items-center gap-3 p-3 ring-1 ring-foreground/10">
             <div className="min-w-0 flex-1">
               <p className="text-xs font-medium">Server storage</p>
               <p className="text-xs text-muted-foreground">
-                {purgedCount === null
-                  ? "Remove every track from the server, keep your account"
-                  : `Removed ${purgedCount} track${purgedCount === 1 ? "" : "s"} from the server`}
+                {auth.canSync
+                  ? purgedCount === null
+                    ? "Remove every track from the server, keep your account"
+                    : `Removed ${purgedCount} track${purgedCount === 1 ? "" : "s"} from the server`
+                  : "Export the data stored on the server"}
               </p>
             </div>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setIsPurgeConfirmOpen(true)}
-              disabled={isPurgeConfirmOpen}
-            >
-              Remove all
-            </Button>
+            <div className="flex shrink-0 flex-col gap-2">
+              {auth.canSync && !isOffline && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setIsPurgeConfirmOpen(true)}
+                  disabled={isPurgeConfirmOpen}
+                >
+                  Remove all
+                </Button>
+              )}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleExport}
+                disabled={isExporting || isOffline || isPurgeConfirmOpen}
+                title={
+                  isOffline
+                    ? "Cannot export while server is unavailable"
+                    : undefined
+                }
+              >
+                {isExporting
+                  ? "Exporting…"
+                  : exportSuccess
+                    ? "Downloaded!"
+                    : "Export my data"}
+              </Button>
+            </div>
           </div>
         )}
 

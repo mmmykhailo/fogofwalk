@@ -1,15 +1,16 @@
 /**
- *   GET    /api/me        user + capabilities (any signed-in user, allowed or not)
- *   DELETE /api/account   erase user, identities, sessions, tracks, blobs
+ *   GET    /api/me              user + capabilities (any signed-in user, allowed or not)
+ *   GET    /api/account/export  full data export in JSON format (any signed-in user)
+ *   DELETE /api/account         erase user, identities, sessions, tracks, blobs
  *
- * `/api/me` is deliberately **not** behind `requireAllowed`: a pending user
- * still sees their name in the drawer, they just have `capabilities.sync ===
- * false`.
+ * `/api/me` and `/api/account/export` are deliberately **not** behind `requireAllowed`:
+ * a pending user still sees their name in the drawer, and should be able to
+ * export their data.
  */
 
 import { Hono } from "hono"
 
-import type { MeResponse } from "~shared/api"
+import type { DataExportResponse, MeResponse } from "~shared/api"
 
 import { createRequireSession } from "../auth/middleware"
 import type { AuthEnv } from "../auth/middleware"
@@ -27,6 +28,50 @@ export function createAccountRoutes(store: ServerStore) {
       capabilities: capabilitiesFor(user),
     }
     return c.json(body)
+  })
+
+  app.get("/account/export", requireSession, async (c) => {
+    const user = c.get("user")
+    const userId = user.id
+
+    // Collect all user data
+    const [identities, sessions, tracks] = await Promise.all([
+      store.findIdentitiesForUser(userId),
+      store.findSessionsForUser(userId),
+      store.listAllTracksForUser(userId),
+    ])
+
+    const serverUser = await toServerUser(store, user)
+
+    const response: DataExportResponse = {
+      exportedAt: new Date().toISOString(),
+      account: {
+        ...serverUser,
+        createdAt: user.createdAt,
+      },
+      identities: identities.map((identity) => ({
+        provider: identity.provider,
+        providerUserId: identity.providerUserId,
+        login: identity.providerLogin,
+        email: identity.email,
+        createdAt: identity.createdAt,
+      })),
+      sessions: sessions.map((session) => ({
+        createdAt: session.createdAt,
+        expiresAt: session.expiresAt,
+        lastUsedAt: session.lastUsedAt,
+      })),
+      tracks,
+    }
+
+    // Set response headers for download
+    c.header("Content-Type", "application/json")
+    c.header(
+      "Content-Disposition",
+      `attachment; filename="fogofwalk-export-${Date.now()}.json"`
+    )
+
+    return c.json(response)
   })
 
   app.delete("/account", requireSession, async (c) => {

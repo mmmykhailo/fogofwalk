@@ -121,6 +121,14 @@ export class MemoryStore implements ServerStore {
     return primary
   }
 
+  async findIdentitiesForUser(userId: string): Promise<Identity[]> {
+    const identities: Identity[] = []
+    for (const identity of this.identities.values()) {
+      if (identity.userId === userId) identities.push(identity)
+    }
+    return identities.sort((a, b) => a.createdAt - b.createdAt)
+  }
+
   async deleteUser(userId: string): Promise<void> {
     this.users.delete(userId)
     for (const [key, identity] of this.identities) {
@@ -167,6 +175,14 @@ export class MemoryStore implements ServerStore {
     for (const [hash, session] of this.sessions) {
       if (session.userId === userId) this.sessions.delete(hash)
     }
+  }
+
+  async findSessionsForUser(userId: string): Promise<Session[]> {
+    const sessions: Session[] = []
+    for (const session of this.sessions.values()) {
+      if (session.userId === userId) sessions.push(session)
+    }
+    return sessions.sort((a, b) => a.createdAt - b.createdAt)
   }
 
   // ── tracks ──────────────────────────────────────────────────────────────
@@ -273,6 +289,36 @@ export class MemoryStore implements ServerStore {
     // No tombstones — see the interface docs.
     tracks?.clear()
     return count
+  }
+
+  async listAllTracksForUser(userId: string): Promise<Array<any>> {
+    const userTracks = this.tracks.get(userId)
+    if (!userTracks) return []
+
+    const tracks: any[] = []
+    for (const stored of userTracks.values()) {
+      try {
+        // Decompress the gzipped blob
+        const decompressed = Bun.gunzipSync(
+          stored.blob as Uint8Array<ArrayBuffer>
+        )
+        const json = new TextDecoder().decode(decompressed)
+        const trackData = JSON.parse(json)
+        tracks.push({
+          ...trackData,
+          id: stored.meta.contentHash,
+        })
+      } catch (err) {
+        console.error(
+          `[export] Failed to parse track ${stored.meta.contentHash}:`,
+          err
+        )
+      }
+    }
+
+    return tracks.sort(
+      (a, b) => (a.startedAtMs ?? Infinity) - (b.startedAtMs ?? Infinity)
+    )
   }
 
   close(): void {

@@ -267,6 +267,15 @@ export class SqliteFsStore implements ServerStore {
     return row ? toIdentity(row) : null
   }
 
+  async findIdentitiesForUser(userId: string): Promise<Identity[]> {
+    const rows = this.db
+      .query(
+        `SELECT * FROM identities WHERE user_id = ? ORDER BY created_at ASC`
+      )
+      .all(userId) as IdentityRow[]
+    return rows.map(toIdentity)
+  }
+
   async deleteUser(userId: string): Promise<void> {
     this.db.transaction(() => {
       this.db
@@ -322,6 +331,16 @@ export class SqliteFsStore implements ServerStore {
 
   async deleteSessionsForUser(userId: string): Promise<void> {
     this.db.query(`DELETE FROM sessions WHERE user_id = ?`).run(userId)
+  }
+
+  async findSessionsForUser(userId: string): Promise<Session[]> {
+    const rows = this.db
+      .query(
+        `SELECT token_hash, user_id, created_at, expires_at, last_used_at
+         FROM sessions WHERE user_id = ? ORDER BY created_at ASC`
+      )
+      .all(userId) as SessionRow[]
+    return rows.map(toSession)
   }
 
   // ── tracks ──────────────────────────────────────────────────────────────
@@ -511,6 +530,48 @@ export class SqliteFsStore implements ServerStore {
         .catch(() => {})
     }
     return rows.length
+  }
+
+  async listAllTracksForUser(userId: string): Promise<Array<any>> {
+    const rows = this.db
+      .query(
+        `SELECT content_hash, name, format, started_at_ms, distance_km,
+                point_count, size_bytes, updated_at
+           FROM tracks WHERE user_id = ? ORDER BY updated_at ASC`
+      )
+      .all(userId) as TrackRow[]
+
+    const tracks: any[] = []
+
+    for (const row of rows) {
+      const meta = toMeta(row)
+      if (!isSafeContentHash(row.content_hash)) continue
+
+      // Fetch and decompress the blob
+      const file = Bun.file(blobPath(this.dataDir, userId, row.content_hash))
+      if (!(await file.exists())) continue
+
+      try {
+        const compressed = new Uint8Array(await file.arrayBuffer())
+        const decompressed = Bun.gunzipSync(compressed)
+        const json = new TextDecoder().decode(decompressed)
+        const trackData = JSON.parse(json)
+
+        // Add the content hash as id (for export purposes)
+        tracks.push({
+          ...trackData,
+          id: row.content_hash,
+        })
+      } catch (err) {
+        // Skip tracks that can't be decompressed or parsed
+        console.error(
+          `[export] Failed to decompress track ${row.content_hash}:`,
+          err
+        )
+      }
+    }
+
+    return tracks
   }
 
   close(): void {
