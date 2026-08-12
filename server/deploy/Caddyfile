@@ -11,7 +11,12 @@ api.fog-of-walk.mykhailo.net {
 
 	# The server binds 127.0.0.1 (HOST in server.env), so this proxy is the
 	# only way in.
-	reverse_proxy 127.0.0.1:8787
+	reverse_proxy 127.0.0.1:8787 {
+		transport http {
+			dial_timeout 5s
+			response_header_timeout 30s
+		}
+	}
 
 	log {
 		output file /var/log/caddy/fogofwalk.log

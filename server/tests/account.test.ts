@@ -1,13 +1,22 @@
 import { beforeEach, describe, expect, test } from "bun:test"
 
-import type { ManifestPage, MeResponse, DataExportResponse } from "~shared/api"
+import type {
+  ApiError,
+  DataExportResponse,
+  ManifestPage,
+  MeResponse,
+} from "~shared/api"
 
+import { resetExportConcurrency } from "../src/account/exportConcurrency"
+import { resetExportRateLimit } from "../src/account/exportRateLimit"
 import { resetRateLimits } from "../src/tracks/rateLimit"
 import { computeContentHash } from "../src/tracks/contentHash"
 import { authHeaders, makeTrack, putTrack, setup, signIn } from "./helpers"
 
 beforeEach(() => {
   resetRateLimits()
+  resetExportRateLimit()
+  resetExportConcurrency()
 })
 
 describe("GET /api/me", () => {
@@ -166,6 +175,25 @@ describe("GET /api/account/export", () => {
   test("is 401 without a token", async () => {
     const { app } = setup()
     expect((await app.request("/api/account/export")).status).toBe(401)
+  })
+
+  test("limits repeated exports for one user", async () => {
+    const { store, app } = setup()
+    const { token } = await signIn(store)
+    const request = () =>
+      app.request("/api/account/export", {
+        headers: authHeaders(token),
+      })
+
+    expect((await request()).status).toBe(200)
+    expect((await request()).status).toBe(200)
+    expect((await request()).status).toBe(200)
+
+    const limited = await request()
+    expect(limited.status).toBe(429)
+    expect(limited.headers.get("Retry-After")).toBeTruthy()
+    const body = (await limited.json()) as ApiError
+    expect(body.retryAfterMs).toBeGreaterThan(0)
   })
 
   test("isolated from other users' data", async () => {

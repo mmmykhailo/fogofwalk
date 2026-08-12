@@ -16,6 +16,12 @@ import { createRequireSession } from "../auth/middleware"
 import type { AuthEnv } from "../auth/middleware"
 import type { ServerStore } from "../store/types"
 import { capabilitiesFor, toServerUser } from "../users"
+import { rateLimited } from "../errors"
+import {
+  acquireExportSlot,
+  exportOverloadRetryAfterMs,
+} from "./exportConcurrency"
+import { checkExportRateLimit } from "./exportRateLimit"
 
 export function createAccountRoutes(store: ServerStore) {
   const app = new Hono<AuthEnv>()
@@ -33,45 +39,67 @@ export function createAccountRoutes(store: ServerStore) {
   app.get("/account/export", requireSession, async (c) => {
     const user = c.get("user")
     const userId = user.id
-
-    // Collect all user data
-    const [identities, sessions, tracks] = await Promise.all([
-      store.findIdentitiesForUser(userId),
-      store.findSessionsForUser(userId),
-      store.listAllTracksForUser(userId),
-    ])
-
-    const serverUser = await toServerUser(store, user)
-
-    const response: DataExportResponse = {
-      exportedAt: new Date().toISOString(),
-      account: {
-        ...serverUser,
-        createdAt: user.createdAt,
-      },
-      identities: identities.map((identity) => ({
-        provider: identity.provider,
-        providerUserId: identity.providerUserId,
-        login: identity.providerLogin,
-        email: identity.email,
-        createdAt: identity.createdAt,
-      })),
-      sessions: sessions.map((session) => ({
-        createdAt: session.createdAt,
-        expiresAt: session.expiresAt,
-        lastUsedAt: session.lastUsedAt,
-      })),
-      tracks,
+    const releaseExportSlot = acquireExportSlot()
+    if (!releaseExportSlot) {
+      return rateLimited(
+        c,
+        "Too many exports are in progress. Try again later.",
+        exportOverloadRetryAfterMs
+      )
     }
 
-    // Set response headers for download
-    c.header("Content-Type", "application/json")
-    c.header(
-      "Content-Disposition",
-      `attachment; filename="fogofwalk-export-${Date.now()}.json"`
-    )
+    const rateLimit = checkExportRateLimit(userId)
+    if (!rateLimit.ok) {
+      releaseExportSlot()
+      return rateLimited(
+        c,
+        "Export limit reached. Try again later.",
+        rateLimit.retryAfterMs
+      )
+    }
 
-    return c.json(response)
+    try {
+      // Collect all user data
+      const [identities, sessions, tracks] = await Promise.all([
+        store.findIdentitiesForUser(userId),
+        store.findSessionsForUser(userId),
+        store.listAllTracksForUser(userId),
+      ])
+
+      const serverUser = await toServerUser(store, user)
+
+      const response: DataExportResponse = {
+        exportedAt: new Date().toISOString(),
+        account: {
+          ...serverUser,
+          createdAt: user.createdAt,
+        },
+        identities: identities.map((identity) => ({
+          provider: identity.provider,
+          providerUserId: identity.providerUserId,
+          login: identity.providerLogin,
+          email: identity.email,
+          createdAt: identity.createdAt,
+        })),
+        sessions: sessions.map((session) => ({
+          createdAt: session.createdAt,
+          expiresAt: session.expiresAt,
+          lastUsedAt: session.lastUsedAt,
+        })),
+        tracks,
+      }
+
+      // Set response headers for download
+      c.header("Content-Type", "application/json")
+      c.header(
+        "Content-Disposition",
+        `attachment; filename="fogofwalk-export-${Date.now()}.json"`
+      )
+
+      return c.json(response)
+    } finally {
+      releaseExportSlot()
+    }
   })
 
   app.delete("/account", requireSession, async (c) => {

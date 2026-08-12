@@ -65,6 +65,7 @@ a missing or malformed one aborts startup with a message naming it.
 | POST | `/api/auth/exchange` | — | Handoff code → bearer token. |
 | POST | `/api/auth/logout` | session | Revokes this session. |
 | GET | `/api/me` | session | User + capabilities. |
+| GET | `/api/account/export` | session | Full JSON export of the requesting user's account data. |
 | DELETE | `/api/account` | session | Erases the account server-side. |
 | GET | `/api/tracks/manifest?since=<cursor>` | allowed | Metadata + tombstones page. |
 | PUT | `/api/tracks/:contentHash` | allowed | Gzipped upload, idempotent. |
@@ -188,6 +189,13 @@ Backing up `sqlite-fs` is one file plus one folder: `DATA_DIR/fogofwalk.db*`
 - The **content hash is the identity** of a track, and the server recomputes it
   from the uploaded geometry. A `PUT` whose URL hash disagrees with its payload
   is a `400` — that is what stops one device poisoning another's data.
+- Account export remains available to pending users because it is a personal-data
+  access operation, not a sync operation. It is limited to three accepted
+  requests per user per 15 minutes and two in-flight exports per process.
+  Rejections are `429` responses with both `Retry-After` and `retryAfterMs`.
+  The export is intentionally not silently truncated; large accounts still
+  require a streaming or asynchronous export design before their memory cost
+  can be reduced.
 - Uploads are **idempotent**: `(user_id, content_hash)` is the primary key, and
   re-uploading identical geometry keeps the original `updated_at` so retries do
   not churn every other device's manifest.
@@ -214,6 +222,13 @@ Production runs on a Debian VPS as a plain systemd unit — Bun executing the
 TypeScript directly, Caddy in front for TLS. `.github/workflows/deploy-server.yml`
 does it on every push to `master` that touches `server/**` or `shared/**`, and on
 manual dispatch. Everything the VPS needs is in [`deploy/`](deploy/).
+
+The in-process export controls are only one layer. Keep `HOST=127.0.0.1` when
+Caddy is present, apply per-IP throttling and connection/request timeouts at
+the edge, and cap upstream concurrency there as well. Do not trust arbitrary
+`X-Forwarded-For` values when deriving an IP limit; only use headers supplied by
+a configured trusted proxy. The per-user limiter must move to a shared store if
+the service is ever run on multiple application instances.
 
 ### Layout on the box
 
