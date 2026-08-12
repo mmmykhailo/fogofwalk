@@ -25,7 +25,7 @@ export function StatCards({ totals, uniqueDistanceKm }: StatCardsProps) {
     totals.totalTracks > 0 ? totals.totalElevationGainM / totals.totalTracks : 0
 
   return (
-    <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+    <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
       <Card>
         <CardHeader>
           <CardDescription>Distance</CardDescription>
