@@ -23,7 +23,6 @@ import type {
 import { SYNC_PAGE_SIZE } from "~shared/constants"
 import type { TrackFormat } from "~shared/tracks"
 
-
 import { combineCursors, pageStream } from "./manifestPaging"
 import type { Pageable } from "./manifestPaging"
 import type {
@@ -78,6 +77,48 @@ export function userBlobDir(dataDir: string, userId: string): string {
 
 function stripTrailingSlash(value: string): string {
   return value.endsWith("/") ? value.slice(0, -1) : value
+}
+
+function hasColumn(db: Database, table: string, column: string): boolean {
+  return (
+    (db
+      .query(`SELECT 1 FROM pragma_table_info('${table}') WHERE name = ?`)
+      .get(column) as { 1: number } | null) !== null
+  )
+}
+
+function hasTable(db: Database, table: string): boolean {
+  return (
+    (db
+      .query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?")
+      .get(table) as { 1: number } | null) !== null
+  )
+}
+
+function migrateSchema(db: Database) {
+  if (hasTable(db, "users") && !hasColumn(db, "users", "handle")) {
+    db.exec("ALTER TABLE users ADD COLUMN handle TEXT")
+    // Existing identities predate public profiles. Preserve their GitHub login
+    // as the profile handle where it is unique.
+    db.exec(`
+      UPDATE OR IGNORE users
+         SET handle = (
+           SELECT provider_login
+             FROM identities
+            WHERE identities.user_id = users.id
+              AND provider_login IS NOT NULL
+            ORDER BY created_at
+            LIMIT 1
+         )
+       WHERE handle IS NULL
+    `)
+  }
+
+  if (hasTable(db, "tracks") && !hasColumn(db, "tracks", "is_public")) {
+    db.exec(
+      "ALTER TABLE tracks ADD COLUMN is_public INTEGER NOT NULL DEFAULT 0"
+    )
+  }
 }
 
 interface UserRow {
@@ -689,6 +730,8 @@ export async function createSqliteFsStore(
   db.exec("PRAGMA journal_mode = WAL;")
   db.exec("PRAGMA foreign_keys = ON;")
   db.exec("PRAGMA busy_timeout = 5000;")
+
+  migrateSchema(db)
 
   const schemaUrl = new URL("../schema/001_init.sql", import.meta.url)
   const schema = await Bun.file(schemaUrl).text()
