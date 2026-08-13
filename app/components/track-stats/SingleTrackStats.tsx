@@ -3,6 +3,7 @@ import { ElevationChart } from "~/components/ElevationChart"
 import { formatPace } from "~/lib/statsFormatters"
 import { LapSelector } from "./LapSelector"
 import { StatRow } from "./StatRow"
+import { VisibilitySelect } from "./VisibilitySelect"
 import {
   formatDistance,
   formatDuration,
@@ -16,6 +17,9 @@ interface SingleTrackStatsProps {
   laps?: TrackLap[]
   activeLap: TrackLap | null
   onLapSelect?: (lapNumber: number | null) => void
+  isPublic?: boolean
+  onVisibilityChange?: (isPublic: boolean) => void
+  isVisibilityLoading?: boolean
 }
 
 export function SingleTrackStats({
@@ -23,6 +27,9 @@ export function SingleTrackStats({
   laps,
   activeLap,
   onLapSelect,
+  isPublic,
+  onVisibilityChange,
+  isVisibilityLoading,
 }: SingleTrackStatsProps) {
   // Read from the displayed stats, not from the track — with a lap selected the
   // track's unique km over the lap's distance would print over 100%. Laps
@@ -37,6 +44,16 @@ export function SingleTrackStats({
           activeLapNumber={activeLap?.number ?? null}
           onLapSelect={onLapSelect}
         />
+      )}
+      {onVisibilityChange && (
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-xs text-muted-foreground">Visibility</span>
+          <VisibilitySelect
+            isPublic={isPublic ?? false}
+            onChange={onVisibilityChange}
+            disabled={isVisibilityLoading}
+          />
+        </div>
       )}
       <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
         <StatRow label="Distance" value={formatDistance(stats.distanceKm)} />

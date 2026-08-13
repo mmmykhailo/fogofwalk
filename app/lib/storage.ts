@@ -97,8 +97,9 @@ export async function saveTracks(tracks: ParsedTrack[]): Promise<void> {
 }
 
 // Fields added after initial release; absent in older IDB records.
-type StoredTrack = Omit<ParsedTrack, "startedAtMs" | "stats"> & {
+type StoredTrack = Omit<ParsedTrack, "startedAtMs" | "stats" | "isPublic"> & {
   startedAtMs?: number | null
+  isPublic?: boolean
   stats: Omit<ParsedTrack["stats"], "uniqueDistanceKm"> & {
     uniqueDistanceKm?: number
   }
@@ -118,6 +119,9 @@ export async function loadTracks(): Promise<ParsedTrack[]> {
           (t) => t != null && isFinite(t)
         )
         track.startedAtMs = first ?? null
+      }
+      if (track.isPublic === undefined) {
+        track.isPublic = false
       }
       if (track.stats.uniqueDistanceKm === undefined) {
         track.stats.uniqueDistanceKm = track.stats.distanceKm

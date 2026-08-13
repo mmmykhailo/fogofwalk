@@ -5,4 +5,5 @@ export default [
   route("/help", "routes/help.tsx"),
   route("/stats", "routes/stats.tsx"),
   route("/auth/callback", "routes/auth-callback.tsx"),
+  route("/u/:handle", "routes/u.$handle.tsx"),
 ] satisfies RouteConfig

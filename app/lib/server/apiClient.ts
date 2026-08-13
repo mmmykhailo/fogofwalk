@@ -150,6 +150,15 @@ export async function apiPost<T>(
   return res.status === 204 ? (undefined as T) : ((await res.json()) as T)
 }
 
+export async function apiPatch<T>(
+  path: string,
+  body?: unknown,
+  opts: Omit<RequestOptions, "method" | "body"> = {}
+): Promise<T> {
+  const res = await request(path, { ...opts, method: "PATCH", body })
+  return (await res.json()) as T
+}
+
 /** For endpoints that answer 204 — resolves on success, throws otherwise. */
 export async function apiSend(
   method: string,

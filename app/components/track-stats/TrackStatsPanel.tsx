@@ -40,6 +40,9 @@ interface TrackStatsPanelProps {
   /** The selected lap, already validated by the parent. Null = whole track. */
   activeLap?: TrackLap | null
   onLapSelect?: (lapNumber: number | null) => void
+  /** Called when the user changes the single track's public/private setting. */
+  onVisibilityChange?: (isPublic: boolean) => void
+  isVisibilityLoading?: boolean
 }
 
 const EMPTY_STATS: TrackStats = {
@@ -69,6 +72,8 @@ export function TrackStatsPanel({
   onDelete,
   activeLap = null,
   onLapSelect,
+  onVisibilityChange,
+  isVisibilityLoading,
 }: TrackStatsPanelProps) {
   const isMulti = tracks.length > 1
   const track = tracks[0]
@@ -161,6 +166,9 @@ export function TrackStatsPanel({
         laps={track?.laps}
         activeLap={activeLap}
         onLapSelect={onLapSelect}
+        isPublic={track?.isPublic}
+        onVisibilityChange={onVisibilityChange}
+        isVisibilityLoading={isVisibilityLoading}
       />
     )
 
