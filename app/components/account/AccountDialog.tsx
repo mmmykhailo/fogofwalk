@@ -4,24 +4,22 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
-  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "~/components/ui/dialog"
 import { apiGet, friendlyMessage } from "~/lib/server/apiClient"
 import { signOut, useAuth } from "~/lib/server/authStore"
-import {
-  describeSyncStatus,
-  requestSync,
-  useIsAutoSyncSuspended,
-  useSyncStatus,
-} from "~/lib/server/syncEngine"
+import { requestSync } from "~/lib/server/syncEngine"
 import { useServerHealth } from "~/lib/server/serverHealth"
-import { useUploadHoldNotice } from "~/lib/server/useUploadHoldNotice"
 import { AccountAvatar } from "./AccountAvatar"
-import { DeleteAccountBlock } from "./DeleteAccountBlock"
+import { AccountDialogFooter } from "./AccountDialogFooter"
+import {
+  getExportButtonLabel,
+  getStorageDescription,
+} from "./accountDialogHelpers"
 import { PurgeServerBlock } from "./PurgeServerBlock"
 import { ServerUnavailableNotice } from "./ServerUnavailableNotice"
+import { useSyncAction } from "./useSyncAction"
 
 interface AccountDialogProps {
   open: boolean
@@ -43,11 +41,9 @@ function downloadFile(data: unknown, filename: string): void {
 
 export function AccountDialog({ open, onOpenChange }: AccountDialogProps) {
   const auth = useAuth()
-  const syncStatus = useSyncStatus()
-  const isSuspended = useIsAutoSyncSuspended()
+  const { statusLabel, buttonLabel, isSyncing } = useSyncAction()
   const health = useServerHealth(true)
   const isOffline = health === "offline"
-  const holdNotice = useUploadHoldNotice()
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false)
   const [isPurgeConfirmOpen, setIsPurgeConfirmOpen] = useState(false)
   const [purgedCount, setPurgedCount] = useState<number | null>(null)
@@ -145,12 +141,9 @@ export function AccountDialog({ open, onOpenChange }: AccountDialogProps) {
               */}
               <p
                 data-testid="sync-status"
-                className="text-xs wrap-break-words text-muted-foreground"
+                className="wrap-break-words text-xs text-muted-foreground"
               >
-                {holdNotice ??
-                  (isSuspended
-                    ? "Paused after a local delete"
-                    : (describeSyncStatus(syncStatus) ?? "Not synced yet"))}
+                {statusLabel}
               </p>
             </div>
             <Button
@@ -159,13 +152,9 @@ export function AccountDialog({ open, onOpenChange }: AccountDialogProps) {
               size="sm"
               // The one way back: an explicit request resumes a suspension.
               onClick={() => requestSync("manual", { manual: true })}
-              disabled={syncStatus.phase === "syncing"}
+              disabled={isSyncing}
             >
-              {syncStatus.phase === "syncing"
-                ? "Syncing…"
-                : isSuspended
-                  ? "Resume sync"
-                  : "Sync now"}
+              {buttonLabel}
             </Button>
           </div>
         )}
@@ -175,11 +164,7 @@ export function AccountDialog({ open, onOpenChange }: AccountDialogProps) {
             <div className="min-w-0 flex-1">
               <p className="text-xs font-medium">Server storage</p>
               <p className="text-xs text-muted-foreground">
-                {auth.canSync
-                  ? purgedCount === null
-                    ? "Remove every track from the server, keep your account"
-                    : `Removed ${purgedCount} track${purgedCount === 1 ? "" : "s"} from the server`
-                  : "Export the data stored on the server"}
+                {getStorageDescription(auth.canSync, purgedCount)}
               </p>
             </div>
             <div className="flex shrink-0 flex-col gap-2">
@@ -204,11 +189,7 @@ export function AccountDialog({ open, onOpenChange }: AccountDialogProps) {
                     : undefined
                 }
               >
-                {isExporting
-                  ? "Exporting…"
-                  : exportSuccess
-                    ? "Downloaded!"
-                    : "Export my data"}
+                {getExportButtonLabel(isExporting, exportSuccess)}
               </Button>
             </div>
           </div>
@@ -231,38 +212,18 @@ export function AccountDialog({ open, onOpenChange }: AccountDialogProps) {
           </p>
         )}
 
-        {error && <p className="text-xs text-destructive mb-2">{error}</p>}
+        {error && <p className="mb-2 text-xs text-destructive">{error}</p>}
 
-        {isPurgeConfirmOpen ? null : isDeleteConfirmOpen ? (
-          <DeleteAccountBlock
-            onCancel={() => setIsDeleteConfirmOpen(false)}
-            onDeleted={() => onOpenChange(false)}
-          />
-        ) : (
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={handleSignOut}
-              disabled={isSigningOut}
-            >
-              {isSigningOut ? "Logging out…" : "Log out"}
-            </Button>
-            <Button
-              variant="destructive"
-              onClick={() => setIsDeleteConfirmOpen(true)}
-              // Deletion is server-side only; offer it only when it can work.
-              // Logging out stays available — it just drops the local session.
-              disabled={isSigningOut || isOffline}
-              title={
-                isOffline
-                  ? "Can't delete your account while the server is unreachable"
-                  : undefined
-              }
-            >
-              Delete account
-            </Button>
-          </DialogFooter>
-        )}
+        <AccountDialogFooter
+          isPurgeConfirmOpen={isPurgeConfirmOpen}
+          isDeleteConfirmOpen={isDeleteConfirmOpen}
+          isSigningOut={isSigningOut}
+          isOffline={isOffline}
+          onSignOut={handleSignOut}
+          onDeleteOpen={() => setIsDeleteConfirmOpen(true)}
+          onDeleteCancel={() => setIsDeleteConfirmOpen(false)}
+          onDeleted={() => onOpenChange(false)}
+        />
       </DialogContent>
     </Dialog>
   )
