@@ -46,14 +46,11 @@ export function SingleTrackStats({
         />
       )}
       {onVisibilityChange && (
-        <div className="flex items-center justify-between gap-2">
-          <span className="text-xs text-muted-foreground">Visibility</span>
           <VisibilitySelect
             isPublic={isPublic ?? false}
             onChange={onVisibilityChange}
             disabled={isVisibilityLoading}
           />
-        </div>
       )}
       <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
         <StatRow label="Distance" value={formatDistance(stats.distanceKm)} />
