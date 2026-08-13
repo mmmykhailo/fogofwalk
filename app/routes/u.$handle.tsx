@@ -3,6 +3,7 @@ import { useParams, Link } from "react-router"
 import { FootprintsIcon } from "@phosphor-icons/react"
 import { PageShell } from "~/components/PageShell"
 import { AccountAvatar } from "~/components/account/AccountAvatar"
+import { apiUrl } from "~/lib/server/config"
 import type { PublicProfileResponse, PublicTrackMeta } from "~shared/api"
 import {
   formatDistance,
@@ -18,7 +19,9 @@ function stripExtension(name: string): string {
 }
 
 async function fetchProfile(handle: string): Promise<PublicProfileResponse> {
-  const res = await fetch(`/api/public/users/${encodeURIComponent(handle)}`)
+  const res = await fetch(
+    apiUrl(`/api/public/users/${encodeURIComponent(handle)}`)
+  )
   if (!res.ok) {
     const body = await res.json().catch(() => ({}))
     throw new Error(body.message || "Profile not found.")
