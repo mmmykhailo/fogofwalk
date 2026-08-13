@@ -145,7 +145,7 @@ export function AccountDialog({ open, onOpenChange }: AccountDialogProps) {
               */}
               <p
                 data-testid="sync-status"
-                className="text-xs break-words text-muted-foreground"
+                className="text-xs wrap-break-words text-muted-foreground"
               >
                 {holdNotice ??
                   (isSuspended
@@ -185,7 +185,7 @@ export function AccountDialog({ open, onOpenChange }: AccountDialogProps) {
             <div className="flex shrink-0 flex-col gap-2">
               {auth.canSync && !isOffline && (
                 <Button
-                  variant="outline"
+                  variant="destructive"
                   size="sm"
                   onClick={() => setIsPurgeConfirmOpen(true)}
                   disabled={isPurgeConfirmOpen}
@@ -231,7 +231,7 @@ export function AccountDialog({ open, onOpenChange }: AccountDialogProps) {
           </p>
         )}
 
-        {error && <p className="text-xs text-destructive">{error}</p>}
+        {error && <p className="text-xs text-destructive mb-2">{error}</p>}
 
         {isPurgeConfirmOpen ? null : isDeleteConfirmOpen ? (
           <DeleteAccountBlock
