@@ -23,7 +23,7 @@ export function createApp(store: ServerStore) {
       // Explicit list, never "*": the API is cross-origin to the client, and
       // a wildcard would let any page read a signed-in user's tracks.
       origin: env.ALLOWED_ORIGINS,
-      allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+      allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
       allowHeaders: ["Authorization", "Content-Type", "Content-Encoding"],
       // So a 429's standard header is readable cross-origin. The client reads
       // `retryAfterMs` out of the body instead, but exposing this keeps the

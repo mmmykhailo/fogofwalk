@@ -6,8 +6,8 @@ import {
   SelectValue,
 } from "~/components/ui/select"
 
-const PRIVATE = "private"
-const PUBLIC = "public"
+const PRIVATE = "Private"
+const PUBLIC = "Public"
 
 interface VisibilitySelectProps {
   isPublic: boolean

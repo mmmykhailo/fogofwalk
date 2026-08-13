@@ -7,19 +7,30 @@ import type {
 
 import { resetRateLimits } from "../src/tracks/rateLimit"
 import { computeContentHash } from "../src/tracks/contentHash"
-import {
-  authHeaders,
-  makeTrack,
-  putTrack,
-  setup,
-  signIn,
-} from "./helpers"
+import { authHeaders, makeTrack, putTrack, setup, signIn } from "./helpers"
 
 beforeEach(() => {
   resetRateLimits()
 })
 
 describe("public profiles", () => {
+  test("CORS preflight permits visibility updates", async () => {
+    const { app } = setup()
+
+    const response = await app.request("/api/tracks/example/visibility", {
+      method: "OPTIONS",
+      headers: {
+        Origin: "http://localhost:5173",
+        "Access-Control-Request-Method": "PATCH",
+      },
+    })
+
+    expect(response.status).toBe(204)
+    expect(response.headers.get("Access-Control-Allow-Methods")).toContain(
+      "PATCH"
+    )
+  })
+
   test("a user's handle is set from their GitHub login", async () => {
     const { store } = setup()
     const { user } = await signIn(store, { login: "runner-one" })
