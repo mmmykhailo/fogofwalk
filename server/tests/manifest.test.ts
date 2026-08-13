@@ -129,6 +129,7 @@ describe("MemoryStore.listManifest", () => {
       const meta: TrackMeta = {
         contentHash: fakeHash(index),
         name: `track ${index}`,
+        isPublic: false,
         format: "gpx",
         startedAtMs: null,
         distanceKm: 1,
@@ -169,6 +170,7 @@ describe("MemoryStore.listManifest", () => {
         {
           contentHash: fakeHash(index),
           name: `track ${index}`,
+          isPublic: false,
           format: "fit",
           startedAtMs: null,
           distanceKm: 1,
@@ -197,6 +199,7 @@ describe("MemoryStore.listManifest", () => {
       {
         contentHash: fakeHash(1),
         name: "old",
+        isPublic: false,
         format: "gpx",
         startedAtMs: null,
         distanceKm: 1,
@@ -216,6 +219,7 @@ describe("MemoryStore.listManifest", () => {
       {
         contentHash: fakeHash(2),
         name: "new",
+        isPublic: false,
         format: "gpx",
         startedAtMs: null,
         distanceKm: 1,
