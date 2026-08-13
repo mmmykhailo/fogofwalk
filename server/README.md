@@ -190,8 +190,8 @@ Backing up `sqlite-fs` is one file plus one folder: `DATA_DIR/fogofwalk.db*`
   from the uploaded geometry. A `PUT` whose URL hash disagrees with its payload
   is a `400` — that is what stops one device poisoning another's data.
 - Account export remains available to pending users because it is a personal-data
-  access operation, not a sync operation. It is limited to three accepted
-  requests per user per 15 minutes and two in-flight exports per process.
+  access operation, not a sync operation. It is limited to one accepted
+  request per user per 15 minutes and two in-flight exports per process.
   Rejections are `429` responses with both `Retry-After` and `retryAfterMs`.
   The export is intentionally not silently truncated; large accounts still
   require a streaming or asynchronous export design before their memory cost

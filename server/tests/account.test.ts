@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, test } from "bun:test"
+import { describe, expect, test } from "bun:test"
 
 import type {
   ApiError,
@@ -7,17 +7,8 @@ import type {
   MeResponse,
 } from "~shared/api"
 
-import { resetExportConcurrency } from "../src/account/exportConcurrency"
-import { resetExportRateLimit } from "../src/account/exportRateLimit"
-import { resetRateLimits } from "../src/tracks/rateLimit"
 import { computeContentHash } from "../src/tracks/contentHash"
 import { authHeaders, makeTrack, putTrack, setup, signIn } from "./helpers"
-
-beforeEach(() => {
-  resetRateLimits()
-  resetExportRateLimit()
-  resetExportConcurrency()
-})
 
 describe("GET /api/me", () => {
   test("reports capabilities for an allowed user", async () => {
@@ -185,8 +176,6 @@ describe("GET /api/account/export", () => {
         headers: authHeaders(token),
       })
 
-    expect((await request()).status).toBe(200)
-    expect((await request()).status).toBe(200)
     expect((await request()).status).toBe(200)
 
     const limited = await request()

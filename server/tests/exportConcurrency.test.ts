@@ -1,28 +1,24 @@
 import { beforeEach, describe, expect, test } from "bun:test"
 
 import {
-  acquireExportSlot,
+  createExportConcurrencyGate,
   exportOverloadRetryAfterMs,
-  resetExportConcurrency,
 } from "../src/account/exportConcurrency"
-
-beforeEach(() => {
-  resetExportConcurrency()
-})
 
 describe("export concurrency gate", () => {
   test("bounds simultaneous exports and releases slots safely", () => {
-    const first = acquireExportSlot()
-    const second = acquireExportSlot()
+    const gate = createExportConcurrencyGate(2)
+    const first = gate.acquire()
+    const second = gate.acquire()
 
     expect(first).not.toBeNull()
     expect(second).not.toBeNull()
-    expect(acquireExportSlot()).toBeNull()
+    expect(gate.acquire()).toBeNull()
     expect(exportOverloadRetryAfterMs).toBeGreaterThan(0)
 
     first?.()
     first?.()
-    const third = acquireExportSlot()
+    const third = gate.acquire()
     expect(third).not.toBeNull()
 
     second?.()
