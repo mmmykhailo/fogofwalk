@@ -83,4 +83,9 @@ export interface ParsedTrack {
    * engine backfills them lazily. Never part of the hash input itself.
    */
   contentHash?: string
+  /**
+   * Whether this track is visible on the owner's public profile. Private by
+   * default; the field is absent in older local tracks and treated as false.
+   */
+  isPublic?: boolean
 }

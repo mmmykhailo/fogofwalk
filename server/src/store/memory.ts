@@ -9,6 +9,8 @@
 
 import type {
   ManifestPage,
+  PublicProfileResponse,
+  PublicTrackMeta,
   TrackMeta,
   TrackTombstone,
   UserStatus,
@@ -70,6 +72,7 @@ export class MemoryStore implements ServerStore {
       const updated: User = {
         ...user,
         displayName: input.displayName,
+        handle: input.login,
         avatarUrl: input.avatarUrl,
         updatedAt: now,
       }
@@ -80,6 +83,7 @@ export class MemoryStore implements ServerStore {
     const user: User = {
       id: crypto.randomUUID(),
       displayName: input.displayName,
+      handle: input.login,
       avatarUrl: input.avatarUrl,
       status: "pending",
       createdAt: now,
@@ -271,6 +275,17 @@ export class MemoryStore implements ServerStore {
     return this.tracks.get(userId)?.get(contentHash)?.blob ?? null
   }
 
+  async setTrackVisibility(
+    userId: string,
+    contentHash: string,
+    isPublic: boolean
+  ): Promise<TrackMeta | null> {
+    const stored = this.tracks.get(userId)?.get(contentHash)
+    if (!stored) return null
+    stored.meta = { ...stored.meta, isPublic }
+    return stored.meta
+  }
+
   async deleteTrack(userId: string, contentHash: string): Promise<number> {
     this.tracks.get(userId)?.delete(contentHash)
     let byHash = this.tombstones.get(userId)
@@ -319,6 +334,72 @@ export class MemoryStore implements ServerStore {
     return tracks.sort(
       (a, b) => (a.startedAtMs ?? Infinity) - (b.startedAtMs ?? Infinity)
     )
+  }
+
+  async findUserByHandle(handle: string): Promise<User | null> {
+    const lower = handle.toLowerCase()
+    for (const user of this.users.values()) {
+      if (user.handle?.toLowerCase() === lower) return user
+    }
+    return null
+  }
+
+  async listPublicTracks(userId: string): Promise<PublicProfileResponse> {
+    const user = await this.getUser(userId)
+    if (!user || !user.handle) {
+      return {
+        user: {
+          handle: user?.handle ?? "",
+          displayName: user?.displayName ?? "",
+          avatarUrl: user?.avatarUrl ?? null,
+        },
+        tracks: [],
+      }
+    }
+
+    const userTracks = this.tracks.get(userId)
+    const tracks: PublicTrackMeta[] = []
+
+    if (userTracks) {
+      for (const stored of userTracks.values()) {
+        if (!stored.meta.isPublic) continue
+        try {
+          const decompressed = Bun.gunzipSync(
+            stored.blob as Uint8Array<ArrayBuffer>
+          )
+          const json = new TextDecoder().decode(decompressed)
+          const payload = JSON.parse(json)
+          tracks.push({
+            contentHash: stored.meta.contentHash,
+            name: stored.meta.name,
+            format: stored.meta.format,
+            startedAtMs: stored.meta.startedAtMs,
+            distanceKm: stored.meta.distanceKm,
+            pointCount: stored.meta.pointCount,
+            durationMs: payload?.stats?.durationMs ?? null,
+            movingTimeMs: payload?.stats?.movingTimeMs ?? null,
+            elevationGainM: payload?.stats?.elevationGainM ?? 0,
+            avgMovingSpeedKmh: payload?.stats?.avgMovingSpeedKmh ?? null,
+          })
+        } catch (err) {
+          console.error(
+            `[public] Failed to parse track ${stored.meta.contentHash}:`,
+            err
+          )
+        }
+      }
+    }
+
+    tracks.sort((a, b) => (b.startedAtMs ?? 0) - (a.startedAtMs ?? 0))
+
+    return {
+      user: {
+        handle: user.handle,
+        displayName: user.displayName,
+        avatarUrl: user.avatarUrl,
+      },
+      tracks,
+    }
   }
 
   close(): void {

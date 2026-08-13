@@ -59,12 +59,39 @@ export interface MeResponse {
   capabilities: UserCapabilities
 }
 
+// ─── Public profiles ───────────────────────────────────────────────────────────
+
+export interface PublicProfileUser {
+  handle: string
+  displayName: string
+  avatarUrl: string | null
+}
+
+export interface PublicTrackMeta {
+  contentHash: string
+  name: string
+  format: TrackFormat
+  startedAtMs: number | null
+  distanceKm: number
+  pointCount: number
+  durationMs: number | null
+  movingTimeMs: number | null
+  elevationGainM: number
+  avgMovingSpeedKmh: number | null
+}
+
+export interface PublicProfileResponse {
+  user: PublicProfileUser
+  tracks: PublicTrackMeta[]
+}
+
 // ─── Tracks ────────────────────────────────────────────────────────────────────
 
 /** A track's server-side metadata. Geometry is fetched separately by hash. */
 export interface TrackMeta {
   contentHash: string
   name: string
+  isPublic: boolean
   format: TrackFormat
   startedAtMs: number | null
   distanceKm: number
@@ -87,6 +114,16 @@ export interface TrackTombstone {
  */
 export interface TrackDeleteResponse {
   deletedAt: number
+}
+
+export interface TrackVisibilityUpdateRequest {
+  isPublic: boolean
+}
+
+export interface TrackVisibilityUpdateResponse {
+  contentHash: string
+  isPublic: boolean
+  updatedAt: number
 }
 
 export interface ManifestPage {

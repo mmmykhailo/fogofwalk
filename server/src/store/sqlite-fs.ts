@@ -14,12 +14,15 @@ import { $ } from "bun"
 
 import type {
   ManifestPage,
+  PublicProfileResponse,
+  PublicTrackMeta,
   TrackMeta,
   TrackTombstone,
   UserStatus,
 } from "~shared/api"
 import { SYNC_PAGE_SIZE } from "~shared/constants"
 import type { TrackFormat } from "~shared/tracks"
+
 
 import { combineCursors, pageStream } from "./manifestPaging"
 import type { Pageable } from "./manifestPaging"
@@ -80,6 +83,7 @@ function stripTrailingSlash(value: string): string {
 interface UserRow {
   id: string
   display_name: string
+  handle: string | null
   avatar_url: string | null
   status: string
   created_at: number
@@ -106,6 +110,7 @@ interface SessionRow {
 interface TrackRow {
   content_hash: string
   name: string
+  is_public: number
   format: string
   started_at_ms: number | null
   distance_km: number
@@ -123,6 +128,7 @@ function toUser(row: UserRow): User {
   return {
     id: row.id,
     displayName: row.display_name,
+    handle: row.handle,
     avatarUrl: row.avatar_url,
     status: row.status as UserStatus,
     createdAt: row.created_at,
@@ -155,6 +161,7 @@ function toMeta(row: TrackRow): TrackMeta {
   return {
     contentHash: row.content_hash,
     name: row.name,
+    isPublic: Boolean(row.is_public),
     format: row.format as TrackFormat,
     startedAtMs: row.started_at_ms,
     distanceKm: row.distance_km,
@@ -199,10 +206,10 @@ export class SqliteFsStore implements ServerStore {
     if (existing) {
       this.db
         .query(
-          `UPDATE users SET display_name = ?, avatar_url = ?, updated_at = ?
+          `UPDATE users SET display_name = ?, handle = ?, avatar_url = ?, updated_at = ?
             WHERE id = ?`
         )
-        .run(input.displayName, input.avatarUrl, now, existing.id)
+        .run(input.displayName, input.login, input.avatarUrl, now, existing.id)
       this.db
         .query(
           `UPDATE identities SET provider_login = ?, email = ?
@@ -216,10 +223,10 @@ export class SqliteFsStore implements ServerStore {
     const id = crypto.randomUUID()
     this.db
       .query(
-        `INSERT INTO users (id, display_name, avatar_url, status, created_at, updated_at)
-         VALUES (?, ?, ?, 'pending', ?, ?)`
+        `INSERT INTO users (id, display_name, handle, avatar_url, status, created_at, updated_at)
+         VALUES (?, ?, ?, ?, 'pending', ?, ?)`
       )
-      .run(id, input.displayName, input.avatarUrl, now, now)
+      .run(id, input.displayName, input.login, input.avatarUrl, now, now)
     this.db
       .query(
         `INSERT INTO identities
@@ -355,7 +362,7 @@ export class SqliteFsStore implements ServerStore {
       (from, limit) => {
         const rows = this.db
           .query(
-            `SELECT content_hash, name, format, started_at_ms, distance_km,
+            `SELECT content_hash, name, is_public, format, started_at_ms, distance_km,
                     point_count, size_bytes, updated_at
                FROM tracks
               WHERE user_id = ? AND updated_at >= ?
@@ -425,11 +432,12 @@ export class SqliteFsStore implements ServerStore {
       this.db
         .query(
           `INSERT INTO tracks
-             (user_id, content_hash, name, format, started_at_ms, distance_km,
+             (user_id, content_hash, name, is_public, format, started_at_ms, distance_km,
               point_count, size_bytes, blob_ref, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT (user_id, content_hash) DO UPDATE SET
              name = excluded.name,
+             is_public = excluded.is_public,
              format = excluded.format,
              started_at_ms = excluded.started_at_ms,
              distance_km = excluded.distance_km,
@@ -442,6 +450,7 @@ export class SqliteFsStore implements ServerStore {
           userId,
           meta.contentHash,
           meta.name,
+          meta.isPublic ? 1 : 0,
           meta.format,
           meta.startedAtMs,
           meta.distanceKm,
@@ -468,12 +477,28 @@ export class SqliteFsStore implements ServerStore {
     if (!isSafeContentHash(contentHash)) return null
     const row = this.db
       .query(
-        `SELECT content_hash, name, format, started_at_ms, distance_km,
+        `SELECT content_hash, name, is_public, format, started_at_ms, distance_km,
                 point_count, size_bytes, updated_at
            FROM tracks WHERE user_id = ? AND content_hash = ?`
       )
       .get(userId, contentHash) as TrackRow | null
     return row ? toMeta(row) : null
+  }
+
+  async setTrackVisibility(
+    userId: string,
+    contentHash: string,
+    isPublic: boolean
+  ): Promise<TrackMeta | null> {
+    if (!isSafeContentHash(contentHash)) return null
+    const now = Date.now()
+    this.db
+      .query(
+        `UPDATE tracks SET is_public = ?, updated_at = ?
+          WHERE user_id = ? AND content_hash = ?`
+      )
+      .run(isPublic ? 1 : 0, now, userId, contentHash)
+    return this.getTrack(userId, contentHash)
   }
 
   async getTrackBlob(
@@ -535,7 +560,7 @@ export class SqliteFsStore implements ServerStore {
   async listAllTracksForUser(userId: string): Promise<Array<any>> {
     const rows = this.db
       .query(
-        `SELECT content_hash, name, format, started_at_ms, distance_km,
+        `SELECT content_hash, name, is_public, format, started_at_ms, distance_km,
                 point_count, size_bytes, updated_at
            FROM tracks WHERE user_id = ? ORDER BY updated_at ASC`
       )
@@ -572,6 +597,78 @@ export class SqliteFsStore implements ServerStore {
     }
 
     return tracks
+  }
+
+  async findUserByHandle(handle: string): Promise<User | null> {
+    const row = this.db
+      .query(`SELECT * FROM users WHERE handle = ? COLLATE NOCASE`)
+      .get(handle) as UserRow | null
+    return row ? toUser(row) : null
+  }
+
+  async listPublicTracks(userId: string): Promise<PublicProfileResponse> {
+    const user = await this.getUser(userId)
+    if (!user || !user.handle) {
+      return {
+        user: {
+          handle: user?.handle ?? "",
+          displayName: user?.displayName ?? "",
+          avatarUrl: user?.avatarUrl ?? null,
+        },
+        tracks: [],
+      }
+    }
+
+    const rows = this.db
+      .query(
+        `SELECT t.content_hash, t.name, t.format, t.started_at_ms,
+                t.distance_km, t.point_count, t.size_bytes, t.updated_at
+           FROM tracks t
+          WHERE t.user_id = ? AND t.is_public = 1
+          ORDER BY t.updated_at DESC`
+      )
+      .all(userId) as TrackRow[]
+
+    const tracks: PublicTrackMeta[] = []
+    for (const row of rows) {
+      if (!isSafeContentHash(row.content_hash)) continue
+      const file = Bun.file(blobPath(this.dataDir, userId, row.content_hash))
+      if (!(await file.exists())) continue
+
+      try {
+        const compressed = new Uint8Array(await file.arrayBuffer())
+        const decompressed = Bun.gunzipSync(compressed)
+        const json = new TextDecoder().decode(decompressed)
+        const payload = JSON.parse(json)
+
+        tracks.push({
+          contentHash: row.content_hash,
+          name: row.name,
+          format: row.format as TrackFormat,
+          startedAtMs: row.started_at_ms,
+          distanceKm: row.distance_km,
+          pointCount: row.point_count,
+          durationMs: payload?.stats?.durationMs ?? null,
+          movingTimeMs: payload?.stats?.movingTimeMs ?? null,
+          elevationGainM: payload?.stats?.elevationGainM ?? 0,
+          avgMovingSpeedKmh: payload?.stats?.avgMovingSpeedKmh ?? null,
+        })
+      } catch (err) {
+        console.error(
+          `[public] Failed to decompress track ${row.content_hash}:`,
+          err
+        )
+      }
+    }
+
+    return {
+      user: {
+        handle: user.handle,
+        displayName: user.displayName,
+        avatarUrl: user.avatarUrl,
+      },
+      tracks,
+    }
   }
 
   close(): void {
