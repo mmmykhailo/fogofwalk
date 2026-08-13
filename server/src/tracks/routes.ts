@@ -12,7 +12,12 @@
 
 import { Hono } from "hono"
 
-import type { TrackDeleteResponse, TrackMeta } from "~shared/api"
+import type {
+  TrackDeleteResponse,
+  TrackMeta,
+  TrackVisibilityUpdateRequest,
+  TrackVisibilityUpdateResponse,
+} from "~shared/api"
 
 import { createRequireSession, requireAllowed } from "../auth/middleware"
 import type { AuthEnv } from "../auth/middleware"
@@ -27,6 +32,11 @@ import {
 import { computeContentHash, isContentHash } from "./contentHash"
 import { parseTrackUpload } from "./payload"
 import { checkRateLimit } from "./rateLimit"
+
+const visibilitySchema = z.object({
+  isPublic: z.boolean(),
+})
+import { z } from "zod"
 
 export function createTrackRoutes(store: ServerStore) {
   const app = new Hono<AuthEnv>()
@@ -118,6 +128,7 @@ export function createTrackRoutes(store: ServerStore) {
     const meta: TrackMeta = {
       contentHash,
       name: track.name,
+      isPublic: track.isPublic ?? false,
       format: track.format,
       startedAtMs: track.startedAtMs,
       distanceKm: track.stats.distanceKm,
@@ -145,6 +156,42 @@ export function createTrackRoutes(store: ServerStore) {
         "Cache-Control": "private, no-store",
       },
     })
+  })
+
+  app.patch("/:contentHash/visibility", async (c) => {
+    const user = c.get("user")
+    const contentHash = c.req.param("contentHash")
+    if (!isContentHash(contentHash)) {
+      return jsonError(c, "bad_request", "Content hash must be 64 hex digits.")
+    }
+
+    let body: unknown
+    try {
+      body = await c.req.json()
+    } catch {
+      return jsonError(c, "bad_request", "Expected a JSON body.")
+    }
+
+    const parsed = visibilitySchema.safeParse(body)
+    if (!parsed.success) {
+      return jsonError(c, "bad_request", "isPublic must be a boolean.")
+    }
+
+    const updated = await store.setTrackVisibility(
+      user.id,
+      contentHash,
+      parsed.data.isPublic
+    )
+    if (!updated) {
+      return jsonError(c, "not_found")
+    }
+
+    const response: TrackVisibilityUpdateResponse = {
+      contentHash: updated.contentHash,
+      isPublic: updated.isPublic,
+      updatedAt: updated.updatedAt,
+    }
+    return c.json(response)
   })
 
   /**

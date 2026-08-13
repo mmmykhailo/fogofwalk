@@ -10,6 +10,7 @@ import { createAccountRoutes } from "./account/routes"
 import { createAuthRoutes } from "./auth/routes"
 import { env } from "./env"
 import { HttpError, errorBody, statusFor } from "./errors"
+import { createPublicRoutes } from "./public/routes"
 import type { ServerStore } from "./store/types"
 import { createTrackRoutes } from "./tracks/routes"
 
@@ -40,6 +41,7 @@ export function createApp(store: ServerStore) {
   app.route("/api/auth", createAuthRoutes(store))
   app.route("/api", createAccountRoutes(store))
   app.route("/api/tracks", createTrackRoutes(store))
+  app.route("/api/public", createPublicRoutes(store))
 
   app.notFound((c) => c.json(errorBody("not_found"), 404))
 
