@@ -58,10 +58,8 @@ export default function PublicProfilePage() {
       .finally(() => setIsLoading(false))
   }, [handle])
 
-  const title = profile?.user.displayName ?? handle ?? "Profile"
-
   return (
-    <PageShell title={title}>
+    <PageShell>
       {profile && (
         <div className="mb-8 flex items-center gap-4">
           <AccountAvatar
@@ -70,9 +68,9 @@ export default function PublicProfilePage() {
             className="size-16"
           />
           <div>
-            <h2 className="text-xl font-semibold">
+            <h1 className="text-xl font-semibold">
               {profile.user.displayName}
-            </h2>
+            </h1>
             <p className="text-sm text-muted-foreground">
               @{profile.user.handle}
             </p>
@@ -105,13 +103,9 @@ export default function PublicProfilePage() {
             className="text-muted-foreground"
             weight="duotone"
           />
-          <p className="text-sm text-muted-foreground">No public tracks yet.</p>
-          <Link
-            to="/"
-            className="text-sm font-medium underline underline-offset-4 transition-colors hover:text-muted-foreground"
-          >
-            Go to map →
-          </Link>
+          <p className="text-sm text-muted-foreground">
+            This user has no public tracks yet
+          </p>
         </div>
       )}
 
