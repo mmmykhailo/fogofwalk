@@ -1,5 +1,4 @@
-import { useEffect, useState } from "react"
-import { useParams, Link } from "react-router"
+import { Link, useLoaderData } from "react-router"
 import { FootprintsIcon } from "@phosphor-icons/react"
 import { PageShell } from "~/components/PageShell"
 import { AccountAvatar } from "~/components/account/AccountAvatar"
@@ -18,15 +17,33 @@ function stripExtension(name: string): string {
   return lastDot > 0 ? name.slice(0, lastDot) : name
 }
 
-async function fetchProfile(handle: string): Promise<PublicProfileResponse> {
-  const res = await fetch(
-    apiUrl(`/api/public/users/${encodeURIComponent(handle)}`)
-  )
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}))
-    throw new Error(body.message || "Profile not found.")
+interface ProfileLoaderData {
+  profile: PublicProfileResponse | null
+  error: string | null
+}
+
+export async function clientLoader({
+  params,
+}: Route.ClientLoaderArgs): Promise<ProfileLoaderData> {
+  const handle = params.handle
+  if (!handle) return { profile: null, error: "Profile not found." }
+
+  try {
+    const res = await fetch(
+      apiUrl(`/api/public/users/${encodeURIComponent(handle)}`)
+    )
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}))
+      throw new Error(body.message || "Profile not found.")
+    }
+    const profile = (await res.json()) as PublicProfileResponse
+    return { profile, error: null }
+  } catch (err) {
+    return {
+      profile: null,
+      error: err instanceof Error ? err.message : String(err),
+    }
   }
-  return (await res.json()) as PublicProfileResponse
 }
 
 export function meta({ params }: Route.MetaArgs) {
@@ -41,22 +58,7 @@ export function meta({ params }: Route.MetaArgs) {
 }
 
 export default function PublicProfilePage() {
-  const { handle } = useParams<{ handle: string }>()
-  const [profile, setProfile] = useState<PublicProfileResponse | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [isLoading, setIsLoading] = useState(true)
-
-  useEffect(() => {
-    if (!handle) return
-    setIsLoading(true)
-    setError(null)
-    fetchProfile(handle)
-      .then(setProfile)
-      .catch((err) =>
-        setError(err instanceof Error ? err.message : String(err))
-      )
-      .finally(() => setIsLoading(false))
-  }, [handle])
+  const { profile, error } = useLoaderData<typeof clientLoader>()
 
   return (
     <PageShell>
@@ -78,13 +80,7 @@ export default function PublicProfilePage() {
         </div>
       )}
 
-      {isLoading && (
-        <div className="flex items-center justify-center py-24">
-          <div className="size-6 animate-spin rounded-full border-2 border-foreground/20 border-t-foreground" />
-        </div>
-      )}
-
-      {error && !isLoading && (
+      {error && (
         <div className="flex flex-col items-center justify-center gap-3 rounded-none border border-dashed border-border py-24 text-center">
           <p className="text-sm text-muted-foreground">{error}</p>
           <Link
@@ -96,7 +92,7 @@ export default function PublicProfilePage() {
         </div>
       )}
 
-      {!isLoading && !error && profile && profile.tracks.length === 0 && (
+      {!error && profile && profile.tracks.length === 0 && (
         <div className="flex flex-col items-center justify-center gap-3 rounded-none border border-dashed border-border py-24 text-center">
           <FootprintsIcon
             size={40}
@@ -109,7 +105,7 @@ export default function PublicProfilePage() {
         </div>
       )}
 
-      {!isLoading && !error && profile && profile.tracks.length > 0 && (
+      {!error && profile && profile.tracks.length > 0 && (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           {profile.tracks.map((track) => (
             <TrackCard key={track.contentHash} track={track} />
