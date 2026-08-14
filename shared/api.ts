@@ -44,6 +44,8 @@ export interface ServerUser {
   id: string
   displayName: string
   avatarUrl: string | null
+  /** Public URL handle, when the provider account has one. */
+  handle: string | null
   /** Provider the current session was created with, e.g. "github". */
   provider: string
   status: UserStatus
