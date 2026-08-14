@@ -201,7 +201,7 @@ export function TrackStatsPanel({
             </DrawerDescription>
             <DrawerHeader>
               <div className="flex items-center justify-between gap-2">
-                <DrawerTitle className="min-w-0 flex-1 truncate">
+                <DrawerTitle className="min-w-0 flex-1 truncate text-left">
                   {panelTitle}
                 </DrawerTitle>
                 <div className="flex shrink-0 items-center">
