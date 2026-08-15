@@ -666,7 +666,7 @@ export class SqliteFsStore implements ServerStore {
                 t.distance_km, t.point_count, t.size_bytes, t.updated_at
            FROM tracks t
           WHERE t.user_id = ? AND t.is_public = 1
-          ORDER BY t.updated_at DESC`
+          ORDER BY (t.started_at_ms IS NULL), t.started_at_ms DESC, t.updated_at DESC`
       )
       .all(userId) as TrackRow[]
 
