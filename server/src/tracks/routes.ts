@@ -11,11 +11,11 @@
  */
 
 import { Hono } from "hono"
+import { z } from "zod"
 
 import type {
   TrackDeleteResponse,
   TrackMeta,
-  TrackVisibilityUpdateRequest,
   TrackVisibilityUpdateResponse,
 } from "~shared/api"
 
@@ -36,7 +36,6 @@ import { checkRateLimit } from "./rateLimit"
 const visibilitySchema = z.object({
   isPublic: z.boolean(),
 })
-import { z } from "zod"
 
 export function createTrackRoutes(store: ServerStore) {
   const app = new Hono<AuthEnv>()
