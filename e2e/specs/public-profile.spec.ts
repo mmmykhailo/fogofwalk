@@ -39,12 +39,15 @@ test.describe("public profile", () => {
     await app.page.goto(`/?track=${encodeURIComponent(id)}`)
     await app.waitUntilReady()
 
-    // Toggle visibility from Private to Public.
+    // Toggle visibility from Private to Public and wait for the debounced
+    // visibility PATCH to actually land, rather than sleeping a guessed delay.
+    const visibilityPatch = app.page.waitForResponse(
+      (res) =>
+        res.request().method() === "PATCH" && res.url().includes("/visibility")
+    )
     await app.page.getByRole("combobox", { name: "Track visibility" }).click()
     await app.page.getByRole("option", { name: "Public" }).click()
-
-    // Wait for the debounced server patch + IDB save.
-    await app.page.waitForTimeout(900)
+    await visibilityPatch
 
     // Publish should show on the public profile.
     await app.page.goto(PUBLIC_PROFILE_URL(login))
