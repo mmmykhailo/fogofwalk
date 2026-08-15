@@ -21,7 +21,7 @@ test.describe("public profile", () => {
     await app.page.goto(PUBLIC_PROFILE_URL(login))
     await expect(app.page.locator("h2").getByText(`E2E ${login}`)).toBeVisible()
     await expect(
-      app.page.getByText("No public tracks yet.")
+      app.page.getByText("This user has no public tracks yet")
     ).toBeVisible()
   })
 
