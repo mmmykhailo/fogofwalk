@@ -44,6 +44,8 @@ export interface ServerUser {
   id: string
   displayName: string
   avatarUrl: string | null
+  /** Public URL handle, when the provider account has one. */
+  handle: string | null
   /** Provider the current session was created with, e.g. "github". */
   provider: string
   status: UserStatus
@@ -59,18 +61,51 @@ export interface MeResponse {
   capabilities: UserCapabilities
 }
 
-// ─── Tracks ────────────────────────────────────────────────────────────────────
+// ─── Public profiles ───────────────────────────────────────────────────────────
 
-/** A track's server-side metadata. Geometry is fetched separately by hash. */
-export interface TrackMeta {
+export interface PublicProfileUser {
+  handle: string
+  displayName: string
+  avatarUrl: string | null
+}
+
+export interface PublicTrackMeta {
   contentHash: string
   name: string
   format: TrackFormat
   startedAtMs: number | null
   distanceKm: number
   pointCount: number
+  durationMs: number | null
+  movingTimeMs: number | null
+  elevationGainM: number
+  avgMovingSpeedKmh: number | null
+}
+
+export interface PublicProfileResponse {
+  user: PublicProfileUser
+  tracks: PublicTrackMeta[]
+}
+
+// ─── Tracks ────────────────────────────────────────────────────────────────────
+
+/** A track's server-side metadata. Geometry is fetched separately by hash. */
+export interface TrackMeta {
+  contentHash: string
+  name: string
+  isPublic: boolean
+  format: TrackFormat
+  startedAtMs: number | null
+  distanceKm: number
+  pointCount: number
   sizeBytes: number
   updatedAt: number
+  // Denormalized from `stats` at upload time so the public profile endpoint
+  // can list tracks without decompressing and parsing every blob.
+  durationMs: number | null
+  movingTimeMs: number | null
+  elevationGainM: number
+  avgMovingSpeedKmh: number | null
 }
 
 export interface TrackTombstone {
@@ -87,6 +122,16 @@ export interface TrackTombstone {
  */
 export interface TrackDeleteResponse {
   deletedAt: number
+}
+
+export interface TrackVisibilityUpdateRequest {
+  isPublic: boolean
+}
+
+export interface TrackVisibilityUpdateResponse {
+  contentHash: string
+  isPublic: boolean
+  updatedAt: number
 }
 
 export interface ManifestPage {

@@ -18,6 +18,17 @@ import {
 import { MemoryStore } from "../src/store/memory"
 import { fakeHash, makeStats } from "./helpers"
 
+/** Denormalized stat fields TrackMeta needs — irrelevant to these paging tests. */
+const noStats = {
+  durationMs: null,
+  movingTimeMs: null,
+  elevationGainM: 0,
+  avgMovingSpeedKmh: null,
+} satisfies Pick<
+  TrackMeta,
+  "durationMs" | "movingTimeMs" | "elevationGainM" | "avgMovingSpeedKmh"
+>
+
 function rowsAt(times: number[]): Pageable[] {
   return times
     .map((time, index) => ({ time, contentHash: fakeHash(index) }))
@@ -129,12 +140,17 @@ describe("MemoryStore.listManifest", () => {
       const meta: TrackMeta = {
         contentHash: fakeHash(index),
         name: `track ${index}`,
+        isPublic: false,
         format: "gpx",
         startedAtMs: null,
         distanceKm: 1,
         pointCount: 2,
         sizeBytes: 10,
         updatedAt: 1_000 + Math.floor(index / 3),
+        durationMs: null,
+        movingTimeMs: null,
+        elevationGainM: 0,
+        avgMovingSpeedKmh: null,
       }
       hashes.push(meta.contentHash)
       await store.putTrack(userId, meta, new Uint8Array([1]))
@@ -169,12 +185,14 @@ describe("MemoryStore.listManifest", () => {
         {
           contentHash: fakeHash(index),
           name: `track ${index}`,
+          isPublic: false,
           format: "fit",
           startedAtMs: null,
           distanceKm: 1,
           pointCount: 2,
           sizeBytes: 10,
           updatedAt: 1_000 + index,
+          ...noStats,
         },
         new Uint8Array([1])
       )
@@ -197,12 +215,14 @@ describe("MemoryStore.listManifest", () => {
       {
         contentHash: fakeHash(1),
         name: "old",
+        isPublic: false,
         format: "gpx",
         startedAtMs: null,
         distanceKm: 1,
         pointCount: 2,
         sizeBytes: 10,
         updatedAt: 1_000,
+        ...noStats,
       },
       new Uint8Array([1])
     )
@@ -216,12 +236,14 @@ describe("MemoryStore.listManifest", () => {
       {
         contentHash: fakeHash(2),
         name: "new",
+        isPublic: false,
         format: "gpx",
         startedAtMs: null,
         distanceKm: 1,
         pointCount: 2,
         sizeBytes: 10,
         updatedAt: 2_000,
+        ...noStats,
       },
       new Uint8Array([1])
     )

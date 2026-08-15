@@ -1,7 +1,7 @@
 import { AppLink } from "~/components/AppLink"
 
 interface PageShellProps {
-  title: string
+  title?: string
   children: React.ReactNode
 }
 
@@ -12,7 +12,9 @@ export function PageShell({ title, children }: PageShellProps) {
         <AppLink to="/" variant="nav" className="mb-6">
           Back to map
         </AppLink>
-        <h1 className="mb-8 text-2xl font-bold tracking-tight">{title}</h1>
+        {!!title && (
+          <h1 className="mb-8 text-2xl font-bold tracking-tight">{title}</h1>
+        )}
         {children}
       </div>
     </div>

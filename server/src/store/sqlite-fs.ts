@@ -14,6 +14,8 @@ import { $ } from "bun"
 
 import type {
   ManifestPage,
+  PublicProfileResponse,
+  PublicTrackMeta,
   TrackMeta,
   TrackTombstone,
   UserStatus,
@@ -77,9 +79,74 @@ function stripTrailingSlash(value: string): string {
   return value.endsWith("/") ? value.slice(0, -1) : value
 }
 
+function hasColumn(db: Database, table: string, column: string): boolean {
+  return (
+    (db
+      .query(`SELECT 1 FROM pragma_table_info('${table}') WHERE name = ?`)
+      .get(column) as { 1: number } | null) !== null
+  )
+}
+
+function hasTable(db: Database, table: string): boolean {
+  return (
+    (db
+      .query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?")
+      .get(table) as { 1: number } | null) !== null
+  )
+}
+
+function migrateSchema(db: Database) {
+  if (hasTable(db, "users") && !hasColumn(db, "users", "handle")) {
+    db.exec("ALTER TABLE users ADD COLUMN handle TEXT")
+    // Existing identities predate public profiles. Preserve their GitHub login
+    // as the profile handle where it is unique.
+    db.exec(`
+      UPDATE OR IGNORE users
+         SET handle = (
+           SELECT provider_login
+             FROM identities
+            WHERE identities.user_id = users.id
+              AND provider_login IS NOT NULL
+            ORDER BY created_at
+            LIMIT 1
+         )
+       WHERE handle IS NULL
+    `)
+  }
+
+  if (hasTable(db, "tracks") && !hasColumn(db, "tracks", "is_public")) {
+    db.exec(
+      "ALTER TABLE tracks ADD COLUMN is_public INTEGER NOT NULL DEFAULT 0"
+    )
+  }
+
+  // Denormalized stat fields for the public profile endpoint (avoids
+  // decompressing every public track's blob on each request). Nullable:
+  // rows written before this migration stay NULL until the track is
+  // re-uploaded, matching PublicTrackMeta's existing null/0 fallbacks.
+  if (hasTable(db, "tracks") && !hasColumn(db, "tracks", "duration_ms")) {
+    db.exec("ALTER TABLE tracks ADD COLUMN duration_ms REAL")
+  }
+  if (hasTable(db, "tracks") && !hasColumn(db, "tracks", "moving_time_ms")) {
+    db.exec("ALTER TABLE tracks ADD COLUMN moving_time_ms REAL")
+  }
+  if (hasTable(db, "tracks") && !hasColumn(db, "tracks", "elevation_gain_m")) {
+    db.exec(
+      "ALTER TABLE tracks ADD COLUMN elevation_gain_m REAL NOT NULL DEFAULT 0"
+    )
+  }
+  if (
+    hasTable(db, "tracks") &&
+    !hasColumn(db, "tracks", "avg_moving_speed_kmh")
+  ) {
+    db.exec("ALTER TABLE tracks ADD COLUMN avg_moving_speed_kmh REAL")
+  }
+}
+
 interface UserRow {
   id: string
   display_name: string
+  handle: string | null
   avatar_url: string | null
   status: string
   created_at: number
@@ -106,12 +173,17 @@ interface SessionRow {
 interface TrackRow {
   content_hash: string
   name: string
+  is_public: number
   format: string
   started_at_ms: number | null
   distance_km: number
   point_count: number
   size_bytes: number
   updated_at: number
+  duration_ms: number | null
+  moving_time_ms: number | null
+  elevation_gain_m: number
+  avg_moving_speed_kmh: number | null
 }
 
 interface TombstoneRow {
@@ -123,6 +195,7 @@ function toUser(row: UserRow): User {
   return {
     id: row.id,
     displayName: row.display_name,
+    handle: row.handle,
     avatarUrl: row.avatar_url,
     status: row.status as UserStatus,
     createdAt: row.created_at,
@@ -155,12 +228,17 @@ function toMeta(row: TrackRow): TrackMeta {
   return {
     contentHash: row.content_hash,
     name: row.name,
+    isPublic: Boolean(row.is_public),
     format: row.format as TrackFormat,
     startedAtMs: row.started_at_ms,
     distanceKm: row.distance_km,
     pointCount: row.point_count,
     sizeBytes: row.size_bytes,
     updatedAt: row.updated_at,
+    durationMs: row.duration_ms,
+    movingTimeMs: row.moving_time_ms,
+    elevationGainM: row.elevation_gain_m,
+    avgMovingSpeedKmh: row.avg_moving_speed_kmh,
   }
 }
 
@@ -203,6 +281,17 @@ export class SqliteFsStore implements ServerStore {
             WHERE id = ?`
         )
         .run(input.displayName, input.avatarUrl, now, existing.id)
+      // `handle` is UNIQUE and only ever set once: if it's already populated
+      // (whether from a prior sign-in or the migration backfill) it's left
+      // alone, and if the provider login collides with someone else's handle
+      // `OR IGNORE` swallows the constraint violation rather than failing
+      // sign-in — the user just keeps no handle.
+      this.db
+        .query(
+          `UPDATE OR IGNORE users SET handle = ?
+            WHERE id = ? AND handle IS NULL`
+        )
+        .run(input.login, existing.id)
       this.db
         .query(
           `UPDATE identities SET provider_login = ?, email = ?
@@ -216,10 +305,15 @@ export class SqliteFsStore implements ServerStore {
     const id = crypto.randomUUID()
     this.db
       .query(
-        `INSERT INTO users (id, display_name, avatar_url, status, created_at, updated_at)
-         VALUES (?, ?, ?, 'pending', ?, ?)`
+        `INSERT INTO users (id, display_name, handle, avatar_url, status, created_at, updated_at)
+         VALUES (?, ?, NULL, ?, 'pending', ?, ?)`
       )
       .run(id, input.displayName, input.avatarUrl, now, now)
+    // Best-effort handle claim — see the comment on the existing-user path
+    // above for why a collision must not fail sign-in.
+    this.db
+      .query(`UPDATE OR IGNORE users SET handle = ? WHERE id = ?`)
+      .run(input.login, id)
     this.db
       .query(
         `INSERT INTO identities
@@ -355,8 +449,9 @@ export class SqliteFsStore implements ServerStore {
       (from, limit) => {
         const rows = this.db
           .query(
-            `SELECT content_hash, name, format, started_at_ms, distance_km,
-                    point_count, size_bytes, updated_at
+            `SELECT content_hash, name, is_public, format, started_at_ms, distance_km,
+                    point_count, size_bytes, updated_at,
+                    duration_ms, moving_time_ms, elevation_gain_m, avg_moving_speed_kmh
                FROM tracks
               WHERE user_id = ? AND updated_at >= ?
               ORDER BY updated_at ASC, content_hash ASC
@@ -425,23 +520,30 @@ export class SqliteFsStore implements ServerStore {
       this.db
         .query(
           `INSERT INTO tracks
-             (user_id, content_hash, name, format, started_at_ms, distance_km,
-              point_count, size_bytes, blob_ref, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             (user_id, content_hash, name, is_public, format, started_at_ms, distance_km,
+              point_count, size_bytes, blob_ref, created_at, updated_at,
+              duration_ms, moving_time_ms, elevation_gain_m, avg_moving_speed_kmh)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT (user_id, content_hash) DO UPDATE SET
              name = excluded.name,
+             is_public = excluded.is_public,
              format = excluded.format,
              started_at_ms = excluded.started_at_ms,
              distance_km = excluded.distance_km,
              point_count = excluded.point_count,
              size_bytes = excluded.size_bytes,
              blob_ref = excluded.blob_ref,
-             updated_at = excluded.updated_at`
+             updated_at = excluded.updated_at,
+             duration_ms = excluded.duration_ms,
+             moving_time_ms = excluded.moving_time_ms,
+             elevation_gain_m = excluded.elevation_gain_m,
+             avg_moving_speed_kmh = excluded.avg_moving_speed_kmh`
         )
         .run(
           userId,
           meta.contentHash,
           meta.name,
+          meta.isPublic ? 1 : 0,
           meta.format,
           meta.startedAtMs,
           meta.distanceKm,
@@ -449,7 +551,11 @@ export class SqliteFsStore implements ServerStore {
           meta.sizeBytes,
           path,
           now,
-          meta.updatedAt
+          meta.updatedAt,
+          meta.durationMs,
+          meta.movingTimeMs,
+          meta.elevationGainM,
+          meta.avgMovingSpeedKmh
         )
       // Re-uploading a previously deleted track resurrects it; leaving the
       // tombstone would make the manifest tell the client to delete it again.
@@ -468,12 +574,29 @@ export class SqliteFsStore implements ServerStore {
     if (!isSafeContentHash(contentHash)) return null
     const row = this.db
       .query(
-        `SELECT content_hash, name, format, started_at_ms, distance_km,
-                point_count, size_bytes, updated_at
+        `SELECT content_hash, name, is_public, format, started_at_ms, distance_km,
+                point_count, size_bytes, updated_at,
+                duration_ms, moving_time_ms, elevation_gain_m, avg_moving_speed_kmh
            FROM tracks WHERE user_id = ? AND content_hash = ?`
       )
       .get(userId, contentHash) as TrackRow | null
     return row ? toMeta(row) : null
+  }
+
+  async setTrackVisibility(
+    userId: string,
+    contentHash: string,
+    isPublic: boolean
+  ): Promise<TrackMeta | null> {
+    if (!isSafeContentHash(contentHash)) return null
+    const now = Date.now()
+    this.db
+      .query(
+        `UPDATE tracks SET is_public = ?, updated_at = ?
+          WHERE user_id = ? AND content_hash = ?`
+      )
+      .run(isPublic ? 1 : 0, now, userId, contentHash)
+    return this.getTrack(userId, contentHash)
   }
 
   async getTrackBlob(
@@ -535,8 +658,9 @@ export class SqliteFsStore implements ServerStore {
   async listAllTracksForUser(userId: string): Promise<Array<any>> {
     const rows = this.db
       .query(
-        `SELECT content_hash, name, format, started_at_ms, distance_km,
-                point_count, size_bytes, updated_at
+        `SELECT content_hash, name, is_public, format, started_at_ms, distance_km,
+                point_count, size_bytes, updated_at,
+                duration_ms, moving_time_ms, elevation_gain_m, avg_moving_speed_kmh
            FROM tracks WHERE user_id = ? ORDER BY updated_at ASC`
       )
       .all(userId) as TrackRow[]
@@ -574,6 +698,62 @@ export class SqliteFsStore implements ServerStore {
     return tracks
   }
 
+  async findUserByHandle(handle: string): Promise<User | null> {
+    const row = this.db
+      .query(`SELECT * FROM users WHERE handle = ? COLLATE NOCASE`)
+      .get(handle) as UserRow | null
+    return row ? toUser(row) : null
+  }
+
+  async listPublicTracks(userId: string): Promise<PublicProfileResponse> {
+    const user = await this.getUser(userId)
+    if (!user || !user.handle) {
+      return {
+        user: {
+          handle: user?.handle ?? "",
+          displayName: user?.displayName ?? "",
+          avatarUrl: user?.avatarUrl ?? null,
+        },
+        tracks: [],
+      }
+    }
+
+    const rows = this.db
+      .query(
+        `SELECT t.content_hash, t.name, t.is_public, t.format, t.started_at_ms,
+                t.distance_km, t.point_count, t.size_bytes, t.updated_at,
+                t.duration_ms, t.moving_time_ms, t.elevation_gain_m, t.avg_moving_speed_kmh
+           FROM tracks t
+          WHERE t.user_id = ? AND t.is_public = 1
+          ORDER BY (t.started_at_ms IS NULL), t.started_at_ms DESC, t.updated_at DESC`
+      )
+      .all(userId) as TrackRow[]
+
+    // Stats are denormalized onto the row at upload time (see putTrack), so
+    // building the response never needs to decompress/parse a track blob.
+    const tracks: PublicTrackMeta[] = rows.map((row) => ({
+      contentHash: row.content_hash,
+      name: row.name,
+      format: row.format as TrackFormat,
+      startedAtMs: row.started_at_ms,
+      distanceKm: row.distance_km,
+      pointCount: row.point_count,
+      durationMs: row.duration_ms,
+      movingTimeMs: row.moving_time_ms,
+      elevationGainM: row.elevation_gain_m,
+      avgMovingSpeedKmh: row.avg_moving_speed_kmh,
+    }))
+
+    return {
+      user: {
+        handle: user.handle,
+        displayName: user.displayName,
+        avatarUrl: user.avatarUrl,
+      },
+      tracks,
+    }
+  }
+
   close(): void {
     this.db.close()
   }
@@ -592,6 +772,8 @@ export async function createSqliteFsStore(
   db.exec("PRAGMA journal_mode = WAL;")
   db.exec("PRAGMA foreign_keys = ON;")
   db.exec("PRAGMA busy_timeout = 5000;")
+
+  migrateSchema(db)
 
   const schemaUrl = new URL("../schema/001_init.sql", import.meta.url)
   const schema = await Bun.file(schemaUrl).text()

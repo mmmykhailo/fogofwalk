@@ -10,6 +10,7 @@ import { createAccountRoutes } from "./account/routes"
 import { createAuthRoutes } from "./auth/routes"
 import { env } from "./env"
 import { HttpError, errorBody, statusFor } from "./errors"
+import { createPublicRoutes } from "./public/routes"
 import type { ServerStore } from "./store/types"
 import { createTrackRoutes } from "./tracks/routes"
 
@@ -22,7 +23,7 @@ export function createApp(store: ServerStore) {
       // Explicit list, never "*": the API is cross-origin to the client, and
       // a wildcard would let any page read a signed-in user's tracks.
       origin: env.ALLOWED_ORIGINS,
-      allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+      allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
       allowHeaders: ["Authorization", "Content-Type", "Content-Encoding"],
       // So a 429's standard header is readable cross-origin. The client reads
       // `retryAfterMs` out of the body instead, but exposing this keeps the
@@ -40,6 +41,7 @@ export function createApp(store: ServerStore) {
   app.route("/api/auth", createAuthRoutes(store))
   app.route("/api", createAccountRoutes(store))
   app.route("/api/tracks", createTrackRoutes(store))
+  app.route("/api/public", createPublicRoutes(store))
 
   app.notFound((c) => c.json(errorBody("not_found"), 404))
 

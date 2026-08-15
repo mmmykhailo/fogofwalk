@@ -7,4 +7,5 @@ export default [
   route("/privacy", "routes/privacy.tsx"),
   route("/terms", "routes/terms.tsx"),
   route("/auth/callback", "routes/auth-callback.tsx"),
+  route("/u/:handle", "routes/u.$handle.tsx"),
 ] satisfies RouteConfig

@@ -8,11 +8,18 @@
  * cross-user isolation is a property of this interface, not of the callers.
  */
 
-import type { ManifestPage, TrackMeta, UserStatus } from "~shared/api"
+import type {
+  ManifestPage,
+  PublicProfileResponse,
+  TrackMeta,
+  UserStatus,
+} from "~shared/api"
 
 export interface User {
   id: string
   displayName: string
+  /** Public URL handle, copied from the primary identity login. May be null. */
+  handle: string | null
   avatarUrl: string | null
   status: UserStatus
   createdAt: number
@@ -84,6 +91,15 @@ export interface ServerStore {
   getTrack(userId: string, contentHash: string): Promise<TrackMeta | null>
   getTrackBlob(userId: string, contentHash: string): Promise<Uint8Array | null>
   /**
+   * Updates a track's public visibility. Returns the new metadata, or null if
+   * the track does not belong to the user.
+   */
+  setTrackVisibility(
+    userId: string,
+    contentHash: string,
+    isPublic: boolean
+  ): Promise<TrackMeta | null>
+  /**
    * Removes the row and the blob and writes a tombstone. Idempotent.
    * Returns the tombstone's `deletedAt`, which the caller reports back so the
    * deleting device can record its own tombstone as already applied.
@@ -101,6 +117,18 @@ export interface ServerStore {
    * re-upload them.
    */
   purgeTracks(userId: string): Promise<number>
+
+  // ── public profiles ─────────────────────────────────────────────────────
+  /**
+   * Look up a user by their public handle. Does not expose the internal user id
+   * or allowlist status.
+   */
+  findUserByHandle(handle: string): Promise<User | null>
+  /**
+   * Public tracks for a user, newest first. The caller already verified the
+   * user exists; this method returns only tracks with `is_public = 1`.
+   */
+  listPublicTracks(userId: string): Promise<PublicProfileResponse>
 
   /** Release file handles / connections. Tests call it; the server never does. */
   close?(): void

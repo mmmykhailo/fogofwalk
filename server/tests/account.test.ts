@@ -22,6 +22,7 @@ describe("GET /api/me", () => {
 
     const body = (await response.json()) as MeResponse
     expect(body.user.id).toBe(user.id)
+    expect(body.user.handle).toBe("allowed-user")
     expect(body.user.provider).toBe("github")
     expect(body.user.status).toBe("allowed")
     expect(body.capabilities.sync).toBe(true)

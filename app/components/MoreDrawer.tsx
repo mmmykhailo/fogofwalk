@@ -15,6 +15,7 @@ import {
   MountainsIcon,
   NavigationArrowIcon,
   XIcon,
+  UserIcon,
 } from "@phosphor-icons/react"
 import {
   Drawer,
@@ -30,6 +31,7 @@ import { ClearAllDialog } from "~/components/ClearAllDialog"
 import { AccountDrawerItem } from "~/components/account/AccountDrawerItem"
 import { AccountDialog } from "~/components/account/AccountDialog"
 import { SignInDialog } from "~/components/account/SignInDialog"
+import { useAuth } from "~/lib/server/authStore"
 import type { FogMode, MapMode } from "~/types/tracks"
 
 interface MoreDrawerProps {
@@ -89,6 +91,7 @@ export function MoreDrawer({
   const [isAccountOpen, setIsAccountOpen] = useState(false)
   const [isLocationHintOpen, setIsLocationHintOpen] = useState(false)
   const isMobile = useIsMobile()
+  const auth = useAuth()
 
   /**
    * Close the drawer before opening a dialog, then wait out the close
@@ -299,6 +302,27 @@ export function MoreDrawer({
                 onSignIn={() => closeThenOpen(setIsSignInOpen)}
                 onOpenAccount={() => closeThenOpen(setIsAccountOpen)}
               />
+              {auth.status === "signedIn" && auth.user.handle && (
+                <>
+                  <Item
+                    variant="muted"
+                    render={<Link to={`/u/${auth.user.handle}`} />}
+                    onClick={close}
+                  >
+                    <ItemMedia variant="icon">
+                      <UserIcon
+                        weight="duotone"
+                        className="size-5 text-muted-foreground"
+                      />
+                    </ItemMedia>
+                    <ItemContent>
+                      <ItemTitle>My public profile</ItemTitle>
+                    </ItemContent>
+                    <CaretRightIcon className="size-4 shrink-0 text-muted-foreground" />
+                  </Item>
+                  <div className="ml-10 border-t border-foreground/10" />
+                </>
+              )}
               <Item
                 variant="muted"
                 render={<Link to="/stats" />}

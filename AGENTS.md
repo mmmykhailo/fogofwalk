@@ -107,6 +107,10 @@ lib/statsFormatters.ts   pure display formatters: formatKm, formatElevation, for
                          formatSpeed, formatMovingTime, formatXAxisTick, formatWeekRange
 lib/laps.ts              format-agnostic lap helpers: buildLapTrack (synthetic track for sharing),
                          lapSubtitle, stripExt. FIT lap extraction lives in parsers/fit.ts
+lib/formatRelativeTime.ts  calendar-day-based "today at 18:15" / "yesterday at 00:03" / "5 days ago" /
+                         "a week ago" / "a month ago" / "1 year ago" formatter — shared anywhere a
+                         timestamp needs a human relative label (currently the public profile's
+                         TrackCard, `components/public-profile/TrackCard.tsx`)
 workers/fogWorker.ts     ALL geometry: simplify → buffer → union/difference → emit fog polygon
 lib/parsers/
   index.ts               routes by extension
@@ -211,8 +215,12 @@ FIT-only. `fit-file-parser`'s default `mode: 'list'` puts a flat `data.laps` arr
 
 **One component per file** — outside `components/ui/`. Sub-components get their own file next to
 their parent (`StatRow.tsx`, `WeekTooltip.tsx`, `RecordRow.tsx`), and a feature with several parts
-gets a folder (`components/track-stats/`, `components/stats/`, `components/help/`). The exception is `components/ui/`,
-where shadcn's generated files export a whole part family (`Card` + `CardHeader` + `CardTitle` …)
+gets a folder (`components/track-stats/`, `components/stats/`, `components/help/`, `components/public-profile/`).
+This applies to route files too — a route module should export only the route (`clientLoader`/`clientAction`/
+default component/`meta`), not inline presentational components; e.g. `routes/u.$handle.tsx`'s `TrackCard` and
+`Stat` live in `components/public-profile/TrackCard.tsx` and `components/public-profile/Stat.tsx`, not inline in
+the route. We always want one component per file, no exceptions beyond the one below. The exception is
+`components/ui/`, where shadcn's generated files export a whole part family (`Card` + `CardHeader` + `CardTitle` …)
 from one file — that's the registry's layout and splitting it would break `shadcn add` updates.
 
 **Base UI popups inside a vaul Drawer need care**: vaul renders a Radix `Dialog.Root` but never forwards its own `modal` prop to it, so a drawer is **always** a trapped Radix `FocusScope` — `modal={false}` only makes vaul `preventDefault()` the outside-press/focus-out events. Base UI popups portal to `<body>`, outside that scope, so when one focuses its content Radix's `focusout` handler yanks focus back into the drawer. For `Select` that is fatal: `SelectTrigger.onFocus` closes the popup whenever `alignItemWithTrigger` is active, so it opens and dismisses itself in the same frame (looks like "the dropdown flickers and won't open"). Two guards are in place — `useBaseUiPortalFocusGuard` in `ui/drawer.tsx` (fixes the root cause for any Base UI popup) and `alignItemWithTrigger={false}` on `LapSelector`'s `SelectContent`. Related, already-existing workarounds: the `[data-base-ui-portal]` check in `DrawerContent`'s `onPointerDownOutside` and the focus-restore effect in `ui/dialog.tsx`. Do **not** try to fix this by portalling the popup into the drawer — vaul puts a `transform` on the drawer content, which makes it a containing block for `position: fixed` and sends the popup off-screen.

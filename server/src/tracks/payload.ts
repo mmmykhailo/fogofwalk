@@ -57,6 +57,7 @@ export const trackUploadSchema: z.ZodType<TrackUploadPayload> = z.object({
   stats: statsSchema,
   laps: z.array(lapSchema).optional(),
   contentHash: z.string().optional(),
+  isPublic: z.boolean().optional(),
 })
 
 export function parseTrackUpload(

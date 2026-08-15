@@ -9,6 +9,8 @@
 
 import type {
   ManifestPage,
+  PublicProfileResponse,
+  PublicTrackMeta,
   TrackMeta,
   TrackTombstone,
   UserStatus,
@@ -67,9 +69,14 @@ export class MemoryStore implements ServerStore {
       })
       const user = this.users.get(existingIdentity.userId)
       if (!user) throw new Error("identity points at a missing user")
+      // Mirrors sqlite-fs: handle is claimed once and never overwritten by a
+      // later sign-in, so a login that collides with another user's handle
+      // is silently ignored rather than clobbering an existing handle.
+      const handle = user.handle ?? this.claimHandle(input.login, user.id)
       const updated: User = {
         ...user,
         displayName: input.displayName,
+        handle,
         avatarUrl: input.avatarUrl,
         updatedAt: now,
       }
@@ -77,9 +84,11 @@ export class MemoryStore implements ServerStore {
       return updated
     }
 
+    const newUserId = crypto.randomUUID()
     const user: User = {
-      id: crypto.randomUUID(),
+      id: newUserId,
       displayName: input.displayName,
+      handle: this.claimHandle(input.login, newUserId),
       avatarUrl: input.avatarUrl,
       status: "pending",
       createdAt: now,
@@ -95,6 +104,19 @@ export class MemoryStore implements ServerStore {
       createdAt: now,
     })
     return user
+  }
+
+  /** Returns `login` if no other user already holds it, otherwise `null`. */
+  private claimHandle(login: string, ownerId: string): string | null {
+    for (const other of this.users.values()) {
+      if (
+        other.id !== ownerId &&
+        other.handle?.toLowerCase() === login.toLowerCase()
+      ) {
+        return null
+      }
+    }
+    return login
   }
 
   async getUser(userId: string): Promise<User | null> {
@@ -271,6 +293,17 @@ export class MemoryStore implements ServerStore {
     return this.tracks.get(userId)?.get(contentHash)?.blob ?? null
   }
 
+  async setTrackVisibility(
+    userId: string,
+    contentHash: string,
+    isPublic: boolean
+  ): Promise<TrackMeta | null> {
+    const stored = this.tracks.get(userId)?.get(contentHash)
+    if (!stored) return null
+    stored.meta = { ...stored.meta, isPublic }
+    return stored.meta
+  }
+
   async deleteTrack(userId: string, contentHash: string): Promise<number> {
     this.tracks.get(userId)?.delete(contentHash)
     let byHash = this.tombstones.get(userId)
@@ -319,6 +352,62 @@ export class MemoryStore implements ServerStore {
     return tracks.sort(
       (a, b) => (a.startedAtMs ?? Infinity) - (b.startedAtMs ?? Infinity)
     )
+  }
+
+  async findUserByHandle(handle: string): Promise<User | null> {
+    const lower = handle.toLowerCase()
+    for (const user of this.users.values()) {
+      if (user.handle?.toLowerCase() === lower) return user
+    }
+    return null
+  }
+
+  async listPublicTracks(userId: string): Promise<PublicProfileResponse> {
+    const user = await this.getUser(userId)
+    if (!user || !user.handle) {
+      return {
+        user: {
+          handle: user?.handle ?? "",
+          displayName: user?.displayName ?? "",
+          avatarUrl: user?.avatarUrl ?? null,
+        },
+        tracks: [],
+      }
+    }
+
+    const userTracks = this.tracks.get(userId)
+    const tracks: PublicTrackMeta[] = []
+
+    if (userTracks) {
+      for (const stored of userTracks.values()) {
+        if (!stored.meta.isPublic) continue
+        // Stats are denormalized onto `meta` at upload time (see putTrack),
+        // so this never needs to decompress/parse the stored blob.
+        tracks.push({
+          contentHash: stored.meta.contentHash,
+          name: stored.meta.name,
+          format: stored.meta.format,
+          startedAtMs: stored.meta.startedAtMs,
+          distanceKm: stored.meta.distanceKm,
+          pointCount: stored.meta.pointCount,
+          durationMs: stored.meta.durationMs,
+          movingTimeMs: stored.meta.movingTimeMs,
+          elevationGainM: stored.meta.elevationGainM,
+          avgMovingSpeedKmh: stored.meta.avgMovingSpeedKmh,
+        })
+      }
+    }
+
+    tracks.sort((a, b) => (b.startedAtMs ?? 0) - (a.startedAtMs ?? 0))
+
+    return {
+      user: {
+        handle: user.handle,
+        displayName: user.displayName,
+        avatarUrl: user.avatarUrl,
+      },
+      tracks,
+    }
   }
 
   close(): void {

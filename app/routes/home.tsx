@@ -58,6 +58,7 @@ import {
 } from "~/lib/server/syncEngine"
 import { sortTracks, populateUniqueDistances } from "~/lib/statsAggregator"
 import { useMyLocation } from "~/lib/useMyLocation"
+import { useTrackVisibility } from "~/lib/useTrackVisibility"
 import type { FogMode, MapMode, ParsedTrack } from "~/types/tracks"
 import type { PhotoEntry, PhotoGroup } from "~/types/photos"
 
@@ -599,6 +600,13 @@ export default function Home() {
     return startSyncScheduler()
   }, [isSyncEnabled])
 
+  const visibility = useTrackVisibility((trackId, isPublic) => {
+    const index = mapStore.tracks.findIndex((t) => t.id === trackId)
+    if (index >= 0) {
+      mapStore.tracks[index]!.isPublic = isPublic
+    }
+  })
+
   function handleAddFiles(files: FileList, mode: FogMode = fogMode) {
     const formData = new FormData()
     formData.append("intent", "add-files")
@@ -877,6 +885,13 @@ export default function Home() {
                 }
                 activeLap={activeLap}
                 onLapSelect={handleLapSelect}
+                onVisibilityChange={
+                  selectedTracks.length === 1
+                    ? (isPublic) =>
+                        visibility.change(selectedTracks[0], isPublic)
+                    : undefined
+                }
+                isVisibilityLoading={visibility.isLoading}
               />
             </ErrorBoundary>
           )}

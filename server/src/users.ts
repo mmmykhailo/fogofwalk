@@ -26,6 +26,7 @@ export async function toServerUser(
     id: user.id,
     displayName: user.displayName,
     avatarUrl: user.avatarUrl,
+    handle: user.handle,
     provider: identity?.provider ?? "unknown",
     status: user.status,
   }
