@@ -34,9 +34,9 @@ export function useTrackVisibility(
     (track: ParsedTrack, isPublic: boolean) => {
       if (!canSync() || !track.contentHash) return
 
+      track.isPublic = isPublic
       latestRef.current = { track, isPublic }
       setPendingValue(isPublic)
-
       if (timeoutRef.current) {
         clearTimeout(timeoutRef.current)
       }
