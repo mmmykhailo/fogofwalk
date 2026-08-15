@@ -134,6 +134,10 @@ export function createTrackRoutes(store: ServerStore) {
       pointCount: track.coordinates.length,
       sizeBytes: stored.byteLength,
       updatedAt: existing?.updatedAt ?? Date.now(),
+      durationMs: track.stats.durationMs,
+      movingTimeMs: track.stats.movingTimeMs,
+      elevationGainM: track.stats.elevationGainM,
+      avgMovingSpeedKmh: track.stats.avgMovingSpeedKmh,
     }
 
     await store.putTrack(user.id, meta, stored)

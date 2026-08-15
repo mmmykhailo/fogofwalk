@@ -381,30 +381,20 @@ export class MemoryStore implements ServerStore {
     if (userTracks) {
       for (const stored of userTracks.values()) {
         if (!stored.meta.isPublic) continue
-        try {
-          const decompressed = Bun.gunzipSync(
-            stored.blob as Uint8Array<ArrayBuffer>
-          )
-          const json = new TextDecoder().decode(decompressed)
-          const payload = JSON.parse(json)
-          tracks.push({
-            contentHash: stored.meta.contentHash,
-            name: stored.meta.name,
-            format: stored.meta.format,
-            startedAtMs: stored.meta.startedAtMs,
-            distanceKm: stored.meta.distanceKm,
-            pointCount: stored.meta.pointCount,
-            durationMs: payload?.stats?.durationMs ?? null,
-            movingTimeMs: payload?.stats?.movingTimeMs ?? null,
-            elevationGainM: payload?.stats?.elevationGainM ?? 0,
-            avgMovingSpeedKmh: payload?.stats?.avgMovingSpeedKmh ?? null,
-          })
-        } catch (err) {
-          console.error(
-            `[public] Failed to parse track ${stored.meta.contentHash}:`,
-            err
-          )
-        }
+        // Stats are denormalized onto `meta` at upload time (see putTrack),
+        // so this never needs to decompress/parse the stored blob.
+        tracks.push({
+          contentHash: stored.meta.contentHash,
+          name: stored.meta.name,
+          format: stored.meta.format,
+          startedAtMs: stored.meta.startedAtMs,
+          distanceKm: stored.meta.distanceKm,
+          pointCount: stored.meta.pointCount,
+          durationMs: stored.meta.durationMs,
+          movingTimeMs: stored.meta.movingTimeMs,
+          elevationGainM: stored.meta.elevationGainM,
+          avgMovingSpeedKmh: stored.meta.avgMovingSpeedKmh,
+        })
       }
     }
 

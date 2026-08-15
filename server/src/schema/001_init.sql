@@ -48,6 +48,12 @@ CREATE TABLE IF NOT EXISTS tracks (
   blob_ref TEXT,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL,
+  -- Denormalized from `stats` at upload time so the public profile endpoint
+  -- can list tracks without decompressing/parsing every blob.
+  duration_ms REAL,
+  moving_time_ms REAL,
+  elevation_gain_m REAL NOT NULL DEFAULT 0,
+  avg_moving_speed_kmh REAL,
   PRIMARY KEY (user_id, content_hash)
 );
 

@@ -100,6 +100,12 @@ export interface TrackMeta {
   pointCount: number
   sizeBytes: number
   updatedAt: number
+  // Denormalized from `stats` at upload time so the public profile endpoint
+  // can list tracks without decompressing and parsing every blob.
+  durationMs: number | null
+  movingTimeMs: number | null
+  elevationGainM: number
+  avgMovingSpeedKmh: number | null
 }
 
 export interface TrackTombstone {

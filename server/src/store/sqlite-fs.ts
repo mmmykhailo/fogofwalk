@@ -119,6 +119,28 @@ function migrateSchema(db: Database) {
       "ALTER TABLE tracks ADD COLUMN is_public INTEGER NOT NULL DEFAULT 0"
     )
   }
+
+  // Denormalized stat fields for the public profile endpoint (avoids
+  // decompressing every public track's blob on each request). Nullable:
+  // rows written before this migration stay NULL until the track is
+  // re-uploaded, matching PublicTrackMeta's existing null/0 fallbacks.
+  if (hasTable(db, "tracks") && !hasColumn(db, "tracks", "duration_ms")) {
+    db.exec("ALTER TABLE tracks ADD COLUMN duration_ms REAL")
+  }
+  if (hasTable(db, "tracks") && !hasColumn(db, "tracks", "moving_time_ms")) {
+    db.exec("ALTER TABLE tracks ADD COLUMN moving_time_ms REAL")
+  }
+  if (hasTable(db, "tracks") && !hasColumn(db, "tracks", "elevation_gain_m")) {
+    db.exec(
+      "ALTER TABLE tracks ADD COLUMN elevation_gain_m REAL NOT NULL DEFAULT 0"
+    )
+  }
+  if (
+    hasTable(db, "tracks") &&
+    !hasColumn(db, "tracks", "avg_moving_speed_kmh")
+  ) {
+    db.exec("ALTER TABLE tracks ADD COLUMN avg_moving_speed_kmh REAL")
+  }
 }
 
 interface UserRow {
@@ -158,6 +180,10 @@ interface TrackRow {
   point_count: number
   size_bytes: number
   updated_at: number
+  duration_ms: number | null
+  moving_time_ms: number | null
+  elevation_gain_m: number
+  avg_moving_speed_kmh: number | null
 }
 
 interface TombstoneRow {
@@ -209,6 +235,10 @@ function toMeta(row: TrackRow): TrackMeta {
     pointCount: row.point_count,
     sizeBytes: row.size_bytes,
     updatedAt: row.updated_at,
+    durationMs: row.duration_ms,
+    movingTimeMs: row.moving_time_ms,
+    elevationGainM: row.elevation_gain_m,
+    avgMovingSpeedKmh: row.avg_moving_speed_kmh,
   }
 }
 
@@ -420,7 +450,8 @@ export class SqliteFsStore implements ServerStore {
         const rows = this.db
           .query(
             `SELECT content_hash, name, is_public, format, started_at_ms, distance_km,
-                    point_count, size_bytes, updated_at
+                    point_count, size_bytes, updated_at,
+                    duration_ms, moving_time_ms, elevation_gain_m, avg_moving_speed_kmh
                FROM tracks
               WHERE user_id = ? AND updated_at >= ?
               ORDER BY updated_at ASC, content_hash ASC
@@ -490,8 +521,9 @@ export class SqliteFsStore implements ServerStore {
         .query(
           `INSERT INTO tracks
              (user_id, content_hash, name, is_public, format, started_at_ms, distance_km,
-              point_count, size_bytes, blob_ref, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              point_count, size_bytes, blob_ref, created_at, updated_at,
+              duration_ms, moving_time_ms, elevation_gain_m, avg_moving_speed_kmh)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT (user_id, content_hash) DO UPDATE SET
              name = excluded.name,
              is_public = excluded.is_public,
@@ -501,7 +533,11 @@ export class SqliteFsStore implements ServerStore {
              point_count = excluded.point_count,
              size_bytes = excluded.size_bytes,
              blob_ref = excluded.blob_ref,
-             updated_at = excluded.updated_at`
+             updated_at = excluded.updated_at,
+             duration_ms = excluded.duration_ms,
+             moving_time_ms = excluded.moving_time_ms,
+             elevation_gain_m = excluded.elevation_gain_m,
+             avg_moving_speed_kmh = excluded.avg_moving_speed_kmh`
         )
         .run(
           userId,
@@ -515,7 +551,11 @@ export class SqliteFsStore implements ServerStore {
           meta.sizeBytes,
           path,
           now,
-          meta.updatedAt
+          meta.updatedAt,
+          meta.durationMs,
+          meta.movingTimeMs,
+          meta.elevationGainM,
+          meta.avgMovingSpeedKmh
         )
       // Re-uploading a previously deleted track resurrects it; leaving the
       // tombstone would make the manifest tell the client to delete it again.
@@ -535,7 +575,8 @@ export class SqliteFsStore implements ServerStore {
     const row = this.db
       .query(
         `SELECT content_hash, name, is_public, format, started_at_ms, distance_km,
-                point_count, size_bytes, updated_at
+                point_count, size_bytes, updated_at,
+                duration_ms, moving_time_ms, elevation_gain_m, avg_moving_speed_kmh
            FROM tracks WHERE user_id = ? AND content_hash = ?`
       )
       .get(userId, contentHash) as TrackRow | null
@@ -618,7 +659,8 @@ export class SqliteFsStore implements ServerStore {
     const rows = this.db
       .query(
         `SELECT content_hash, name, is_public, format, started_at_ms, distance_km,
-                point_count, size_bytes, updated_at
+                point_count, size_bytes, updated_at,
+                duration_ms, moving_time_ms, elevation_gain_m, avg_moving_speed_kmh
            FROM tracks WHERE user_id = ? ORDER BY updated_at ASC`
       )
       .all(userId) as TrackRow[]
@@ -678,45 +720,29 @@ export class SqliteFsStore implements ServerStore {
 
     const rows = this.db
       .query(
-        `SELECT t.content_hash, t.name, t.format, t.started_at_ms,
-                t.distance_km, t.point_count, t.size_bytes, t.updated_at
+        `SELECT t.content_hash, t.name, t.is_public, t.format, t.started_at_ms,
+                t.distance_km, t.point_count, t.size_bytes, t.updated_at,
+                t.duration_ms, t.moving_time_ms, t.elevation_gain_m, t.avg_moving_speed_kmh
            FROM tracks t
           WHERE t.user_id = ? AND t.is_public = 1
           ORDER BY (t.started_at_ms IS NULL), t.started_at_ms DESC, t.updated_at DESC`
       )
       .all(userId) as TrackRow[]
 
-    const tracks: PublicTrackMeta[] = []
-    for (const row of rows) {
-      if (!isSafeContentHash(row.content_hash)) continue
-      const file = Bun.file(blobPath(this.dataDir, userId, row.content_hash))
-      if (!(await file.exists())) continue
-
-      try {
-        const compressed = new Uint8Array(await file.arrayBuffer())
-        const decompressed = Bun.gunzipSync(compressed)
-        const json = new TextDecoder().decode(decompressed)
-        const payload = JSON.parse(json)
-
-        tracks.push({
-          contentHash: row.content_hash,
-          name: row.name,
-          format: row.format as TrackFormat,
-          startedAtMs: row.started_at_ms,
-          distanceKm: row.distance_km,
-          pointCount: row.point_count,
-          durationMs: payload?.stats?.durationMs ?? null,
-          movingTimeMs: payload?.stats?.movingTimeMs ?? null,
-          elevationGainM: payload?.stats?.elevationGainM ?? 0,
-          avgMovingSpeedKmh: payload?.stats?.avgMovingSpeedKmh ?? null,
-        })
-      } catch (err) {
-        console.error(
-          `[public] Failed to decompress track ${row.content_hash}:`,
-          err
-        )
-      }
-    }
+    // Stats are denormalized onto the row at upload time (see putTrack), so
+    // building the response never needs to decompress/parse a track blob.
+    const tracks: PublicTrackMeta[] = rows.map((row) => ({
+      contentHash: row.content_hash,
+      name: row.name,
+      format: row.format as TrackFormat,
+      startedAtMs: row.started_at_ms,
+      distanceKm: row.distance_km,
+      pointCount: row.point_count,
+      durationMs: row.duration_ms,
+      movingTimeMs: row.moving_time_ms,
+      elevationGainM: row.elevation_gain_m,
+      avgMovingSpeedKmh: row.avg_moving_speed_kmh,
+    }))
 
     return {
       user: {
