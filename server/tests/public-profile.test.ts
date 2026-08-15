@@ -37,6 +37,28 @@ describe("public profiles", () => {
     expect(user.handle).toBe("runner-one")
   })
 
+  test("a colliding GitHub login does not break sign-in", async () => {
+    const { store } = setup()
+    const first = await signIn(store, {
+      login: "shared-login",
+      providerUserId: "first",
+    })
+    expect(first.user.handle).toBe("shared-login")
+
+    // A second, unrelated identity signing in with the same login must not
+    // throw on the `handle` UNIQUE constraint — it just gets no handle.
+    const second = await signIn(store, {
+      login: "shared-login",
+      providerUserId: "second",
+    })
+    expect(second.user.handle).toBeNull()
+    expect(second.user.id).not.toBe(first.user.id)
+
+    // The first user's handle is unaffected by the second collision.
+    const refreshedFirst = await store.getUser(first.user.id)
+    expect(refreshedFirst?.handle).toBe("shared-login")
+  })
+
   test("public endpoint returns 404 for unknown handles", async () => {
     const { app } = setup()
     const response = await app.request("/api/public/users/does-not-exist")

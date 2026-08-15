@@ -69,10 +69,14 @@ export class MemoryStore implements ServerStore {
       })
       const user = this.users.get(existingIdentity.userId)
       if (!user) throw new Error("identity points at a missing user")
+      // Mirrors sqlite-fs: handle is claimed once and never overwritten by a
+      // later sign-in, so a login that collides with another user's handle
+      // is silently ignored rather than clobbering an existing handle.
+      const handle = user.handle ?? this.claimHandle(input.login, user.id)
       const updated: User = {
         ...user,
         displayName: input.displayName,
-        handle: input.login,
+        handle,
         avatarUrl: input.avatarUrl,
         updatedAt: now,
       }
@@ -80,10 +84,11 @@ export class MemoryStore implements ServerStore {
       return updated
     }
 
+    const newUserId = crypto.randomUUID()
     const user: User = {
-      id: crypto.randomUUID(),
+      id: newUserId,
       displayName: input.displayName,
-      handle: input.login,
+      handle: this.claimHandle(input.login, newUserId),
       avatarUrl: input.avatarUrl,
       status: "pending",
       createdAt: now,
@@ -99,6 +104,19 @@ export class MemoryStore implements ServerStore {
       createdAt: now,
     })
     return user
+  }
+
+  /** Returns `login` if no other user already holds it, otherwise `null`. */
+  private claimHandle(login: string, ownerId: string): string | null {
+    for (const other of this.users.values()) {
+      if (
+        other.id !== ownerId &&
+        other.handle?.toLowerCase() === login.toLowerCase()
+      ) {
+        return null
+      }
+    }
+    return login
   }
 
   async getUser(userId: string): Promise<User | null> {

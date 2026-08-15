@@ -247,10 +247,21 @@ export class SqliteFsStore implements ServerStore {
     if (existing) {
       this.db
         .query(
-          `UPDATE users SET display_name = ?, handle = ?, avatar_url = ?, updated_at = ?
+          `UPDATE users SET display_name = ?, avatar_url = ?, updated_at = ?
             WHERE id = ?`
         )
-        .run(input.displayName, input.login, input.avatarUrl, now, existing.id)
+        .run(input.displayName, input.avatarUrl, now, existing.id)
+      // `handle` is UNIQUE and only ever set once: if it's already populated
+      // (whether from a prior sign-in or the migration backfill) it's left
+      // alone, and if the provider login collides with someone else's handle
+      // `OR IGNORE` swallows the constraint violation rather than failing
+      // sign-in — the user just keeps no handle.
+      this.db
+        .query(
+          `UPDATE OR IGNORE users SET handle = ?
+            WHERE id = ? AND handle IS NULL`
+        )
+        .run(input.login, existing.id)
       this.db
         .query(
           `UPDATE identities SET provider_login = ?, email = ?
@@ -265,9 +276,14 @@ export class SqliteFsStore implements ServerStore {
     this.db
       .query(
         `INSERT INTO users (id, display_name, handle, avatar_url, status, created_at, updated_at)
-         VALUES (?, ?, ?, ?, 'pending', ?, ?)`
+         VALUES (?, ?, NULL, ?, 'pending', ?, ?)`
       )
-      .run(id, input.displayName, input.login, input.avatarUrl, now, now)
+      .run(id, input.displayName, input.avatarUrl, now, now)
+    // Best-effort handle claim — see the comment on the existing-user path
+    // above for why a collision must not fail sign-in.
+    this.db
+      .query(`UPDATE OR IGNORE users SET handle = ? WHERE id = ?`)
+      .run(input.login, id)
     this.db
       .query(
         `INSERT INTO identities
