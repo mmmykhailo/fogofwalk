@@ -302,6 +302,23 @@ export function MoreDrawer({
                 onSignIn={() => closeThenOpen(setIsSignInOpen)}
                 onOpenAccount={() => closeThenOpen(setIsAccountOpen)}
               />
+              <Item
+                variant="muted"
+                render={<Link to="/tracks" />}
+                onClick={close}
+              >
+                <ItemMedia variant="icon">
+                  <PathIcon
+                    weight="duotone"
+                    className="size-5 text-muted-foreground"
+                  />
+                </ItemMedia>
+                <ItemContent>
+                  <ItemTitle>My tracks</ItemTitle>
+                </ItemContent>
+                <CaretRightIcon className="size-4 shrink-0 text-muted-foreground" />
+              </Item>
+              <div className="ml-10 border-t border-foreground/10" />
               {auth.status === "signedIn" && auth.user.handle && (
                 <>
                   <Item

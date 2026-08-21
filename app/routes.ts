@@ -4,6 +4,7 @@ export default [
   index("routes/home.tsx"),
   route("/help", "routes/help.tsx"),
   route("/stats", "routes/stats.tsx"),
+  route("/tracks", "routes/tracks.tsx"),
   route("/privacy", "routes/privacy.tsx"),
   route("/terms", "routes/terms.tsx"),
   route("/auth/callback", "routes/auth-callback.tsx"),
