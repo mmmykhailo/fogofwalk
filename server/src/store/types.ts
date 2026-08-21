@@ -125,8 +125,9 @@ export interface ServerStore {
    */
   findUserByHandle(handle: string): Promise<User | null>
   /**
-   * Public tracks for a user, newest first. The caller already verified the
-   * user exists; this method returns only tracks with `is_public = 1`.
+   * Public tracks with their metadata for a user, newest first. The caller
+   * already verified the user exists; this method returns only tracks with
+   * `is_public = 1` and never exposes geometry.
    */
   listPublicTracks(userId: string): Promise<PublicProfileResponse>
 

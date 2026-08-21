@@ -1,9 +1,11 @@
+import { useEffect, useState } from "react"
 import { Link, useLoaderData } from "react-router"
 import { FootprintsIcon } from "@phosphor-icons/react"
 import { PageShell } from "~/components/PageShell"
 import { AccountAvatar } from "~/components/account/AccountAvatar"
 import { TrackCard } from "~/components/public-profile/TrackCard"
 import { apiUrl } from "~/lib/server/config"
+import { useAuth } from "~/lib/server/authStore"
 import type { PublicProfileResponse } from "~shared/api"
 import type { Route } from "./+types/u.$handle"
 
@@ -49,6 +51,23 @@ export function meta({ params }: Route.MetaArgs) {
 
 export default function PublicProfilePage() {
   const { profile, error } = useLoaderData<typeof clientLoader>()
+  const auth = useAuth()
+  const [tracks, setTracks] = useState(() => profile?.tracks ?? [])
+
+  useEffect(() => {
+    setTracks(profile?.tracks ?? [])
+  }, [profile])
+
+  const isOwner =
+    auth.status === "signedIn" &&
+    auth.canSync &&
+    auth.user.handle?.toLowerCase() === profile?.user.handle.toLowerCase()
+
+  function handleTrackHidden(contentHash: string) {
+    setTracks((current) =>
+      current.filter((track) => track.contentHash !== contentHash)
+    )
+  }
 
   return (
     <PageShell>
@@ -82,7 +101,7 @@ export default function PublicProfilePage() {
         </div>
       )}
 
-      {!error && profile && profile.tracks.length === 0 && (
+      {!error && profile && tracks.length === 0 && (
         <div className="flex flex-col items-center justify-center gap-3 rounded-none border border-dashed border-border py-24 text-center">
           <FootprintsIcon
             size={40}
@@ -95,10 +114,15 @@ export default function PublicProfilePage() {
         </div>
       )}
 
-      {!error && profile && profile.tracks.length > 0 && (
+      {!error && profile && tracks.length > 0 && (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          {profile.tracks.map((track) => (
-            <TrackCard key={track.contentHash} track={track} />
+          {tracks.map((track) => (
+            <TrackCard
+              key={track.contentHash}
+              track={track}
+              isOwner={isOwner}
+              onHidden={handleTrackHidden}
+            />
           ))}
         </div>
       )}

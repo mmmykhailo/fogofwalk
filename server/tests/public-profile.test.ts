@@ -91,7 +91,10 @@ describe("public profiles", () => {
     expect(body.user.displayName).toBe("public-user")
     expect(body.tracks).toHaveLength(1)
     expect(body.tracks[0]!.name).toBe("public.gpx")
-    // Denormalized at upload time — see the comment on listPublicTracks.
+    // The profile returns all server metadata (but never the geometry blob).
+    expect(body.tracks[0]!.isPublic).toBe(true)
+    expect(body.tracks[0]!.sizeBytes).toBeGreaterThan(0)
+    expect(body.tracks[0]!.updatedAt).toBeGreaterThan(0)
     expect(body.tracks[0]!.durationMs).toBe(1_800_000)
     expect(body.tracks[0]!.movingTimeMs).toBe(1_700_000)
     expect(body.tracks[0]!.elevationGainM).toBe(12)

@@ -383,18 +383,7 @@ export class MemoryStore implements ServerStore {
         if (!stored.meta.isPublic) continue
         // Stats are denormalized onto `meta` at upload time (see putTrack),
         // so this never needs to decompress/parse the stored blob.
-        tracks.push({
-          contentHash: stored.meta.contentHash,
-          name: stored.meta.name,
-          format: stored.meta.format,
-          startedAtMs: stored.meta.startedAtMs,
-          distanceKm: stored.meta.distanceKm,
-          pointCount: stored.meta.pointCount,
-          durationMs: stored.meta.durationMs,
-          movingTimeMs: stored.meta.movingTimeMs,
-          elevationGainM: stored.meta.elevationGainM,
-          avgMovingSpeedKmh: stored.meta.avgMovingSpeedKmh,
-        })
+        tracks.push({ ...stored.meta })
       }
     }
 

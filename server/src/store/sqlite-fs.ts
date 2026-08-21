@@ -25,6 +25,7 @@ import type { TrackFormat } from "~shared/tracks"
 
 import { combineCursors, pageStream } from "./manifestPaging"
 import type { Pageable } from "./manifestPaging"
+import { parseTrackUpload } from "../tracks/payload"
 import type {
   Identity,
   IdentityInput,
@@ -729,20 +730,11 @@ export class SqliteFsStore implements ServerStore {
       )
       .all(userId) as TrackRow[]
 
-    // Stats are denormalized onto the row at upload time (see putTrack), so
-    // building the response never needs to decompress/parse a track blob.
-    const tracks: PublicTrackMeta[] = rows.map((row) => ({
-      contentHash: row.content_hash,
-      name: row.name,
-      format: row.format as TrackFormat,
-      startedAtMs: row.started_at_ms,
-      distanceKm: row.distance_km,
-      pointCount: row.point_count,
-      durationMs: row.duration_ms,
-      movingTimeMs: row.moving_time_ms,
-      elevationGainM: row.elevation_gain_m,
-      avgMovingSpeedKmh: row.avg_moving_speed_kmh,
-    }))
+    // Stats are denormalized onto new rows. Old uploads predate those columns,
+    // so hydrate each legacy row once from its already-stored upload payload.
+    const tracks = await Promise.all(
+      rows.map((row) => this.hydrateLegacyPublicMeta(userId, row))
+    )
 
     return {
       user: {
@@ -751,6 +743,60 @@ export class SqliteFsStore implements ServerStore {
         avatarUrl: user.avatarUrl,
       },
       tracks,
+    }
+  }
+
+  private async hydrateLegacyPublicMeta(
+    userId: string,
+    row: TrackRow
+  ): Promise<PublicTrackMeta> {
+    if (
+      row.duration_ms !== null ||
+      row.moving_time_ms !== null ||
+      row.avg_moving_speed_kmh !== null
+    ) {
+      return toMeta(row)
+    }
+
+    try {
+      const file = Bun.file(blobPath(this.dataDir, userId, row.content_hash))
+      const compressed = new Uint8Array(await file.arrayBuffer())
+      const payload = JSON.parse(
+        new TextDecoder().decode(Bun.gunzipSync(compressed))
+      )
+      const parsed = parseTrackUpload(payload)
+      if (!parsed.ok) return toMeta(row)
+
+      const { stats } = parsed.track
+      this.db
+        .query(
+          `UPDATE tracks
+              SET duration_ms = ?, moving_time_ms = ?, elevation_gain_m = ?,
+                  avg_moving_speed_kmh = ?
+            WHERE user_id = ? AND content_hash = ?`
+        )
+        .run(
+          stats.durationMs,
+          stats.movingTimeMs,
+          stats.elevationGainM,
+          stats.avgMovingSpeedKmh,
+          userId,
+          row.content_hash
+        )
+
+      return {
+        ...toMeta(row),
+        durationMs: stats.durationMs,
+        movingTimeMs: stats.movingTimeMs,
+        elevationGainM: stats.elevationGainM,
+        avgMovingSpeedKmh: stats.avgMovingSpeedKmh,
+      }
+    } catch (err) {
+      console.warn(
+        `[public-profile] failed to hydrate metadata for ${row.content_hash}:`,
+        err
+      )
+      return toMeta(row)
     }
   }
 

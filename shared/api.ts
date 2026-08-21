@@ -69,24 +69,6 @@ export interface PublicProfileUser {
   avatarUrl: string | null
 }
 
-export interface PublicTrackMeta {
-  contentHash: string
-  name: string
-  format: TrackFormat
-  startedAtMs: number | null
-  distanceKm: number
-  pointCount: number
-  durationMs: number | null
-  movingTimeMs: number | null
-  elevationGainM: number
-  avgMovingSpeedKmh: number | null
-}
-
-export interface PublicProfileResponse {
-  user: PublicProfileUser
-  tracks: PublicTrackMeta[]
-}
-
 // ─── Tracks ────────────────────────────────────────────────────────────────────
 
 /** A track's server-side metadata. Geometry is fetched separately by hash. */
@@ -106,6 +88,14 @@ export interface TrackMeta {
   movingTimeMs: number | null
   elevationGainM: number
   avgMovingSpeedKmh: number | null
+}
+
+/** Track metadata displayed on a public profile; geometry stays private. */
+export type PublicTrackMeta = TrackMeta
+
+export interface PublicProfileResponse {
+  user: PublicProfileUser
+  tracks: PublicTrackMeta[]
 }
 
 export interface TrackTombstone {

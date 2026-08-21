@@ -1,5 +1,9 @@
 import type { PublicTrackMeta } from "~shared/api"
+import { Menu } from "@base-ui/react/menu"
+import { DotsThreeIcon } from "@phosphor-icons/react"
+import { useState } from "react"
 import { formatRelativeTime } from "~/lib/formatRelativeTime"
+import { updateTrackVisibility } from "~/lib/server/trackVisibility"
 import {
   formatDistance,
   formatDuration,
@@ -13,17 +17,70 @@ function stripExtension(name: string): string {
   return lastDot > 0 ? name.slice(0, lastDot) : name
 }
 
-export function TrackCard({ track }: { track: PublicTrackMeta }) {
+interface TrackCardProps {
+  track: PublicTrackMeta
+  isOwner?: boolean
+  onHidden?: (contentHash: string) => void
+}
+
+export function TrackCard({
+  track,
+  isOwner = false,
+  onHidden,
+}: TrackCardProps) {
+  const [isHiding, setIsHiding] = useState(false)
+
+  async function handleHide() {
+    setIsHiding(true)
+    try {
+      await updateTrackVisibility(track.contentHash, false)
+      onHidden?.(track.contentHash)
+    } catch (err) {
+      console.warn("[public-profile] failed to hide track:", err)
+    } finally {
+      setIsHiding(false)
+    }
+  }
+
   return (
     <div className="flex flex-col gap-2 rounded-none bg-card p-4 text-card-foreground ring-1 ring-foreground/10">
-      <div>
-        <h3 className="font-heading text-sm font-medium">
-          {stripExtension(track.name)}
-        </h3>
-        {track.startedAtMs != null && (
-          <p className="text-xs text-muted-foreground">
-            {formatRelativeTime(track.startedAtMs)}
-          </p>
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <h3 className="font-heading text-sm font-medium">
+            {stripExtension(track.name)}
+          </h3>
+          {track.startedAtMs != null && (
+            <p
+              className="text-xs text-muted-foreground"
+              title={new Date(track.startedAtMs).toLocaleString()}
+            >
+              {formatRelativeTime(track.startedAtMs)}
+            </p>
+          )}
+        </div>
+        {isOwner && (
+          <Menu.Root>
+            <Menu.Trigger
+              aria-label={`Track actions for ${stripExtension(track.name)}`}
+              className="inline-flex size-7 shrink-0 items-center justify-center text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
+              disabled={isHiding}
+            >
+              <DotsThreeIcon size={18} weight="bold" />
+            </Menu.Trigger>
+            <Menu.Portal>
+              <Menu.Positioner align="end" sideOffset={4}>
+                <Menu.Popup className="z-50 min-w-40 border border-border bg-popover p-1 text-popover-foreground shadow-md outline-none">
+                  <Menu.Item
+                    className="flex w-full cursor-pointer items-center px-2 py-1.5 text-sm outline-none hover:bg-muted data-[highlighted]:bg-muted"
+                    disabled={isHiding}
+                    onClick={handleHide}
+                  >
+                    Hide from profile
+                  </Menu.Item>
+                </Menu.Popup>
+              </Menu.Positioner>
+            </Menu.Portal>
+          </Menu.Root>
         )}
       </div>
       <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
