@@ -17,6 +17,13 @@ bun run format     # prettier
 tree (not css/md/json), and the repo has drifted from the current prettier config, so it produces
 churn in files you did not touch. Format only what you changed: `bunx prettier --write <paths>`.
 
+## Worktrees and local environment
+
+When creating a new Git worktree, carry over ignored local environment files by creating symlinks
+to `.env` and `server/.env` from the primary worktree, when those source files exist. Never copy
+or commit those files. This is required before running commands that rely on the local API URL or
+server credentials.
+
 E2E tests (separate package — Playwright, real browser against the real server):
 
 ```bash
