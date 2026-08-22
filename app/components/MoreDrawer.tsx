@@ -1,6 +1,5 @@
 import { useState } from "react"
 import { useIsMobile } from "~/lib/useIsMobile"
-import { Link } from "react-router"
 import {
   ImageIcon,
   TrashIcon,
@@ -31,6 +30,7 @@ import { ClearAllDialog } from "~/components/ClearAllDialog"
 import { AccountDrawerItem } from "~/components/account/AccountDrawerItem"
 import { AccountDialog } from "~/components/account/AccountDialog"
 import { SignInDialog } from "~/components/account/SignInDialog"
+import { TransitionLink } from "~/components/TransitionLink"
 import { useAuth } from "~/lib/server/authStore"
 import type { FogMode, MapMode } from "~/types/tracks"
 
@@ -306,9 +306,7 @@ export function MoreDrawer({
                 <>
                   <Item
                     variant="muted"
-                    render={
-                      <Link to={`/u/${auth.user.handle}`} viewTransition />
-                    }
+                    render={<TransitionLink to={`/u/${auth.user.handle}`} />}
                     onClick={close}
                   >
                     <ItemMedia variant="icon">
@@ -327,7 +325,7 @@ export function MoreDrawer({
               )}
               <Item
                 variant="muted"
-                render={<Link to="/stats" viewTransition />}
+                render={<TransitionLink to="/stats" />}
                 onClick={close}
               >
                 <ItemMedia variant="icon">
@@ -344,7 +342,7 @@ export function MoreDrawer({
               <div className="ml-10 border-t border-foreground/10" />
               <Item
                 variant="muted"
-                render={<Link to="/help" viewTransition />}
+                render={<TransitionLink to="/help" />}
                 onClick={close}
               >
                 <ItemMedia variant="icon">

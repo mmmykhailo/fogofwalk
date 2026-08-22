@@ -81,6 +81,9 @@ test.describe("server-less build", () => {
 
     await app.openDrawer()
     await app.drawer.getByRole("link", { name: "Statistics" }).click()
+    await expect(
+      app.page.locator("[data-page-transition-overlay]")
+    ).toHaveClass(/opacity-100/)
     await expect(app.page).toHaveURL(/\/stats$/)
     await expect(app.page.getByTestId("cached-map-canvas")).toHaveCount(1)
     await expect(app.page.locator("[data-map-cache]")).toHaveAttribute(

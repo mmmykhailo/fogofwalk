@@ -8,6 +8,7 @@ import {
   isRouteErrorResponse,
 } from "react-router"
 import { WarningOctagonIcon } from "@phosphor-icons/react"
+import { PageTransitionProvider } from "~/components/PageTransitionProvider"
 
 import type { Route } from "./+types/root"
 import "./app.css"
@@ -72,7 +73,11 @@ export function Layout({ children }: { children: React.ReactNode }) {
 }
 
 export default function App() {
-  return <Outlet />
+  return (
+    <PageTransitionProvider>
+      <Outlet />
+    </PageTransitionProvider>
+  )
 }
 
 export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {
