@@ -1,5 +1,11 @@
 import { useState, useEffect, useMemo, useRef } from "react"
-import { useFetcher, useLoaderData, useSearchParams } from "react-router"
+import {
+  Outlet,
+  useFetcher,
+  useLoaderData,
+  useLocation,
+  useSearchParams,
+} from "react-router"
 import type maplibregl from "maplibre-gl"
 import { featureCollection, lineString } from "@turf/helpers"
 import bbox from "@turf/bbox"
@@ -329,6 +335,16 @@ export default function Home() {
   const loaderData = useLoaderData<typeof clientLoader>()
   const fetcher = useFetcher<typeof clientAction>()
   const [searchParams, setSearchParams] = useSearchParams()
+  const location = useLocation()
+  const isMapRoute = location.pathname === "/"
+  // This parent route stays matched for every in-app page. Delay mounting the
+  // expensive WebGL map for direct visits to another page, then keep it alive
+  // for the rest of the document session after the first map visit.
+  const [hasMountedMap, setHasMountedMap] = useState(isMapRoute)
+
+  useEffect(() => {
+    if (isMapRoute) setHasMountedMap(true)
+  }, [isMapRoute])
 
   // Initialise from restored data (falls back to defaults on first load)
   const [trackCount, setTrackCount] = useState(loaderData.restoredTrackCount)
@@ -366,6 +382,14 @@ export default function Home() {
   const [isDuplicateOpen, setIsDuplicateOpen] = useState(false)
   // Loading overlay: starts visible, fades out when map is ready, then unmounts
   const [overlayDone, setOverlayDone] = useState(false)
+
+  // The cached map keeps its layout while hidden, but MapLibre still needs a
+  // resize after returning from a page that may have changed the viewport.
+  useEffect(() => {
+    if (!isMapRoute || !mapReady) return
+    const frame = requestAnimationFrame(() => mapStore.map?.resize())
+    return () => cancelAnimationFrame(frame)
+  }, [isMapRoute, mapReady])
 
   // Reprocess flag: true when tracks were restored but fog cache was stale/absent.
   // mapStore.fogData is null in that case; checked once after map is ready.
@@ -774,184 +798,206 @@ export default function Home() {
     : null
 
   return (
-    <div className="relative h-screen w-screen overflow-hidden">
-      {/* Dark overlay: hides the white→tiles→fog flash; fades out once map is ready */}
-      {!overlayDone && (
+    <>
+      {hasMountedMap && (
         <div
-          className="pointer-events-none absolute inset-0 z-50 transition-opacity duration-500"
-          style={{ backgroundColor: "#0a0a1e", opacity: mapReady ? 0 : 1 }}
-          onTransitionEnd={() => setOverlayDone(true)}
-        />
-      )}
-      <ErrorBoundary>
-        <MapView
-          showTracks={showTracks}
-          showFog={showFog}
-          onMapReady={() => setMapReady(true)}
-          onProcessingUpdate={handleProcessingUpdate}
-          selectedTrackIds={selectedTrackIds}
-          onTrackSelect={handleTrackSelect}
-          mapMode={mapMode}
-          photos={photos}
-          showPhotos={showPhotos}
-          onPhotoSelect={setSelectedGroup}
-          showMyLocation={showMyLocation}
-          myLocation={myLocationPosition}
-          highlightCoordinates={highlightCoordinates}
-          focusCoordinates={focusCoordinates}
-          focusKey={focusKey}
-        />
-      </ErrorBoundary>
-      {mapReady && (
-        <>
-          <ControlPanel
-            trackCount={trackCount}
-            processedCount={processedCount}
-            isProcessing={isProcessing}
-            showTracks={showTracks}
-            onShowTracksChange={setShowTracks}
-            showFog={showFog}
-            onShowFogChange={setShowFog}
-            fogMode={fogMode}
-            onFogModeChange={handleFogModeChange}
-            mapMode={mapMode}
-            onMapModeChange={setMapMode}
-            onAddFiles={handleAddFiles}
-            onClearAll={handleClearAll}
-            photoCount={photos.length}
-            onAddPhotos={handleAddPhotos}
-            showPhotos={showPhotos}
-            onShowPhotosChange={setShowPhotos}
-            showMyLocation={showMyLocation}
-            onShowMyLocationChange={handleShowMyLocationChange}
-            locationPermissionDenied={locationPermissionDenied}
-          />
-          <FileUploadDialog
-            open={showUploadDialog}
-            onOpenChange={setShowUploadDialog}
-            onAddFiles={(files) => handleAddFiles(files, fogMode)}
-            onLoadSampleData={handleLoadSampleData}
-          />
-          <PhotoErrorDialog
-            open={photoErrorOpen}
-            onOpenChange={setPhotoErrorOpen}
-          />
-          <ParseErrorDialog
-            open={isParseErrorOpen}
-            onOpenChange={setIsParseErrorOpen}
-            failedFiles={parseFailedFiles}
-          />
-          <DuplicateTracksDialog
-            open={isDuplicateOpen}
-            onOpenChange={setIsDuplicateOpen}
-            duplicateCount={duplicateCount}
-          />
-          <PhotoCard
-            group={selectedGroup}
-            onClose={() => setSelectedGroup(null)}
-          />
-          {selectedTracks.length > 0 && (
-            <ErrorBoundary
-              fallback={(error, reset) => (
-                <div className="absolute right-4 bottom-4 z-10 w-80">
-                  <ErrorCard error={error} reset={reset} className="" />
-                </div>
-              )}
-            >
-              <TrackStatsPanel
-                tracks={selectedTracks}
-                onRemoveTrack={(id) =>
-                  setSelectedTrackIds((prev) => prev.filter((x) => x !== id))
-                }
-                onClose={() => {
-                  setSelectedTrackIds([])
-                  setSelectedLap(null)
-                  setPendingTrackId(null)
-                  setSearchParams(
-                    (prev) => {
-                      const next = new URLSearchParams(prev)
-                      next.delete("track")
-                      return next
-                    },
-                    { replace: true }
-                  )
-                }}
-                onShare={() => setShowShareDialog(true)}
-                onDelete={
-                  selectedTracks.length === 1
-                    ? (alsoOnServer) =>
-                        handleDeleteTrack(selectedTracks[0].id, alsoOnServer)
-                    : undefined
-                }
-                activeLap={activeLap}
-                onLapSelect={handleLapSelect}
-                onVisibilityChange={
-                  selectedTracks.length === 1
-                    ? (isPublic) =>
-                        visibility.change(selectedTracks[0], isPublic)
-                    : undefined
-                }
-                isVisibilityLoading={visibility.isLoading}
-              />
-            </ErrorBoundary>
-          )}
-          {showShareDialog && selectedTracks.length > 0 && (
-            <ShareDialog
-              open={showShareDialog}
-              onOpenChange={setShowShareDialog}
-              tracks={activeLapTrack ? [activeLapTrack] : selectedTracks}
-              photos={photos}
-              subtitle={
-                activeLap
-                  ? lapSubtitle(selectedTracks[0], activeLap)
-                  : undefined
-              }
+          data-map-cache
+          aria-hidden={isMapRoute ? undefined : "true"}
+          inert={isMapRoute ? undefined : true}
+          className={
+            isMapRoute
+              ? "relative h-screen w-screen overflow-hidden"
+              : "pointer-events-none invisible fixed inset-0 overflow-hidden"
+          }
+        >
+          {/* Dark overlay: hides the white→tiles→fog flash; fades out once map is ready */}
+          {!overlayDone && (
+            <div
+              className="pointer-events-none absolute inset-0 z-50 transition-opacity duration-500"
+              style={{ backgroundColor: "#0a0a1e", opacity: mapReady ? 0 : 1 }}
+              onTransitionEnd={() => setOverlayDone(true)}
             />
           )}
-          {pendingTrack && (
-            <Dialog
-              open
-              onOpenChange={(open) => {
-                if (!open) setPendingTrackId(null)
-              }}
-            >
-              <DialogContent showCloseButton={false}>
-                <DialogHeader>
-                  <DialogTitle>Add to stats?</DialogTitle>
-                  <DialogDescription>
-                    &ldquo;{pendingTrack.name}&rdquo;
-                  </DialogDescription>
-                </DialogHeader>
-                <DialogFooter className="flex-col gap-2 sm:flex-row">
-                  <Button
-                    variant="outline"
-                    onClick={() => setPendingTrackId(null)}
-                  >
-                    Cancel
-                  </Button>
-                  <Button
-                    variant="outline"
-                    onClick={() => {
-                      setSelectedTrackIds([pendingTrackId!])
+          <ErrorBoundary>
+            <MapView
+              showTracks={showTracks}
+              showFog={showFog}
+              onMapReady={() => setMapReady(true)}
+              onProcessingUpdate={handleProcessingUpdate}
+              selectedTrackIds={selectedTrackIds}
+              onTrackSelect={handleTrackSelect}
+              mapMode={mapMode}
+              photos={photos}
+              showPhotos={showPhotos}
+              onPhotoSelect={setSelectedGroup}
+              showMyLocation={showMyLocation}
+              myLocation={myLocationPosition}
+              highlightCoordinates={highlightCoordinates}
+              focusCoordinates={focusCoordinates}
+              focusKey={focusKey}
+            />
+          </ErrorBoundary>
+          {mapReady && isMapRoute && (
+            <>
+              <ControlPanel
+                trackCount={trackCount}
+                processedCount={processedCount}
+                isProcessing={isProcessing}
+                showTracks={showTracks}
+                onShowTracksChange={setShowTracks}
+                showFog={showFog}
+                onShowFogChange={setShowFog}
+                fogMode={fogMode}
+                onFogModeChange={handleFogModeChange}
+                mapMode={mapMode}
+                onMapModeChange={setMapMode}
+                onAddFiles={handleAddFiles}
+                onClearAll={handleClearAll}
+                photoCount={photos.length}
+                onAddPhotos={handleAddPhotos}
+                showPhotos={showPhotos}
+                onShowPhotosChange={setShowPhotos}
+                showMyLocation={showMyLocation}
+                onShowMyLocationChange={handleShowMyLocationChange}
+                locationPermissionDenied={locationPermissionDenied}
+              />
+              <FileUploadDialog
+                open={showUploadDialog}
+                onOpenChange={setShowUploadDialog}
+                onAddFiles={(files) => handleAddFiles(files, fogMode)}
+                onLoadSampleData={handleLoadSampleData}
+              />
+              <PhotoErrorDialog
+                open={photoErrorOpen}
+                onOpenChange={setPhotoErrorOpen}
+              />
+              <ParseErrorDialog
+                open={isParseErrorOpen}
+                onOpenChange={setIsParseErrorOpen}
+                failedFiles={parseFailedFiles}
+              />
+              <DuplicateTracksDialog
+                open={isDuplicateOpen}
+                onOpenChange={setIsDuplicateOpen}
+                duplicateCount={duplicateCount}
+              />
+              <PhotoCard
+                group={selectedGroup}
+                onClose={() => setSelectedGroup(null)}
+              />
+              {selectedTracks.length > 0 && (
+                <ErrorBoundary
+                  fallback={(error, reset) => (
+                    <div className="absolute right-4 bottom-4 z-10 w-80">
+                      <ErrorCard error={error} reset={reset} className="" />
+                    </div>
+                  )}
+                >
+                  <TrackStatsPanel
+                    tracks={selectedTracks}
+                    onRemoveTrack={(id) =>
+                      setSelectedTrackIds((prev) =>
+                        prev.filter((x) => x !== id)
+                      )
+                    }
+                    onClose={() => {
+                      setSelectedTrackIds([])
+                      setSelectedLap(null)
                       setPendingTrackId(null)
+                      setSearchParams(
+                        (prev) => {
+                          const next = new URLSearchParams(prev)
+                          next.delete("track")
+                          return next
+                        },
+                        { replace: true }
+                      )
                     }}
-                  >
-                    Replace
-                  </Button>
-                  <Button
-                    onClick={() => {
-                      setSelectedTrackIds((prev) => [...prev, pendingTrackId!])
-                      setPendingTrackId(null)
-                    }}
-                  >
-                    Add to stats
-                  </Button>
-                </DialogFooter>
-              </DialogContent>
-            </Dialog>
+                    onShare={() => setShowShareDialog(true)}
+                    onDelete={
+                      selectedTracks.length === 1
+                        ? (alsoOnServer) =>
+                            handleDeleteTrack(
+                              selectedTracks[0].id,
+                              alsoOnServer
+                            )
+                        : undefined
+                    }
+                    activeLap={activeLap}
+                    onLapSelect={handleLapSelect}
+                    onVisibilityChange={
+                      isSyncEnabled && selectedTracks.length === 1
+                        ? (isPublic) =>
+                            visibility.change(selectedTracks[0], isPublic)
+                        : undefined
+                    }
+                    isVisibilityLoading={visibility.isLoading}
+                  />
+                </ErrorBoundary>
+              )}
+              {showShareDialog && selectedTracks.length > 0 && (
+                <ShareDialog
+                  open={showShareDialog}
+                  onOpenChange={setShowShareDialog}
+                  tracks={activeLapTrack ? [activeLapTrack] : selectedTracks}
+                  photos={photos}
+                  subtitle={
+                    activeLap
+                      ? lapSubtitle(selectedTracks[0], activeLap)
+                      : undefined
+                  }
+                />
+              )}
+              {pendingTrack && (
+                <Dialog
+                  open
+                  onOpenChange={(open) => {
+                    if (!open) setPendingTrackId(null)
+                  }}
+                >
+                  <DialogContent showCloseButton={false}>
+                    <DialogHeader>
+                      <DialogTitle>Add to stats?</DialogTitle>
+                      <DialogDescription>
+                        &ldquo;{pendingTrack.name}&rdquo;
+                      </DialogDescription>
+                    </DialogHeader>
+                    <DialogFooter className="flex-col gap-2 sm:flex-row">
+                      <Button
+                        variant="outline"
+                        onClick={() => setPendingTrackId(null)}
+                      >
+                        Cancel
+                      </Button>
+                      <Button
+                        variant="outline"
+                        onClick={() => {
+                          setSelectedTrackIds([pendingTrackId!])
+                          setPendingTrackId(null)
+                        }}
+                      >
+                        Replace
+                      </Button>
+                      <Button
+                        onClick={() => {
+                          setSelectedTrackIds((prev) => [
+                            ...prev,
+                            pendingTrackId!,
+                          ])
+                          setPendingTrackId(null)
+                        }}
+                      >
+                        Add to stats
+                      </Button>
+                    </DialogFooter>
+                  </DialogContent>
+                </Dialog>
+              )}
+            </>
           )}
-        </>
+        </div>
       )}
-    </div>
+      <Outlet />
+    </>
   )
 }

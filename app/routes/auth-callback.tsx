@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react"
-import { useNavigate, useSearchParams } from "react-router"
+import { useSearchParams } from "react-router"
 import type { AuthExchangeResponse } from "~shared/api"
 import { apiPost, friendlyMessage } from "~/lib/server/apiClient"
 import { completeSignIn, setSignedOut } from "~/lib/server/authStore"
@@ -7,6 +7,7 @@ import { isServerEnabled } from "~/lib/server/config"
 import { useServerHealth } from "~/lib/server/serverHealth"
 import { AppLink } from "~/components/AppLink"
 import { ServerUnavailableNotice } from "~/components/account/ServerUnavailableNotice"
+import { usePageTransition } from "~/components/PageTransitionProvider"
 
 /**
  * Landing point for the OAuth redirect. The server sends a single-use handoff
@@ -15,7 +16,7 @@ import { ServerUnavailableNotice } from "~/components/account/ServerUnavailableN
  */
 export default function AuthCallbackPage() {
   const [searchParams] = useSearchParams()
-  const navigate = useNavigate()
+  const { navigate } = usePageTransition()
   const [error, setError] = useState<string | null>(null)
   const health = useServerHealth()
   // The handoff code is single-use; React 19 StrictMode double-effects would

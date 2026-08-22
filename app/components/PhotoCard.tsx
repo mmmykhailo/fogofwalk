@@ -29,9 +29,10 @@ export function PhotoCard({ group, onClose }: PhotoCardProps) {
   const [isOpen, setIsOpen] = useState(true)
   const isDismissingRef = useRef(false)
   const isMobile = useIsMobile()
-  const { style, onMouseDown, onTouchStart } = useDraggable({
-    x: typeof window !== "undefined" ? window.innerWidth - 336 : 0,
+  const { style, ref, onMouseDown, onTouchStart } = useDraggable({
+    x: -16,
     y: 16,
+    padding: 16,
   })
 
   useEffect(() => {
@@ -132,7 +133,7 @@ export function PhotoCard({ group, onClose }: PhotoCardProps) {
   }
 
   return (
-    <div className="absolute z-20 w-80" style={style}>
+    <div ref={ref} className="absolute z-20 w-80" style={style}>
       <Card className="overflow-hidden bg-background/80 backdrop-blur-md">
         <CardHeader
           onMouseDown={onMouseDown}

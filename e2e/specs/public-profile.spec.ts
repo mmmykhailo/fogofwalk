@@ -8,6 +8,16 @@ const PUBLIC_PROFILE_URL = (handle: string) => `/u/${handle}`
  * handle and any tracks the user marked public.
  */
 test.describe("public profile", () => {
+  test("opens the profile from the cached map", async ({ app, login }) => {
+    await app.goto()
+    await app.signIn()
+    await app.openDrawer()
+    await app.drawer.getByRole("link", { name: "My public profile" }).click()
+
+    await expect(app.page).toHaveURL(new RegExp(`/u/${login}$`))
+    await expect(app.page.getByText(`@${login}`)).toBeVisible()
+  })
+
   test("a private track does not appear on the public profile", async ({
     app,
     login,

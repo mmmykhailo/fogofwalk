@@ -5,13 +5,17 @@ import {
   DialogTitle,
   DialogDescription,
 } from "~/components/ui/dialog"
+import { TransitionLink } from "~/components/TransitionLink"
 
 interface PhotoErrorDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
 }
 
-export function PhotoErrorDialog({ open, onOpenChange }: PhotoErrorDialogProps) {
+export function PhotoErrorDialog({
+  open,
+  onOpenChange,
+}: PhotoErrorDialogProps) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
@@ -26,15 +30,22 @@ export function PhotoErrorDialog({ open, onOpenChange }: PhotoErrorDialogProps) 
           <ul className="ml-4 list-disc space-y-1">
             <li>No activity tracks loaded yet — add GPX or FIT files first</li>
             <li>
-              Photos have no timestamp (screenshots or heavily edited photos often lose EXIF data)
+              Photos have no timestamp (screenshots or heavily edited photos
+              often lose EXIF data)
             </li>
-            <li>Photos were taken more than 5 minutes away from any recorded track point</li>
+            <li>
+              Photos were taken more than 5 minutes away from any recorded track
+              point
+            </li>
           </ul>
           <p>
             See the{" "}
-            <a href="/help" className="underline underline-offset-2 hover:text-foreground">
+            <TransitionLink
+              to="/help"
+              className="underline underline-offset-2 hover:text-foreground"
+            >
               help page
-            </a>{" "}
+            </TransitionLink>{" "}
             for more details.
           </p>
         </div>

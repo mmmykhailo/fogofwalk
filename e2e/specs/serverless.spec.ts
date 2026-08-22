@@ -68,4 +68,31 @@ test.describe("server-less build", () => {
 
     await app.expectTrackCount(0)
   })
+
+  test("keeps the live map mounted while visiting statistics", async ({
+    app,
+  }) => {
+    await app.goto()
+    const mapCanvas = app.page.locator(".maplibregl-canvas").first()
+    await expect(mapCanvas).toBeVisible()
+    await mapCanvas.evaluate((canvas) =>
+      canvas.setAttribute("data-testid", "cached-map-canvas")
+    )
+
+    await app.openDrawer()
+    await app.drawer.getByRole("link", { name: "Statistics" }).click()
+    await expect(
+      app.page.locator("[data-page-transition-overlay]")
+    ).toHaveClass(/opacity-100/)
+    await expect(app.page).toHaveURL(/\/stats$/)
+    await expect(app.page.getByTestId("cached-map-canvas")).toHaveCount(1)
+    await expect(app.page.locator("[data-map-cache]")).toHaveAttribute(
+      "aria-hidden",
+      "true"
+    )
+
+    await app.page.getByRole("link", { name: "Back to map" }).click()
+    await expect(app.page).toHaveURL(/\/$/)
+    await expect(app.page.getByTestId("cached-map-canvas")).toBeVisible()
+  })
 })
