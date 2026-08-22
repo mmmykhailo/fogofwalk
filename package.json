@@ -6,7 +6,7 @@
     "build": "react-router build && mv build/client/* build && rm -rf build/client && cp build/index.html build/404.html",
     "dev": "react-router dev",
     "typecheck": "react-router typegen && tsc",
-    "test": "bun test app",
+    "test": "bun test",
     "format": "prettier --write \"**/*.{ts,tsx}\"",
     "test:e2e": "cd e2e && bun run test"
   },
