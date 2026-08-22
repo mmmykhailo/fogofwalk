@@ -2,6 +2,7 @@ import type { PublicTrackMeta } from "~shared/api"
 import { Menu } from "@base-ui/react/menu"
 import { DotsThreeIcon } from "@phosphor-icons/react"
 import { useState } from "react"
+import { AppLink } from "~/components/AppLink"
 import { formatRelativeTime } from "~/lib/formatRelativeTime"
 import { updateTrackVisibility } from "~/lib/server/trackVisibility"
 import {
@@ -17,24 +18,40 @@ function stripExtension(name: string): string {
   return lastDot > 0 ? name.slice(0, lastDot) : name
 }
 
+export interface TrackCardData {
+  name: string
+  startedAtMs: number | null
+  distanceKm: number
+  durationMs: number | null
+  elevationGainM: number
+  avgMovingSpeedKmh: number | null
+}
+
 interface TrackCardProps {
-  track: PublicTrackMeta
+  track: PublicTrackMeta | TrackCardData
+  /** Local map destination. Public-profile tracks intentionally have none. */
+  trackHref?: string
   isOwner?: boolean
   onHidden?: (contentHash: string) => void
 }
 
 export function TrackCard({
   track,
+  trackHref,
   isOwner = false,
   onHidden,
 }: TrackCardProps) {
   const [isHiding, setIsHiding] = useState(false)
+  const trackName = stripExtension(track.name)
+  const contentHash = "contentHash" in track ? track.contentHash : null
 
   async function handleHide() {
+    if (contentHash == null) return
+
     setIsHiding(true)
     try {
-      await updateTrackVisibility(track.contentHash, false)
-      onHidden?.(track.contentHash)
+      await updateTrackVisibility(contentHash, false)
+      onHidden?.(contentHash)
     } catch (err) {
       console.warn("[public-profile] failed to hide track:", err)
     } finally {
@@ -47,7 +64,17 @@ export function TrackCard({
       <div className="flex items-start justify-between gap-2">
         <div>
           <h3 className="font-heading text-sm font-medium">
-            {stripExtension(track.name)}
+            {trackHref ? (
+              <AppLink
+                to={trackHref}
+                className="block truncate"
+                title={trackName}
+              >
+                {trackName}
+              </AppLink>
+            ) : (
+              trackName
+            )}
           </h3>
           {track.startedAtMs != null && (
             <p
@@ -58,10 +85,10 @@ export function TrackCard({
             </p>
           )}
         </div>
-        {isOwner && (
+        {isOwner && contentHash != null && (
           <Menu.Root>
             <Menu.Trigger
-              aria-label={`Track actions for ${stripExtension(track.name)}`}
+              aria-label={`Track actions for ${trackName}`}
               className="inline-flex size-7 shrink-0 items-center justify-center text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
               disabled={isHiding}
             >
