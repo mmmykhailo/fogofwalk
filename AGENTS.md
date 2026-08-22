@@ -10,6 +10,7 @@ Browser-only SPA with an **optional** sync server. Users import GPX/FIT activity
 bun run dev        # dev server
 bun run typecheck  # react-router typegen + tsc (run after every change)
 bun run build      # production build
+bun run test       # Bun unit tests for the client app
 bun run format     # prettier
 ```
 

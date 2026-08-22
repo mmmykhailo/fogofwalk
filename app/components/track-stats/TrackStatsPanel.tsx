@@ -87,9 +87,10 @@ export function TrackStatsPanel({
   const [isOpen, setIsOpen] = useState(true)
   const isDismissingRef = useRef(false)
   const isMobile = useIsMobile()
-  const { style, onMouseDown, onTouchStart } = useDraggable({
-    x: typeof window !== "undefined" ? window.innerWidth - 336 : 0,
-    y: 16,
+  const { style, ref, onMouseDown, onTouchStart } = useDraggable({
+    x: -16,
+    y: 12,
+    padding: 12,
   })
 
   // On mobile: set open=false so the sheet exit animation plays, then call onClose
@@ -218,7 +219,7 @@ export function TrackStatsPanel({
   }
 
   return (
-    <div className="absolute z-10 w-80" style={style}>
+    <div ref={ref} className="absolute z-10 w-80" style={style}>
       <Card className="bg-background/80 backdrop-blur-md">
         <CardHeader
           onMouseDown={onMouseDown}
