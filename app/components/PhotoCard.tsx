@@ -30,9 +30,9 @@ export function PhotoCard({ group, onClose }: PhotoCardProps) {
   const isDismissingRef = useRef(false)
   const isMobile = useIsMobile()
   const { style, ref, onMouseDown, onTouchStart } = useDraggable({
-    x: -16,
-    y: 16,
-    padding: 16,
+    x: Infinity,
+    y: 0,
+    padding: 12,
   })
 
   useEffect(() => {

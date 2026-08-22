@@ -19,6 +19,21 @@ test("useDraggable uses negative initial coordinates as far-edge offsets", () =>
   ).toEqual({ x: 688, y: 544 })
 })
 
+test("useDraggable uses padding when Infinity aligns an element with a far edge", () => {
+  expect(
+    getInitialDraggablePosition(
+      { x: Infinity, y: 0 },
+      {
+        width: 320,
+        height: 200,
+        viewportWidth: 1_024,
+        viewportHeight: 768,
+        padding: 12,
+      }
+    )
+  ).toEqual({ x: 692, y: 12 })
+})
+
 test("useDraggable keeps a dragged element within every padded viewport edge", () => {
   const bounds = {
     width: 320,

@@ -1,9 +1,9 @@
-import { useEffect, useRef, useState } from "react"
+import { useLayoutEffect, useRef, useState } from "react"
 
 interface DraggableOptions {
-  /** A negative value is measured from the corresponding far edge. */
+  /** `Infinity` aligns with the far edge; a negative value offsets from it. */
   x: number
-  /** A negative value is measured from the corresponding far edge. */
+  /** `Infinity` aligns with the far edge; a negative value offsets from it. */
   y: number
   /** Minimum distance between the draggable element and the viewport edge. */
   padding?: number
@@ -41,8 +41,18 @@ export function getInitialDraggablePosition(
 ): Position {
   return constrainDraggablePosition(
     {
-      x: x < 0 ? viewportWidth - width + x : x,
-      y: y < 0 ? viewportHeight - height + y : y,
+      x:
+        x === Infinity
+          ? viewportWidth - width - padding
+          : x < 0
+            ? viewportWidth - width + x
+            : x,
+      y:
+        y === Infinity
+          ? viewportHeight - height - padding
+          : y < 0
+            ? viewportHeight - height + y
+            : y,
     },
     { width, height, viewportWidth, viewportHeight, padding }
   )
@@ -93,7 +103,7 @@ export function useDraggable({ x, y, padding = 0 }: DraggableOptions) {
     }
   }
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const setInitialPosition = () => {
       if (hasSetInitialPosition.current || !element) return
 
