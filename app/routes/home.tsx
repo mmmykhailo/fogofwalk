@@ -886,7 +886,7 @@ export default function Home() {
                 activeLap={activeLap}
                 onLapSelect={handleLapSelect}
                 onVisibilityChange={
-                  selectedTracks.length === 1
+                  isSyncEnabled && selectedTracks.length === 1
                     ? (isPublic) =>
                         visibility.change(selectedTracks[0], isPublic)
                     : undefined
