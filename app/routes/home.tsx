@@ -432,7 +432,7 @@ export default function Home() {
         { padding: 80, maxZoom: 14 }
       )
     }
-  }, [mapReady])
+  }, [mapReady, searchParams])
 
   // Handle files shared via the Web Share Target API (PWA installed).
   // The service worker intercepts the POST to /?share-target, buffers the files
