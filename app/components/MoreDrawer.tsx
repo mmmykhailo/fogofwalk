@@ -304,7 +304,7 @@ export function MoreDrawer({
               />
               <Item
                 variant="muted"
-                render={<Link to="/tracks" />}
+                render={<TransitionLink to="/tracks" />}
                 onClick={close}
               >
                 <ItemMedia variant="icon">
