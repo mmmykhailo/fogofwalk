@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react"
-import { Link, useLoaderData } from "react-router"
+import { useLoaderData } from "react-router"
 import { FootprintsIcon } from "@phosphor-icons/react"
 import { PageShell } from "~/components/PageShell"
 import { AccountAvatar } from "~/components/account/AccountAvatar"
 import { TrackCard } from "~/components/public-profile/TrackCard"
+import { TransitionLink } from "~/components/TransitionLink"
 import { apiUrl } from "~/lib/server/config"
 import { useAuth } from "~/lib/server/authStore"
 import type { PublicProfileResponse } from "~shared/api"
@@ -92,12 +93,12 @@ export default function PublicProfilePage() {
       {error && (
         <div className="flex flex-col items-center justify-center gap-3 rounded-none border border-dashed border-border py-24 text-center">
           <p className="text-sm text-muted-foreground">{error}</p>
-          <Link
+          <TransitionLink
             to="/"
             className="text-sm font-medium underline underline-offset-4 transition-colors hover:text-muted-foreground"
           >
             Go to map →
-          </Link>
+          </TransitionLink>
         </div>
       )}
 

@@ -57,7 +57,7 @@ export default function AuthCallbackPage() {
           { anonymous: true }
         )
         await completeSignIn(res)
-        navigate("/", { replace: true })
+        navigate("/", { replace: true, viewTransition: true })
       } catch (err) {
         setSignedOut()
         setError(friendlyMessage(err))

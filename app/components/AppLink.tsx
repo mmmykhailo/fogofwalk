@@ -1,6 +1,6 @@
-import { Link } from "react-router"
 import { ArrowLeftIcon } from "@phosphor-icons/react"
 import { cn } from "~/lib/utils"
+import { TransitionLink } from "~/components/TransitionLink"
 
 const variants = {
   nav: "inline-flex items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground",
@@ -15,11 +15,21 @@ interface AppLinkProps {
   children: React.ReactNode
 }
 
-export function AppLink({ to, variant = "subtle", className, title, children }: AppLinkProps) {
+export function AppLink({
+  to,
+  variant = "subtle",
+  className,
+  title,
+  children,
+}: AppLinkProps) {
   return (
-    <Link to={to} className={cn(variants[variant], className)} title={title}>
+    <TransitionLink
+      to={to}
+      className={cn(variants[variant], className)}
+      title={title}
+    >
       {variant === "nav" && <ArrowLeftIcon size={16} />}
       {children}
-    </Link>
+    </TransitionLink>
   )
 }

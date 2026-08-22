@@ -161,7 +161,10 @@
   font-size: 1.125rem;
   font-weight: 500;
   letter-spacing: 0.08em;
-  font-family: system-ui, -apple-system, sans-serif;
+  font-family:
+    system-ui,
+    -apple-system,
+    sans-serif;
   text-transform: uppercase;
   opacity: 0.9;
 }
@@ -179,6 +182,24 @@
   border-top-color: rgba(255, 255, 255, 0.5);
   border-radius: 50%;
   animation: fow-spin 0.9s linear infinite;
+}
+
+/* React Router opts individual internal links into the browser View
+   Transitions API. Keep the route change in step with the map's first-load
+   fade, and use normal blending so a dark map and a light document do not
+   flash through one another. */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 500ms;
+  animation-timing-function: ease;
+  mix-blend-mode: normal;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-old(root),
+  ::view-transition-new(root) {
+    animation: none;
+  }
 }
 
 /* Vaul injects border-radius:8px inline via JS — neutralise it */

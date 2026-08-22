@@ -1,5 +1,4 @@
 import { useRef, useState } from "react"
-import { Link } from "react-router"
 import {
   CloudArrowDownIcon,
   FlaskIcon,
@@ -13,6 +12,7 @@ import {
   DialogDescription,
 } from "~/components/ui/dialog"
 import { Button } from "~/components/ui/button"
+import { TransitionLink } from "~/components/TransitionLink"
 import { SignInDialog } from "~/components/account/SignInDialog"
 import { useAuth } from "~/lib/server/authStore"
 
@@ -66,12 +66,12 @@ export function FileUploadDialog({
             className="hidden"
             onChange={handleFileChange}
           />
-          <Link
+          <TransitionLink
             to="/help"
             className="text-xs text-muted-foreground underline underline-offset-2 transition-colors hover:text-foreground"
           >
             New to Fog of Walk? Learn how it works →
-          </Link>
+          </TransitionLink>
           <div className="flex flex-col gap-3 pt-2">
             <div className="flex gap-3">
               <Button

@@ -306,7 +306,9 @@ export function MoreDrawer({
                 <>
                   <Item
                     variant="muted"
-                    render={<Link to={`/u/${auth.user.handle}`} />}
+                    render={
+                      <Link to={`/u/${auth.user.handle}`} viewTransition />
+                    }
                     onClick={close}
                   >
                     <ItemMedia variant="icon">
@@ -325,7 +327,7 @@ export function MoreDrawer({
               )}
               <Item
                 variant="muted"
-                render={<Link to="/stats" />}
+                render={<Link to="/stats" viewTransition />}
                 onClick={close}
               >
                 <ItemMedia variant="icon">
@@ -342,7 +344,7 @@ export function MoreDrawer({
               <div className="ml-10 border-t border-foreground/10" />
               <Item
                 variant="muted"
-                render={<Link to="/help" />}
+                render={<Link to="/help" viewTransition />}
                 onClick={close}
               >
                 <ItemMedia variant="icon">
