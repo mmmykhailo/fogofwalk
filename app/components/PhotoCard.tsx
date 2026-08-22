@@ -27,6 +27,10 @@ interface PhotoCardProps {
 export function PhotoCard({ group, onClose }: PhotoCardProps) {
   const [idx, setIdx] = useState(0)
   const [isOpen, setIsOpen] = useState(true)
+  const [photoAspectRatio, setPhotoAspectRatio] = useState<{
+    groupId: string
+    value: number
+  } | null>(null)
   const isDismissingRef = useRef(false)
   const isMobile = useIsMobile()
   const { style, ref, onMouseDown, onTouchStart } = useDraggable({
@@ -45,10 +49,51 @@ export function PhotoCard({ group, onClose }: PhotoCardProps) {
     setIsOpen(true)
   }, [group?.id])
 
+  useEffect(() => {
+    if (!group) return
+
+    let isCancelled = false
+    const urls = group.photos.flatMap((photo) =>
+      photo.objectUrl ? [photo.objectUrl] : []
+    )
+
+    Promise.all(
+      urls.map(
+        (url) =>
+          new Promise<number | null>((resolve) => {
+            const image = new Image()
+            image.onload = () =>
+              resolve(
+                image.naturalWidth > 0 && image.naturalHeight > 0
+                  ? image.naturalWidth / image.naturalHeight
+                  : null
+              )
+            image.onerror = () => resolve(null)
+            image.src = url
+          })
+      )
+    ).then((aspectRatios) => {
+      if (isCancelled) return
+
+      setPhotoAspectRatio({
+        groupId: group.id,
+        value: Math.max(
+          ...aspectRatios.filter((ratio): ratio is number => ratio !== null),
+          1
+        ),
+      })
+    })
+
+    return () => {
+      isCancelled = true
+    }
+  }, [group?.id])
+
   if (!group) return null
 
   const photo = group.photos[idx]
   const count = group.photos.length
+  const isPhotoFrameReady = photoAspectRatio?.groupId === group.id
 
   function handleDismiss() {
     if (isDismissingRef.current) return
@@ -118,12 +163,19 @@ export function PhotoCard({ group, onClose }: PhotoCardProps) {
             </div>
           </DrawerHeader>
           <div className="pb-4">
-            {photo.objectUrl && (
-              <img
-                src={photo.objectUrl}
-                alt="Photo"
-                className="block max-h-[55vh] w-full object-contain"
-              />
+            {isPhotoFrameReady && (
+              <div
+                className="max-h-[55vh] w-full"
+                style={{ aspectRatio: photoAspectRatio.value }}
+              >
+                {photo.objectUrl && (
+                  <img
+                    src={photo.objectUrl}
+                    alt="Photo"
+                    className="block size-full object-contain"
+                  />
+                )}
+              </div>
             )}
             {navControls}
           </div>
@@ -156,12 +208,19 @@ export function PhotoCard({ group, onClose }: PhotoCardProps) {
           </CardAction>
         </CardHeader>
         <CardContent className="p-0">
-          {photo.objectUrl && (
-            <img
-              src={photo.objectUrl}
-              alt="Photo"
-              className="block h-auto w-full"
-            />
+          {isPhotoFrameReady && (
+            <div
+              className="w-full"
+              style={{ aspectRatio: photoAspectRatio.value }}
+            >
+              {photo.objectUrl && (
+                <img
+                  src={photo.objectUrl}
+                  alt="Photo"
+                  className="block size-full object-contain"
+                />
+              )}
+            </div>
           )}
           {navControls}
         </CardContent>
