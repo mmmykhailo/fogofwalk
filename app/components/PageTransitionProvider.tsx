@@ -14,7 +14,7 @@ import {
 } from "react-router"
 
 const DARKEN_DURATION_MS = 180
-const VIEW_TRANSITION_DURATION_MS = 500
+const VIEW_TRANSITION_DURATION_MS = 100
 
 interface PageTransitionContextValue {
   navigate: (to: To, options?: NavigateOptions) => void
