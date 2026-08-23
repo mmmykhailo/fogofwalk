@@ -38,9 +38,9 @@ export function ActivityGrid({ recentDays }: ActivityGridProps) {
       </div>
 
       {/* Horizontally scrollable wrapper for narrow screens */}
-      <div className="overflow-x-auto -mx-4 px-4">
+      <div className="-mx-4 overflow-x-auto px-4">
         <div
-          className="flex gap-0.5 min-w-max"
+          className="flex min-w-max gap-0.5"
           aria-label="Activity over the last 12 weeks"
         >
           {/* Day-of-week label column */}

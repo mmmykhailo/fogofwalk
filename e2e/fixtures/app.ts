@@ -5,12 +5,7 @@ import {
   type Page,
 } from "@playwright/test"
 
-import {
-  ALLOWED_LOGIN_POOL,
-  API_URL,
-  LOGINS_PER_WORKER,
-  WEB_URL,
-} from "./ports"
+import { ADMIN_LOGIN_POOL, API_URL, LOGINS_PER_WORKER, WEB_URL } from "./ports"
 import { AppPage } from "./app-page"
 
 export { expect }
@@ -141,7 +136,7 @@ export const test = base.extend<Fixtures>({
       )
     }
     await use(
-      ALLOWED_LOGIN_POOL[testInfo.workerIndex * LOGINS_PER_WORKER + offset]
+      ADMIN_LOGIN_POOL[testInfo.workerIndex * LOGINS_PER_WORKER + offset]
     )
   },
 

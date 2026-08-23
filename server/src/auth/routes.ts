@@ -17,16 +17,12 @@ import { Hono } from "hono"
 import { deleteCookie, getSignedCookie, setSignedCookie } from "hono/cookie"
 import { z } from "zod"
 
-import type {
-  AuthExchangeResponse,
-  AuthProvidersResponse,
-  UserStatus,
-} from "~shared/api"
+import type { AuthExchangeResponse, AuthProvidersResponse } from "~shared/api"
 
 import { env } from "../env"
 import { jsonError } from "../errors"
 import type { ServerStore } from "../store/types"
-import { capabilitiesFor, toServerUser } from "../users"
+import { capabilitiesFor, isAdmin, toServerUser } from "../users"
 import { createRequireSession } from "./middleware"
 import type { AuthEnv } from "./middleware"
 import { providers, listProviders } from "./providers"
@@ -76,25 +72,6 @@ export function resolveRedirectOrigin(raw: string | undefined): string | null {
   return env.ALLOWED_ORIGINS.includes(stripTrailingSlash(origin))
     ? origin
     : null
-}
-
-/**
- * Default deny: everyone lands as `pending`. `ALLOWED_LOGINS` can only
- * *promote*, and only from `pending` — the database is authoritative
- * afterwards so an admin can allow or block an account without a redeploy,
- * and a `blocked` user can never be resurrected by an env var.
- */
-export async function applyAllowlist(
-  store: ServerStore,
-  userId: string,
-  status: UserStatus,
-  provider: string,
-  login: string
-) {
-  if (status !== "pending") return null
-  const key = `${provider}:${login}`.toLowerCase()
-  if (!env.ALLOWED_LOGINS.includes(key)) return null
-  return store.setUserStatus(userId, "allowed")
 }
 
 export function createAuthRoutes(store: ServerStore) {
@@ -195,13 +172,10 @@ export function createAuthRoutes(store: ServerStore) {
       email: profile.email,
     })
 
-    await applyAllowlist(
-      store,
-      user.id,
-      user.status,
-      provider.id,
-      profile.login
-    )
+    const refreshed = await store.getUser(user.id)
+    if (refreshed?.status === "pending" && (await isAdmin(store, user.id))) {
+      await store.setUserStatus(user.id, "allowed")
+    }
 
     const session = await createSessionFor(store, user.id)
     const handoff = createHandoffCode(user.id, session.token, session.expiresAt)
@@ -239,7 +213,7 @@ export function createAuthRoutes(store: ServerStore) {
       token: entry.token,
       expiresAt: entry.tokenExpiresAt,
       user: await toServerUser(store, user),
-      capabilities: capabilitiesFor(user),
+      capabilities: await capabilitiesFor(store, user),
     }
     return c.json(response)
   })

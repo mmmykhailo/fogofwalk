@@ -5,7 +5,7 @@ import { join } from "node:path"
 import { fileURLToPath } from "node:url"
 
 import {
-  ALLOWED_LOGIN_POOL,
+  ADMIN_LOGIN_POOL,
   API_PORT,
   API_URL,
   IDP_PORT,
@@ -23,8 +23,9 @@ const repoRoot = join(here, "..")
  * A single shared server rather than one per worker: the client dev server
  * bakes `VITE_API_URL` in at startup, so every worker has to point at the same
  * API. Isolation comes from each test claiming its own login out of
- * `ALLOWED_LOGIN_POOL` — every store method is scoped by user id, so two tests
- * cannot see each other's data.
+ * `ADMIN_LOGIN_POOL` — every store method is scoped by user id, so two tests
+ * cannot see each other's data. The test identities are administrators so
+ * existing sync specs can exercise their own isolated libraries.
  */
 export default async function globalSetup() {
   const dataDir = mkdtempSync(join(tmpdir(), "fogofwalk-e2e-"))
@@ -50,7 +51,7 @@ export default async function globalSetup() {
         PUBLIC_URL: API_URL,
         // Both client projects must be allowed to sign in and to be redirected to.
         ALLOWED_ORIGINS: `${WEB_URL},${WEB_URL_SERVERLESS}`,
-        ALLOWED_LOGINS: ALLOWED_LOGIN_POOL.map((l) => `github:${l}`).join(","),
+        ADMIN_LOGINS: ADMIN_LOGIN_POOL.map((l) => `github:${l}`).join(","),
         SESSION_SECRET: "e2e-session-secret-that-is-long-enough-0123456789",
         GITHUB_CLIENT_ID: "e2e-client-id",
         GITHUB_CLIENT_SECRET: "e2e-client-secret",

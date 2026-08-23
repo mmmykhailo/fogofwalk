@@ -33,7 +33,7 @@ test.describe("auth and account lifecycle", () => {
     await expect(app.accountRow).toBeHidden()
   })
 
-  test("a login outside the allowlist is signed in but gated", async ({
+  test("a login without approval is signed in but gated", async ({
     browser,
     secondDevice,
   }) => {

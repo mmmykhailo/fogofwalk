@@ -26,8 +26,8 @@ const envSchema = z.object({
   ALLOWED_ORIGINS: z
     .string({ required_error: "ALLOWED_ORIGINS is required" })
     .min(1, "ALLOWED_ORIGINS must list at least one origin"),
-  /** `provider:login` pairs promoted from `pending` to `allowed` at sign-in. */
-  ALLOWED_LOGINS: z.string().optional(),
+  /** Deployment-owned administrator identities. */
+  ADMIN_LOGINS: z.string({ required_error: "ADMIN_LOGINS is required" }).min(1),
   /** Signs the short-lived OAuth state cookie. */
   SESSION_SECRET: z
     .string({ required_error: "SESSION_SECRET is required" })
@@ -47,8 +47,7 @@ export interface Env {
   STORE_DRIVER: string
   /** Normalised: no trailing slash, lowercased. */
   ALLOWED_ORIGINS: string[]
-  /** Lowercased `provider:login` pairs. */
-  ALLOWED_LOGINS: string[]
+  ADMIN_LOGINS: string[]
   SESSION_SECRET: string
   /** Normalised: no trailing slash. */
   PUBLIC_URL: string
@@ -96,15 +95,25 @@ export function parseEnv(source: Record<string, string | undefined>): Env {
     )
   }
 
+  const adminLogins = csv(parsed.ADMIN_LOGINS).map((entry) =>
+    entry.toLowerCase()
+  )
+  if (
+    adminLogins.length === 0 ||
+    adminLogins.some((entry) => !/^[^:\s]+:[^:\s]+$/.test(entry))
+  ) {
+    throw new Error(
+      "Invalid server environment:\n  - ADMIN_LOGINS must contain one or more provider:login identities"
+    )
+  }
+
   return {
     PORT: parsed.PORT,
     HOST: parsed.HOST,
     DATA_DIR: parsed.DATA_DIR,
     STORE_DRIVER: parsed.STORE_DRIVER,
     ALLOWED_ORIGINS: origins,
-    ALLOWED_LOGINS: csv(parsed.ALLOWED_LOGINS).map((entry) =>
-      entry.toLowerCase()
-    ),
+    ADMIN_LOGINS: adminLogins,
     SESSION_SECRET: parsed.SESSION_SECRET,
     PUBLIC_URL: stripTrailingSlash(parsed.PUBLIC_URL),
     GITHUB_CLIENT_ID: parsed.GITHUB_CLIENT_ID ?? null,

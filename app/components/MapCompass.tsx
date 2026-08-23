@@ -20,7 +20,7 @@ export function MapCompass({ bearing, onReset, className }: MapCompassProps) {
     const target = 45 - bearing
     let delta = target - accumulatedRef.current
     // Normalize to [-180, 180] — always take the shortest arc
-    delta = ((delta % 360) + 540) % 360 - 180
+    delta = (((delta % 360) + 540) % 360) - 180
     accumulatedRef.current += delta
     if (iconRef.current) {
       iconRef.current.style.transform = `rotate(${accumulatedRef.current}deg)`

@@ -7,6 +7,9 @@ import { Hono } from "hono"
 import { cors } from "hono/cors"
 
 import { createAccountRoutes } from "./account/routes"
+import { createAccessRoutes } from "./access/routes"
+import { createAdminRoutes } from "./admin/routes"
+import { createRequireAdmin } from "./admin/middleware"
 import { createAuthRoutes } from "./auth/routes"
 import { env } from "./env"
 import { HttpError, errorBody, statusFor } from "./errors"
@@ -40,6 +43,9 @@ export function createApp(store: ServerStore) {
 
   app.route("/api/auth", createAuthRoutes(store))
   app.route("/api", createAccountRoutes(store))
+  app.route("/api", createAccessRoutes(store))
+  app.use("/api/admin/*", createRequireAdmin(store))
+  app.route("/api/admin", createAdminRoutes(store))
   app.route("/api/tracks", createTrackRoutes(store))
   app.route("/api/public", createPublicRoutes(store))
 

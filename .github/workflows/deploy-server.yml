@@ -57,13 +57,14 @@ jobs:
         env:
           API_PUBLIC_URL: ${{ vars.API_PUBLIC_URL }}
           ALLOWED_ORIGINS: ${{ vars.ALLOWED_ORIGINS }}
+          ADMIN_LOGINS: ${{ vars.ADMIN_LOGINS }}
           SESSION_SECRET: ${{ secrets.SESSION_SECRET }}
           VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
           VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
         run: |
           missing=""
           for name in VPS_HOST VPS_USER API_PUBLIC_URL ALLOWED_ORIGINS \
-            SESSION_SECRET VPS_SSH_KEY VPS_KNOWN_HOSTS; do
+            SESSION_SECRET ADMIN_LOGINS VPS_SSH_KEY VPS_KNOWN_HOSTS; do
             [ -n "${!name}" ] || missing="$missing $name"
           done
           if [ -n "$missing" ]; then
@@ -138,7 +139,7 @@ jobs:
       - name: Render the server environment file
         env:
           ALLOWED_ORIGINS: ${{ vars.ALLOWED_ORIGINS }}
-          ALLOWED_LOGINS: ${{ vars.ALLOWED_LOGINS }}
+          ADMIN_LOGINS: ${{ vars.ADMIN_LOGINS }}
           PUBLIC_URL: ${{ vars.API_PUBLIC_URL }}
           GITHUB_OAUTH_CLIENT_ID: ${{ vars.OAUTH_GITHUB_CLIENT_ID }}
           GITHUB_OAUTH_CLIENT_SECRET: ${{ secrets.OAUTH_GITHUB_CLIENT_SECRET }}
@@ -154,7 +155,7 @@ jobs:
             printf 'DATA_DIR=/srv/fogofwalk/data\n'
             printf 'STORE_DRIVER=sqlite-fs\n'
             printf 'ALLOWED_ORIGINS=%s\n' "$ALLOWED_ORIGINS"
-            printf 'ALLOWED_LOGINS=%s\n' "$ALLOWED_LOGINS"
+            printf 'ADMIN_LOGINS=%s\n' "$ADMIN_LOGINS"
             printf 'SESSION_SECRET=%s\n' "$SESSION_SECRET"
             printf 'PUBLIC_URL=%s\n' "$PUBLIC_URL"
             printf 'GITHUB_CLIENT_ID=%s\n' "$GITHUB_OAUTH_CLIENT_ID"

@@ -8,6 +8,8 @@
  */
 
 import type {
+  AdminAccessRequest,
+  AdminUser,
   ManifestPage,
   PublicProfileResponse,
   PublicTrackMeta,
@@ -24,6 +26,8 @@ import type {
   IdentityInput,
   ServerStore,
   Session,
+  AccessRequestCreation,
+  StoredAccessRequest,
   User,
 } from "./types"
 
@@ -44,6 +48,8 @@ export class MemoryStore implements ServerStore {
   private readonly tracks = new Map<string, Map<string, StoredTrack>>()
   /** userId → contentHash → deletedAt */
   private readonly tombstones = new Map<string, Map<string, number>>()
+  private readonly accessRequests = new Map<string, StoredAccessRequest>()
+  private readonly settings = new Map<string, string>()
 
   // ── users & identities ──────────────────────────────────────────────────
 
@@ -134,6 +140,30 @@ export class MemoryStore implements ServerStore {
     return updated
   }
 
+  async setUserStatusWithAccessRequest(
+    userId: string,
+    status: UserStatus,
+    adminUserId: string
+  ): Promise<User | null> {
+    const user = await this.setUserStatus(userId, status)
+    if (!user) return null
+    const request = this.accessRequests.get(userId)
+    if (!request) return user
+    const isPending = status === "pending"
+    this.accessRequests.set(userId, {
+      ...request,
+      status:
+        status === "allowed"
+          ? "approved"
+          : status === "blocked"
+            ? "rejected"
+            : "pending",
+      decidedAt: isPending ? null : Date.now(),
+      decidedBy: isPending ? null : adminUserId,
+    })
+    return user
+  }
+
   async findPrimaryIdentity(userId: string): Promise<Identity | null> {
     let primary: Identity | null = null
     for (const identity of this.identities.values()) {
@@ -161,6 +191,133 @@ export class MemoryStore implements ServerStore {
     }
     this.tracks.delete(userId)
     this.tombstones.delete(userId)
+    this.accessRequests.delete(userId)
+  }
+
+  async getAccessRequest(userId: string): Promise<StoredAccessRequest | null> {
+    return this.accessRequests.get(userId) ?? null
+  }
+
+  async createAccessRequest(userId: string): Promise<AccessRequestCreation> {
+    const existing = this.accessRequests.get(userId)
+    if (existing) return { request: existing, created: false }
+    const request: StoredAccessRequest = {
+      id: crypto.randomUUID(),
+      userId,
+      status: "pending",
+      requestedAt: Date.now(),
+      decidedAt: null,
+      decidedBy: null,
+      notificationStatus: "not_configured",
+      notificationAttemptedAt: null,
+    }
+    this.accessRequests.set(userId, request)
+    return { request, created: true }
+  }
+
+  async setAccessRequestNotification(
+    userId: string,
+    status: "not_configured" | "sent" | "failed"
+  ): Promise<void> {
+    const request = this.accessRequests.get(userId)
+    if (request)
+      this.accessRequests.set(userId, {
+        ...request,
+        notificationStatus: status,
+        notificationAttemptedAt: Date.now(),
+      })
+  }
+
+  private toAdminRequest(request: StoredAccessRequest): AdminAccessRequest {
+    const user = this.users.get(request.userId)
+    const identity = [...this.identities.values()].find(
+      (item) => item.userId === request.userId
+    )
+    return {
+      id: request.id,
+      userId: request.userId,
+      status: request.status,
+      requestedAt: request.requestedAt,
+      decidedAt: request.decidedAt,
+      displayName: user?.displayName ?? "Deleted user",
+      identity: identity?.providerLogin
+        ? `${identity.provider}:${identity.providerLogin}`
+        : null,
+      notificationStatus: request.notificationStatus,
+      notificationAttemptedAt: request.notificationAttemptedAt,
+    }
+  }
+
+  async listAdminRequests(): Promise<AdminAccessRequest[]> {
+    return [...this.accessRequests.values()]
+      .map((request) => this.toAdminRequest(request))
+      .sort((a, b) =>
+        a.status === "pending" && b.status !== "pending"
+          ? -1
+          : b.status === "pending" && a.status !== "pending"
+            ? 1
+            : a.requestedAt - b.requestedAt
+      )
+  }
+
+  async listAdminUsers(): Promise<AdminUser[]> {
+    return [...this.users.values()]
+      .map((user) => {
+        const identity = [...this.identities.values()].find(
+          (item) => item.userId === user.id
+        )
+        const request = this.accessRequests.get(user.id)
+        return {
+          id: user.id,
+          displayName: user.displayName,
+          avatarUrl: user.avatarUrl,
+          handle: user.handle,
+          status: user.status,
+          updatedAt: user.updatedAt,
+          identity: identity?.providerLogin
+            ? `${identity.provider}:${identity.providerLogin}`
+            : null,
+          request: request ? this.toAdminRequest(request) : null,
+        }
+      })
+      .sort((a, b) => b.updatedAt - a.updatedAt)
+  }
+
+  async decideAccessRequest(
+    requestId: string,
+    decision: "approve" | "reject",
+    adminUserId: string
+  ): Promise<StoredAccessRequest | null> {
+    const request = [...this.accessRequests.values()].find(
+      (item) => item.id === requestId
+    )
+    if (!request) return null
+    const status: StoredAccessRequest["status"] =
+      decision === "approve" ? "approved" : "rejected"
+    const updated = {
+      ...request,
+      status,
+      decidedAt: Date.now(),
+      decidedBy: adminUserId,
+    }
+    this.accessRequests.set(request.userId, updated)
+    await this.setUserStatus(
+      request.userId,
+      decision === "approve" ? "allowed" : "blocked"
+    )
+    return updated
+  }
+
+  async getSetting(key: string): Promise<string | null> {
+    return this.settings.get(key) ?? null
+  }
+  async setSetting(
+    key: string,
+    value: string | null,
+    _updatedBy: string
+  ): Promise<void> {
+    if (value === null) this.settings.delete(key)
+    else this.settings.set(key, value)
   }
 
   // ── sessions ────────────────────────────────────────────────────────────
@@ -405,6 +562,8 @@ export class MemoryStore implements ServerStore {
     this.sessions.clear()
     this.tracks.clear()
     this.tombstones.clear()
+    this.accessRequests.clear()
+    this.settings.clear()
   }
 }
 

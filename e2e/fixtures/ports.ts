@@ -18,17 +18,17 @@ export const WEB_URL = `http://localhost:${WEB_PORT}`
 export const WEB_URL_SERVERLESS = `http://localhost:${WEB_PORT_SERVERLESS}`
 
 /**
- * Logins the server is booted with in `ALLOWED_LOGINS`. Each test claims one by
+ * Test administrator logins. Each test claims one by
  * index, which is what gives per-test isolation: every store method is scoped by
  * user id, so two tests using different logins cannot see each other's tracks.
  */
 export const LOGINS_PER_WORKER = 64
 const MAX_WORKERS = 16
 
-export const ALLOWED_LOGIN_POOL = Array.from(
+export const ADMIN_LOGIN_POOL = Array.from(
   { length: LOGINS_PER_WORKER * MAX_WORKERS },
   (_, i) => `e2e-${i}`
 )
 
-/** Not in the pool — lands as `pending`, which is the not-allowlisted path. */
+/** Not in the pool — lands as `pending`, which is the access-request path. */
 export const UNLISTED_LOGIN = "e2e-stranger"

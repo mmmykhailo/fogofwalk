@@ -52,13 +52,58 @@ export interface ServerUser {
 }
 
 export interface UserCapabilities {
-  /** False until an admin allowlists the account. Gates all sync UI. */
+  /** False until an admin approves the account. Gates all sync UI. */
   sync: boolean
+  /** Presentation hint only; admin API authorization is always server-side. */
+  admin: boolean
 }
 
 export interface MeResponse {
   user: ServerUser
   capabilities: UserCapabilities
+}
+
+export type AccessRequestStatus = "pending" | "approved" | "rejected"
+export type NotificationStatus = "not_configured" | "sent" | "failed"
+
+export interface AccessRequest {
+  status: AccessRequestStatus
+  requestedAt: number
+}
+
+export interface AdminAccessRequest extends AccessRequest {
+  id: string
+  userId: string
+  displayName: string
+  identity: string | null
+  notificationStatus: NotificationStatus
+  notificationAttemptedAt: number | null
+  decidedAt: number | null
+}
+
+export interface AdminUser {
+  id: string
+  displayName: string
+  avatarUrl: string | null
+  handle: string | null
+  status: UserStatus
+  updatedAt: number
+  identity: string | null
+  request: AdminAccessRequest | null
+}
+
+export interface AdminBootstrapResponse {
+  requests: AdminAccessRequest[]
+  users: AdminUser[]
+  telegramChatId: string | null
+  isBotTokenConfigured: boolean
+}
+
+export interface TelegramSettingsRequest {
+  chatId?: string
+  token?: string
+  clearChatId?: boolean
+  clearToken?: boolean
 }
 
 // ─── Public profiles ───────────────────────────────────────────────────────────

@@ -1,6 +1,6 @@
 /**
  * `requireSession` resolves the bearer token; `requireAllowed` enforces the
- * default-deny allowlist. They are separate because the UI is allowed to show
+ * default-deny access policy. They are separate because the UI is allowed to show
  * a signed-in `pending` user their name and status — only sync is gated.
  */
 

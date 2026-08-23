@@ -35,7 +35,7 @@ export type AuthState =
   /** Restoring a stored session, or exchanging an OAuth handoff code. */
   | { status: "loading" }
   | { status: "signedOut" }
-  | { status: "signedIn"; user: ServerUser; canSync: boolean }
+  | { status: "signedIn"; user: ServerUser; canSync: boolean; isAdmin: boolean }
 
 let state: AuthState = isServerEnabled
   ? { status: "loading" }
@@ -71,7 +71,7 @@ export function getAuthToken(): string | null {
   return token
 }
 
-/** True when the user is signed in *and* allowlisted — the gate for all sync. */
+/** True when the user is signed in and approved — the gate for all sync. */
 export function canSync(): boolean {
   return state.status === "signedIn" && state.canSync
 }
@@ -83,7 +83,12 @@ function applySession(
 ) {
   token = nextToken
   setAuthToken(nextToken)
-  setState({ status: "signedIn", user, canSync: capabilities.sync })
+  setState({
+    status: "signedIn",
+    user,
+    canSync: capabilities.sync,
+    isAdmin: capabilities.admin,
+  })
 }
 
 async function forgetSession() {
@@ -140,6 +145,20 @@ export async function completeSignIn(res: AuthExchangeResponse): Promise<void> {
     user: res.user,
     capabilities: res.capabilities,
   })
+}
+
+/** Revalidate the cached identity and persist any access-state change. */
+export async function refreshAuth(): Promise<void> {
+  if (state.status !== "signedIn" || !token) return
+  const me = await apiGet<MeResponse>("/api/me")
+  applySession(token, me.user, me.capabilities)
+  const stored = await loadSession()
+  if (stored)
+    await saveSession({
+      ...stored,
+      user: me.user,
+      capabilities: me.capabilities,
+    })
 }
 
 export function setLoading(): void {

@@ -230,7 +230,10 @@ function drawRoutes(
   W: number,
   H: number
 ): void {
-  let minLng = Infinity, maxLng = -Infinity, minLat = Infinity, maxLat = -Infinity
+  let minLng = Infinity,
+    maxLng = -Infinity,
+    minLat = Infinity,
+    maxLat = -Infinity
   for (const t of tracks) {
     for (const [lng, lat] of t.coordinates) {
       if (lng < minLng) minLng = lng
@@ -258,14 +261,16 @@ function drawRoutes(
   for (const track of tracks) {
     const MAX_PTS = 2000
     const { coordinates } = track
-    const step = coordinates.length > MAX_PTS ? Math.ceil(coordinates.length / MAX_PTS) : 1
+    const step =
+      coordinates.length > MAX_PTS ? Math.ceil(coordinates.length / MAX_PTS) : 1
     const pts = coordinates.filter((_, i) => i % step === 0)
     if (pts.length < 2) continue
 
     const buildPath = () => {
       ctx.beginPath()
       ctx.moveTo(toX(pts[0][0]), toY(pts[0][1]))
-      for (let i = 1; i < pts.length; i++) ctx.lineTo(toX(pts[i][0]), toY(pts[i][1]))
+      for (let i = 1; i < pts.length; i++)
+        ctx.lineTo(toX(pts[i][0]), toY(pts[i][1]))
     }
 
     ctx.save()
@@ -497,11 +502,18 @@ export async function copyShareCard(opts: ShareCardOptions): Promise<void> {
     await drawShareCard(canvas, opts)
     await new Promise<void>((resolve, reject) => {
       canvas.toBlob(async (blob) => {
-        if (!blob) { reject(new Error("Canvas toBlob returned null")); return }
+        if (!blob) {
+          reject(new Error("Canvas toBlob returned null"))
+          return
+        }
         try {
-          await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })])
+          await navigator.clipboard.write([
+            new ClipboardItem({ "image/png": blob }),
+          ])
           resolve()
-        } catch (err) { reject(err) }
+        } catch (err) {
+          reject(err)
+        }
       }, "image/png")
     })
   } finally {
@@ -519,12 +531,18 @@ export async function exportShareCard(opts: ShareCardOptions): Promise<void> {
     await drawShareCard(canvas, opts)
     await new Promise<void>((resolve, reject) => {
       canvas.toBlob((blob) => {
-        if (!blob) { reject(new Error("Canvas toBlob returned null")); return }
+        if (!blob) {
+          reject(new Error("Canvas toBlob returned null"))
+          return
+        }
         const url = URL.createObjectURL(blob)
         const a = document.createElement("a")
         const isSingle = opts.tracks.length === 1
         const safeName = isSingle
-          ? opts.tracks[0].name.replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "").toLowerCase()
+          ? opts.tracks[0].name
+              .replace(/[^a-z0-9]+/gi, "-")
+              .replace(/^-|-$/g, "")
+              .toLowerCase()
           : `${opts.tracks.length}-activities`
         a.href = url
         a.download = `fogofwalk-${safeName || "activity"}.png`
@@ -571,7 +589,10 @@ export function computeCompositeStats(tracks: ParsedTrack[]): CompositeStats {
     totalElevationGainM += s?.elevationGainM ?? 0
     totalElevationLossM += s?.elevationLossM ?? 0
     if (s?.hasElevation) hasElevation = true
-    if (s?.durationMs != null) { totalDurationMs += s.durationMs; hasDuration = true }
+    if (s?.durationMs != null) {
+      totalDurationMs += s.durationMs
+      hasDuration = true
+    }
     if (s?.movingTimeMs != null) {
       totalMovingTimeMs += s.movingTimeMs
       timedDistanceKm += s.distanceKm ?? 0
