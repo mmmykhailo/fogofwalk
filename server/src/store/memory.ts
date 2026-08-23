@@ -139,6 +139,30 @@ export class MemoryStore implements ServerStore {
     return updated
   }
 
+  async setUserStatusWithAccessRequest(
+    userId: string,
+    status: UserStatus,
+    adminUserId: string
+  ): Promise<User | null> {
+    const user = await this.setUserStatus(userId, status)
+    if (!user) return null
+    const request = this.accessRequests.get(userId)
+    if (!request) return user
+    const isPending = status === "pending"
+    this.accessRequests.set(userId, {
+      ...request,
+      status:
+        status === "allowed"
+          ? "approved"
+          : status === "blocked"
+            ? "rejected"
+            : "pending",
+      decidedAt: isPending ? null : Date.now(),
+      decidedBy: isPending ? null : adminUserId,
+    })
+    return user
+  }
+
   async findPrimaryIdentity(userId: string): Promise<Identity | null> {
     let primary: Identity | null = null
     for (const identity of this.identities.values()) {

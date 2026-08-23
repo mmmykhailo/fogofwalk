@@ -53,5 +53,22 @@ describe("admin access workflow", () => {
     )
     expect(approved.status).toBe(200)
     expect((await store.getUser(applicant.user.id))?.status).toBe("allowed")
+
+    const blocked = await app.request(
+      `/api/admin/users/${applicant.user.id}/status`,
+      {
+        method: "PATCH",
+        headers: {
+          ...authHeaders(admin.token),
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ status: "blocked" }),
+      }
+    )
+    expect(blocked.status).toBe(200)
+    expect((await store.getUser(applicant.user.id))?.status).toBe("blocked")
+    expect((await store.getAccessRequest(applicant.user.id))?.status).toBe(
+      "rejected"
+    )
   })
 })

@@ -69,7 +69,11 @@ export function createAdminRoutes(store: ServerStore) {
         "bad_request",
         "Administrators cannot block themselves."
       )
-    const user = await store.setUserStatus(userId, body.data.status)
+    const user = await store.setUserStatusWithAccessRequest(
+      userId,
+      body.data.status,
+      c.get("user").id
+    )
     if (!user) return jsonError(c, "not_found")
     return c.json({ ok: true })
   })

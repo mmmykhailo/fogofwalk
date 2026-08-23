@@ -77,6 +77,11 @@ export interface ServerStore {
   upsertUserFromIdentity(input: IdentityInput): Promise<User>
   getUser(userId: string): Promise<User | null>
   setUserStatus(userId: string, status: UserStatus): Promise<User | null>
+  setUserStatusWithAccessRequest(
+    userId: string,
+    status: UserStatus,
+    adminUserId: string
+  ): Promise<User | null>
   /**
    * Earliest identity for the user. `sessions` has no provider column, so this
    * is what `ServerUser.provider` reports.

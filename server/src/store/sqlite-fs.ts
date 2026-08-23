@@ -380,6 +380,38 @@ export class SqliteFsStore implements ServerStore {
     return this.getUser(userId)
   }
 
+  async setUserStatusWithAccessRequest(
+    userId: string,
+    status: UserStatus,
+    adminUserId: string
+  ): Promise<User | null> {
+    const now = Date.now()
+    const requestStatus =
+      status === "allowed"
+        ? "approved"
+        : status === "blocked"
+          ? "rejected"
+          : "pending"
+    this.db.transaction(() => {
+      this.db
+        .query(`UPDATE users SET status = ?, updated_at = ? WHERE id = ?`)
+        .run(status, now, userId)
+      this.db
+        .query(
+          `UPDATE access_requests
+             SET status = ?, decided_at = ?, decided_by = ?
+           WHERE user_id = ?`
+        )
+        .run(
+          requestStatus,
+          status === "pending" ? null : now,
+          status === "pending" ? null : adminUserId,
+          userId
+        )
+    })()
+    return this.getUser(userId)
+  }
+
   async findPrimaryIdentity(userId: string): Promise<Identity | null> {
     const row = this.db
       .query(
