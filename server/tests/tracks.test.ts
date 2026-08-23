@@ -26,7 +26,7 @@ beforeEach(() => {
   resetRateLimits()
 })
 
-describe("allowlist gating", () => {
+describe("access gating", () => {
   test("a pending user is refused by every track route", async () => {
     const { store, app } = setup()
     const { token } = await signIn(store, {

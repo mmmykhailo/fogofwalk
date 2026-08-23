@@ -12,6 +12,7 @@ import { signOut, useAuth } from "~/lib/server/authStore"
 import { requestSync } from "~/lib/server/syncEngine"
 import { useServerHealth } from "~/lib/server/serverHealth"
 import { AccountAvatar } from "./AccountAvatar"
+import { AccessRequestBlock } from "./AccessRequestBlock"
 import { AccountDialogFooter } from "./AccountDialogFooter"
 import {
   getExportButtonLabel,
@@ -205,11 +206,12 @@ export function AccountDialog({ open, onOpenChange }: AccountDialogProps) {
           />
         )}
 
-        {!auth.canSync && !isOffline && (
-          <p className="p-3 text-xs/relaxed text-muted-foreground ring-1 ring-foreground/10">
-            Your account isn&rsquo;t enabled for sync yet. You&rsquo;re signed
-            in, but tracks stay on this device until an admin enables it.
-          </p>
+        {!auth.canSync && !isOffline && <AccessRequestBlock open={open} />}
+
+        {auth.isAdmin && (
+          <Button variant="outline" size="sm" render={<a href="/admin" />}>
+            Admin
+          </Button>
         )}
 
         {error && <p className="mb-2 text-xs text-destructive">{error}</p>}

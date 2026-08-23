@@ -47,7 +47,7 @@ exchange happens server-side where Playwright cannot reach. So the preload
 rewrites the server's two outbound calls to the fake IdP, and the browser leg is
 handled by intercepting `/api/auth/*/start` — *not* the github.com navigation,
 because Playwright cannot route a request reached through a redirect. The real
-callback, state-cookie validation, allowlist promotion and session minting all
+callback, state-cookie validation, administrator promotion and session minting all
 run untouched.
 
 **The map must load or nothing is testable.** Every control is gated behind
@@ -56,8 +56,8 @@ request with a minimal offline style and abort every other tile host; blocking
 the style instead hangs the whole app. Chromium runs with SwiftShader flags
 because a missing WebGL context throws the map into the error boundary.
 
-**Isolation is per-login.** The server boots with a large `ALLOWED_LOGINS` pool
-and each test claims one, so tests never see each other's tracks — every store
+**Isolation is per-login.** The server boots with a pool of test administrator
+identities and each test claims one, so tests never see each other's tracks — every store
 method is scoped by user id. Workers own disjoint slices of the pool.
 
 ## Keeping it honest

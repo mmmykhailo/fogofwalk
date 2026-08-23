@@ -48,7 +48,7 @@ a missing or malformed one aborts startup with a message naming it.
 | `DATA_DIR` | no | `./data` | SQLite file + blob tree (`sqlite-fs`). |
 | `STORE_DRIVER` | no | `sqlite-fs` | `sqlite-fs` or `memory`. |
 | `ALLOWED_ORIGINS` | **yes** | — | Comma-separated exact client origins. Drives CORS *and* the OAuth redirect allowlist. Never `*`. |
-| `ALLOWED_LOGINS` | no | empty | Comma-separated `provider:login`. Empty means **nobody** can sync. |
+| `ADMIN_LOGINS` | **yes** | — | Comma-separated deployment-owned `provider:login` administrators. |
 | `SESSION_SECRET` | **yes** | — | ≥ 32 chars. Signs the OAuth state cookie. |
 | `PUBLIC_URL` | **yes** | — | This server's externally reachable base URL. The OAuth callback URI is derived from it. |
 | `GITHUB_CLIENT_ID` | pair | — | Omit both to leave GitHub sign-in off. |
@@ -96,33 +96,18 @@ that are mid-flight — those users see the callback fail and sign in again.
 
 ### Allowlist (default deny)
 
+New access is requested in the account dialog and decided at `/admin`; only
+`ADMIN_LOGINS` determines who may use that page. Telegram bot settings are
+stored there as an encrypted write-only secret. Rotating `SESSION_SECRET`
+invalidates the saved bot token and requires entering it again.
+
 Anyone can complete OAuth; everyone lands as `status = 'pending'` and gets a
 `403 { error: "not_allowed" }` from every `/api/tracks/*` route. `/api/me`
 still works, so the UI can greet them by name and explain the situation.
 
-`ALLOWED_LOGINS` can only **promote**, and only from `pending`:
-
-```
-ALLOWED_LOGINS=github:alice,github:bob
-```
-
-To allowlist a user:
-
-1. Add `provider:login` to `ALLOWED_LOGINS` and restart, then have them sign in
-   again — the promotion happens at sign-in.
-2. Or edit the database directly, which takes effect immediately and needs no
-   redeploy — the database is authoritative. Match on `identities.provider_login`,
-   the same key the allowlist uses; `users.display_name` is a free-text profile
-   name and is often not the login at all:
-   ```bash
-   sqlite3 data/fogofwalk.db \
-     "UPDATE users SET status='allowed' WHERE id = (
-        SELECT user_id FROM identities
-        WHERE provider='github' AND provider_login='alice');"
-   ```
-
-Blocking works the same way (`status='blocked'`), and the env var can never
-undo it: a blocked account is never promoted, and an allowed account is never
+Administrators approve, reject, block, or re-enable accounts in `/admin`.
+Blocking is persistent: an administrator must explicitly change a blocked
+account's status before it can sync again.
 demoted by removing it from the list.
 
 ## Registering the GitHub OAuth app
@@ -286,7 +271,7 @@ Caddy is the only way in.
    | variable | `VPS_USER` | `deploy` |
    | variable | `API_PUBLIC_URL` | `https://api.fog-of-walk.mykhailo.net` |
    | variable | `ALLOWED_ORIGINS` | `https://fog-of-walk.mykhailo.net` |
-   | variable | `ALLOWED_LOGINS` | `github:your-login` |
+   | variable | `ADMIN_LOGINS` | `github:your-login` |
    | variable | `OAUTH_GITHUB_CLIENT_ID` | from the production OAuth app |
    | variable | `VITE_API_URL` | same as `API_PUBLIC_URL` — read by the Pages build |
 

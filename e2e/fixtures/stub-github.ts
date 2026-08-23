@@ -7,7 +7,7 @@
  * of the OAuth dance runs server-side, where Playwright's `page.route` cannot
  * reach. Patching `fetch` in the *test harness* keeps `server/src` free of any
  * test-only configuration — the callback handler, state-cookie validation,
- * allowlist promotion, session minting and handoff code all run for real.
+ * administrator promotion, session minting and handoff code all run for real.
  *
  * Loaded only by the E2E rig: `bun --preload <this> src/index.ts`.
  */

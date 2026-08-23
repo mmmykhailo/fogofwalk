@@ -31,7 +31,7 @@ export function createAccountRoutes(store: ServerStore) {
     const user = c.get("user")
     const body: MeResponse = {
       user: await toServerUser(store, user),
-      capabilities: capabilitiesFor(user),
+      capabilities: await capabilitiesFor(store, user),
     }
     return c.json(body)
   })

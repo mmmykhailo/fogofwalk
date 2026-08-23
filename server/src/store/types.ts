@@ -9,7 +9,11 @@
  */
 
 import type {
+  AccessRequestStatus,
+  AdminAccessRequest,
+  AdminUser,
   ManifestPage,
+  NotificationStatus,
   PublicProfileResponse,
   TrackMeta,
   UserStatus,
@@ -53,6 +57,17 @@ export interface IdentityInput {
   email: string | null
 }
 
+export interface StoredAccessRequest {
+  id: string
+  userId: string
+  status: AccessRequestStatus
+  requestedAt: number
+  decidedAt: number | null
+  decidedBy: string | null
+  notificationStatus: NotificationStatus
+  notificationAttemptedAt: number | null
+}
+
 export interface ServerStore {
   // ── identities & users ──────────────────────────────────────────────────
   findUserByIdentity(
@@ -71,6 +86,23 @@ export interface ServerStore {
   findIdentitiesForUser(userId: string): Promise<Identity[]>
   /** Cascades identities, sessions, tracks, tombstones and geometry blobs. */
   deleteUser(userId: string): Promise<void>
+  getAccessRequest(userId: string): Promise<StoredAccessRequest | null>
+  createAccessRequest(userId: string): Promise<StoredAccessRequest>
+  setAccessRequestNotification(
+    userId: string,
+    status: NotificationStatus
+  ): Promise<void>
+  listAdminUsers(): Promise<AdminUser[]>
+  listAdminRequests(): Promise<AdminAccessRequest[]>
+  decideAccessRequest(
+    requestId: string,
+    decision: "approve" | "reject",
+    adminUserId: string
+  ): Promise<StoredAccessRequest | null>
+
+  // ── administrator settings ─────────────────────────────────────────────
+  getSetting(key: string): Promise<string | null>
+  setSetting(key: string, value: string | null, updatedBy: string): Promise<void>
 
   // ── sessions (token stored hashed, never in clear) ───────────────────────
   createSession(
@@ -121,7 +153,7 @@ export interface ServerStore {
   // ── public profiles ─────────────────────────────────────────────────────
   /**
    * Look up a user by their public handle. Does not expose the internal user id
-   * or allowlist status.
+   * or access status.
    */
   findUserByHandle(handle: string): Promise<User | null>
   /**

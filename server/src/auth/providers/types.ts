@@ -6,7 +6,7 @@
 
 export interface OAuthProfile {
   providerUserId: string
-  /** Stable handle used by the `ALLOWED_LOGINS` allowlist, e.g. a username. */
+  /** Stable provider login, e.g. a username. */
   login: string
   displayName: string
   avatarUrl: string | null

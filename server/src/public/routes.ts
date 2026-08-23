@@ -5,7 +5,7 @@
  *
  * These routes are intentionally anonymous: a profile is discoverable only by
  * its handle, and only tracks the owner marked public are listed. The internal
- * user id and allowlist status are never exposed.
+ * user id and access status are never exposed.
  */
 
 import { Hono } from "hono"

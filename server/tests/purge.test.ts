@@ -114,7 +114,7 @@ describe("DELETE /api/tracks — server-only purge", () => {
     expect((await manifest(app, b.token)).tracks).toHaveLength(1)
   })
 
-  test("is refused for a user who is not allowlisted", async () => {
+  test("is refused for a user without approval", async () => {
     const { store, app } = setup()
     const { token } = await signIn(store, {
       login: "stranger",

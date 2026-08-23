@@ -72,3 +72,24 @@ CREATE TABLE IF NOT EXISTS track_tombstones (
 
 CREATE INDEX IF NOT EXISTS tombstones_sync
   ON track_tombstones(user_id, deleted_at, content_hash);
+
+CREATE TABLE IF NOT EXISTS access_requests (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL UNIQUE,
+  status TEXT NOT NULL DEFAULT 'pending',
+  requested_at INTEGER NOT NULL,
+  decided_at INTEGER,
+  decided_by TEXT,
+  notification_status TEXT NOT NULL DEFAULT 'not_configured',
+  notification_attempted_at INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS access_requests_status_requested
+  ON access_requests(status, requested_at);
+
+CREATE TABLE IF NOT EXISTS server_settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL,
+  updated_at INTEGER NOT NULL,
+  updated_by TEXT NOT NULL
+);

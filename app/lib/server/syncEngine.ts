@@ -163,7 +163,7 @@ let isRerunQueued = false
 
 /**
  * Ask for a sync. Cheap and safe to call from anywhere — it no-ops when the
- * user is signed out or not allowlisted, and coalesces concurrent requests.
+ * user is signed out or not approved, and coalesces concurrent requests.
  *
  * Pass `manual` for a request the user made explicitly (the "Sync now"
  * button). Only that clears a suspension; every automatic trigger is dropped
