@@ -26,6 +26,7 @@ import type {
   IdentityInput,
   ServerStore,
   Session,
+  AccessRequestCreation,
   StoredAccessRequest,
   User,
 } from "./types"
@@ -197,9 +198,9 @@ export class MemoryStore implements ServerStore {
     return this.accessRequests.get(userId) ?? null
   }
 
-  async createAccessRequest(userId: string): Promise<StoredAccessRequest> {
+  async createAccessRequest(userId: string): Promise<AccessRequestCreation> {
     const existing = this.accessRequests.get(userId)
-    if (existing) return existing
+    if (existing) return { request: existing, created: false }
     const request: StoredAccessRequest = {
       id: crypto.randomUUID(),
       userId,
@@ -211,7 +212,7 @@ export class MemoryStore implements ServerStore {
       notificationAttemptedAt: null,
     }
     this.accessRequests.set(userId, request)
-    return request
+    return { request, created: true }
   }
 
   async setAccessRequestNotification(

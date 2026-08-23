@@ -68,6 +68,12 @@ export interface StoredAccessRequest {
   notificationAttemptedAt: number | null
 }
 
+/** The request plus whether this call inserted its one-per-user row. */
+export interface AccessRequestCreation {
+  request: StoredAccessRequest
+  created: boolean
+}
+
 export interface ServerStore {
   // ── identities & users ──────────────────────────────────────────────────
   findUserByIdentity(
@@ -92,7 +98,7 @@ export interface ServerStore {
   /** Cascades identities, sessions, tracks, tombstones and geometry blobs. */
   deleteUser(userId: string): Promise<void>
   getAccessRequest(userId: string): Promise<StoredAccessRequest | null>
-  createAccessRequest(userId: string): Promise<StoredAccessRequest>
+  createAccessRequest(userId: string): Promise<AccessRequestCreation>
   setAccessRequestNotification(
     userId: string,
     status: NotificationStatus

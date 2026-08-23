@@ -23,9 +23,8 @@ export function createAccessRoutes(store: ServerStore) {
     const user = c.get("user")
     if (user.status !== "pending")
       return jsonError(c, "bad_request", "This account cannot request access.")
-    const before = await store.getAccessRequest(user.id)
-    const request = await store.createAccessRequest(user.id)
-    if (!before) {
+    const { request, created } = await store.createAccessRequest(user.id)
+    if (created) {
       const identity = await store.findPrimaryIdentity(user.id)
       const result = await sendTelegram(
         store,
@@ -33,7 +32,7 @@ export function createAccessRoutes(store: ServerStore) {
       )
       await store.setAccessRequestNotification(user.id, result)
     }
-    return c.json(applicant(request), before ? 200 : 201)
+    return c.json(applicant(request), created ? 201 : 200)
   })
   return app
 }

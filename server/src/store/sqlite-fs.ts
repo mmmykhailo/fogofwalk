@@ -33,6 +33,7 @@ import type {
   IdentityInput,
   ServerStore,
   Session,
+  AccessRequestCreation,
   StoredAccessRequest,
   User,
 } from "./types"
@@ -458,9 +459,9 @@ export class SqliteFsStore implements ServerStore {
     return row ? toAccessRequest(row) : null
   }
 
-  async createAccessRequest(userId: string): Promise<StoredAccessRequest> {
+  async createAccessRequest(userId: string): Promise<AccessRequestCreation> {
     const existing = await this.getAccessRequest(userId)
-    if (existing) return existing
+    if (existing) return { request: existing, created: false }
     const request: StoredAccessRequest = {
       id: crypto.randomUUID(),
       userId,
@@ -485,10 +486,10 @@ export class SqliteFsStore implements ServerStore {
         )
     } catch {
       const concurrent = await this.getAccessRequest(userId)
-      if (concurrent) return concurrent
+      if (concurrent) return { request: concurrent, created: false }
       throw new Error("failed to create access request")
     }
-    return request
+    return { request, created: true }
   }
 
   async setAccessRequestNotification(

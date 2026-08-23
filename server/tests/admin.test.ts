@@ -1,8 +1,45 @@
 import { describe, expect, test } from "bun:test"
 
 import { authHeaders, setup, signIn } from "./helpers"
+import { encryptTelegramToken } from "../src/telegram"
 
 describe("admin access workflow", () => {
+  test("sends one notification when concurrent requests create one row", async () => {
+    const { app, store } = setup()
+    const applicant = await signIn(store, {
+      login: "applicant",
+      status: "pending",
+    })
+    await store.setSetting("telegram_chat_id", "123", "admin")
+    await store.setSetting(
+      "telegram_bot_token",
+      await encryptTelegramToken("test-token"),
+      "admin"
+    )
+    const originalFetch = globalThis.fetch
+    let notifications = 0
+    globalThis.fetch = (async () => {
+      notifications += 1
+      return Response.json({ ok: true })
+    }) as unknown as typeof fetch
+    try {
+      const [first, second] = await Promise.all([
+        app.request("/api/access-request", {
+          method: "POST",
+          headers: authHeaders(applicant.token),
+        }),
+        app.request("/api/access-request", {
+          method: "POST",
+          headers: authHeaders(applicant.token),
+        }),
+      ])
+      expect([first.status, second.status].sort()).toEqual([200, 201])
+      expect(notifications).toBe(1)
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
   test("masks the admin API and lets an administrator approve a request", async () => {
     const { app, store } = setup()
     const anonymous = await app.request("/api/admin/bootstrap")
