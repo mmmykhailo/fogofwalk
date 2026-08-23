@@ -4,7 +4,12 @@ import { FootprintsIcon } from "@phosphor-icons/react"
 import { PageShell } from "~/components/PageShell"
 import { AccountAvatar } from "~/components/account/AccountAvatar"
 import { TrackCard } from "~/components/public-profile/TrackCard"
+import { PublicActivityGrid } from "~/components/public-profile/PublicActivityGrid"
+import { PublicProfileSummary } from "~/components/public-profile/PublicProfileSummary"
+import { StatCards } from "~/components/stats/StatCards"
+import { WeeklyChart } from "~/components/stats/WeeklyChart"
 import { TransitionLink } from "~/components/TransitionLink"
+import { computePublicProfileStats } from "~/lib/publicProfileStats"
 import { apiUrl } from "~/lib/server/config"
 import { useAuth } from "~/lib/server/authStore"
 import type { PublicProfileResponse } from "~shared/api"
@@ -63,6 +68,7 @@ export default function PublicProfilePage() {
     auth.status === "signedIn" &&
     auth.canSync &&
     auth.user.handle?.toLowerCase() === profile?.user.handle.toLowerCase()
+  const stats = computePublicProfileStats(tracks)
 
   function handleTrackHidden(contentHash: string) {
     setTracks((current) =>
@@ -116,15 +122,28 @@ export default function PublicProfilePage() {
       )}
 
       {!error && profile && tracks.length > 0 && (
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          {tracks.map((track) => (
-            <TrackCard
-              key={track.contentHash}
-              track={track}
-              isOwner={isOwner}
-              onHidden={handleTrackHidden}
-            />
-          ))}
+        <div className="space-y-6">
+          <StatCards totals={stats.totals} />
+          <WeeklyChart weekly={stats.weekly} />
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <PublicActivityGrid recentDays={stats.recentDays} />
+            <PublicProfileSummary stats={stats} />
+          </div>
+          <section>
+            <h2 className="mb-3 font-heading text-lg font-semibold">
+              Public activities
+            </h2>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              {tracks.map((track) => (
+                <TrackCard
+                  key={track.contentHash}
+                  track={track}
+                  isOwner={isOwner}
+                  onHidden={handleTrackHidden}
+                />
+              ))}
+            </div>
+          </section>
         </div>
       )}
     </PageShell>
