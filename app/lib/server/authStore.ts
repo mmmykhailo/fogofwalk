@@ -83,7 +83,12 @@ function applySession(
 ) {
   token = nextToken
   setAuthToken(nextToken)
-  setState({ status: "signedIn", user, canSync: capabilities.sync, isAdmin: capabilities.admin })
+  setState({
+    status: "signedIn",
+    user,
+    canSync: capabilities.sync,
+    isAdmin: capabilities.admin,
+  })
 }
 
 async function forgetSession() {
@@ -148,7 +153,12 @@ export async function refreshAuth(): Promise<void> {
   const me = await apiGet<MeResponse>("/api/me")
   applySession(token, me.user, me.capabilities)
   const stored = await loadSession()
-  if (stored) await saveSession({ ...stored, user: me.user, capabilities: me.capabilities })
+  if (stored)
+    await saveSession({
+      ...stored,
+      user: me.user,
+      capabilities: me.capabilities,
+    })
 }
 
 export function setLoading(): void {

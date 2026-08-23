@@ -26,12 +26,12 @@ bun run dev                  # http://localhost:8787, hot reload
 curl localhost:8787/health   # {"ok":true}
 ```
 
-| Script | What it does |
-| --- | --- |
-| `bun run dev` | `bun --hot src/index.ts` |
-| `bun run start` | `bun src/index.ts` |
-| `bun run typecheck` | `tsc --noEmit` (run after every change) |
-| `bun run test` | `bun test` — mostly against the in-memory driver; `tests/sqliteFs.test.ts` exercises the real `sqlite-fs` one |
+| Script              | What it does                                                                                                  |
+| ------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `bun run dev`       | `bun --hot src/index.ts`                                                                                      |
+| `bun run start`     | `bun src/index.ts`                                                                                            |
+| `bun run typecheck` | `tsc --noEmit` (run after every change)                                                                       |
+| `bun run test`      | `bun test` — mostly against the in-memory driver; `tests/sqliteFs.test.ts` exercises the real `sqlite-fs` one |
 
 Run the client against it with `VITE_API_URL=http://localhost:8787 bun run dev`
 from the repository root.
@@ -41,37 +41,37 @@ from the repository root.
 Bun loads `server/.env` automatically. Every variable is validated at boot;
 a missing or malformed one aborts startup with a message naming it.
 
-| Variable | Required | Default | Purpose |
-| --- | --- | --- | --- |
-| `PORT` | no | `8787` | Port `Bun.serve` listens on. |
-| `HOST` | no | `0.0.0.0` | Interface to bind. Right for a container; behind a reverse proxy use `127.0.0.1` so the port is unreachable from the network. |
-| `DATA_DIR` | no | `./data` | SQLite file + blob tree (`sqlite-fs`). |
-| `STORE_DRIVER` | no | `sqlite-fs` | `sqlite-fs` or `memory`. |
-| `ALLOWED_ORIGINS` | **yes** | — | Comma-separated exact client origins. Drives CORS *and* the OAuth redirect allowlist. Never `*`. |
-| `ADMIN_LOGINS` | **yes** | — | Comma-separated deployment-owned `provider:login` administrators. |
-| `SESSION_SECRET` | **yes** | — | ≥ 32 chars. Signs the OAuth state cookie. |
-| `PUBLIC_URL` | **yes** | — | This server's externally reachable base URL. The OAuth callback URI is derived from it. |
-| `GITHUB_CLIENT_ID` | pair | — | Omit both to leave GitHub sign-in off. |
-| `GITHUB_CLIENT_SECRET` | pair | — | Must be set together with the id. |
+| Variable               | Required | Default     | Purpose                                                                                                                       |
+| ---------------------- | -------- | ----------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `PORT`                 | no       | `8787`      | Port `Bun.serve` listens on.                                                                                                  |
+| `HOST`                 | no       | `0.0.0.0`   | Interface to bind. Right for a container; behind a reverse proxy use `127.0.0.1` so the port is unreachable from the network. |
+| `DATA_DIR`             | no       | `./data`    | SQLite file + blob tree (`sqlite-fs`).                                                                                        |
+| `STORE_DRIVER`         | no       | `sqlite-fs` | `sqlite-fs` or `memory`.                                                                                                      |
+| `ALLOWED_ORIGINS`      | **yes**  | —           | Comma-separated exact client origins. Drives CORS _and_ the OAuth redirect allowlist. Never `*`.                              |
+| `ADMIN_LOGINS`         | **yes**  | —           | Comma-separated deployment-owned `provider:login` administrators.                                                             |
+| `SESSION_SECRET`       | **yes**  | —           | ≥ 32 chars. Signs the OAuth state cookie.                                                                                     |
+| `PUBLIC_URL`           | **yes**  | —           | This server's externally reachable base URL. The OAuth callback URI is derived from it.                                       |
+| `GITHUB_CLIENT_ID`     | pair     | —           | Omit both to leave GitHub sign-in off.                                                                                        |
+| `GITHUB_CLIENT_SECRET` | pair     | —           | Must be set together with the id.                                                                                             |
 
 ## API
 
-| Method | Path | Auth | Purpose |
-| --- | --- | --- | --- |
-| GET | `/health` | — | Liveness. |
-| GET | `/api/auth/providers` | — | `{ providers: [{ id, label }] }` — drives the sign-in dialog. |
-| GET | `/api/auth/:provider/start?redirect=<origin>` | — | 302 to the provider. |
-| GET | `/api/auth/:provider/callback` | — | 302 back to `<origin>/auth/callback?code=<handoff>`. |
-| POST | `/api/auth/exchange` | — | Handoff code → bearer token. |
-| POST | `/api/auth/logout` | session | Revokes this session. |
-| GET | `/api/me` | session | User + capabilities. |
-| GET | `/api/account/export` | session | Full JSON export of the requesting user's account data. |
-| DELETE | `/api/account` | session | Erases the account server-side. |
-| GET | `/api/tracks/manifest?since=<cursor>` | allowed | Metadata + tombstones page. |
-| PUT | `/api/tracks/:contentHash` | allowed | Gzipped upload, idempotent. |
-| GET | `/api/tracks/:contentHash` | allowed | The gzipped track JSON. |
-| DELETE | `/api/tracks` | allowed | Purge every track for this user. **No tombstones** — other devices keep their copies. Backs "Remove all". |
-| DELETE | `/api/tracks/:contentHash` | allowed | Delete + tombstone. Returns the tombstone's `deletedAt`. |
+| Method | Path                                          | Auth    | Purpose                                                                                                   |
+| ------ | --------------------------------------------- | ------- | --------------------------------------------------------------------------------------------------------- |
+| GET    | `/health`                                     | —       | Liveness.                                                                                                 |
+| GET    | `/api/auth/providers`                         | —       | `{ providers: [{ id, label }] }` — drives the sign-in dialog.                                             |
+| GET    | `/api/auth/:provider/start?redirect=<origin>` | —       | 302 to the provider.                                                                                      |
+| GET    | `/api/auth/:provider/callback`                | —       | 302 back to `<origin>/auth/callback?code=<handoff>`.                                                      |
+| POST   | `/api/auth/exchange`                          | —       | Handoff code → bearer token.                                                                              |
+| POST   | `/api/auth/logout`                            | session | Revokes this session.                                                                                     |
+| GET    | `/api/me`                                     | session | User + capabilities.                                                                                      |
+| GET    | `/api/account/export`                         | session | Full JSON export of the requesting user's account data.                                                   |
+| DELETE | `/api/account`                                | session | Erases the account server-side.                                                                           |
+| GET    | `/api/tracks/manifest?since=<cursor>`         | allowed | Metadata + tombstones page.                                                                               |
+| PUT    | `/api/tracks/:contentHash`                    | allowed | Gzipped upload, idempotent.                                                                               |
+| GET    | `/api/tracks/:contentHash`                    | allowed | The gzipped track JSON.                                                                                   |
+| DELETE | `/api/tracks`                                 | allowed | Purge every track for this user. **No tombstones** — other devices keep their copies. Backs "Remove all". |
+| DELETE | `/api/tracks/:contentHash`                    | allowed | Delete + tombstone. Returns the tombstone's `deletedAt`.                                                  |
 
 Non-2xx bodies are always `{ error, message? }` with `error` drawn from
 `ApiErrorCode` in `shared/api.ts`.
@@ -112,7 +112,7 @@ demoted by removing it from the list.
 
 ## Registering the GitHub OAuth app
 
-1. GitHub → Settings → Developer settings → **OAuth Apps** → *New OAuth App*.
+1. GitHub → Settings → Developer settings → **OAuth Apps** → _New OAuth App_.
 2. **Homepage URL**: your client origin, e.g. `http://localhost:5173`.
 3. **Authorization callback URL**: `PUBLIC_URL/api/auth/github/callback` —
    for local development exactly `http://localhost:8787/api/auth/github/callback`.
@@ -148,13 +148,13 @@ Routes, middleware and the client dialog need no change: `/start` and
 there is no method that can read a track without naming its owner, so
 cross-user isolation is a property of the interface rather than of its callers.
 
-| Driver | Metadata | Geometry | Status |
-| --- | --- | --- | --- |
-| `sqlite-fs` | `bun:sqlite` at `DATA_DIR/fogofwalk.db` | `DATA_DIR/blobs/<userId>/<hash>.json.gz` | **default** |
-| `memory` | Maps | Maps | tests only |
-| `sqlite-blob` | same DB | `BLOB` column | extension point |
-| `postgres-bytea` | Postgres via `Bun.sql` | `bytea` | extension point |
-| `postgres-s3` | Postgres via `Bun.sql` | `Bun.s3` | extension point |
+| Driver           | Metadata                                | Geometry                                 | Status          |
+| ---------------- | --------------------------------------- | ---------------------------------------- | --------------- |
+| `sqlite-fs`      | `bun:sqlite` at `DATA_DIR/fogofwalk.db` | `DATA_DIR/blobs/<userId>/<hash>.json.gz` | **default**     |
+| `memory`         | Maps                                    | Maps                                     | tests only      |
+| `sqlite-blob`    | same DB                                 | `BLOB` column                            | extension point |
+| `postgres-bytea` | Postgres via `Bun.sql`                  | `bytea`                                  | extension point |
+| `postgres-s3`    | Postgres via `Bun.sql`                  | `Bun.s3`                                 | extension point |
 
 To add one: implement `ServerStore` in `src/store/<driver>.ts`, add a `case` to
 `src/store/index.ts` (the only module allowed to import a concrete driver), and
@@ -189,7 +189,7 @@ Backing up `sqlite-fs` is one file plus one folder: `DATA_DIR/fogofwalk.db*`
 - The manifest cursor is a timestamp used as an **inclusive** lower bound, and
   a page never splits a millisecond. The reasoning, including the two ways this
   goes wrong, is in the header comment of `src/store/manifestPaging.ts`.
-- `MAX_TRACK_BYTES` (8 MB, from `shared/constants.ts`) is enforced *while*
+- `MAX_TRACK_BYTES` (8 MB, from `shared/constants.ts`) is enforced _while_
   reading the body, and decompression is capped too, so neither a huge upload
   nor a zip bomb gets buffered.
 - The `PUT` rate limit is per-user and **in-process**: it protects one server
@@ -197,7 +197,7 @@ Backing up `sqlite-fs` is one file plus one folder: `DATA_DIR/fogofwalk.db*`
   instance would need a shared limiter. The window and the cap live in
   `shared/constants.ts` because the client paces itself against the same numbers
   — a 429 is the fallback, not the mechanism. When one is returned it carries
-  `retryAfterMs` in the body *and* a standard `Retry-After` header; the body is
+  `retryAfterMs` in the body _and_ a standard `Retry-After` header; the body is
   what the browser client reads, since a cross-origin response header is
   invisible to JS unless CORS exposes it.
 
@@ -261,19 +261,19 @@ Caddy is the only way in.
    release yet, so the unit will show as failed until the first deploy.
 5. Add the repo secrets and variables:
 
-   | Kind | Name | Example |
-   | --- | --- | --- |
-   | secret | `VPS_SSH_KEY` | private half of the CI keypair |
-   | secret | `VPS_KNOWN_HOSTS` | output of `ssh-keyscan <the exact value of VPS_HOST>` |
-   | secret | `SESSION_SECRET` | ≥ 32 chars, **not** the one in your local `.env` |
-   | secret | `OAUTH_GITHUB_CLIENT_SECRET` | from the production OAuth app |
-   | variable | `VPS_HOST` | VPS IP or hostname |
-   | variable | `VPS_USER` | `deploy` |
-   | variable | `API_PUBLIC_URL` | `https://api.fog-of-walk.mykhailo.net` |
-   | variable | `ALLOWED_ORIGINS` | `https://fog-of-walk.mykhailo.net` |
-   | variable | `ADMIN_LOGINS` | `github:your-login` |
-   | variable | `OAUTH_GITHUB_CLIENT_ID` | from the production OAuth app |
-   | variable | `VITE_API_URL` | same as `API_PUBLIC_URL` — read by the Pages build |
+   | Kind     | Name                         | Example                                               |
+   | -------- | ---------------------------- | ----------------------------------------------------- |
+   | secret   | `VPS_SSH_KEY`                | private half of the CI keypair                        |
+   | secret   | `VPS_KNOWN_HOSTS`            | output of `ssh-keyscan <the exact value of VPS_HOST>` |
+   | secret   | `SESSION_SECRET`             | ≥ 32 chars, **not** the one in your local `.env`      |
+   | secret   | `OAUTH_GITHUB_CLIENT_SECRET` | from the production OAuth app                         |
+   | variable | `VPS_HOST`                   | VPS IP or hostname                                    |
+   | variable | `VPS_USER`                   | `deploy`                                              |
+   | variable | `API_PUBLIC_URL`             | `https://api.fog-of-walk.mykhailo.net`                |
+   | variable | `ALLOWED_ORIGINS`            | `https://fog-of-walk.mykhailo.net`                    |
+   | variable | `ADMIN_LOGINS`               | `github:your-login`                                   |
+   | variable | `OAUTH_GITHUB_CLIENT_ID`     | from the production OAuth app                         |
+   | variable | `VITE_API_URL`               | same as `API_PUBLIC_URL` — read by the Pages build    |
 
    The `OAUTH_` prefix is not decoration: GitHub refuses secret and variable
    names beginning with `GITHUB_`. The workflow maps them back to
@@ -284,10 +284,12 @@ Caddy is the only way in.
    IP does not cover the hostname. The workflow checks this before its first SSH
    and tells you what to re-scan. `ssh-keyscan` is trust-on-first-use, so verify
    the fingerprint against the box itself:
+
    ```bash
    ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub          # on the VPS
    ssh-keygen -lf <(ssh-keyscan -t ed25519 "$VPS_HOST")      # locally, must match
    ```
+
 6. Run the workflow from the Actions tab (`workflow_dispatch`) rather than
    waiting for a push, so a configuration mistake is isolated from a code change.
 

@@ -2,7 +2,7 @@
 
 ## What this is
 
-Browser-only SPA with an **optional** sync server. Users import GPX/FIT activity files and geotagged photos; fog of war clears along their routes. No server is *required* — all parsing, geometry and rendering run in the browser, and the GitHub Pages build ships without a server at all. State is persisted in IndexedDB (tracks, photos, fog cache, fogMode, session, syncState) and localStorage (map position). It is also an installable PWA — see "PWA and offline" below.
+Browser-only SPA with an **optional** sync server. Users import GPX/FIT activity files and geotagged photos; fog of war clears along their routes. No server is _required_ — all parsing, geometry and rendering run in the browser, and the GitHub Pages build ships without a server at all. State is persisted in IndexedDB (tracks, photos, fog cache, fogMode, session, syncState) and localStorage (map position). It is also an installable PWA — see "PWA and offline" below.
 
 ## Commands
 
@@ -138,36 +138,37 @@ routes.ts                explicit route table (see the gotcha below)
 1. Main thread parses files → `ParsedTrack[]` (unified type, format-agnostic)
 2. Sent to worker via `postMessage({ type: "PROCESS_TRACKS", tracks, mode })`
 3. Worker: `simplify` (at `TRACK_SIMPLIFY_TOLERANCE`) → `buffer` (`FOG_CLEAR_RADIUS_METERS`, `BUFFER_STEPS`) per track, accumulated into `pendingBuffer` (corridor) or `accumulated` (fill)
-4. Every 300 ms: flush pending into fog polygon via `@turf/difference`, simplify the *result* at `SIMPLIFY_TOLERANCE`, emit `FOG_UPDATE { fogData }`
+4. Every 300 ms: flush pending into fog polygon via `@turf/difference`, simplify the _result_ at `SIMPLIFY_TOLERANCE`, emit `FOG_UPDATE { fogData }`
 5. MapView calls `fogSource.setData(msg.fogData)` — the fog IS the GeoJSON, sent directly
 
 **Two different simplify tolerances, and mixing them up is a visible bug.**
-`TRACK_SIMPLIFY_TOLERANCE` (0.0005, ~55 m) is applied to the *track* before buffering — it can be
+`TRACK_SIMPLIFY_TOLERANCE` (0.0005, ~55 m) is applied to the _track_ before buffering — it can be
 coarse because the 100 m buffer swallows the corner-cutting. `SIMPLIFY_TOLERANCE` (0.0001, ~11 m)
-is applied to the *emitted fog polygon* and controls the visual precision of the fog edge.
+is applied to the _emitted fog polygon_ and controls the visual precision of the fog edge.
 Swapping them either ruins the fog boundary or wastes an order of magnitude of vertex budget.
 
 ### Corridor vs Fill mode
 
-| | Corridor (default) | Fill |
-|---|---|---|
-| Worker state | `fogPolygon` + `pendingBuffer` | `accumulated` (persistent across emits) |
-| How applied | `difference(fog, pendingBuffer)` per emit | `difference(worldFog, stripInnerRings(accumulated))` per emit |
-| Loop behavior | Only the 100 m corridor cleared | Interior of closed loops also cleared |
-| Multi-file loops | Corridors only | Detected — `accumulated` holds all tracks |
+|                  | Corridor (default)                        | Fill                                                          |
+| ---------------- | ----------------------------------------- | ------------------------------------------------------------- |
+| Worker state     | `fogPolygon` + `pendingBuffer`            | `accumulated` (persistent across emits)                       |
+| How applied      | `difference(fog, pendingBuffer)` per emit | `difference(worldFog, stripInnerRings(accumulated))` per emit |
+| Loop behavior    | Only the 100 m corridor cleared           | Interior of closed loops also cleared                         |
+| Multi-file loops | Corridors only                            | Detected — `accumulated` holds all tracks                     |
 
 `stripInnerRings` removes inner rings from the union polygon, turning an annulus into a filled disk.
 
 ## Persistence
 
 ### IndexedDB (`lib/storage.ts`)
+
 Three object stores opened via a raw IDB wrapper (no external library):
 
-| Store | keyPath | Contents |
-|---|---|---|
-| `tracks` | `"id"` | `ParsedTrack` objects (JSON) |
-| `photos` | `"id"` | `{ id, file: File, takenAtMs, lng, lat }` — File/Blob stored directly |
-| `prefs` | `"key"` | four keys: `"fogMode"` (FogMode), `"fogCache"` (fog GeoJSON + mode + trackIds), `"session"` (bearer token + user), `"syncState"` (cursor, appliedTombstones, ignoredHashes) |
+| Store    | keyPath | Contents                                                                                                                                                                    |
+| -------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `tracks` | `"id"`  | `ParsedTrack` objects (JSON)                                                                                                                                                |
+| `photos` | `"id"`  | `{ id, file: File, takenAtMs, lng, lat }` — File/Blob stored directly                                                                                                       |
+| `prefs`  | `"key"` | four keys: `"fogMode"` (FogMode), `"fogCache"` (fog GeoJSON + mode + trackIds), `"session"` (bearer token + user), `"syncState"` (cursor, appliedTombstones, ignoredHashes) |
 
 `prefSet`/`prefGet` are module-private, so that list is exhaustive. `clearAll()` drops everything
 except `"session"` — a clear-all must not sign you out.
@@ -179,6 +180,7 @@ except `"session"` — a clear-all must not sign you out.
 **Fog cache invalidation:** cleared on add-files (new tracks added), on fogMode change, and on clear-all.
 
 ### localStorage (`lib/mapStore.ts`)
+
 Map center + zoom are saved to `localStorage` (`"fogofwalk:mapPosition"`) **synchronously** on every `moveend` event. Do NOT use IDB for map position — IDB writes are async and are killed if the page is reloaded before the transaction completes. localStorage writes are synchronous and survive page unload. The value is read at module-init time (before any useEffect) so there is no race condition.
 
 ## Photos
@@ -205,7 +207,7 @@ FIT-only. `fit-file-parser`'s default `mode: 'list'` puts a flat `data.laps` arr
 
 **Adjacent laps share their boundary point** (`laps[k].startIndex === laps[k-1].endIndex`) so highlighted polylines are contiguous and lap distances sum to the track distance. The cost is that a naive `durationMs` would include the bridging gap, so the device's `total_elapsed_time` overrides it when present (which also makes the numbers match the watch and Strava).
 
-**Point→lap assignment is a monotone forward sweep bounded by the *next* lap's `start_time`** — never a `ts >= start && ts <= end` range filter. `lap.timestamp` is the lap *end* and is inclusive, so a range filter double-counts boundary points, drops auto-pause gaps into no lap at all, and yields a set rather than a contiguous range. The sweep runs over `rawPoints`, not raw FIT records, because `fit.ts` filters null-lat/lng and null-island records first so the two index spaces don't line up.
+**Point→lap assignment is a monotone forward sweep bounded by the _next_ lap's `start_time`** — never a `ts >= start && ts <= end` range filter. `lap.timestamp` is the lap _end_ and is inclusive, so a range filter double-counts boundary points, drops auto-pause gaps into no lap at all, and yields a set rather than a contiguous range. The sweep runs over `rawPoints`, not raw FIT records, because `fit.ts` filters null-lat/lng and null-island records first so the two index spaces don't line up.
 
 **Lap stats do NOT all sum to the track total** — `elevationGainM` won't, because `computeElevationGainLoss` resets its hysteresis reference and distance-window smoother at each slice boundary. Same for moving time near boundaries. This is expected, not a bug to fix.
 
@@ -253,11 +255,11 @@ from one file — that's the registry's layout and splitting it would break `sha
 
 **`runId` cancels in-flight worker runs**: every worker message carries a generation token. `startFogRun()` (`lib/mapStore.ts`) bumps `mapStore.runId`; the worker bails out of its loop at the next checkpoint once its captured id stops matching, and MapView drops any reply whose `runId` is stale. Post everything through `postToFogWorker()` so the stamp is never forgotten.
 
-- Call `startFogRun()` **only where prior work is genuinely discarded** — fog-mode toggle, `delete-track`, `clear-all`. `add-files` and the restore-reprocess must *join* the current run: they post only the new tracks and depend on the worker's accumulated `fogPolygon`/`accumulated` surviving.
+- Call `startFogRun()` **only where prior work is genuinely discarded** — fog-mode toggle, `delete-track`, `clear-all`. `add-files` and the restore-reprocess must _join_ the current run: they post only the new tracks and depend on the worker's accumulated `fogPolygon`/`accumulated` surviving.
 - `startFogRun()` must always be followed by `postToFogWorker({ type: "RESET" })`. That is how the worker learns the new id; without it the old loop keeps running while every reply is dropped, and the progress bar sticks forever.
 - The worker's loop `await`s a **macrotask** (`MessageChannel`) once per track. `await Promise.resolve()` would not work — it drains only microtasks, so a queued RESET would never be dispatched. The loop is parked exactly at that await whenever the message handler runs, which is why `resetState()` can never land mid-track.
 - `jobChain` serializes same-run batches. Once the loop yields, two `PROCESS_TRACKS` for one run could otherwise interleave over the shared accumulators.
-- This also fixes two older bugs: an abandoned run's `DONE` used to write a fog cache pairing the *new* `mapStore.fogMode` with the *old* mode's polygon, and `clear-all`/`delete-track` used to get repainted by the doomed run's `FOG_UPDATE`s.
+- This also fixes two older bugs: an abandoned run's `DONE` used to write a fog cache pairing the _new_ `mapStore.fogMode` with the _old_ mode's polygon, and `clear-all`/`delete-track` used to get repainted by the doomed run's `FOG_UPDATE`s.
 
 **`mapStore.fogMode`**: kept in sync with the React `fogMode` state (updated in `handleFogModeChange`). MapView reads it from mapStore in the worker DONE handler to save the fog cache — avoids threading it as a prop.
 
@@ -270,6 +272,7 @@ from one file — that's the registry's layout and splitting it would break `sha
 **Explicit route registration**: Routes are NOT auto-discovered from the filesystem. Every route must be added to `app/routes.ts` or it will 404 and `react-router typegen` will not generate its `+types/` file.
 
 **Two read-time migrations in `loadTracks()`**, both applied in memory only — no re-save — so old IDB data stays untouched:
+
 - `startedAtMs === undefined` (tracks saved before the field existed) → back-filled from `pointTimestamps[0]`.
 - `stats.uniqueDistanceKm === undefined` → seeded from `stats.distanceKm`. It is immediately overwritten by `populateUniqueDistances`, so the value only has to be non-`undefined` for the interim render.
 
@@ -284,15 +287,15 @@ client-side — `clientLoader` calls `loadTracks()` then runs the five aggregato
 
 ### Aggregators (`lib/statsAggregator.ts`)
 
-| Function | Output |
-|---|---|
-| `computeLifetimeTotals` | Distance, elevation, moving time, track count, active days |
-| `computeWeeklyBars` | One `WeeklyBar` per ISO week between first and last activity; gaps filled with zero |
-| `computeStreaks` | Current/longest streak, 84-day active-day set, this-week/last-week km, active-day count |
-| `computePersonalRecords` | Best single-activity records: distance, elevation, pace, avg speed, moving time |
-| `computeUniqueDistance` | Library-wide unique km — a grid dedupe across every track, so it is not a sum of per-track values |
+| Function                 | Output                                                                                            |
+| ------------------------ | ------------------------------------------------------------------------------------------------- |
+| `computeLifetimeTotals`  | Distance, elevation, moving time, track count, active days                                        |
+| `computeWeeklyBars`      | One `WeeklyBar` per ISO week between first and last activity; gaps filled with zero               |
+| `computeStreaks`         | Current/longest streak, 84-day active-day set, this-week/last-week km, active-day count           |
+| `computePersonalRecords` | Best single-activity records: distance, elevation, pace, avg speed, moving time                   |
+| `computeUniqueDistance`  | Library-wide unique km — a grid dedupe across every track, so it is not a sum of per-track values |
 
-**Naming: `avgSpeed` vs `avgMovingSpeed`.** `avgSpeedKmh` is distance ÷ *elapsed* time; `avgMovingSpeedKmh` is distance ÷ *moving* time (stopped segments excluded — see `MOVING_TIME_STOPPED_GAP_MS`). Never introduce a bare `speed`/`speedKmh` identifier — always qualify which one it is. The one exception is `segmentSpeedKmh` in `lib/stats.ts`, an instantaneous per-segment speed that only gates whether a segment counts as moving. `PersonalRecords.fastestAvgSpeed` uses the elapsed-time average; `fastestPace` uses moving pace, so the two are independent records rather than reciprocals of one another.
+**Naming: `avgSpeed` vs `avgMovingSpeed`.** `avgSpeedKmh` is distance ÷ _elapsed_ time; `avgMovingSpeedKmh` is distance ÷ _moving_ time (stopped segments excluded — see `MOVING_TIME_STOPPED_GAP_MS`). Never introduce a bare `speed`/`speedKmh` identifier — always qualify which one it is. The one exception is `segmentSpeedKmh` in `lib/stats.ts`, an instantaneous per-segment speed that only gates whether a segment counts as moving. `PersonalRecords.fastestAvgSpeed` uses the elapsed-time average; `fastestPace` uses moving pace, so the two are independent records rather than reciprocals of one another.
 
 `computeStreaks` uses **local calendar dates** (not UTC) so days match what the user sees on their device.
 
@@ -312,9 +315,9 @@ re-derive from `pointTimestamps` elsewhere.
 
 ## File format support
 
-| Format | Parser | Notes |
-|---|---|---|
-| `.gpx` | `@tmcw/togeojson` | Handles LineString + MultiLineString features |
+| Format | Parser               | Notes                                                                             |
+| ------ | -------------------- | --------------------------------------------------------------------------------- |
+| `.gpx` | `@tmcw/togeojson`    | Handles LineString + MultiLineString features                                     |
 | `.fit` | `fit-file-parser` v3 | Returns degrees directly, filter near-(0,0) records; also the only source of laps |
 
 To add a new format: create `app/lib/parsers/newformat.ts` + one line in `parsers/index.ts`. Worker, clientAction, and UI are untouched.
@@ -350,7 +353,7 @@ syntax and is resolved before tsconfig paths are consulted.
 **Two deploy workflows, path-filtered against each other.** `deploy.yml` builds the SPA to GitHub
 Pages and now passes `VITE_API_URL` from a repo variable, so the public site does have sync;
 `deploy-server.yml` rsyncs `server/` + `shared/` to a Debian VPS (bare Bun + systemd behind Caddy,
-releases under `/srv/fogofwalk`, artifacts in `server/deploy/`). `shared/**` fires *both* — the
+releases under `/srv/fogofwalk`, artifacts in `server/deploy/`). `shared/**` fires _both_ — the
 frontend re-exports it through `app/types/tracks.ts`. Server-optional is still the invariant: no
 code path changed, only the build now sets the var, and clearing the variable restores the
 server-less bundle. `server.env` is rendered from GitHub secrets on every deploy, so a config
@@ -369,11 +372,11 @@ and recomputed by the receiving device.
 **Downloaded tracks go through `mapStore.ingestTracks()`** — the same function `add-files` uses, so
 a synced track is indistinguishable from an imported one. It **joins** the current fog run rather
 than calling `startFogRun()`: only the new tracks are posted and the worker's accumulated fog has
-to survive. Deletions arriving from a tombstone *do* need the full reset-and-replay, which is why
+to survive. Deletions arriving from a tombstone _do_ need the full reset-and-replay, which is why
 `syncEngine` hands them to the `setSyncChangeHandler` callback in `home.tsx` instead of doing it
 itself — rebuilding fog and fixing `selectedTrackIds` are React concerns.
 
-**`clear-all` is local only.** It resets *this device*; the server copies are untouched. Deleting
+**`clear-all` is local only.** It resets _this device_; the server copies are untouched. Deleting
 server data is a separate, explicit action ("Remove all" in the account dialog). An earlier
 version wrote a tombstone per track here, which silently destroyed the user's server library and
 made a restore impossible.
@@ -387,7 +390,7 @@ resumes; that is deliberate, so there is no hidden "sync is off" mode to discove
 dialog's button passes it. Note this also holds back uploads of anything imported while
 suspended.
 
-**Sync has to be *scheduled*, not just triggered.** `startSyncScheduler()` (focus,
+**Sync has to be _scheduled_, not just triggered.** `startSyncScheduler()` (focus,
 `visibilitychange`, `online`, plus a 5-minute poll while visible) is what makes another device's
 uploads appear. Sign-in and add-files triggers alone meant a tab open on device B never saw
 device A's imports until a reload — which reads as "sync doesn't download anything".
@@ -398,15 +401,15 @@ for exactly this; on download failures the cursor is re-saved at `since`.
 
 **Three deletion semantics, and they are not interchangeable:**
 
-| Action | Server row | Tombstone | Other devices |
-|---|---|---|---|
-| Delete track, "delete from server" **on** (default) | deleted | yes | delete their copy |
-| Delete track, "delete from server" **off** | kept | no | unaffected; this device records the hash in `ignoredHashes` so it is not re-downloaded |
-| "Remove all" in the account dialog (`DELETE /api/tracks`) | all deleted | **no** | keep everything; they simply stop syncing it |
-| "Clear all" in the drawer | untouched | no | unaffected; this device re-downloads everything |
+| Action                                                    | Server row  | Tombstone | Other devices                                                                          |
+| --------------------------------------------------------- | ----------- | --------- | -------------------------------------------------------------------------------------- |
+| Delete track, "delete from server" **on** (default)       | deleted     | yes       | delete their copy                                                                      |
+| Delete track, "delete from server" **off**                | kept        | no        | unaffected; this device records the hash in `ignoredHashes` so it is not re-downloaded |
+| "Remove all" in the account dialog (`DELETE /api/tracks`) | all deleted | **no**    | keep everything; they simply stop syncing it                                           |
+| "Clear all" in the drawer                                 | untouched   | no        | unaffected; this device re-downloads everything                                        |
 
 **Tombstones are applied at most once per device** (`syncState.appliedTombstones`, hash →
-`deletedAt`). The server's manifest cursor is an *inclusive* lower bound — that is how a row
+`deletedAt`). The server's manifest cursor is an _inclusive_ lower bound — that is how a row
 written in the same millisecond as a read is not lost — so the newest tombstones are re-served on
 the following sync. Applying one twice silently re-deletes a file the user had just re-imported
 and refuses to upload it. A tombstone is recorded even when it is not acted on.
@@ -414,12 +417,12 @@ and refuses to upload it. A tombstone is recorded even when it is not acted on.
 **A from-scratch walk (`since === 0`) never deletes local data.** With no cursor there is no prior
 shared state to reconcile against, so a tombstone describes a deletion relative to a history this
 device no longer has. `clear-all` drops `syncState`, which would otherwise replay every tombstone
-the account ever wrote. From-scratch converges toward the *union* of local and server; only
+the account ever wrote. From-scratch converges toward the _union_ of local and server; only
 incremental walks propagate deletions.
 
 **`ingestTracks` drops tracks whose `contentHash` is already held** and **returns what it actually
 took**. Re-importing a file — or importing one sync had just restored — must not yield two
-identical tracks. `add-files` must report *that* count as `newTracksCount`, never the parsed
+identical tracks. `add-files` must report _that_ count as `newTracksCount`, never the parsed
 count: the progress UI waits for a worker `DONE`, and when every track is a duplicate nothing is
 posted, so reporting the parsed count strands "Processing 0 of N…" on screen forever. When
 nothing was added and nothing failed, `DuplicateTracksDialog` explains why the map did not change.
@@ -432,7 +435,7 @@ cache is rebuilt from an empty server.
 **Sync is covered by Playwright E2E tests** in `e2e/` — every regression listed above has a spec,
 and `e2e/README.md` records which spec fails when each fix is reverted. Add one for any new sync
 behaviour; the whole point is that these bugs stopped being caught by hand. Three rig constraints
-worth knowing before touching it: the map style request must be *fulfilled* (blocking it hangs the
+worth knowing before touching it: the map style request must be _fulfilled_ (blocking it hangs the
 app, because every control waits on MapLibre's `load`), OAuth is faked in two halves because
 Playwright cannot route a redirect hop, and per-test isolation comes from each test claiming its
 own login out of `ALLOWED_LOGINS`.
@@ -452,6 +455,7 @@ deletes a copy the user has since re-imported.
 (`UPLOAD_RATE_MAX_PER_WINDOW` / `UPLOAD_RATE_WINDOW_MS` in `shared/constants.ts`, enforced only on
 `PUT /api/tracks/:hash`), and `app/lib/server/uploadGate.ts` mirrors that window locally so a bulk
 import stays under it instead of discovering it by failing. Three things about it are load-bearing:
+
 - The client's budget (`UPLOAD_RATE_CLIENT_BUDGET`) is deliberately **below** the server's. The two
   windows are measured at opposite ends of the request, so the client's view drifts ahead.
 - The gate's state is **module-level, not per-run**. `runSync` re-enters `syncOnce` immediately when
@@ -465,6 +469,7 @@ import stays under it instead of discovering it by failing. Three things about i
 The hold is published (`useUploadHoldSeconds`) and worded once in `useUploadHoldNotice`, which both
 `AccountDialog` and `AccountDrawerItem` render — a silent minute-long stall reads as a hang. Four
 things about it:
+
 - **Both hold paths announce, not just the 429 one.** The commonest long hold is the pacer: a fresh
   page spends its whole budget in one burst and then waits out a full window, with the server never
   saying no. Reporting only on `penalizeUploads` left the first sync of a large library showing
@@ -502,18 +507,18 @@ long-lived credential never touches a URL, history entry or `Referer`.
 ## Constants (`app/constants/fog.ts`)
 
 ```ts
-FOG_CLEAR_RADIUS_METERS  = 100   // buffer RADIUS each side — the corridor is ~200 m wide
-FOG_EMIT_INTERVAL_MS     = 300   // max fog update frequency
-SIMPLIFY_TOLERANCE       = 0.0001   // ~11m — applied to the EMITTED fog polygon
-TRACK_SIMPLIFY_TOLERANCE = 0.0005   // ~55m — applied to the TRACK before buffering
-BUFFER_STEPS             = 16    // arc segments per buffer; 4× fewer vertices than the default 64
-MAP_STYLE_URL           = "https://tiles.openfreemap.org/styles/liberty"
-FOG_COLOR               = "#0a0a1e"
-FOG_OPACITY             = 0.8
-TRACK_COLOR             = "#ff6b35"
-LAP_PROFILE_POINTS      = 60    // per-lap elevation profile cap (track's is 300)
-MAX_LAPS                = 200   // give up on pathological FIT files above this
-LAP_HIGHLIGHT_WIDTH     = 6     // selected-lap line width
+FOG_CLEAR_RADIUS_METERS = 100 // buffer RADIUS each side — the corridor is ~200 m wide
+FOG_EMIT_INTERVAL_MS = 300 // max fog update frequency
+SIMPLIFY_TOLERANCE = 0.0001 // ~11m — applied to the EMITTED fog polygon
+TRACK_SIMPLIFY_TOLERANCE = 0.0005 // ~55m — applied to the TRACK before buffering
+BUFFER_STEPS = 16 // arc segments per buffer; 4× fewer vertices than the default 64
+MAP_STYLE_URL = "https://tiles.openfreemap.org/styles/liberty"
+FOG_COLOR = "#0a0a1e"
+FOG_OPACITY = 0.8
+TRACK_COLOR = "#ff6b35"
+LAP_PROFILE_POINTS = 60 // per-lap elevation profile cap (track's is 300)
+MAX_LAPS = 200 // give up on pathological FIT files above this
+LAP_HIGHLIGHT_WIDTH = 6 // selected-lap line width
 ```
 
 Not an exhaustive list — `fog.ts` also holds the track line widths/opacities/dim colour,

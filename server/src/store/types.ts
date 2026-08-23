@@ -102,7 +102,11 @@ export interface ServerStore {
 
   // ── administrator settings ─────────────────────────────────────────────
   getSetting(key: string): Promise<string | null>
-  setSetting(key: string, value: string | null, updatedBy: string): Promise<void>
+  setSetting(
+    key: string,
+    value: string | null,
+    updatedBy: string
+  ): Promise<void>
 
   // ── sessions (token stored hashed, never in clear) ───────────────────────
   createSession(

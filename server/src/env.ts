@@ -95,9 +95,16 @@ export function parseEnv(source: Record<string, string | undefined>): Env {
     )
   }
 
-  const adminLogins = csv(parsed.ADMIN_LOGINS).map((entry) => entry.toLowerCase())
-  if (adminLogins.length === 0 || adminLogins.some((entry) => !/^[^:\s]+:[^:\s]+$/.test(entry))) {
-    throw new Error("Invalid server environment:\n  - ADMIN_LOGINS must contain one or more provider:login identities")
+  const adminLogins = csv(parsed.ADMIN_LOGINS).map((entry) =>
+    entry.toLowerCase()
+  )
+  if (
+    adminLogins.length === 0 ||
+    adminLogins.some((entry) => !/^[^:\s]+:[^:\s]+$/.test(entry))
+  ) {
+    throw new Error(
+      "Invalid server environment:\n  - ADMIN_LOGINS must contain one or more provider:login identities"
+    )
   }
 
   return {

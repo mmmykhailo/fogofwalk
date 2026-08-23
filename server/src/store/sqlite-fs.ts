@@ -196,15 +196,28 @@ interface TombstoneRow {
 }
 
 interface AccessRequestRow {
-  id: string; user_id: string; status: string; requested_at: number
-  decided_at: number | null; decided_by: string | null
-  notification_status: string; notification_attempted_at: number | null
+  id: string
+  user_id: string
+  status: string
+  requested_at: number
+  decided_at: number | null
+  decided_by: string | null
+  notification_status: string
+  notification_attempted_at: number | null
 }
 
 function toAccessRequest(row: AccessRequestRow): StoredAccessRequest {
-  return { id: row.id, userId: row.user_id, status: row.status as StoredAccessRequest["status"], requestedAt: row.requested_at,
-    decidedAt: row.decided_at, decidedBy: row.decided_by,
-    notificationStatus: row.notification_status as StoredAccessRequest["notificationStatus"], notificationAttemptedAt: row.notification_attempted_at }
+  return {
+    id: row.id,
+    userId: row.user_id,
+    status: row.status as StoredAccessRequest["status"],
+    requestedAt: row.requested_at,
+    decidedAt: row.decided_at,
+    decidedBy: row.decided_by,
+    notificationStatus:
+      row.notification_status as StoredAccessRequest["notificationStatus"],
+    notificationAttemptedAt: row.notification_attempted_at,
+  }
 }
 
 function toUser(row: UserRow): User {
@@ -407,17 +420,37 @@ export class SqliteFsStore implements ServerStore {
   }
 
   async getAccessRequest(userId: string): Promise<StoredAccessRequest | null> {
-    const row = this.db.query(`SELECT * FROM access_requests WHERE user_id = ?`).get(userId) as AccessRequestRow | null
+    const row = this.db
+      .query(`SELECT * FROM access_requests WHERE user_id = ?`)
+      .get(userId) as AccessRequestRow | null
     return row ? toAccessRequest(row) : null
   }
 
   async createAccessRequest(userId: string): Promise<StoredAccessRequest> {
     const existing = await this.getAccessRequest(userId)
     if (existing) return existing
-    const request: StoredAccessRequest = { id: crypto.randomUUID(), userId, status: "pending", requestedAt: Date.now(), decidedAt: null, decidedBy: null, notificationStatus: "not_configured", notificationAttemptedAt: null }
+    const request: StoredAccessRequest = {
+      id: crypto.randomUUID(),
+      userId,
+      status: "pending",
+      requestedAt: Date.now(),
+      decidedAt: null,
+      decidedBy: null,
+      notificationStatus: "not_configured",
+      notificationAttemptedAt: null,
+    }
     try {
-      this.db.query(`INSERT INTO access_requests (id, user_id, status, requested_at, notification_status) VALUES (?, ?, ?, ?, ?)`)
-        .run(request.id, userId, request.status, request.requestedAt, request.notificationStatus)
+      this.db
+        .query(
+          `INSERT INTO access_requests (id, user_id, status, requested_at, notification_status) VALUES (?, ?, ?, ?, ?)`
+        )
+        .run(
+          request.id,
+          userId,
+          request.status,
+          request.requestedAt,
+          request.notificationStatus
+        )
     } catch {
       const concurrent = await this.getAccessRequest(userId)
       if (concurrent) return concurrent
@@ -426,52 +459,129 @@ export class SqliteFsStore implements ServerStore {
     return request
   }
 
-  async setAccessRequestNotification(userId: string, status: StoredAccessRequest["notificationStatus"]): Promise<void> {
-    this.db.query(`UPDATE access_requests SET notification_status = ?, notification_attempted_at = ? WHERE user_id = ?`).run(status, Date.now(), userId)
+  async setAccessRequestNotification(
+    userId: string,
+    status: StoredAccessRequest["notificationStatus"]
+  ): Promise<void> {
+    this.db
+      .query(
+        `UPDATE access_requests SET notification_status = ?, notification_attempted_at = ? WHERE user_id = ?`
+      )
+      .run(status, Date.now(), userId)
   }
 
   private adminRequest(row: AccessRequestRow): AdminAccessRequest {
-    const user = this.db.query(`SELECT display_name FROM users WHERE id = ?`).get(row.user_id) as { display_name: string } | null
-    const identity = this.db.query(`SELECT provider, provider_login FROM identities WHERE user_id = ? ORDER BY created_at LIMIT 1`).get(row.user_id) as { provider: string; provider_login: string | null } | null
+    const user = this.db
+      .query(`SELECT display_name FROM users WHERE id = ?`)
+      .get(row.user_id) as { display_name: string } | null
+    const identity = this.db
+      .query(
+        `SELECT provider, provider_login FROM identities WHERE user_id = ? ORDER BY created_at LIMIT 1`
+      )
+      .get(row.user_id) as {
+      provider: string
+      provider_login: string | null
+    } | null
     const request = toAccessRequest(row)
-    return { ...request, displayName: user?.display_name ?? "Deleted user", identity: identity?.provider_login ? `${identity.provider}:${identity.provider_login}` : null }
+    return {
+      ...request,
+      displayName: user?.display_name ?? "Deleted user",
+      identity: identity?.provider_login
+        ? `${identity.provider}:${identity.provider_login}`
+        : null,
+    }
   }
 
   async listAdminRequests(): Promise<AdminAccessRequest[]> {
-    const rows = this.db.query(`SELECT * FROM access_requests ORDER BY CASE status WHEN 'pending' THEN 0 ELSE 1 END, requested_at ASC`).all() as AccessRequestRow[]
+    const rows = this.db
+      .query(
+        `SELECT * FROM access_requests ORDER BY CASE status WHEN 'pending' THEN 0 ELSE 1 END, requested_at ASC`
+      )
+      .all() as AccessRequestRow[]
     return rows.map((row) => this.adminRequest(row))
   }
 
   async listAdminUsers(): Promise<AdminUser[]> {
-    const users = this.db.query(`SELECT * FROM users ORDER BY updated_at DESC`).all() as UserRow[]
+    const users = this.db
+      .query(`SELECT * FROM users ORDER BY updated_at DESC`)
+      .all() as UserRow[]
     return users.map((row) => {
       const user = toUser(row)
-      const identity = this.db.query(`SELECT provider, provider_login FROM identities WHERE user_id = ? ORDER BY created_at LIMIT 1`).get(user.id) as { provider: string; provider_login: string | null } | null
-      const request = this.db.query(`SELECT * FROM access_requests WHERE user_id = ?`).get(user.id) as AccessRequestRow | null
-      return { id: user.id, displayName: user.displayName, avatarUrl: user.avatarUrl, handle: user.handle, status: user.status, updatedAt: user.updatedAt, identity: identity?.provider_login ? `${identity.provider}:${identity.provider_login}` : null, request: request ? this.adminRequest(request) : null }
+      const identity = this.db
+        .query(
+          `SELECT provider, provider_login FROM identities WHERE user_id = ? ORDER BY created_at LIMIT 1`
+        )
+        .get(user.id) as {
+        provider: string
+        provider_login: string | null
+      } | null
+      const request = this.db
+        .query(`SELECT * FROM access_requests WHERE user_id = ?`)
+        .get(user.id) as AccessRequestRow | null
+      return {
+        id: user.id,
+        displayName: user.displayName,
+        avatarUrl: user.avatarUrl,
+        handle: user.handle,
+        status: user.status,
+        updatedAt: user.updatedAt,
+        identity: identity?.provider_login
+          ? `${identity.provider}:${identity.provider_login}`
+          : null,
+        request: request ? this.adminRequest(request) : null,
+      }
     })
   }
 
-  async decideAccessRequest(requestId: string, decision: "approve" | "reject", adminUserId: string): Promise<StoredAccessRequest | null> {
-    const row = this.db.query(`SELECT * FROM access_requests WHERE id = ?`).get(requestId) as AccessRequestRow | null
+  async decideAccessRequest(
+    requestId: string,
+    decision: "approve" | "reject",
+    adminUserId: string
+  ): Promise<StoredAccessRequest | null> {
+    const row = this.db
+      .query(`SELECT * FROM access_requests WHERE id = ?`)
+      .get(requestId) as AccessRequestRow | null
     if (!row) return null
     const status = decision === "approve" ? "approved" : "rejected"
     const userStatus = decision === "approve" ? "allowed" : "blocked"
     const decidedAt = Date.now()
     this.db.transaction(() => {
-      this.db.query(`UPDATE access_requests SET status = ?, decided_at = ?, decided_by = ? WHERE id = ?`).run(status, decidedAt, adminUserId, requestId)
-      this.db.query(`UPDATE users SET status = ?, updated_at = ? WHERE id = ?`).run(userStatus, decidedAt, row.user_id)
+      this.db
+        .query(
+          `UPDATE access_requests SET status = ?, decided_at = ?, decided_by = ? WHERE id = ?`
+        )
+        .run(status, decidedAt, adminUserId, requestId)
+      this.db
+        .query(`UPDATE users SET status = ?, updated_at = ? WHERE id = ?`)
+        .run(userStatus, decidedAt, row.user_id)
     })()
     return this.getAccessRequest(row.user_id)
   }
 
   async getSetting(key: string): Promise<string | null> {
-    return (this.db.query(`SELECT value FROM server_settings WHERE key = ?`).get(key) as { value: string } | null)?.value ?? null
+    return (
+      (
+        this.db
+          .query(`SELECT value FROM server_settings WHERE key = ?`)
+          .get(key) as { value: string } | null
+      )?.value ?? null
+    )
   }
 
-  async setSetting(key: string, value: string | null, updatedBy: string): Promise<void> {
-    if (value === null) { this.db.query(`DELETE FROM server_settings WHERE key = ?`).run(key); return }
-    this.db.query(`INSERT INTO server_settings (key, value, updated_at, updated_by) VALUES (?, ?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at, updated_by = excluded.updated_by`).run(key, value, Date.now(), updatedBy)
+  async setSetting(
+    key: string,
+    value: string | null,
+    updatedBy: string
+  ): Promise<void> {
+    if (value === null) {
+      this.db.query(`DELETE FROM server_settings WHERE key = ?`).run(key)
+      return
+    }
+    this.db
+      .query(
+        `INSERT INTO server_settings (key, value, updated_at, updated_by) VALUES (?, ?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at, updated_by = excluded.updated_by`
+      )
+      .run(key, value, Date.now(), updatedBy)
   }
 
   // ── sessions ────────────────────────────────────────────────────────────

@@ -19,13 +19,13 @@ Or from the repo root: `bun run test:e2e`.
 
 Six specs, one per area of sync behaviour:
 
-| Spec | Covers |
-|---|---|
-| `auth.spec.ts` | sign-in through the fake IdP, session persistence, pending-vs-allowed, log out, delete account |
-| `track-sync.spec.ts` | upload, download onto a second device, content-hash dedupe, the scheduler, manifest paging |
-| `deletion.spec.ts` | the three deletion semantics — per-track with and without the server switch, purge-all, clear-all |
-| `suspension.spec.ts` | auto-sync suspension after a local-only delete, and that only a manual sync clears it |
-| `serverless.spec.ts` | the `VITE_API_URL`-unset build: no account surfaces, no requests, everything else still works |
+| Spec                 | Covers                                                                                                                      |
+| -------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `auth.spec.ts`       | sign-in through the fake IdP, session persistence, pending-vs-allowed, log out, delete account                              |
+| `track-sync.spec.ts` | upload, download onto a second device, content-hash dedupe, the scheduler, manifest paging                                  |
+| `deletion.spec.ts`   | the three deletion semantics — per-track with and without the server switch, purge-all, clear-all                           |
+| `suspension.spec.ts` | auto-sync suspension after a local-only delete, and that only a manual sync clears it                                       |
+| `serverless.spec.ts` | the `VITE_API_URL`-unset build: no account surfaces, no requests, everything else still works                               |
 | `rate-limit.spec.ts` | a 429 upload is retried inside the same sync run, the retry is bounded, and both account surfaces count an upload hold down |
 
 ## How the rig fits together
@@ -45,7 +45,7 @@ pointing at the test API, one with it unset (the GitHub Pages build).
 **OAuth is faked in two halves.** `arctic` hardcodes github.com, and the token
 exchange happens server-side where Playwright cannot reach. So the preload
 rewrites the server's two outbound calls to the fake IdP, and the browser leg is
-handled by intercepting `/api/auth/*/start` — *not* the github.com navigation,
+handled by intercepting `/api/auth/*/start` — _not_ the github.com navigation,
 because Playwright cannot route a request reached through a redirect. The real
 callback, state-cookie validation, administrator promotion and session minting all
 run untouched.
@@ -65,13 +65,13 @@ method is scoped by user id. Workers own disjoint slices of the pool.
 The suite exists because sync shipped several regressions in a row. Re-break one
 and check the matching spec fails — all six below were verified to do so:
 
-| Break | Spec that must fail |
-|---|---|
-| dropping the 429 retry in `uploadTrack` | a 429 is retried within the same sync |
-| dropping `announceHold` from the pacing branch of `acquireUploadSlot` | self-paced holds are announced too |
-| `useUploadHoldNotice` not rendered by the account surfaces | the account surfaces explain the hold and count down |
-| `newTracksCount: allTracks.length` in `add-files` | re-importing the same files … does not hang |
-| `clear-all` propagating deletions to the server | clear all leaves the server untouched |
-| dropping `appliedTombstones` freshness check | a deleted track can be re-imported |
-| `isFromScratch = false` | a track re-imported after a clear-all survives its old tombstone |
-| `setIsProcessing(trackCount > 0)` without `isFogRunInFlight` | deleting with the server switch on |
+| Break                                                                 | Spec that must fail                                              |
+| --------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| dropping the 429 retry in `uploadTrack`                               | a 429 is retried within the same sync                            |
+| dropping `announceHold` from the pacing branch of `acquireUploadSlot` | self-paced holds are announced too                               |
+| `useUploadHoldNotice` not rendered by the account surfaces            | the account surfaces explain the hold and count down             |
+| `newTracksCount: allTracks.length` in `add-files`                     | re-importing the same files … does not hang                      |
+| `clear-all` propagating deletions to the server                       | clear all leaves the server untouched                            |
+| dropping `appliedTombstones` freshness check                          | a deleted track can be re-imported                               |
+| `isFromScratch = false`                                               | a track re-imported after a clear-all survives its old tombstone |
+| `setIsProcessing(trackCount > 0)` without `isFogRunInFlight`          | deleting with the server switch on                               |

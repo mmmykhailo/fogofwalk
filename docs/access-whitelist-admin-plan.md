@@ -52,16 +52,16 @@ small data models.
 
 `access_requests`:
 
-| Column | Purpose |
-| --- | --- |
-| `id` | Random UUID used by admin mutation routes. |
-| `user_id` | Unique applicant; references the existing user logically. |
-| `status` | `pending`, `approved`, or `rejected`. |
-| `requested_at` | First submission time. |
-| `decided_at` | Null until an admin decision. |
-| `decided_by` | Null or the admin user's ID for auditability. |
-| `notification_status` | `not_configured`, `sent`, or `failed`. |
-| `notification_attempted_at` | Null until Telegram was attempted. |
+| Column                      | Purpose                                                   |
+| --------------------------- | --------------------------------------------------------- |
+| `id`                        | Random UUID used by admin mutation routes.                |
+| `user_id`                   | Unique applicant; references the existing user logically. |
+| `status`                    | `pending`, `approved`, or `rejected`.                     |
+| `requested_at`              | First submission time.                                    |
+| `decided_at`                | Null until an admin decision.                             |
+| `decided_by`                | Null or the admin user's ID for auditability.             |
+| `notification_status`       | `not_configured`, `sent`, or `failed`.                    |
+| `notification_attempted_at` | Null until Telegram was attempted.                        |
 
 Keep one request row per user. `POST /api/access-request` is idempotent: it
 creates the initial row, but repeated clicks/retries return the existing row
@@ -71,12 +71,12 @@ self-service notification spam loop.
 
 `server_settings`:
 
-| Column | Purpose |
-| --- | --- |
-| `key` | Primary key; initially `telegram_chat_id` and `telegram_bot_token`. |
-| `value` | Plain chat ID or a versioned encrypted token envelope. |
-| `updated_at` | Audit/diagnostic timestamp. |
-| `updated_by` | Admin user ID. |
+| Column       | Purpose                                                             |
+| ------------ | ------------------------------------------------------------------- |
+| `key`        | Primary key; initially `telegram_chat_id` and `telegram_bot_token`. |
+| `value`      | Plain chat ID or a versioned encrypted token envelope.              |
+| `updated_at` | Audit/diagnostic timestamp.                                         |
+| `updated_by` | Admin user ID.                                                      |
 
 Encrypt the bot token before storing it. Derive a dedicated AES-GCM key from
 the existing `SESSION_SECRET` via HKDF in Web Crypto with fixed,
@@ -131,9 +131,9 @@ Carry that value into `AuthState` as `isAdmin` alongside the existing
 
 Add routes available behind `requireSession`, but not `requireAllowed`:
 
-| Method and path | Behavior |
-| --- | --- |
-| `GET /api/access-request` | Returns `null` or the current user's request state. |
+| Method and path            | Behavior                                                                                |
+| -------------------------- | --------------------------------------------------------------------------------------- |
+| `GET /api/access-request`  | Returns `null` or the current user's request state.                                     |
 | `POST /api/access-request` | Creates the idempotent request, attempts one notification, and returns the saved state. |
 
 Reject request creation when the user is already `allowed` or `blocked`; an
@@ -192,14 +192,14 @@ before the administrator relies on the configuration.
 Mount `createAdminRoutes(store)` at `/api/admin`, guarded once at the router
 boundary by `createRequireAdmin`:
 
-| Method and path | Behavior |
-| --- | --- |
-| `GET /api/admin/bootstrap` | Returns requests/users, chat ID, and `isBotTokenConfigured`; never the bot token or encrypted value. |
-| `PATCH /api/admin/requests/:id` | Accepts `{ decision: "approve" | "reject" }` and performs the atomic decision. |
-| `PATCH /api/admin/users/:id/status` | Accepts the explicit `pending`, `allowed`, or `blocked` state for whitelist maintenance. |
-| `PATCH /api/admin/settings/telegram` | Validates and saves a chat ID plus an optional replacement token; explicit flags clear either value. |
-| `POST /api/admin/settings/telegram/test` | Sends a fixed test notification. |
-| `POST /api/admin/requests/:id/resend-notification` | Retries notification for one existing request. |
+| Method and path                                    | Behavior                                                                                             |
+| -------------------------------------------------- | ---------------------------------------------------------------------------------------------------- | --------------------------------------------- |
+| `GET /api/admin/bootstrap`                         | Returns requests/users, chat ID, and `isBotTokenConfigured`; never the bot token or encrypted value. |
+| `PATCH /api/admin/requests/:id`                    | Accepts `{ decision: "approve"                                                                       | "reject" }` and performs the atomic decision. |
+| `PATCH /api/admin/users/:id/status`                | Accepts the explicit `pending`, `allowed`, or `blocked` state for whitelist maintenance.             |
+| `PATCH /api/admin/settings/telegram`               | Validates and saves a chat ID plus an optional replacement token; explicit flags clear either value. |
+| `POST /api/admin/settings/telegram/test`           | Sends a fixed test notification.                                                                     |
+| `POST /api/admin/requests/:id/resend-notification` | Retries notification for one existing request.                                                       |
 
 Validate UUIDs and JSON bodies with Zod. The Telegram settings request should
 distinguish “token omitted, keep the current secret” from “remove the current
@@ -349,7 +349,7 @@ single final test message to the real private channel in staging/production.
    bot token and channel ID, and confirm existing allowed users appear
    correctly.
 4. Confirm existing allowed users appear correctly in the admin interface.
-6. Document Telegram setup: add the bot to the private channel, grant it
+5. Document Telegram setup: add the bot to the private channel, grant it
    permission to post, and obtain the channel's numeric chat ID. Setting,
    rotating, or removing the token and changing the destination are all admin
    UI operations. Restrict the admin page accordingly and never paste the token

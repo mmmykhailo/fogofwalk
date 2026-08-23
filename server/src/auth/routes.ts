@@ -17,10 +17,7 @@ import { Hono } from "hono"
 import { deleteCookie, getSignedCookie, setSignedCookie } from "hono/cookie"
 import { z } from "zod"
 
-import type {
-  AuthExchangeResponse,
-  AuthProvidersResponse,
-} from "~shared/api"
+import type { AuthExchangeResponse, AuthProvidersResponse } from "~shared/api"
 
 import { env } from "../env"
 import { jsonError } from "../errors"

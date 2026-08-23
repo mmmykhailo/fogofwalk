@@ -9,7 +9,9 @@ import { isAdmin } from "../users"
 /** A deliberately indistinguishable 404 for every non-admin case. */
 export function createRequireAdmin(store: ServerStore) {
   return createMiddleware<AuthEnv>(async (c, next) => {
-    const match = /^Bearer\s+(.+)$/i.exec(c.req.header("Authorization")?.trim() ?? "")
+    const match = /^Bearer\s+(.+)$/i.exec(
+      c.req.header("Authorization")?.trim() ?? ""
+    )
     const token = match?.[1]?.trim()
     const verified = token ? await verifySessionToken(store, token) : null
     if (!verified || !(await isAdmin(store, verified.user.id))) {

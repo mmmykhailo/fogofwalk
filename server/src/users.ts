@@ -8,7 +8,10 @@ import type { ServerUser, UserCapabilities } from "~shared/api"
 import { env } from "./env"
 import type { ServerStore, User } from "./store/types"
 
-export async function isAdmin(store: ServerStore, userId: string): Promise<boolean> {
+export async function isAdmin(
+  store: ServerStore,
+  userId: string
+): Promise<boolean> {
   const identities = await store.findIdentitiesForUser(userId)
   return identities.some(
     (identity) =>
@@ -23,7 +26,10 @@ export async function capabilitiesFor(
   store: ServerStore,
   user: User
 ): Promise<UserCapabilities> {
-  return { sync: user.status === "allowed", admin: await isAdmin(store, user.id) }
+  return {
+    sync: user.status === "allowed",
+    admin: await isAdmin(store, user.id),
+  }
 }
 
 /**

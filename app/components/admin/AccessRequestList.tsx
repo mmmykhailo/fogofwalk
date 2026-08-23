@@ -1,7 +1,81 @@
 import type { AdminAccessRequest } from "~shared/api"
 import { Button } from "~/components/ui/button"
 
-interface Props { requests: AdminAccessRequest[]; onMutate: (path: string, method?: string, body?: unknown) => void; isMutating: string | null }
+interface Props {
+  requests: AdminAccessRequest[]
+  onMutate: (path: string, method?: string, body?: unknown) => void
+  isMutating: string | null
+}
 export function AccessRequestList({ requests, onMutate, isMutating }: Props) {
-  return <section className="space-y-2 rounded-none p-4 ring-1 ring-foreground/10"><h2 className="font-medium">Access requests</h2>{requests.length === 0 ? <p className="text-xs text-muted-foreground">No requests yet.</p> : requests.map((request) => <div key={request.id} className="flex items-center justify-between gap-3 border-t pt-2 text-xs"><div><p>{request.displayName} <span className="text-muted-foreground">{request.identity}</span></p><p className="text-muted-foreground">{request.status} · notification {request.notificationStatus}</p></div><div className="flex gap-1">{request.status === "pending" && <><Button size="sm" disabled={isMutating !== null} onClick={() => onMutate(`/api/admin/requests/${request.id}`, "PATCH", { decision: "approve" })}>Approve</Button><Button size="sm" variant="destructive" disabled={isMutating !== null} onClick={() => onMutate(`/api/admin/requests/${request.id}`, "PATCH", { decision: "reject" })}>Reject</Button></>}{request.notificationStatus !== "sent" && <Button size="sm" variant="outline" disabled={isMutating !== null} onClick={() => onMutate(`/api/admin/requests/${request.id}/resend-notification`, "POST")}>Resend</Button>}</div></div>)}</section>
+  return (
+    <section className="space-y-2 rounded-none p-4 ring-1 ring-foreground/10">
+      <h2 className="font-medium">Access requests</h2>
+      {requests.length === 0 ? (
+        <p className="text-xs text-muted-foreground">No requests yet.</p>
+      ) : (
+        requests.map((request) => (
+          <div
+            key={request.id}
+            className="flex items-center justify-between gap-3 border-t pt-2 text-xs"
+          >
+            <div>
+              <p>
+                {request.displayName}{" "}
+                <span className="text-muted-foreground">
+                  {request.identity}
+                </span>
+              </p>
+              <p className="text-muted-foreground">
+                {request.status} · notification {request.notificationStatus}
+              </p>
+            </div>
+            <div className="flex gap-1">
+              {request.status === "pending" && (
+                <>
+                  <Button
+                    size="sm"
+                    disabled={isMutating !== null}
+                    onClick={() =>
+                      onMutate(`/api/admin/requests/${request.id}`, "PATCH", {
+                        decision: "approve",
+                      })
+                    }
+                  >
+                    Approve
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="destructive"
+                    disabled={isMutating !== null}
+                    onClick={() =>
+                      onMutate(`/api/admin/requests/${request.id}`, "PATCH", {
+                        decision: "reject",
+                      })
+                    }
+                  >
+                    Reject
+                  </Button>
+                </>
+              )}
+              {request.notificationStatus !== "sent" && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={isMutating !== null}
+                  onClick={() =>
+                    onMutate(
+                      `/api/admin/requests/${request.id}/resend-notification`,
+                      "POST"
+                    )
+                  }
+                >
+                  Resend
+                </Button>
+              )}
+            </div>
+          </div>
+        ))
+      )}
+    </section>
+  )
 }

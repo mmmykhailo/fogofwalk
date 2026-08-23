@@ -177,56 +177,120 @@ export class MemoryStore implements ServerStore {
     const existing = this.accessRequests.get(userId)
     if (existing) return existing
     const request: StoredAccessRequest = {
-      id: crypto.randomUUID(), userId, status: "pending", requestedAt: Date.now(),
-      decidedAt: null, decidedBy: null, notificationStatus: "not_configured",
+      id: crypto.randomUUID(),
+      userId,
+      status: "pending",
+      requestedAt: Date.now(),
+      decidedAt: null,
+      decidedBy: null,
+      notificationStatus: "not_configured",
       notificationAttemptedAt: null,
     }
     this.accessRequests.set(userId, request)
     return request
   }
 
-  async setAccessRequestNotification(userId: string, status: "not_configured" | "sent" | "failed"): Promise<void> {
+  async setAccessRequestNotification(
+    userId: string,
+    status: "not_configured" | "sent" | "failed"
+  ): Promise<void> {
     const request = this.accessRequests.get(userId)
-    if (request) this.accessRequests.set(userId, { ...request, notificationStatus: status, notificationAttemptedAt: Date.now() })
+    if (request)
+      this.accessRequests.set(userId, {
+        ...request,
+        notificationStatus: status,
+        notificationAttemptedAt: Date.now(),
+      })
   }
 
   private toAdminRequest(request: StoredAccessRequest): AdminAccessRequest {
     const user = this.users.get(request.userId)
-    const identity = [...this.identities.values()].find((item) => item.userId === request.userId)
-    return { id: request.id, userId: request.userId, status: request.status, requestedAt: request.requestedAt,
-      decidedAt: request.decidedAt, displayName: user?.displayName ?? "Deleted user",
-      identity: identity?.providerLogin ? `${identity.provider}:${identity.providerLogin}` : null,
-      notificationStatus: request.notificationStatus, notificationAttemptedAt: request.notificationAttemptedAt }
+    const identity = [...this.identities.values()].find(
+      (item) => item.userId === request.userId
+    )
+    return {
+      id: request.id,
+      userId: request.userId,
+      status: request.status,
+      requestedAt: request.requestedAt,
+      decidedAt: request.decidedAt,
+      displayName: user?.displayName ?? "Deleted user",
+      identity: identity?.providerLogin
+        ? `${identity.provider}:${identity.providerLogin}`
+        : null,
+      notificationStatus: request.notificationStatus,
+      notificationAttemptedAt: request.notificationAttemptedAt,
+    }
   }
 
   async listAdminRequests(): Promise<AdminAccessRequest[]> {
-    return [...this.accessRequests.values()].map((request) => this.toAdminRequest(request)).sort((a, b) =>
-      a.status === "pending" && b.status !== "pending" ? -1 : b.status === "pending" && a.status !== "pending" ? 1 : a.requestedAt - b.requestedAt)
+    return [...this.accessRequests.values()]
+      .map((request) => this.toAdminRequest(request))
+      .sort((a, b) =>
+        a.status === "pending" && b.status !== "pending"
+          ? -1
+          : b.status === "pending" && a.status !== "pending"
+            ? 1
+            : a.requestedAt - b.requestedAt
+      )
   }
 
   async listAdminUsers(): Promise<AdminUser[]> {
-    return [...this.users.values()].map((user) => {
-      const identity = [...this.identities.values()].find((item) => item.userId === user.id)
-      const request = this.accessRequests.get(user.id)
-      return { id: user.id, displayName: user.displayName, avatarUrl: user.avatarUrl, handle: user.handle,
-        status: user.status, updatedAt: user.updatedAt,
-        identity: identity?.providerLogin ? `${identity.provider}:${identity.providerLogin}` : null,
-        request: request ? this.toAdminRequest(request) : null }
-    }).sort((a, b) => b.updatedAt - a.updatedAt)
+    return [...this.users.values()]
+      .map((user) => {
+        const identity = [...this.identities.values()].find(
+          (item) => item.userId === user.id
+        )
+        const request = this.accessRequests.get(user.id)
+        return {
+          id: user.id,
+          displayName: user.displayName,
+          avatarUrl: user.avatarUrl,
+          handle: user.handle,
+          status: user.status,
+          updatedAt: user.updatedAt,
+          identity: identity?.providerLogin
+            ? `${identity.provider}:${identity.providerLogin}`
+            : null,
+          request: request ? this.toAdminRequest(request) : null,
+        }
+      })
+      .sort((a, b) => b.updatedAt - a.updatedAt)
   }
 
-  async decideAccessRequest(requestId: string, decision: "approve" | "reject", adminUserId: string): Promise<StoredAccessRequest | null> {
-    const request = [...this.accessRequests.values()].find((item) => item.id === requestId)
+  async decideAccessRequest(
+    requestId: string,
+    decision: "approve" | "reject",
+    adminUserId: string
+  ): Promise<StoredAccessRequest | null> {
+    const request = [...this.accessRequests.values()].find(
+      (item) => item.id === requestId
+    )
     if (!request) return null
-    const status: StoredAccessRequest["status"] = decision === "approve" ? "approved" : "rejected"
-    const updated = { ...request, status, decidedAt: Date.now(), decidedBy: adminUserId }
+    const status: StoredAccessRequest["status"] =
+      decision === "approve" ? "approved" : "rejected"
+    const updated = {
+      ...request,
+      status,
+      decidedAt: Date.now(),
+      decidedBy: adminUserId,
+    }
     this.accessRequests.set(request.userId, updated)
-    await this.setUserStatus(request.userId, decision === "approve" ? "allowed" : "blocked")
+    await this.setUserStatus(
+      request.userId,
+      decision === "approve" ? "allowed" : "blocked"
+    )
     return updated
   }
 
-  async getSetting(key: string): Promise<string | null> { return this.settings.get(key) ?? null }
-  async setSetting(key: string, value: string | null, _updatedBy: string): Promise<void> {
+  async getSetting(key: string): Promise<string | null> {
+    return this.settings.get(key) ?? null
+  }
+  async setSetting(
+    key: string,
+    value: string | null,
+    _updatedBy: string
+  ): Promise<void> {
     if (value === null) this.settings.delete(key)
     else this.settings.set(key, value)
   }

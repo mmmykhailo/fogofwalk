@@ -21,13 +21,13 @@ registerRoute(
         maxAgeSeconds: 60 * 60 * 24 * 30, // 30 days
       }),
     ],
-  }),
+  })
 )
 
 // Map style JSON: StaleWhileRevalidate so updates are picked up next load
 registerRoute(
   ({ url }) => url.pathname.endsWith(".json"),
-  new StaleWhileRevalidate({ cacheName: "map-styles" }),
+  new StaleWhileRevalidate({ cacheName: "map-styles" })
 )
 
 // Web Share Target: intercept the POST from the system share sheet,
@@ -50,15 +50,14 @@ self.addEventListener("fetch", (event) => {
             new Request(`/share-queue/${encodeURIComponent(file.name)}`),
             new Response(await file.arrayBuffer(), {
               headers: {
-                "Content-Type":
-                  file.type || "application/octet-stream",
+                "Content-Type": file.type || "application/octet-stream",
                 "X-File-Name": file.name,
               },
-            }),
+            })
           )
         }
         return Response.redirect("/?from-share", 303)
-      })(),
+      })()
     )
   }
 })

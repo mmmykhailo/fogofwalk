@@ -46,11 +46,11 @@ export function SingleTrackStats({
         />
       )}
       {onVisibilityChange && (
-          <VisibilitySelect
-            isPublic={isPublic ?? false}
-            onChange={onVisibilityChange}
-            disabled={isVisibilityLoading}
-          />
+        <VisibilitySelect
+          isPublic={isPublic ?? false}
+          onChange={onVisibilityChange}
+          disabled={isVisibilityLoading}
+        />
       )}
       <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
         <StatRow label="Distance" value={formatDistance(stats.distanceKm)} />
