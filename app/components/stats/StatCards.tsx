@@ -15,7 +15,8 @@ import {
 
 interface StatCardsProps {
   totals: LifetimeTotals
-  uniqueDistanceKm: number
+  /** Unique distance requires private track geometry, so public profiles omit it. */
+  uniqueDistanceKm?: number
 }
 
 export function StatCards({ totals, uniqueDistanceKm }: StatCardsProps) {
@@ -35,14 +36,16 @@ export function StatCards({ totals, uniqueDistanceKm }: StatCardsProps) {
         </CardHeader>
       </Card>
 
-      <Card>
-        <CardHeader>
-          <CardDescription>Unique distance</CardDescription>
-          <CardTitle className="text-2xl tabular-nums">
-            {formatKm(uniqueDistanceKm)}
-          </CardTitle>
-        </CardHeader>
-      </Card>
+      {uniqueDistanceKm != null && (
+        <Card>
+          <CardHeader>
+            <CardDescription>Unique distance</CardDescription>
+            <CardTitle className="text-2xl tabular-nums">
+              {formatKm(uniqueDistanceKm)}
+            </CardTitle>
+          </CardHeader>
+        </Card>
+      )}
 
       <Card>
         <CardHeader>
