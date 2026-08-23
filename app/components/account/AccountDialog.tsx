@@ -208,12 +208,6 @@ export function AccountDialog({ open, onOpenChange }: AccountDialogProps) {
 
         {!auth.canSync && !isOffline && <AccessRequestBlock open={open} />}
 
-        {auth.isAdmin && (
-          <Button variant="outline" size="sm" render={<a href="/admin" />}>
-            Admin
-          </Button>
-        )}
-
         {error && <p className="mb-2 text-xs text-destructive">{error}</p>}
 
         <AccountDialogFooter

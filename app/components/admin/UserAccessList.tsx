@@ -1,5 +1,11 @@
 import type { AdminUser, UserStatus } from "~shared/api"
-import { Button } from "~/components/ui/button"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "~/components/ui/select"
 
 interface Props {
   users: AdminUser[]
@@ -15,27 +21,34 @@ export function UserAccessList({ users, onStatus, isMutating }: Props) {
           key={user.id}
           className="flex items-center justify-between gap-3 border-t pt-2 text-xs"
         >
-          <div>
-            <p>
-              {user.displayName}{" "}
-              <span className="text-muted-foreground">{user.identity}</span>
-            </p>
-            <p className="text-muted-foreground">{user.status}</p>
-          </div>
-          <div className="flex gap-1">
-            {(["pending", "allowed", "blocked"] as UserStatus[]).map(
-              (status) => (
-                <Button
-                  key={status}
-                  size="sm"
-                  variant={user.status === status ? "default" : "outline"}
-                  disabled={isMutating !== null || user.status === status}
-                  onClick={() => onStatus(user.id, status)}
-                >
-                  {status}
-                </Button>
-              )
-            )}
+          <p>
+            {user.displayName}{" "}
+            <span className="text-muted-foreground">{user.identity}</span>
+          </p>
+          <div className="flex items-center gap-2">
+            <Select
+              value={user.status}
+              onValueChange={(status) =>
+                onStatus(user.id, status as UserStatus)
+              }
+              disabled={isMutating !== null}
+            >
+              <SelectTrigger
+                size="sm"
+                aria-label={`Change ${user.displayName}'s status`}
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {(["pending", "allowed", "blocked"] as UserStatus[]).map(
+                  (status) => (
+                    <SelectItem key={status} value={status}>
+                      {status}
+                    </SelectItem>
+                  )
+                )}
+              </SelectContent>
+            </Select>
           </div>
         </div>
       ))}

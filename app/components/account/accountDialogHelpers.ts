@@ -3,7 +3,10 @@ export function getStorageDescription(
   purgedCount: number | null
 ): string {
   if (purgedCount === null) {
-    return "Delete tracks from server or export your data"
+    if (canSync) {
+      return "Delete tracks from server or export your data"
+    }
+    return "See which of your data we have"
   }
 
   const suffix = purgedCount === 1 ? "" : "s"

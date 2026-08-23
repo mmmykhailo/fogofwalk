@@ -89,6 +89,7 @@ export function AccessRequestBlock({ open }: AccessRequestBlockProps) {
           </div>
         </div>
       )}
+      {/* Approved variant should not be shown, but we have it just in case */}
       {request?.status === "approved" && (
         <div className="flex gap-3 p-3">
           <CheckCircleIcon
@@ -98,7 +99,7 @@ export function AccessRequestBlock({ open }: AccessRequestBlockProps) {
           <div>
             <p className="text-sm font-medium">Access approved</p>
             <p className="mt-1 text-xs/relaxed text-muted-foreground">
-              Refreshing your account enables sync.
+              You can use server features now!
             </p>
           </div>
         </div>
