@@ -115,6 +115,8 @@ export function AccessRequestBlock({ open }: AccessRequestBlockProps) {
               Access declined
             </p>
             <p className="mt-1 text-xs/relaxed text-muted-foreground">
+              You weren't granted access to server features.
+              <br />
               Contact the administrator if you think this was a mistake.
             </p>
           </div>
