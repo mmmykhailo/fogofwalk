@@ -13,6 +13,7 @@ import {
   GlobeIcon,
   MountainsIcon,
   NavigationArrowIcon,
+  ShieldCheckIcon,
   XIcon,
   UserIcon,
 } from "@phosphor-icons/react"
@@ -373,6 +374,27 @@ export function MoreDrawer({
                 </ItemContent>
                 <CaretRightIcon className="size-4 shrink-0 text-muted-foreground" />
               </Item>
+              {auth.status === "signedIn" && auth.isAdmin && (
+                <>
+                  <div className="ml-10 border-t border-foreground/10" />
+                  <Item
+                    variant="muted"
+                    render={<TransitionLink to="/admin" />}
+                    onClick={close}
+                  >
+                    <ItemMedia variant="icon">
+                      <ShieldCheckIcon
+                        weight="duotone"
+                        className="size-5 text-muted-foreground"
+                      />
+                    </ItemMedia>
+                    <ItemContent>
+                      <ItemTitle>Administration</ItemTitle>
+                    </ItemContent>
+                    <CaretRightIcon className="size-4 shrink-0 text-muted-foreground" />
+                  </Item>
+                </>
+              )}
             </div>
 
             {/* 4. Destructive — isolated from file actions */}
