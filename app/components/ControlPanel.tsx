@@ -2,7 +2,7 @@ import { useRef, useState } from "react"
 import { DotsThreeIcon } from "@phosphor-icons/react"
 import { Button } from "~/components/ui/button"
 import type { FogMode, MapMode } from "~/types/tracks"
-import { MoreDrawer } from "~/components/MoreDrawer"
+import { MapDrawer } from "~/components/MapDrawer"
 
 interface ControlPanelProps {
   trackCount: number
@@ -118,7 +118,7 @@ export function ControlPanel({
       </div>
 
       {/* All controls in one drawer */}
-      <MoreDrawer
+      <MapDrawer
         isOpen={isDrawerOpen}
         onOpenChange={setIsDrawerOpen}
         trackCount={trackCount}

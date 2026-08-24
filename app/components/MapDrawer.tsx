@@ -35,7 +35,7 @@ import { TransitionLink } from "~/components/TransitionLink"
 import { useAuth } from "~/lib/server/authStore"
 import type { FogMode, MapMode } from "~/types/tracks"
 
-interface MoreDrawerProps {
+interface MapDrawerProps {
   isOpen: boolean
   onOpenChange: (open: boolean) => void
   trackCount: number
@@ -61,7 +61,7 @@ interface MoreDrawerProps {
   locationPermissionDenied: boolean
 }
 
-export function MoreDrawer({
+export function MapDrawer({
   isOpen,
   onOpenChange,
   trackCount,
@@ -85,7 +85,7 @@ export function MoreDrawer({
   showMyLocation,
   onShowMyLocationChange,
   locationPermissionDenied,
-}: MoreDrawerProps) {
+}: MapDrawerProps) {
   const close = () => onOpenChange(false)
   const [isClearAllOpen, setIsClearAllOpen] = useState(false)
   const [isSignInOpen, setIsSignInOpen] = useState(false)
