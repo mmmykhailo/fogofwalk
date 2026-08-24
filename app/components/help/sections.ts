@@ -5,7 +5,7 @@ import {
   FILE_FORMAT_ANCHORS,
 } from "~/components/help/FileFormatsSection"
 import { PhotosSection } from "~/components/help/PhotosSection"
-import { TrackStatsSection } from "~/components/help/TrackStatsSection"
+import { ActivityStatsSection } from "~/components/help/ActivityStatsSection"
 import { StatisticsSection } from "~/components/help/StatisticsSection"
 import { SharingSection } from "~/components/help/SharingSection"
 import { MapControlsSection } from "~/components/help/MapControlsSection"
@@ -57,9 +57,9 @@ export const HELP_SECTIONS: HelpSection[] = [
   },
   { id: "photos", title: "Adding photos", Body: PhotosSection },
   {
-    id: "track-stats",
-    title: "Exploring your tracks",
-    Body: TrackStatsSection,
+    id: "activity-stats",
+    title: "Exploring your activities",
+    Body: ActivityStatsSection,
   },
   { id: "statistics", title: "Statistics", Body: StatisticsSection },
   { id: "sharing", title: "Sharing an activity", Body: SharingSection },

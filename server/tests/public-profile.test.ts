@@ -2,12 +2,18 @@ import { beforeEach, describe, expect, test } from "bun:test"
 
 import type {
   PublicProfileResponse,
-  TrackVisibilityUpdateResponse,
+  ActivityVisibilityUpdateResponse,
 } from "~shared/api"
 
-import { resetRateLimits } from "../src/tracks/rateLimit"
-import { computeContentHash } from "../src/tracks/contentHash"
-import { authHeaders, makeTrack, putTrack, setup, signIn } from "./helpers"
+import { resetRateLimits } from "../src/activities/rateLimit"
+import { computeContentHash } from "../src/activities/contentHash"
+import {
+  authHeaders,
+  makeActivity,
+  putActivity,
+  setup,
+  signIn,
+} from "./helpers"
 
 beforeEach(() => {
   resetRateLimits()
@@ -17,7 +23,7 @@ describe("public profiles", () => {
   test("CORS preflight permits visibility updates", async () => {
     const { app } = setup()
 
-    const response = await app.request("/api/tracks/example/visibility", {
+    const response = await app.request("/api/activities/example/visibility", {
       method: "OPTIONS",
       headers: {
         Origin: "http://localhost:5173",
@@ -65,12 +71,12 @@ describe("public profiles", () => {
     expect(response.status).toBe(404)
   })
 
-  test("public endpoint returns only public tracks", async () => {
+  test("public endpoint returns only public activities", async () => {
     const { store, app } = setup()
     const { token } = await signIn(store, { login: "public-user" })
 
-    const privateTrack = makeTrack({ name: "private.gpx" })
-    const publicTrack = makeTrack({
+    const privateActivity = makeActivity({ name: "private.gpx" })
+    const publicActivity = makeActivity({
       name: "public.gpx",
       coordinates: [
         [13.5, 52.5],
@@ -80,8 +86,8 @@ describe("public profiles", () => {
       isPublic: true,
     })
 
-    await putTrack(app, token, privateTrack)
-    await putTrack(app, token, publicTrack)
+    await putActivity(app, token, privateActivity)
+    await putActivity(app, token, publicActivity)
 
     const response = await app.request("/api/public/users/public-user")
     expect(response.status).toBe(200)
@@ -89,45 +95,45 @@ describe("public profiles", () => {
     const body = (await response.json()) as PublicProfileResponse
     expect(body.user.handle).toBe("public-user")
     expect(body.user.displayName).toBe("public-user")
-    expect(body.tracks).toHaveLength(1)
-    expect(body.tracks[0]!.name).toBe("public.gpx")
+    expect(body.activities).toHaveLength(1)
+    expect(body.activities[0]!.name).toBe("public.gpx")
     // The profile returns all server metadata (but never the geometry blob).
-    expect(body.tracks[0]!.isPublic).toBe(true)
-    expect(body.tracks[0]!.sizeBytes).toBeGreaterThan(0)
-    expect(body.tracks[0]!.updatedAt).toBeGreaterThan(0)
-    expect(body.tracks[0]!.durationMs).toBe(1_800_000)
-    expect(body.tracks[0]!.movingTimeMs).toBe(1_700_000)
-    expect(body.tracks[0]!.elevationGainM).toBe(12)
-    expect(body.tracks[0]!.avgMovingSpeedKmh).toBe(8.9)
+    expect(body.activities[0]!.isPublic).toBe(true)
+    expect(body.activities[0]!.sizeBytes).toBeGreaterThan(0)
+    expect(body.activities[0]!.updatedAt).toBeGreaterThan(0)
+    expect(body.activities[0]!.durationMs).toBe(1_800_000)
+    expect(body.activities[0]!.movingTimeMs).toBe(1_700_000)
+    expect(body.activities[0]!.elevationGainM).toBe(12)
+    expect(body.activities[0]!.avgMovingSpeedKmh).toBe(8.9)
   })
 
-  test("private tracks are hidden from the public endpoint", async () => {
+  test("private activities are hidden from the public endpoint", async () => {
     const { store, app } = setup()
     const { token } = await signIn(store, { login: "private-user" })
 
-    await putTrack(app, token, makeTrack({ name: "hidden.gpx" }))
+    await putActivity(app, token, makeActivity({ name: "hidden.gpx" }))
 
     const response = await app.request("/api/public/users/private-user")
     expect(response.status).toBe(200)
 
     const body = (await response.json()) as PublicProfileResponse
-    expect(body.tracks).toHaveLength(0)
+    expect(body.activities).toHaveLength(0)
   })
 
   test("visibility update is reflected on the public endpoint", async () => {
     const { store, app } = setup()
     const { token } = await signIn(store, { login: "toggle-user" })
 
-    const track = makeTrack({ name: "toggle.gpx" })
-    const hash = await computeContentHash(track)
-    await putTrack(app, token, track)
+    const activity = makeActivity({ name: "toggle.gpx" })
+    const hash = await computeContentHash(activity)
+    await putActivity(app, token, activity)
 
     const before = (await (
       await app.request("/api/public/users/toggle-user")
     ).json()) as PublicProfileResponse
-    expect(before.tracks).toHaveLength(0)
+    expect(before.activities).toHaveLength(0)
 
-    const update = await app.request(`/api/tracks/${hash}/visibility`, {
+    const update = await app.request(`/api/activities/${hash}/visibility`, {
       method: "PATCH",
       headers: {
         ...authHeaders(token),
@@ -136,17 +142,17 @@ describe("public profiles", () => {
       body: JSON.stringify({ isPublic: true }),
     })
     expect(update.status).toBe(200)
-    const updateBody = (await update.json()) as TrackVisibilityUpdateResponse
+    const updateBody = (await update.json()) as ActivityVisibilityUpdateResponse
     expect(updateBody.isPublic).toBe(true)
 
     const after = (await (
       await app.request("/api/public/users/toggle-user")
     ).json()) as PublicProfileResponse
-    expect(after.tracks).toHaveLength(1)
-    expect(after.tracks[0]!.contentHash).toBe(hash)
+    expect(after.activities).toHaveLength(1)
+    expect(after.activities[0]!.contentHash).toBe(hash)
   })
 
-  test("visibility update is refused for another user's track", async () => {
+  test("visibility update is refused for another user's activity", async () => {
     const { store, app } = setup()
     const a = await signIn(store, {
       login: "allowed-user",
@@ -154,11 +160,11 @@ describe("public profiles", () => {
     })
     const b = await signIn(store, { login: "other-user", providerUserId: "b" })
 
-    const track = makeTrack()
-    const hash = await computeContentHash(track)
-    await putTrack(app, a.token, track)
+    const activity = makeActivity()
+    const hash = await computeContentHash(activity)
+    await putActivity(app, a.token, activity)
 
-    const response = await app.request(`/api/tracks/${hash}/visibility`, {
+    const response = await app.request(`/api/activities/${hash}/visibility`, {
       method: "PATCH",
       headers: {
         ...authHeaders(b.token),

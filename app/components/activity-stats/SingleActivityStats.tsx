@@ -1,4 +1,4 @@
-import type { TrackLap, TrackStats } from "~/types/tracks"
+import type { ActivityLap, ActivityStats } from "~/types/activities"
 import { ElevationChart } from "~/components/ElevationChart"
 import { formatPace } from "~/lib/statsFormatters"
 import { LapSelector } from "./LapSelector"
@@ -11,18 +11,18 @@ import {
   formatSpeed,
 } from "./formatters"
 
-interface SingleTrackStatsProps {
+interface SingleActivityStatsProps {
   /** Already resolved to the lap's stats when a lap is selected. */
-  stats: TrackStats
-  laps?: TrackLap[]
-  activeLap: TrackLap | null
+  stats: ActivityStats
+  laps?: ActivityLap[]
+  activeLap: ActivityLap | null
   onLapSelect?: (lapNumber: number | null) => void
   isPublic?: boolean
   onVisibilityChange?: (isPublic: boolean) => void
   isVisibilityLoading?: boolean
 }
 
-export function SingleTrackStats({
+export function SingleActivityStats({
   stats,
   laps,
   activeLap,
@@ -30,9 +30,9 @@ export function SingleTrackStats({
   isPublic,
   onVisibilityChange,
   isVisibilityLoading,
-}: SingleTrackStatsProps) {
-  // Read from the displayed stats, not from the track — with a lap selected the
-  // track's unique km over the lap's distance would print over 100%. Laps
+}: SingleActivityStatsProps) {
+  // Read from the displayed stats, not from the activity — with a lap selected the
+  // activity's unique km over the lap's distance would print over 100%. Laps
   // always carry 0 here (see lib/laps.ts), and the > 0 guard hides the row.
   const uniqueKm = stats.uniqueDistanceKm
 

@@ -22,7 +22,7 @@ interface Fixtures {
 }
 
 export interface ServerState {
-  tracks: { contentHash: string; name: string }[]
+  activities: { contentHash: string; name: string }[]
   tombstones: string[]
 }
 
@@ -128,7 +128,7 @@ export const test = base.extend<Fixtures>({
     // Each worker owns a disjoint slice of the pool. Multiplying the cursor by
     // the worker index (the previous attempt) overlaps — worker 0 takes 0,1,2…
     // and worker 1 takes 0,2,4… — so two tests shared a user and each other's
-    // tracks, which surfaced as unexplained duplicate-import dialogs.
+    // activities, which surfaced as unexplained duplicate-import dialogs.
     const offset = loginCursor++
     if (offset >= LOGINS_PER_WORKER) {
       throw new Error(
@@ -161,15 +161,18 @@ export const test = base.extend<Fixtures>({
   serverState: async ({ request }, use) => {
     await use(async (page: Page) => {
       const token = await readSessionToken(page)
-      const res = await request.get(`${API_URL}/api/tracks/manifest?since=0`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
+      const res = await request.get(
+        `${API_URL}/api/activities/manifest?since=0`,
+        {
+          headers: { Authorization: `Bearer ${token}` },
+        }
+      )
       const body = (await res.json()) as {
-        tracks: { contentHash: string; name: string }[]
+        activities: { contentHash: string; name: string }[]
         deletions: { contentHash: string }[]
       }
       return {
-        tracks: body.tracks,
+        activities: body.activities,
         tombstones: body.deletions.map((d) => d.contentHash),
       }
     })

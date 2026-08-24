@@ -3,21 +3,21 @@ import { beforeEach, describe, expect, test } from "bun:test"
 import type {
   ApiError,
   ManifestPage,
-  TrackDeleteResponse,
-  TrackMeta,
+  ActivityDeleteResponse,
+  ActivityMeta,
 } from "~shared/api"
 import {
   UPLOAD_RATE_MAX_PER_WINDOW,
   UPLOAD_RATE_WINDOW_MS,
 } from "~shared/constants"
 
-import { resetRateLimits } from "../src/tracks/rateLimit"
-import { computeContentHash } from "../src/tracks/contentHash"
+import { resetRateLimits } from "../src/activities/rateLimit"
+import { computeContentHash } from "../src/activities/contentHash"
 import {
   authHeaders,
   fakeHash,
-  makeTrack,
-  putTrack,
+  makeActivity,
+  putActivity,
   setup,
   signIn,
 } from "./helpers"
@@ -27,20 +27,20 @@ beforeEach(() => {
 })
 
 describe("access gating", () => {
-  test("a pending user is refused by every track route", async () => {
+  test("a pending user is refused by every activity route", async () => {
     const { store, app } = setup()
     const { token } = await signIn(store, {
       login: "stranger",
       status: "pending",
     })
 
-    const manifest = await app.request("/api/tracks/manifest", {
+    const manifest = await app.request("/api/activities/manifest", {
       headers: authHeaders(token),
     })
     expect(manifest.status).toBe(403)
     expect(await manifest.json()).toMatchObject({ error: "not_allowed" })
 
-    const upload = await putTrack(app, token, makeTrack())
+    const upload = await putActivity(app, token, makeActivity())
     expect(upload.status).toBe(403)
   })
 
@@ -50,7 +50,7 @@ describe("access gating", () => {
       login: "banned",
       status: "blocked",
     })
-    const response = await app.request("/api/tracks/manifest", {
+    const response = await app.request("/api/activities/manifest", {
       headers: authHeaders(token),
     })
     expect(response.status).toBe(403)
@@ -59,10 +59,10 @@ describe("access gating", () => {
   test("a missing or bogus token is 401, not 403", async () => {
     const { app } = setup()
 
-    expect((await app.request("/api/tracks/manifest")).status).toBe(401)
+    expect((await app.request("/api/activities/manifest")).status).toBe(401)
     expect(
       (
-        await app.request("/api/tracks/manifest", {
+        await app.request("/api/activities/manifest", {
           headers: authHeaders("not-a-real-token"),
         })
       ).status
@@ -72,28 +72,28 @@ describe("access gating", () => {
   test("an allowed user reaches the manifest", async () => {
     const { store, app } = setup()
     const { token } = await signIn(store)
-    const response = await app.request("/api/tracks/manifest", {
+    const response = await app.request("/api/activities/manifest", {
       headers: authHeaders(token),
     })
     expect(response.status).toBe(200)
     const page = (await response.json()) as ManifestPage
-    expect(page.tracks).toEqual([])
+    expect(page.activities).toEqual([])
     expect(page.deletions).toEqual([])
     expect(page.hasMore).toBe(false)
   })
 })
 
 describe("upload", () => {
-  test("stores the track and reports its metadata", async () => {
+  test("stores the activity and reports its metadata", async () => {
     const { store, app } = setup()
     const { token } = await signIn(store)
-    const track = makeTrack()
+    const activity = makeActivity()
 
-    const response = await putTrack(app, token, track)
+    const response = await putActivity(app, token, activity)
     expect(response.status).toBe(200)
 
-    const meta = (await response.json()) as TrackMeta
-    expect(meta.contentHash).toBe(await computeContentHash(track))
+    const meta = (await response.json()) as ActivityMeta
+    expect(meta.contentHash).toBe(await computeContentHash(activity))
     expect(meta.name).toBe("Morning run")
     expect(meta.format).toBe("gpx")
     expect(meta.pointCount).toBe(3)
@@ -104,34 +104,36 @@ describe("upload", () => {
     const { store, app } = setup()
     const { token } = await signIn(store)
 
-    const response = await putTrack(
+    const response = await putActivity(
       app,
       token,
-      makeTrack(),
+      makeActivity(),
       fakeHash(0xbadbeef)
     )
     expect(response.status).toBe(400)
     expect(await response.json()).toMatchObject({ error: "bad_request" })
 
     const manifest = (await (
-      await app.request("/api/tracks/manifest", { headers: authHeaders(token) })
+      await app.request("/api/activities/manifest", {
+        headers: authHeaders(token),
+      })
     ).json()) as ManifestPage
-    expect(manifest.tracks).toEqual([])
+    expect(manifest.activities).toEqual([])
   })
 
   test("rejects a hash that is not 64 hex digits", async () => {
     const { store, app } = setup()
     const { token } = await signIn(store)
 
-    const notHex = await putTrack(app, token, makeTrack(), "z".repeat(64))
+    const notHex = await putActivity(app, token, makeActivity(), "z".repeat(64))
     expect(notHex.status).toBe(400)
 
     // A traversal attempt never reaches a handler at all, let alone the
     // filesystem — but it must certainly not succeed.
-    const traversal = await putTrack(
+    const traversal = await putActivity(
       app,
       token,
-      makeTrack(),
+      makeActivity(),
       encodeURIComponent("../../etc/passwd")
     )
     expect(traversal.status).toBe(400)
@@ -141,9 +143,9 @@ describe("upload", () => {
     const { store, app } = setup()
     const { token } = await signIn(store)
 
-    const broken = { ...makeTrack(), coordinates: [] }
-    const hash = await computeContentHash(makeTrack())
-    const response = await app.request(`/api/tracks/${hash}`, {
+    const broken = { ...makeActivity(), coordinates: [] }
+    const hash = await computeContentHash(makeActivity())
+    const response = await app.request(`/api/activities/${hash}`, {
       method: "PUT",
       headers: { ...authHeaders(token), "Content-Encoding": "gzip" },
       body: Bun.gzipSync(new TextEncoder().encode(JSON.stringify(broken))),
@@ -154,34 +156,36 @@ describe("upload", () => {
   test("is idempotent — the same PUT twice leaves one row", async () => {
     const { store, app } = setup()
     const { token } = await signIn(store)
-    const track = makeTrack()
+    const activity = makeActivity()
 
-    const first = await putTrack(app, token, track)
-    const second = await putTrack(app, token, track)
+    const first = await putActivity(app, token, activity)
+    const second = await putActivity(app, token, activity)
     expect(first.status).toBe(200)
     expect(second.status).toBe(200)
 
-    const firstMeta = (await first.json()) as TrackMeta
-    const secondMeta = (await second.json()) as TrackMeta
+    const firstMeta = (await first.json()) as ActivityMeta
+    const secondMeta = (await second.json()) as ActivityMeta
     // Identical geometry keeps the original updatedAt so retries do not churn
     // every other device's manifest.
     expect(secondMeta.updatedAt).toBe(firstMeta.updatedAt)
 
     const manifest = (await (
-      await app.request("/api/tracks/manifest", { headers: authHeaders(token) })
+      await app.request("/api/activities/manifest", {
+        headers: authHeaders(token),
+      })
     ).json()) as ManifestPage
-    expect(manifest.tracks).toHaveLength(1)
+    expect(manifest.activities).toHaveLength(1)
   })
 
   test("round-trips the gzipped blob", async () => {
     const { store, app } = setup()
     const { token } = await signIn(store)
-    const track = makeTrack()
-    const hash = await computeContentHash(track)
+    const activity = makeActivity()
+    const hash = await computeContentHash(activity)
 
-    await putTrack(app, token, track)
+    await putActivity(app, token, activity)
 
-    const response = await app.request(`/api/tracks/${hash}`, {
+    const response = await app.request(`/api/activities/${hash}`, {
       headers: authHeaders(token),
     })
     expect(response.status).toBe(200)
@@ -189,8 +193,8 @@ describe("upload", () => {
 
     const bytes = new Uint8Array(await response.arrayBuffer())
     const json = JSON.parse(new TextDecoder().decode(Bun.gunzipSync(bytes)))
-    expect(json.name).toBe(track.name)
-    expect(json.coordinates).toEqual(track.coordinates)
+    expect(json.name).toBe(activity.name)
+    expect(json.coordinates).toEqual(activity.coordinates)
   })
 
   test("past the rate limit, the 429 says how long to wait", async () => {
@@ -200,15 +204,15 @@ describe("upload", () => {
     // Distinct geometry per upload so nothing is deduped away before the
     // limiter is reached.
     for (let i = 0; i < UPLOAD_RATE_MAX_PER_WINDOW; i++) {
-      const response = await putTrack(
+      const response = await putActivity(
         app,
         token,
-        makeTrack({ coordinates: [[13.4 + i / 10_000, 52.5]] })
+        makeActivity({ coordinates: [[13.4 + i / 10_000, 52.5]] })
       )
       expect(response.status).toBe(200)
     }
 
-    const response = await putTrack(app, token, makeTrack())
+    const response = await putActivity(app, token, makeActivity())
     expect(response.status).toBe(429)
 
     // The client pauses every in-flight upload for `retryAfterMs`, so it has to
@@ -225,7 +229,7 @@ describe("upload", () => {
 })
 
 describe("cross-user isolation", () => {
-  test("user B cannot read user A's track", async () => {
+  test("user B cannot read user A's activity", async () => {
     const { store, app } = setup()
     const a = await signIn(store, {
       login: "allowed-user",
@@ -233,29 +237,29 @@ describe("cross-user isolation", () => {
     })
     const b = await signIn(store, { login: "other-user", providerUserId: "b" })
 
-    const track = makeTrack()
-    const hash = await computeContentHash(track)
-    expect((await putTrack(app, a.token, track)).status).toBe(200)
+    const activity = makeActivity()
+    const hash = await computeContentHash(activity)
+    expect((await putActivity(app, a.token, activity)).status).toBe(200)
 
-    const asA = await app.request(`/api/tracks/${hash}`, {
+    const asA = await app.request(`/api/activities/${hash}`, {
       headers: authHeaders(a.token),
     })
     expect(asA.status).toBe(200)
 
-    const asB = await app.request(`/api/tracks/${hash}`, {
+    const asB = await app.request(`/api/activities/${hash}`, {
       headers: authHeaders(b.token),
     })
     expect(asB.status).toBe(404)
 
     const manifestB = (await (
-      await app.request("/api/tracks/manifest", {
+      await app.request("/api/activities/manifest", {
         headers: authHeaders(b.token),
       })
     ).json()) as ManifestPage
-    expect(manifestB.tracks).toEqual([])
+    expect(manifestB.activities).toEqual([])
   })
 
-  test("user B's delete does not touch user A's track", async () => {
+  test("user B's delete does not touch user A's activity", async () => {
     const { store, app } = setup()
     const a = await signIn(store, {
       login: "allowed-user",
@@ -263,17 +267,17 @@ describe("cross-user isolation", () => {
     })
     const b = await signIn(store, { login: "other-user", providerUserId: "b" })
 
-    const track = makeTrack()
-    const hash = await computeContentHash(track)
-    await putTrack(app, a.token, track)
+    const activity = makeActivity()
+    const hash = await computeContentHash(activity)
+    await putActivity(app, a.token, activity)
 
-    const deleted = await app.request(`/api/tracks/${hash}`, {
+    const deleted = await app.request(`/api/activities/${hash}`, {
       method: "DELETE",
       headers: authHeaders(b.token),
     })
     expect(deleted.status).toBe(200)
 
-    const stillThere = await app.request(`/api/tracks/${hash}`, {
+    const stillThere = await app.request(`/api/activities/${hash}`, {
       headers: authHeaders(a.token),
     })
     expect(stillThere.status).toBe(200)
@@ -284,30 +288,32 @@ describe("delete", () => {
   test("writes a tombstone that shows up in the manifest", async () => {
     const { store, app } = setup()
     const { token } = await signIn(store)
-    const track = makeTrack()
-    const hash = await computeContentHash(track)
+    const activity = makeActivity()
+    const hash = await computeContentHash(activity)
 
-    await putTrack(app, token, track)
+    await putActivity(app, token, activity)
 
-    const response = await app.request(`/api/tracks/${hash}`, {
+    const response = await app.request(`/api/activities/${hash}`, {
       method: "DELETE",
       headers: authHeaders(token),
     })
     expect(response.status).toBe(200)
     // The timestamp lets the deleting device mark its own tombstone applied.
-    const deleteBody = (await response.json()) as TrackDeleteResponse
+    const deleteBody = (await response.json()) as ActivityDeleteResponse
     expect(deleteBody.deletedAt).toBeGreaterThan(0)
 
     const manifest = (await (
-      await app.request("/api/tracks/manifest", { headers: authHeaders(token) })
+      await app.request("/api/activities/manifest", {
+        headers: authHeaders(token),
+      })
     ).json()) as ManifestPage
-    expect(manifest.tracks).toEqual([])
+    expect(manifest.activities).toEqual([])
     expect(manifest.deletions).toHaveLength(1)
     expect(manifest.deletions[0]!.contentHash).toBe(hash)
 
     expect(
       (
-        await app.request(`/api/tracks/${hash}`, {
+        await app.request(`/api/activities/${hash}`, {
           headers: authHeaders(token),
         })
       ).status
@@ -320,7 +326,7 @@ describe("delete", () => {
     const hash = fakeHash(7)
 
     for (const _ of [0, 1]) {
-      const response = await app.request(`/api/tracks/${hash}`, {
+      const response = await app.request(`/api/activities/${hash}`, {
         method: "DELETE",
         headers: authHeaders(token),
       })
@@ -328,7 +334,9 @@ describe("delete", () => {
     }
 
     const manifest = (await (
-      await app.request("/api/tracks/manifest", { headers: authHeaders(token) })
+      await app.request("/api/activities/manifest", {
+        headers: authHeaders(token),
+      })
     ).json()) as ManifestPage
     expect(manifest.deletions).toHaveLength(1)
   })
@@ -336,20 +344,22 @@ describe("delete", () => {
   test("re-uploading after a delete clears the tombstone", async () => {
     const { store, app } = setup()
     const { token } = await signIn(store)
-    const track = makeTrack()
-    const hash = await computeContentHash(track)
+    const activity = makeActivity()
+    const hash = await computeContentHash(activity)
 
-    await putTrack(app, token, track)
-    await app.request(`/api/tracks/${hash}`, {
+    await putActivity(app, token, activity)
+    await app.request(`/api/activities/${hash}`, {
       method: "DELETE",
       headers: authHeaders(token),
     })
-    await putTrack(app, token, track)
+    await putActivity(app, token, activity)
 
     const manifest = (await (
-      await app.request("/api/tracks/manifest", { headers: authHeaders(token) })
+      await app.request("/api/activities/manifest", {
+        headers: authHeaders(token),
+      })
     ).json()) as ManifestPage
-    expect(manifest.tracks).toHaveLength(1)
+    expect(manifest.activities).toHaveLength(1)
     expect(manifest.deletions).toEqual([])
   })
 })

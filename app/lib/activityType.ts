@@ -1,4 +1,4 @@
-import type { ActivityType } from "~/types/tracks"
+import type { ActivityType } from "~/types/activities"
 
 const WALKING_TYPES = new Set([
   "hike",

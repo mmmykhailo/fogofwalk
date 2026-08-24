@@ -20,7 +20,7 @@ export const WEB_URL_SERVERLESS = `http://localhost:${WEB_PORT_SERVERLESS}`
 /**
  * Test administrator logins. Each test claims one by
  * index, which is what gives per-test isolation: every store method is scoped by
- * user id, so two tests using different logins cannot see each other's tracks.
+ * user id, so two tests using different logins cannot see each other's activities.
  */
 export const LOGINS_PER_WORKER = 64
 const MAX_WORKERS = 16

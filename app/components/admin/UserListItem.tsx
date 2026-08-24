@@ -62,11 +62,11 @@ export function UserListItem({
             <span className="text-muted-foreground">{user.identity}</span>
           </p>
           <p className="text-muted-foreground">
-            {user.storage.trackCount}{" "}
-            {user.storage.trackCount === 1 ? "track" : "tracks"} ·{" "}
-            {formatBytes(user.storage.trackSizeBytes)}
-            {user.storage.publicTrackCount > 0 &&
-              ` · ${user.storage.publicTrackCount} public`}
+            {user.storage.activityCount}{" "}
+            {user.storage.activityCount === 1 ? "activity" : "activities"} ·{" "}
+            {formatBytes(user.storage.activitySizeBytes)}
+            {user.storage.publicActivityCount > 0 &&
+              ` · ${user.storage.publicActivityCount} public`}
           </p>
         </div>
         <div className="flex items-center gap-2">

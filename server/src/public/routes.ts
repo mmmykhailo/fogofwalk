@@ -1,10 +1,10 @@
 /**
  * Public profile pages.
  *
- *   GET /api/public/users/:handle            → profile + public tracks
+ *   GET /api/public/users/:handle            → profile + public activities
  *
  * These routes are intentionally anonymous: a profile is discoverable only by
- * its handle, and only tracks the owner marked public are listed. The internal
+ * its handle, and only activities the owner marked public are listed. The internal
  * user id and access status are never exposed.
  */
 
@@ -35,7 +35,7 @@ export function createPublicRoutes(store: ServerStore) {
       return jsonError(c, "not_found", "Unknown user.")
     }
 
-    const profile = await store.listPublicTracks(user.id)
+    const profile = await store.listPublicActivities(user.id)
     const body: PublicProfileResponse = profile
     return c.json(body)
   })

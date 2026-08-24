@@ -17,17 +17,17 @@ import type {
   AdminUser,
   ManifestPage,
   PublicProfileResponse,
-  PublicTrackMeta,
-  TrackMeta,
-  TrackTombstone,
+  PublicActivityMeta,
+  ActivityMeta,
+  ActivityTombstone,
   UserStatus,
 } from "~shared/api"
 import { SYNC_PAGE_SIZE } from "~shared/constants"
-import type { TrackFormat } from "~shared/tracks"
+import type { ActivityFormat } from "~shared/activities"
 
 import { combineCursors, pageStream } from "./manifestPaging"
 import type { Pageable } from "./manifestPaging"
-import { parseTrackUpload } from "../tracks/payload"
+import { parseActivityUpload } from "../activities/payload"
 import type {
   Identity,
   IdentityInput,
@@ -101,6 +101,24 @@ function hasTable(db: Database, table: string): boolean {
 }
 
 function migrateSchema(db: Database) {
+  // Rename the pre-activity domain tables in place. SQLite preserves every
+  // row and rewrites dependent schema references during ALTER TABLE, while the
+  // blobs remain valid because their on-disk path is content-hash based.
+  if (hasTable(db, "tracks") && !hasTable(db, "activities")) {
+    db.exec("ALTER TABLE tracks RENAME TO activities")
+  }
+  if (
+    hasTable(db, "track_tombstones") &&
+    !hasTable(db, "activity_tombstones")
+  ) {
+    db.exec("ALTER TABLE track_tombstones RENAME TO activity_tombstones")
+  }
+
+  // Index names are not rewritten by ALTER TABLE. Drop the legacy names so
+  // the idempotent schema below recreates them with activity terminology.
+  db.exec("DROP INDEX IF EXISTS tracks_sync")
+  db.exec("DROP INDEX IF EXISTS tracks_public_user")
+
   if (hasTable(db, "users") && !hasColumn(db, "users", "handle")) {
     db.exec("ALTER TABLE users ADD COLUMN handle TEXT")
     // Existing identities predate public profiles. Preserve their GitHub login
@@ -119,32 +137,41 @@ function migrateSchema(db: Database) {
     `)
   }
 
-  if (hasTable(db, "tracks") && !hasColumn(db, "tracks", "is_public")) {
+  if (hasTable(db, "activities") && !hasColumn(db, "activities", "is_public")) {
     db.exec(
-      "ALTER TABLE tracks ADD COLUMN is_public INTEGER NOT NULL DEFAULT 0"
+      "ALTER TABLE activities ADD COLUMN is_public INTEGER NOT NULL DEFAULT 0"
     )
   }
 
   // Denormalized stat fields for the public profile endpoint (avoids
-  // decompressing every public track's blob on each request). Nullable:
-  // rows written before this migration stay NULL until the track is
-  // re-uploaded, matching PublicTrackMeta's existing null/0 fallbacks.
-  if (hasTable(db, "tracks") && !hasColumn(db, "tracks", "duration_ms")) {
-    db.exec("ALTER TABLE tracks ADD COLUMN duration_ms REAL")
+  // decompressing every public activity's blob on each request). Nullable:
+  // rows written before this migration stay NULL until the activity is
+  // re-uploaded, matching PublicActivityMeta's existing null/0 fallbacks.
+  if (
+    hasTable(db, "activities") &&
+    !hasColumn(db, "activities", "duration_ms")
+  ) {
+    db.exec("ALTER TABLE activities ADD COLUMN duration_ms REAL")
   }
-  if (hasTable(db, "tracks") && !hasColumn(db, "tracks", "moving_time_ms")) {
-    db.exec("ALTER TABLE tracks ADD COLUMN moving_time_ms REAL")
+  if (
+    hasTable(db, "activities") &&
+    !hasColumn(db, "activities", "moving_time_ms")
+  ) {
+    db.exec("ALTER TABLE activities ADD COLUMN moving_time_ms REAL")
   }
-  if (hasTable(db, "tracks") && !hasColumn(db, "tracks", "elevation_gain_m")) {
+  if (
+    hasTable(db, "activities") &&
+    !hasColumn(db, "activities", "elevation_gain_m")
+  ) {
     db.exec(
-      "ALTER TABLE tracks ADD COLUMN elevation_gain_m REAL NOT NULL DEFAULT 0"
+      "ALTER TABLE activities ADD COLUMN elevation_gain_m REAL NOT NULL DEFAULT 0"
     )
   }
   if (
-    hasTable(db, "tracks") &&
-    !hasColumn(db, "tracks", "avg_moving_speed_kmh")
+    hasTable(db, "activities") &&
+    !hasColumn(db, "activities", "avg_moving_speed_kmh")
   ) {
-    db.exec("ALTER TABLE tracks ADD COLUMN avg_moving_speed_kmh REAL")
+    db.exec("ALTER TABLE activities ADD COLUMN avg_moving_speed_kmh REAL")
   }
 }
 
@@ -175,7 +202,7 @@ interface SessionRow {
   last_used_at: number
 }
 
-interface TrackRow {
+interface ActivityRow {
   content_hash: string
   name: string
   is_public: number
@@ -192,9 +219,9 @@ interface TrackRow {
 }
 
 interface AdminUserStorageRow {
-  track_count: number
-  public_track_count: number
-  track_size_bytes: number
+  activity_count: number
+  public_activity_count: number
+  activity_size_bytes: number
 }
 
 interface TombstoneRow {
@@ -260,12 +287,12 @@ function toSession(row: SessionRow): Session {
   }
 }
 
-function toMeta(row: TrackRow): TrackMeta {
+function toMeta(row: ActivityRow): ActivityMeta {
   return {
     contentHash: row.content_hash,
     name: row.name,
     isPublic: Boolean(row.is_public),
-    format: row.format as TrackFormat,
+    format: row.format as ActivityFormat,
     startedAtMs: row.started_at_ms,
     distanceKm: row.distance_km,
     pointCount: row.point_count,
@@ -442,9 +469,9 @@ export class SqliteFsStore implements ServerStore {
     this.db.transaction(() => {
       this.db.query(`DELETE FROM access_requests WHERE user_id = ?`).run(userId)
       this.db
-        .query(`DELETE FROM track_tombstones WHERE user_id = ?`)
+        .query(`DELETE FROM activity_tombstones WHERE user_id = ?`)
         .run(userId)
-      this.db.query(`DELETE FROM tracks WHERE user_id = ?`).run(userId)
+      this.db.query(`DELETE FROM activities WHERE user_id = ?`).run(userId)
       this.db.query(`DELETE FROM sessions WHERE user_id = ?`).run(userId)
       this.db.query(`DELETE FROM identities WHERE user_id = ?`).run(userId)
       this.db.query(`DELETE FROM users WHERE id = ?`).run(userId)
@@ -547,10 +574,10 @@ export class SqliteFsStore implements ServerStore {
     const storageRows = this.db
       .query(
         `SELECT user_id,
-                COUNT(*) AS track_count,
-                SUM(CASE WHEN is_public = 1 THEN 1 ELSE 0 END) AS public_track_count,
-                COALESCE(SUM(size_bytes), 0) AS track_size_bytes
-           FROM tracks
+                COUNT(*) AS activity_count,
+                SUM(CASE WHEN is_public = 1 THEN 1 ELSE 0 END) AS public_activity_count,
+                COALESCE(SUM(size_bytes), 0) AS activity_size_bytes
+           FROM activities
           GROUP BY user_id`
       )
       .all() as Array<AdminUserStorageRow & { user_id: string }>
@@ -583,9 +610,9 @@ export class SqliteFsStore implements ServerStore {
           : null,
         request: request ? this.adminRequest(request) : null,
         storage: {
-          trackCount: storage?.track_count ?? 0,
-          publicTrackCount: storage?.public_track_count ?? 0,
-          trackSizeBytes: storage?.track_size_bytes ?? 0,
+          activityCount: storage?.activity_count ?? 0,
+          publicActivityCount: storage?.public_activity_count ?? 0,
+          activitySizeBytes: storage?.activity_size_bytes ?? 0,
         },
       }
     })
@@ -690,7 +717,7 @@ export class SqliteFsStore implements ServerStore {
     return rows.map(toSession)
   }
 
-  // ── tracks ──────────────────────────────────────────────────────────────
+  // ── activities ──────────────────────────────────────────────────────────────
 
   async listManifest(
     userId: string,
@@ -698,19 +725,19 @@ export class SqliteFsStore implements ServerStore {
   ): Promise<ManifestPage> {
     const since = Number.isFinite(sinceCursor) ? Math.max(0, sinceCursor) : 0
 
-    const trackPage = await pageStream<Pageable & { meta: TrackMeta }>(
+    const activityPage = await pageStream<Pageable & { meta: ActivityMeta }>(
       (from, limit) => {
         const rows = this.db
           .query(
             `SELECT content_hash, name, is_public, format, started_at_ms, distance_km,
                     point_count, size_bytes, updated_at,
                     duration_ms, moving_time_ms, elevation_gain_m, avg_moving_speed_kmh
-               FROM tracks
+               FROM activities
               WHERE user_id = ? AND updated_at >= ?
               ORDER BY updated_at ASC, content_hash ASC
               LIMIT ?`
           )
-          .all(userId, from, limit) as TrackRow[]
+          .all(userId, from, limit) as ActivityRow[]
         return rows.map((row) => ({
           time: row.updated_at,
           contentHash: row.content_hash,
@@ -722,13 +749,13 @@ export class SqliteFsStore implements ServerStore {
     )
 
     const tombstonePage = await pageStream<
-      Pageable & { tombstone: TrackTombstone }
+      Pageable & { tombstone: ActivityTombstone }
     >(
       (from, limit) => {
         const rows = this.db
           .query(
             `SELECT content_hash, deleted_at
-               FROM track_tombstones
+               FROM activity_tombstones
               WHERE user_id = ? AND deleted_at >= ?
               ORDER BY deleted_at ASC, content_hash ASC
               LIMIT ?`
@@ -748,21 +775,21 @@ export class SqliteFsStore implements ServerStore {
     )
 
     const { cursor, hasMore } = combineCursors(since, [
-      trackPage,
+      activityPage,
       tombstonePage,
     ])
 
     return {
-      tracks: trackPage.rows.map((row) => row.meta),
+      activities: activityPage.rows.map((row) => row.meta),
       deletions: tombstonePage.rows.map((row) => row.tombstone),
       cursor,
       hasMore,
     }
   }
 
-  async putTrack(
+  async putActivity(
     userId: string,
-    meta: TrackMeta,
+    meta: ActivityMeta,
     blob: Uint8Array
   ): Promise<void> {
     const path = blobPath(this.dataDir, userId, meta.contentHash)
@@ -772,7 +799,7 @@ export class SqliteFsStore implements ServerStore {
     this.db.transaction(() => {
       this.db
         .query(
-          `INSERT INTO tracks
+          `INSERT INTO activities
              (user_id, content_hash, name, is_public, format, started_at_ms, distance_km,
               point_count, size_bytes, blob_ref, created_at, updated_at,
               duration_ms, moving_time_ms, elevation_gain_m, avg_moving_speed_kmh)
@@ -810,55 +837,55 @@ export class SqliteFsStore implements ServerStore {
           meta.elevationGainM,
           meta.avgMovingSpeedKmh
         )
-      // Re-uploading a previously deleted track resurrects it; leaving the
+      // Re-uploading a previously deleted activity resurrects it; leaving the
       // tombstone would make the manifest tell the client to delete it again.
       this.db
         .query(
-          `DELETE FROM track_tombstones WHERE user_id = ? AND content_hash = ?`
+          `DELETE FROM activity_tombstones WHERE user_id = ? AND content_hash = ?`
         )
         .run(userId, meta.contentHash)
     })()
   }
 
-  async getTrack(
+  async getActivity(
     userId: string,
     contentHash: string
-  ): Promise<TrackMeta | null> {
+  ): Promise<ActivityMeta | null> {
     if (!isSafeContentHash(contentHash)) return null
     const row = this.db
       .query(
         `SELECT content_hash, name, is_public, format, started_at_ms, distance_km,
                 point_count, size_bytes, updated_at,
                 duration_ms, moving_time_ms, elevation_gain_m, avg_moving_speed_kmh
-           FROM tracks WHERE user_id = ? AND content_hash = ?`
+           FROM activities WHERE user_id = ? AND content_hash = ?`
       )
-      .get(userId, contentHash) as TrackRow | null
+      .get(userId, contentHash) as ActivityRow | null
     return row ? toMeta(row) : null
   }
 
-  async setTrackVisibility(
+  async setActivityVisibility(
     userId: string,
     contentHash: string,
     isPublic: boolean
-  ): Promise<TrackMeta | null> {
+  ): Promise<ActivityMeta | null> {
     if (!isSafeContentHash(contentHash)) return null
     const now = Date.now()
     this.db
       .query(
-        `UPDATE tracks SET is_public = ?, updated_at = ?
+        `UPDATE activities SET is_public = ?, updated_at = ?
           WHERE user_id = ? AND content_hash = ?`
       )
       .run(isPublic ? 1 : 0, now, userId, contentHash)
-    return this.getTrack(userId, contentHash)
+    return this.getActivity(userId, contentHash)
   }
 
-  async getTrackBlob(
+  async getActivityBlob(
     userId: string,
     contentHash: string
   ): Promise<Uint8Array | null> {
     // The row lookup is the authorisation check: a hash that belongs to
     // another user never reaches the filesystem.
-    const meta = await this.getTrack(userId, contentHash)
+    const meta = await this.getActivity(userId, contentHash)
     if (!meta) return null
 
     const file = Bun.file(blobPath(this.dataDir, userId, contentHash))
@@ -866,17 +893,17 @@ export class SqliteFsStore implements ServerStore {
     return new Uint8Array(await file.arrayBuffer())
   }
 
-  async deleteTrack(userId: string, contentHash: string): Promise<number> {
+  async deleteActivity(userId: string, contentHash: string): Promise<number> {
     const now = Date.now()
     if (!isSafeContentHash(contentHash)) return now
 
     this.db.transaction(() => {
       this.db
-        .query(`DELETE FROM tracks WHERE user_id = ? AND content_hash = ?`)
+        .query(`DELETE FROM activities WHERE user_id = ? AND content_hash = ?`)
         .run(userId, contentHash)
       this.db
         .query(
-          `INSERT INTO track_tombstones (user_id, content_hash, deleted_at)
+          `INSERT INTO activity_tombstones (user_id, content_hash, deleted_at)
            VALUES (?, ?, ?)
            ON CONFLICT (user_id, content_hash) DO UPDATE SET
              deleted_at = excluded.deleted_at`
@@ -890,14 +917,14 @@ export class SqliteFsStore implements ServerStore {
     return now
   }
 
-  async purgeTracks(userId: string): Promise<number> {
+  async purgeActivities(userId: string): Promise<number> {
     const rows = this.db
-      .query(`SELECT content_hash FROM tracks WHERE user_id = ?`)
+      .query(`SELECT content_hash FROM activities WHERE user_id = ?`)
       .all(userId) as { content_hash: string }[]
 
     // No tombstone writes — see the interface docs. This wipes the server's
-    // copy only; other devices keep their tracks and their cached view.
-    this.db.query(`DELETE FROM tracks WHERE user_id = ?`).run(userId)
+    // copy only; other devices keep their activities and their cached view.
+    this.db.query(`DELETE FROM activities WHERE user_id = ?`).run(userId)
 
     for (const row of rows) {
       if (!isSafeContentHash(row.content_hash)) continue
@@ -908,17 +935,17 @@ export class SqliteFsStore implements ServerStore {
     return rows.length
   }
 
-  async listAllTracksForUser(userId: string): Promise<Array<any>> {
+  async listAllActivitiesForUser(userId: string): Promise<Array<any>> {
     const rows = this.db
       .query(
         `SELECT content_hash, name, is_public, format, started_at_ms, distance_km,
                 point_count, size_bytes, updated_at,
                 duration_ms, moving_time_ms, elevation_gain_m, avg_moving_speed_kmh
-           FROM tracks WHERE user_id = ? ORDER BY updated_at ASC`
+           FROM activities WHERE user_id = ? ORDER BY updated_at ASC`
       )
-      .all(userId) as TrackRow[]
+      .all(userId) as ActivityRow[]
 
-    const tracks: any[] = []
+    const activities: any[] = []
 
     for (const row of rows) {
       const meta = toMeta(row)
@@ -932,23 +959,23 @@ export class SqliteFsStore implements ServerStore {
         const compressed = new Uint8Array(await file.arrayBuffer())
         const decompressed = Bun.gunzipSync(compressed)
         const json = new TextDecoder().decode(decompressed)
-        const trackData = JSON.parse(json)
+        const activityData = JSON.parse(json)
 
         // Add the content hash as id (for export purposes)
-        tracks.push({
-          ...trackData,
+        activities.push({
+          ...activityData,
           id: row.content_hash,
         })
       } catch (err) {
-        // Skip tracks that can't be decompressed or parsed
+        // Skip activities that can't be decompressed or parsed
         console.error(
-          `[export] Failed to decompress track ${row.content_hash}:`,
+          `[export] Failed to decompress activity ${row.content_hash}:`,
           err
         )
       }
     }
 
-    return tracks
+    return activities
   }
 
   async findUserByHandle(handle: string): Promise<User | null> {
@@ -958,7 +985,7 @@ export class SqliteFsStore implements ServerStore {
     return row ? toUser(row) : null
   }
 
-  async listPublicTracks(userId: string): Promise<PublicProfileResponse> {
+  async listPublicActivities(userId: string): Promise<PublicProfileResponse> {
     const user = await this.getUser(userId)
     if (!user || !user.handle) {
       return {
@@ -967,7 +994,7 @@ export class SqliteFsStore implements ServerStore {
           displayName: user?.displayName ?? "",
           avatarUrl: user?.avatarUrl ?? null,
         },
-        tracks: [],
+        activities: [],
       }
     }
 
@@ -976,15 +1003,15 @@ export class SqliteFsStore implements ServerStore {
         `SELECT t.content_hash, t.name, t.is_public, t.format, t.started_at_ms,
                 t.distance_km, t.point_count, t.size_bytes, t.updated_at,
                 t.duration_ms, t.moving_time_ms, t.elevation_gain_m, t.avg_moving_speed_kmh
-           FROM tracks t
+           FROM activities t
           WHERE t.user_id = ? AND t.is_public = 1
           ORDER BY (t.started_at_ms IS NULL), t.started_at_ms DESC, t.updated_at DESC`
       )
-      .all(userId) as TrackRow[]
+      .all(userId) as ActivityRow[]
 
     // Stats are denormalized onto new rows. Old uploads predate those columns,
     // so hydrate each legacy row once from its already-stored upload payload.
-    const tracks = await Promise.all(
+    const activities = await Promise.all(
       rows.map((row) => this.hydrateLegacyPublicMeta(userId, row))
     )
 
@@ -994,14 +1021,14 @@ export class SqliteFsStore implements ServerStore {
         displayName: user.displayName,
         avatarUrl: user.avatarUrl,
       },
-      tracks,
+      activities,
     }
   }
 
   private async hydrateLegacyPublicMeta(
     userId: string,
-    row: TrackRow
-  ): Promise<PublicTrackMeta> {
+    row: ActivityRow
+  ): Promise<PublicActivityMeta> {
     if (
       row.duration_ms !== null ||
       row.moving_time_ms !== null ||
@@ -1016,13 +1043,13 @@ export class SqliteFsStore implements ServerStore {
       const payload = JSON.parse(
         new TextDecoder().decode(Bun.gunzipSync(compressed))
       )
-      const parsed = parseTrackUpload(payload)
+      const parsed = parseActivityUpload(payload)
       if (!parsed.ok) return toMeta(row)
 
-      const { stats } = parsed.track
+      const { stats } = parsed.activity
       this.db
         .query(
-          `UPDATE tracks
+          `UPDATE activities
               SET duration_ms = ?, moving_time_ms = ?, elevation_gain_m = ?,
                   avg_moving_speed_kmh = ?
             WHERE user_id = ? AND content_hash = ?`

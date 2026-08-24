@@ -1,12 +1,12 @@
 /**
- * Client-side pacing for track uploads.
+ * Client-side pacing for activity uploads.
  *
  * The server caps uploads per user (`UPLOAD_RATE_MAX_PER_WINDOW` in a
  * `UPLOAD_RATE_WINDOW_MS` window) and rejects the rest with a 429. A bulk
  * import is exactly the workload that hits it, and discovering the limit by
  * failing is expensive: the limiter answers before reading the body, so all
  * three pool workers burn through the remaining queue in milliseconds and every
- * one of those tracks waits for a later sync.
+ * one of those activities waits for a later sync.
  *
  * So this mirrors the server's sliding window locally and waits for a slot
  * instead. The 429 path stays as a fallback for when the two views disagree.
@@ -22,7 +22,7 @@ import {
   UPLOAD_RATE_WINDOW_MS,
 } from "~shared/constants"
 
-/** Attempts per track before the upload is left for the next sync. */
+/** Attempts per activity before the upload is left for the next sync. */
 export const MAX_UPLOAD_RETRIES = 3
 
 /**

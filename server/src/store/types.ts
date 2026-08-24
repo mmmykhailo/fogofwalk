@@ -3,8 +3,8 @@
  * everything below it is a driver (`sqlite-fs`, `memory`, and the extension
  * points documented in `server/README.md`).
  *
- * Every track method takes `userId` first and filters on it. There is
- * deliberately no method that can read a track without naming its owner —
+ * Every activity method takes `userId` first and filters on it. There is
+ * deliberately no method that can read an activity without naming its owner —
  * cross-user isolation is a property of this interface, not of the callers.
  */
 
@@ -15,7 +15,7 @@ import type {
   ManifestPage,
   NotificationStatus,
   PublicProfileResponse,
-  TrackMeta,
+  ActivityMeta,
   UserStatus,
 } from "~shared/api"
 
@@ -95,7 +95,7 @@ export interface ServerStore {
   findPrimaryIdentity(userId: string): Promise<Identity | null>
   /** All identities linked to the user (for data export). */
   findIdentitiesForUser(userId: string): Promise<Identity[]>
-  /** Cascades identities, sessions, tracks, tombstones and geometry blobs. */
+  /** Cascades identities, sessions, activities, tombstones and geometry blobs. */
   deleteUser(userId: string): Promise<void>
   getAccessRequest(userId: string): Promise<StoredAccessRequest | null>
   createAccessRequest(userId: string): Promise<AccessRequestCreation>
@@ -132,38 +132,45 @@ export interface ServerStore {
   /** All sessions for the user (for data export). */
   findSessionsForUser(userId: string): Promise<Session[]>
 
-  // ── tracks ──────────────────────────────────────────────────────────────
+  // ── activities ──────────────────────────────────────────────────────────────
   listManifest(userId: string, sinceCursor: number): Promise<ManifestPage>
-  putTrack(userId: string, meta: TrackMeta, blob: Uint8Array): Promise<void>
-  getTrack(userId: string, contentHash: string): Promise<TrackMeta | null>
-  getTrackBlob(userId: string, contentHash: string): Promise<Uint8Array | null>
+  putActivity(
+    userId: string,
+    meta: ActivityMeta,
+    blob: Uint8Array
+  ): Promise<void>
+  getActivity(userId: string, contentHash: string): Promise<ActivityMeta | null>
+  getActivityBlob(
+    userId: string,
+    contentHash: string
+  ): Promise<Uint8Array | null>
   /**
-   * Updates a track's public visibility. Returns the new metadata, or null if
-   * the track does not belong to the user.
+   * Updates an activity's public visibility. Returns the new metadata, or null if
+   * the activity does not belong to the user.
    */
-  setTrackVisibility(
+  setActivityVisibility(
     userId: string,
     contentHash: string,
     isPublic: boolean
-  ): Promise<TrackMeta | null>
+  ): Promise<ActivityMeta | null>
   /**
    * Removes the row and the blob and writes a tombstone. Idempotent.
    * Returns the tombstone's `deletedAt`, which the caller reports back so the
    * deleting device can record its own tombstone as already applied.
    */
-  deleteTrack(userId: string, contentHash: string): Promise<number>
-  /** All tracks for the user with full geometry (for data export). */
-  listAllTracksForUser(userId: string): Promise<Array<any>>
+  deleteActivity(userId: string, contentHash: string): Promise<number>
+  /** All activities for the user with full geometry (for data export). */
+  listAllActivitiesForUser(userId: string): Promise<Array<any>>
   /**
-   * Removes every track row and blob for the user and returns how many went.
+   * Removes every activity row and blob for the user and returns how many went.
    *
    * Deliberately writes **no tombstones**: this is the "wipe the server, keep
    * my devices" action. A tombstone would tell every other device to delete
    * its local copy, which is the opposite of what this is for. Other devices
-   * keep their cached view that these tracks are stored, so they also do not
+   * keep their cached view that these activities are stored, so they also do not
    * re-upload them.
    */
-  purgeTracks(userId: string): Promise<number>
+  purgeActivities(userId: string): Promise<number>
 
   // ── public profiles ─────────────────────────────────────────────────────
   /**
@@ -172,11 +179,11 @@ export interface ServerStore {
    */
   findUserByHandle(handle: string): Promise<User | null>
   /**
-   * Public tracks with their metadata for a user, newest first. The caller
-   * already verified the user exists; this method returns only tracks with
+   * Public activities with their metadata for a user, newest first. The caller
+   * already verified the user exists; this method returns only activities with
    * `is_public = 1` and never exposes geometry.
    */
-  listPublicTracks(userId: string): Promise<PublicProfileResponse>
+  listPublicActivities(userId: string): Promise<PublicProfileResponse>
 
   /** Release file handles / connections. Tests call it; the server never does. */
   close?(): void

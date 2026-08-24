@@ -3,14 +3,14 @@
 Optional companion to the Fog of Walk SPA. Without it the app is exactly what
 it has always been: a fully client-side, server-less map. With it, and with
 `VITE_API_URL` set at build time, the same static bundle gains GitHub sign-in
-and background track sync.
+and background activity sync.
 
 It is a standalone **Bun** package — not a workspace of the client. `bun
 install` at the repository root never pulls these dependencies, and the GitHub
 Pages workflow is untouched. The only thing the two sides share is `../shared`.
-`shared/tracks.ts` and `shared/api.ts` are type-only and vanish at compile time;
+`shared/activities.ts` and `shared/api.ts` are type-only and vanish at compile time;
 `shared/constants.ts` is not — the client imports `HASH_COORD_PRECISION`,
-`MAX_TRACK_BYTES` and `SYNC_CONCURRENCY` as runtime values, so those literals do
+`MAX_ACTIVITY_BYTES` and `SYNC_CONCURRENCY` as runtime values, so those literals do
 reach the browser bundle. Keep it free of anything heavier than a constant.
 
 Runtime dependencies are `hono`, `arctic` and `zod` (all MIT). Everything else
@@ -68,11 +68,11 @@ a missing or malformed one aborts startup with a message naming it.
 | GET    | `/api/me`                                     | session | User + capabilities.                                                                                      |
 | GET    | `/api/account/export`                         | session | Full JSON export of the requesting user's account data.                                                   |
 | DELETE | `/api/account`                                | session | Erases the account server-side.                                                                           |
-| GET    | `/api/tracks/manifest?since=<cursor>`         | allowed | Metadata + tombstones page.                                                                               |
-| PUT    | `/api/tracks/:contentHash`                    | allowed | Gzipped upload, idempotent.                                                                               |
-| GET    | `/api/tracks/:contentHash`                    | allowed | The gzipped track JSON.                                                                                   |
-| DELETE | `/api/tracks`                                 | allowed | Purge every track for this user. **No tombstones** — other devices keep their copies. Backs "Remove all". |
-| DELETE | `/api/tracks/:contentHash`                    | allowed | Delete + tombstone. Returns the tombstone's `deletedAt`.                                                  |
+| GET    | `/api/activities/manifest?since=<cursor>`         | allowed | Metadata + tombstones page.                                                                               |
+| PUT    | `/api/activities/:contentHash`                    | allowed | Gzipped upload, idempotent.                                                                               |
+| GET    | `/api/activities/:contentHash`                    | allowed | The gzipped activity JSON.                                                                                   |
+| DELETE | `/api/activities`                                 | allowed | Purge every activity for this user. **No tombstones** — other devices keep their copies. Backs "Remove all". |
+| DELETE | `/api/activities/:contentHash`                    | allowed | Delete + tombstone. Returns the tombstone's `deletedAt`.                                                  |
 
 Non-2xx bodies are always `{ error, message? }` with `error` drawn from
 `ApiErrorCode` in `shared/api.ts`.
@@ -103,7 +103,7 @@ stored there as an encrypted write-only secret. Rotating `SESSION_SECRET`
 invalidates the saved bot token and requires entering it again.
 
 Anyone can complete OAuth; everyone lands as `status = 'pending'` and gets a
-`403 { error: "not_allowed" }` from every `/api/tracks/*` route. `/api/me`
+`403 { error: "not_allowed" }` from every `/api/activities/*` route. `/api/me`
 still works, so the UI can greet them by name and explain the situation.
 
 Administrators approve, reject, block, or re-enable accounts in `/admin`.
@@ -154,8 +154,8 @@ Routes, middleware and the client dialog need no change: `/start` and
 
 ## Storage drivers
 
-`src/store/types.ts` is the seam. Every track method takes `userId` first and
-there is no method that can read a track without naming its owner, so
+`src/store/types.ts` is the seam. Every activity method takes `userId` first and
+there is no method that can read an activity without naming its owner, so
 cross-user isolation is a property of the interface rather than of its callers.
 
 | Driver           | Metadata                                | Geometry                                 | Status          |
@@ -179,9 +179,14 @@ Backing up `sqlite-fs` is one file plus one folder: `DATA_DIR/fogofwalk.db*`
 (WAL is on, so copy the `-wal`/`-shm` siblings too, or use
 `sqlite3 … ".backup"`) and `DATA_DIR/blobs/`.
 
+At boot, the SQLite driver migrates databases created before the activity
+terminology change by renaming the legacy metadata and tombstone tables in
+place. Geometry blobs need no move because their paths are keyed only by user
+and content hash.
+
 ## Sync notes
 
-- The **content hash is the identity** of a track, and the server recomputes it
+- The **content hash is the identity** of an activity, and the server recomputes it
   from the uploaded geometry. A `PUT` whose URL hash disagrees with its payload
   is a `400` — that is what stops one device poisoning another's data.
 - Account export remains available to pending users because it is a personal-data
@@ -199,7 +204,7 @@ Backing up `sqlite-fs` is one file plus one folder: `DATA_DIR/fogofwalk.db*`
 - The manifest cursor is a timestamp used as an **inclusive** lower bound, and
   a page never splits a millisecond. The reasoning, including the two ways this
   goes wrong, is in the header comment of `src/store/manifestPaging.ts`.
-- `MAX_TRACK_BYTES` (8 MB, from `shared/constants.ts`) is enforced _while_
+- `MAX_ACTIVITY_BYTES` (8 MB, from `shared/constants.ts`) is enforced _while_
   reading the body, and decompression is capped too, so neither a huge upload
   nor a zip bomb gets buffered.
 - The `PUT` rate limit is per-user and **in-process**: it protects one server

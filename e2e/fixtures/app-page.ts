@@ -78,18 +78,18 @@ export class AppPage {
     await expect(this.drawer).toBeHidden()
   }
 
-  // ─── Tracks ─────────────────────────────────────────────────────────────
+  // ─── Activities ─────────────────────────────────────────────────────────────
 
-  /** Number of tracks the drawer reports. 0 when the status line is absent. */
-  async trackCount(): Promise<number> {
+  /** Number of activities the drawer reports. 0 when the status line is absent. */
+  async activityCount(): Promise<number> {
     await this.openDrawer()
     const status = this.page.getByTestId("drawer-status")
     if (!(await status.isVisible().catch(() => false))) return 0
     const text = (await status.textContent()) ?? ""
-    return Number(/(\d+)\s+tracks?/.exec(text)?.[1] ?? 0)
+    return Number(/(\d+)\s+activities?/.exec(text)?.[1] ?? 0)
   }
 
-  async expectTrackCount(expected: number) {
+  async expectActivityCount(expected: number) {
     await this.openDrawer()
     const status = this.page.getByTestId("drawer-status")
     if (expected === 0) {
@@ -97,7 +97,7 @@ export class AppPage {
       return
     }
     await expect(status).toContainText(
-      new RegExp(`\\b${expected} tracks?\\b`),
+      new RegExp(`\\b${expected} activities?\\b`),
       { timeout: 30_000 }
     )
   }
@@ -117,7 +117,7 @@ export class AppPage {
       )
   }
 
-  importTracks(count: number, seedOffset = 0) {
+  importActivities(count: number, seedOffset = 0) {
     return this.importFiles(makeGpxSet(count, seedOffset))
   }
 
@@ -191,7 +191,7 @@ export class AppPage {
     const dialog = await this.openAccountDialog()
     await dialog.getByRole("button", { name: "Remove all" }).click()
     await dialog.getByRole("button", { name: /Remove from server/ }).click()
-    await expect(dialog.getByText(/Removed \d+ track/)).toBeVisible({
+    await expect(dialog.getByText(/Removed \d+ activity/)).toBeVisible({
       timeout: 30_000,
     })
     await this.page.keyboard.press("Escape")
@@ -212,8 +212,8 @@ export class AppPage {
     await expect(dialog).toBeHidden({ timeout: 30_000 })
   }
 
-  /** Local track ids and names, read from IndexedDB. */
-  async localTracks(): Promise<{ id: string; name: string }[]> {
+  /** Local activity ids and names, read from IndexedDB. */
+  async localActivities(): Promise<{ id: string; name: string }[]> {
     return this.page.evaluate(async () => {
       const db = await new Promise<IDBDatabase>((resolve, reject) => {
         const req = indexedDB.open("fogofwalk")
@@ -221,8 +221,8 @@ export class AppPage {
         req.onerror = () => reject(req.error)
       })
       return new Promise<{ id: string; name: string }[]>((resolve) => {
-        const tx = db.transaction("tracks", "readonly")
-        const all = tx.objectStore("tracks").getAll()
+        const tx = db.transaction("activities", "readonly")
+        const all = tx.objectStore("activities").getAll()
         all.onsuccess = () =>
           resolve(all.result.map((t: any) => ({ id: t.id, name: t.name })))
         all.onerror = () => resolve([])
@@ -231,31 +231,35 @@ export class AppPage {
   }
 
   /**
-   * Selects a track and deletes it. `alsoOnServer` drives the switch deciding
+   * Selects an activity and deletes it. `alsoOnServer` drives the switch deciding
    * whether the server copy goes too.
    *
-   * Selection goes through the `?track=<id>` deep link rather than clicking the
+   * Selection goes through the `?activity=<id>` deep link rather than clicking the
    * map: with tiles stubbed out there is nothing to aim at, and hit-testing a
    * polyline at a guessed pixel would be the flakiest thing in the suite.
    */
-  async deleteTrack(trackName: string, alsoOnServer: boolean) {
-    const tracks = await this.localTracks()
-    const target = tracks.find((t) => t.name === trackName)
+  async deleteActivity(activityName: string, alsoOnServer: boolean) {
+    const activities = await this.localActivities()
+    const target = activities.find((t) => t.name === activityName)
     if (!target) {
       throw new Error(
-        `no local track named ${trackName}; have ${tracks.map((t) => t.name).join(", ")}`
+        `no local activity named ${activityName}; have ${activities.map((t) => t.name).join(", ")}`
       )
     }
 
     await this.closeDrawer()
-    await this.page.goto(`/?track=${encodeURIComponent(target.id)}`)
+    await this.page.goto(`/?activity=${encodeURIComponent(target.id)}`)
     await this.waitUntilReady()
 
-    const deleteButton = this.page.getByRole("button", { name: "Delete track" })
+    const deleteButton = this.page.getByRole("button", {
+      name: "Delete activity",
+    })
     await expect(deleteButton).toBeVisible({ timeout: 20_000 })
     await deleteButton.click()
 
-    const dialog = this.page.getByRole("dialog", { name: /Delete this track/ })
+    const dialog = this.page.getByRole("dialog", {
+      name: /Delete this activity/,
+    })
     await expect(dialog).toBeVisible()
     const toggle = dialog.getByRole("switch", {
       name: "Delete from the server too",

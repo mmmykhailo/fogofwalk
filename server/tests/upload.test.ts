@@ -10,14 +10,14 @@ import {
   gunzipCapped,
   looksGzipped,
   readCappedBody,
-} from "../src/tracks/body"
+} from "../src/activities/body"
 import {
   canonicalHashString,
   computeContentHash,
   isContentHash,
-} from "../src/tracks/contentHash"
-import { parseTrackUpload } from "../src/tracks/payload"
-import { makeStats, makeTrack } from "./helpers"
+} from "../src/activities/contentHash"
+import { parseActivityUpload } from "../src/activities/payload"
+import { makeStats, makeActivity } from "./helpers"
 
 describe("content hash", () => {
   test("uses the canonical form shared with the client", () => {
@@ -44,16 +44,16 @@ describe("content hash", () => {
   })
 
   test("is stable, and 64 lowercase hex digits", async () => {
-    const hash = await computeContentHash(makeTrack())
+    const hash = await computeContentHash(makeActivity())
     expect(isContentHash(hash)).toBe(true)
-    expect(await computeContentHash(makeTrack())).toBe(hash)
+    expect(await computeContentHash(makeActivity())).toBe(hash)
   })
 
   test("ignores name and stats but not geometry, format or start time", async () => {
-    const base = makeTrack()
+    const base = makeActivity()
     const hash = await computeContentHash(base)
 
-    const renamed = makeTrack({ name: "Renamed", stats: makeStats(999) })
+    const renamed = makeActivity({ name: "Renamed", stats: makeStats(999) })
     expect(await computeContentHash(renamed)).toBe(hash)
     expect(await computeContentHash({ ...base, format: "fit" })).not.toBe(hash)
     expect(await computeContentHash({ ...base, startedAtMs: 1 })).not.toBe(hash)
@@ -66,7 +66,7 @@ describe("content hash", () => {
   })
 
   test("ignores differences below the 6-decimal precision", async () => {
-    const base = makeTrack()
+    const base = makeActivity()
     const nudged = {
       ...base,
       coordinates: base.coordinates.map(
@@ -80,24 +80,24 @@ describe("content hash", () => {
 })
 
 describe("payload validation", () => {
-  test("accepts a well-formed track", () => {
-    expect(parseTrackUpload(makeTrack()).ok).toBe(true)
+  test("accepts a well-formed activity", () => {
+    expect(parseActivityUpload(makeActivity()).ok).toBe(true)
   })
 
   test("rejects nonsense", () => {
     const cases: unknown[] = [
       null,
       "a string",
-      { ...makeTrack(), coordinates: [] },
-      { ...makeTrack(), coordinates: [[181, 0]] },
-      { ...makeTrack(), coordinates: [[0, 91]] },
-      { ...makeTrack(), format: "tcx" },
-      { ...makeTrack(), stats: undefined },
-      { ...makeTrack(), name: "" },
-      { ...makeTrack(), startedAtMs: Number.NaN },
+      { ...makeActivity(), coordinates: [] },
+      { ...makeActivity(), coordinates: [[181, 0]] },
+      { ...makeActivity(), coordinates: [[0, 91]] },
+      { ...makeActivity(), format: "tcx" },
+      { ...makeActivity(), stats: undefined },
+      { ...makeActivity(), name: "" },
+      { ...makeActivity(), startedAtMs: Number.NaN },
     ]
     for (const value of cases) {
-      expect(parseTrackUpload(value).ok).toBe(false)
+      expect(parseActivityUpload(value).ok).toBe(false)
     }
   })
 })
@@ -135,7 +135,7 @@ describe("body limits", () => {
   })
 
   test("round-trips a normal body", async () => {
-    const payload = new TextEncoder().encode(JSON.stringify(makeTrack()))
+    const payload = new TextEncoder().encode(JSON.stringify(makeActivity()))
     const out = await gunzipCapped(Bun.gzipSync(payload))
     expect(new TextDecoder().decode(out)).toBe(
       new TextDecoder().decode(payload)

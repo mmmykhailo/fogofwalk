@@ -1,16 +1,16 @@
 /**
- * Track types. The format-agnostic shapes live in `shared/tracks.ts` so the
+ * Activity types. The format-agnostic shapes live in `shared/activities.ts` so the
  * sync server compiles against the same declarations; they are re-exported
- * here so every `~/types/tracks` import site keeps working unchanged.
+ * here so every `~/types/activities` import site keeps working unchanged.
  *
  * What stays in this file is client-only: fog/map modes, and the worker
  * protocol (which references the `GeoJSON` global namespace — unavailable, and
  * meaningless, on the server).
  */
 
-export type * from "~shared/tracks"
+export type * from "~shared/activities"
 
-import type { ParsedTrack } from "~shared/tracks"
+import type { ParsedActivity } from "~shared/activities"
 
 export type FogMode = "corridor" | "fill"
 export type MapMode = "flat" | "relief"
@@ -23,8 +23,8 @@ export type MapMode = "flat" | "relief"
  */
 export type WorkerInboundMessage =
   | {
-      type: "PROCESS_TRACKS"
-      tracks: ParsedTrack[]
+      type: "PROCESS_ACTIVITIES"
+      activities: ParsedActivity[]
       mode: FogMode
       runId: number
     }

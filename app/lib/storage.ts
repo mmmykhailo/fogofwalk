@@ -1,4 +1,4 @@
-import type { ParsedTrack, FogMode } from "~/types/tracks"
+import type { ParsedActivity, FogMode } from "~/types/activities"
 import type { ServerUser, UserCapabilities } from "~shared/api"
 import type { PhotoEntry } from "~/types/photos"
 
@@ -14,7 +14,7 @@ interface StoredPhoto {
 }
 
 export interface FogCache {
-  trackIds: string[]
+  activityIds: string[]
   fogMode: FogMode
   fogData: GeoJSON.Feature<GeoJSON.Polygon | GeoJSON.MultiPolygon>
 }
@@ -27,7 +27,7 @@ interface PrefEntry {
 // ─── DB singleton ──────────────────────────────────────────────────────────────
 
 const DB_NAME = "fogofwalk"
-const DB_VERSION = 1
+const DB_VERSION = 2
 
 let dbPromise: Promise<IDBDatabase | null> | null = null
 
@@ -43,8 +43,27 @@ function getDb(): Promise<IDBDatabase | null> {
 
       req.onupgradeneeded = (e) => {
         const db = (e.target as IDBOpenDBRequest).result
-        if (!db.objectStoreNames.contains("tracks")) {
-          db.createObjectStore("tracks", { keyPath: "id" })
+        const tx = (e.target as IDBOpenDBRequest).transaction!
+        if (!db.objectStoreNames.contains("activities")) {
+          db.createObjectStore("activities", { keyPath: "id" })
+        }
+
+        // v1 called imported activities "tracks". Copy each record inside the
+        // versionchange transaction, then remove the legacy store only after
+        // its cursor is exhausted so no existing activity can be stranded.
+        if (e.oldVersion < 2 && db.objectStoreNames.contains("tracks")) {
+          const legacyStore = tx.objectStore("tracks")
+          const activitiesStore = tx.objectStore("activities")
+          const cursorRequest = legacyStore.openCursor()
+          cursorRequest.onsuccess = () => {
+            const cursor = cursorRequest.result
+            if (cursor) {
+              activitiesStore.put(cursor.value)
+              cursor.continue()
+              return
+            }
+            db.deleteObjectStore("tracks")
+          }
         }
         if (!db.objectStoreNames.contains("photos")) {
           db.createObjectStore("photos", { keyPath: "id" })
@@ -76,93 +95,98 @@ function promisifyRequest<T>(req: IDBRequest<T>): Promise<T> {
   })
 }
 
-// ─── Tracks ───────────────────────────────────────────────────────────────────
+// ─── Activities ───────────────────────────────────────────────────────────────────
 
-/** Upsert tracks into storage. Uses put, so re-adding the same ID is idempotent. */
-export async function saveTracks(tracks: ParsedTrack[]): Promise<void> {
-  if (tracks.length === 0) return
+/** Upsert activities into storage. Uses put, so re-adding the same ID is idempotent. */
+export async function saveActivities(
+  activities: ParsedActivity[]
+): Promise<void> {
+  if (activities.length === 0) return
   const db = await getDb()
   if (!db) return
   try {
-    const tx = db.transaction("tracks", "readwrite")
-    const store = tx.objectStore("tracks")
-    for (const track of tracks) store.put(track)
+    const tx = db.transaction("activities", "readwrite")
+    const store = tx.objectStore("activities")
+    for (const activity of activities) store.put(activity)
     await new Promise<void>((resolve, reject) => {
       tx.oncomplete = () => resolve()
       tx.onerror = () => reject(tx.error)
     })
   } catch (err) {
-    console.warn("[storage] saveTracks failed:", err)
+    console.warn("[storage] saveActivities failed:", err)
   }
 }
 
 // Fields added after initial release; absent in older IDB records.
-type StoredTrack = Omit<ParsedTrack, "startedAtMs" | "stats" | "isPublic"> & {
+type StoredActivity = Omit<
+  ParsedActivity,
+  "startedAtMs" | "stats" | "isPublic"
+> & {
   startedAtMs?: number | null
   isPublic?: boolean
-  stats: Omit<ParsedTrack["stats"], "uniqueDistanceKm"> & {
+  stats: Omit<ParsedActivity["stats"], "uniqueDistanceKm"> & {
     uniqueDistanceKm?: number
   }
 }
 
-/** Load all persisted tracks. Returns [] on any error. */
-export async function loadTracks(): Promise<ParsedTrack[]> {
+/** Load all persisted activities. Returns [] on any error. */
+export async function loadActivities(): Promise<ParsedActivity[]> {
   const db = await getDb()
   if (!db) return []
   try {
-    const tx = db.transaction("tracks", "readonly")
-    const store = tx.objectStore("tracks")
-    const tracks = await promisifyRequest<StoredTrack[]>(store.getAll())
-    for (const track of tracks) {
-      if (track.startedAtMs === undefined) {
-        const first = track.pointTimestamps?.find(
+    const tx = db.transaction("activities", "readonly")
+    const store = tx.objectStore("activities")
+    const activities = await promisifyRequest<StoredActivity[]>(store.getAll())
+    for (const activity of activities) {
+      if (activity.startedAtMs === undefined) {
+        const first = activity.pointTimestamps?.find(
           (t) => t != null && isFinite(t)
         )
-        track.startedAtMs = first ?? null
+        activity.startedAtMs = first ?? null
       }
-      if (track.isPublic === undefined) {
-        track.isPublic = false
+      if (activity.isPublic === undefined) {
+        activity.isPublic = false
       }
-      if (track.stats.uniqueDistanceKm === undefined) {
-        track.stats.uniqueDistanceKm = track.stats.distanceKm
+      if (activity.stats.uniqueDistanceKm === undefined) {
+        activity.stats.uniqueDistanceKm = activity.stats.distanceKm
       }
     }
-    return tracks as ParsedTrack[]
+    return activities as ParsedActivity[]
   } catch (err) {
-    console.warn("[storage] loadTracks failed:", err)
+    console.warn("[storage] loadActivities failed:", err)
     return []
   }
 }
 
-/** Delete a single track by id from storage. */
-export async function deleteTrack(id: string): Promise<void> {
+/** Delete a single activity by id from storage. */
+export async function deleteActivity(id: string): Promise<void> {
   const db = await getDb()
   if (!db) return
   try {
-    const tx = db.transaction("tracks", "readwrite")
-    tx.objectStore("tracks").delete(id)
+    const tx = db.transaction("activities", "readwrite")
+    tx.objectStore("activities").delete(id)
     await new Promise<void>((resolve, reject) => {
       tx.oncomplete = () => resolve()
       tx.onerror = () => reject(tx.error)
     })
   } catch (err) {
-    console.warn("[storage] deleteTrack failed:", err)
+    console.warn("[storage] deleteActivity failed:", err)
   }
 }
 
-/** Delete all tracks from storage. */
-export async function clearTracks(): Promise<void> {
+/** Delete all activities from storage. */
+export async function clearActivities(): Promise<void> {
   const db = await getDb()
   if (!db) return
   try {
-    const tx = db.transaction("tracks", "readwrite")
-    tx.objectStore("tracks").clear()
+    const tx = db.transaction("activities", "readwrite")
+    tx.objectStore("activities").clear()
     await new Promise<void>((resolve, reject) => {
       tx.oncomplete = () => resolve()
       tx.onerror = () => reject(tx.error)
     })
   } catch (err) {
-    console.warn("[storage] clearTracks failed:", err)
+    console.warn("[storage] clearActivities failed:", err)
   }
 }
 
@@ -315,7 +339,12 @@ export async function saveFogCache(cache: FogCache): Promise<void> {
 }
 
 export async function loadFogCache(): Promise<FogCache | null> {
-  return prefGet<FogCache>("fogCache")
+  const cache = await prefGet<FogCache & { trackIds?: string[] }>("fogCache")
+  if (!cache) return null
+  if (!cache.activityIds && cache.trackIds) {
+    return { ...cache, activityIds: cache.trackIds }
+  }
+  return cache
 }
 
 export async function clearFogCache(): Promise<void> {
@@ -323,18 +352,18 @@ export async function clearFogCache(): Promise<void> {
 }
 
 /**
- * Returns true if the stored fog is still valid for the current tracks + mode.
+ * Returns true if the stored fog is still valid for the current activities + mode.
  * Pure function — no IDB access.
  */
 export function isFogCacheValid(
   cache: FogCache,
-  currentTrackIds: string[],
+  currentActivityIds: string[],
   currentFogMode: FogMode
 ): boolean {
   if (cache.fogMode !== currentFogMode) return false
-  if (cache.trackIds.length !== currentTrackIds.length) return false
-  const cacheSet = new Set(cache.trackIds)
-  return currentTrackIds.every((id) => cacheSet.has(id))
+  if (cache.activityIds.length !== currentActivityIds.length) return false
+  const cacheSet = new Set(cache.activityIds)
+  return currentActivityIds.every((id) => cacheSet.has(id))
 }
 
 // ─── Sync session ─────────────────────────────────────────────────────────────
@@ -374,13 +403,13 @@ export interface SyncState {
    * Every content hash known to exist on the server.
    *
    * Required because the manifest is incremental: a page fetched with a
-   * non-zero cursor only lists *recent* tracks, so without this the older ones
+   * non-zero cursor only lists *recent* activities, so without this the older ones
    * would look absent and be re-uploaded on every single sync. Rebuilt from
    * scratch whenever the cursor resets to 0.
    */
   serverHashes: string[]
   /**
-   * Tracks this device deleted locally while deliberately leaving the server
+   * Activities this device deleted locally while deliberately leaving the server
    * copy in place. Without this the next sync would download them straight
    * back, and "delete" would look broken.
    */
@@ -410,15 +439,15 @@ export async function clearSyncState(): Promise<void> {
 // ─── Clear all ────────────────────────────────────────────────────────────────
 
 /**
- * Wipe all persisted data (tracks, photos, IDB prefs). Used by "clear-all".
+ * Wipe all persisted data (activities, photos, IDB prefs). Used by "clear-all".
  *
  * The session is deliberately kept: clearing the map is not signing out. The
  * sync cursor *is* dropped, so the next sync re-walks the manifest from zero
- * rather than believing it is already up to date with tracks that are gone.
+ * rather than believing it is already up to date with activities that are gone.
  */
 export async function clearAll(): Promise<void> {
   await Promise.all([
-    clearTracks(),
+    clearActivities(),
     clearPhotos(),
     prefDelete("fogMode"),
     prefDelete("fogCache"),

@@ -1,5 +1,5 @@
 // ─── Relative time formatting ─────────────────────────────────────────────────
-// Shared across any UI that shows "when did this happen" (track cards, activity
+// Shared across any UI that shows "when did this happen" (activity cards, activity
 // lists, …). Calendar-day based, not a rolling 24h window, so "today"/"yesterday"
 // match what the user would call them regardless of what time of day it is.
 

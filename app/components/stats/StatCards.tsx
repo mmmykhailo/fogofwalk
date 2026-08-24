@@ -15,15 +15,19 @@ import {
 
 interface StatCardsProps {
   totals: LifetimeTotals
-  /** Unique distance requires private track geometry, so public profiles omit it. */
+  /** Unique distance requires private activity geometry, so public profiles omit it. */
   uniqueDistanceKm?: number
 }
 
 export function StatCards({ totals, uniqueDistanceKm }: StatCardsProps) {
   const avgDistanceKm =
-    totals.totalTracks > 0 ? totals.totalDistanceKm / totals.totalTracks : 0
+    totals.totalActivities > 0
+      ? totals.totalDistanceKm / totals.totalActivities
+      : 0
   const avgElevationM =
-    totals.totalTracks > 0 ? totals.totalElevationGainM / totals.totalTracks : 0
+    totals.totalActivities > 0
+      ? totals.totalElevationGainM / totals.totalActivities
+      : 0
 
   return (
     <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
@@ -71,7 +75,7 @@ export function StatCards({ totals, uniqueDistanceKm }: StatCardsProps) {
         <CardHeader>
           <CardDescription>Activities</CardDescription>
           <CardTitle className="text-2xl tabular-nums">
-            {totals.totalTracks}
+            {totals.totalActivities}
           </CardTitle>
         </CardHeader>
       </Card>

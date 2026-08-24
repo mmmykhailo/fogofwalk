@@ -23,11 +23,11 @@ export function WeekTooltip({ active, payload }: WeekTooltipProps) {
           {bar.distanceKm.toFixed(1)} km
         </span>
       </div>
-      {bar.trackCount > 0 && (
+      {bar.activityCount > 0 && (
         <div className="flex justify-between gap-4">
           <span className="text-muted-foreground">Activities</span>
           <span className="font-mono font-medium text-foreground tabular-nums">
-            {bar.trackCount}
+            {bar.activityCount}
           </span>
         </div>
       )}

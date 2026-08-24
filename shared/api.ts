@@ -6,7 +6,7 @@
  * field rename fails both typechecks instead of drifting silently.
  */
 
-import type { ParsedTrack, TrackFormat } from "./tracks"
+import type { ParsedActivity, ActivityFormat } from "./activities"
 
 // ─── Auth ──────────────────────────────────────────────────────────────────────
 
@@ -36,7 +36,7 @@ export interface AuthExchangeResponse {
 
 /**
  * Allowlist state. Everyone who completes OAuth becomes `pending`; only
- * `allowed` users may reach `/api/tracks/*`.
+ * `allowed` users may reach `/api/activities/*`.
  */
 export type UserStatus = "pending" | "allowed" | "blocked"
 
@@ -91,9 +91,9 @@ export interface AdminUser {
   identity: string | null
   request: AdminAccessRequest | null
   storage: {
-    trackCount: number
-    publicTrackCount: number
-    trackSizeBytes: number
+    activityCount: number
+    publicActivityCount: number
+    activitySizeBytes: number
   }
 }
 
@@ -119,64 +119,64 @@ export interface PublicProfileUser {
   avatarUrl: string | null
 }
 
-// ─── Tracks ────────────────────────────────────────────────────────────────────
+// ─── Activities ────────────────────────────────────────────────────────────────────
 
-/** A track's server-side metadata. Geometry is fetched separately by hash. */
-export interface TrackMeta {
+/** An activity's server-side metadata. Geometry is fetched separately by hash. */
+export interface ActivityMeta {
   contentHash: string
   name: string
   isPublic: boolean
-  format: TrackFormat
+  format: ActivityFormat
   startedAtMs: number | null
   distanceKm: number
   pointCount: number
   sizeBytes: number
   updatedAt: number
   // Denormalized from `stats` at upload time so the public profile endpoint
-  // can list tracks without decompressing and parsing every blob.
+  // can list activities without decompressing and parsing every blob.
   durationMs: number | null
   movingTimeMs: number | null
   elevationGainM: number
   avgMovingSpeedKmh: number | null
 }
 
-/** Track metadata displayed on a public profile; geometry stays private. */
-export type PublicTrackMeta = TrackMeta
+/** Activity metadata displayed on a public profile; geometry stays private. */
+export type PublicActivityMeta = ActivityMeta
 
 export interface PublicProfileResponse {
   user: PublicProfileUser
-  tracks: PublicTrackMeta[]
+  activities: PublicActivityMeta[]
 }
 
-export interface TrackTombstone {
+export interface ActivityTombstone {
   contentHash: string
   deletedAt: number
 }
 
 /**
- * Answer to `DELETE /api/tracks/:contentHash`.
+ * Answer to `DELETE /api/activities/:contentHash`.
  *
  * The timestamp matters: the deleting device has to record its own tombstone as
- * already applied, or its next sync re-applies it and deletes a track the user
+ * already applied, or its next sync re-applies it and deletes an activity the user
  * has since deliberately re-imported.
  */
-export interface TrackDeleteResponse {
+export interface ActivityDeleteResponse {
   deletedAt: number
 }
 
-export interface TrackVisibilityUpdateRequest {
+export interface ActivityVisibilityUpdateRequest {
   isPublic: boolean
 }
 
-export interface TrackVisibilityUpdateResponse {
+export interface ActivityVisibilityUpdateResponse {
   contentHash: string
   isPublic: boolean
   updatedAt: number
 }
 
 export interface ManifestPage {
-  tracks: TrackMeta[]
-  deletions: TrackTombstone[]
+  activities: ActivityMeta[]
+  deletions: ActivityTombstone[]
   /** Feed back as `?since=` on the next call. */
   cursor: number
   hasMore: boolean
@@ -188,7 +188,7 @@ export interface ManifestPage {
  * `stats.uniqueDistanceKm` is zeroed on upload: it is relative to whichever
  * library computed it, so the receiving device recomputes rather than trusts.
  */
-export type TrackUploadPayload = Omit<ParsedTrack, "id">
+export type ActivityUploadPayload = Omit<ParsedActivity, "id">
 
 // ─── Data Export (GDPR Right of Access) ────────────────────────────────────────
 
@@ -211,7 +211,7 @@ export interface DataExportResponse {
   account: ServerUser & { createdAt: number }
   identities: ExportedIdentity[]
   sessions: ExportedSession[]
-  tracks: ParsedTrack[]
+  activities: ParsedActivity[]
 }
 
 // ─── Errors ────────────────────────────────────────────────────────────────────

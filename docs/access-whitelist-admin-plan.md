@@ -227,7 +227,7 @@ request state rather than expanding `AccountDialog.tsx` further. It should:
 - show a pending confirmation plus a refresh action after submission;
 - show clear approved/rejected copy when the server reports a decision;
 - use `ServerUnavailableNotice`/`friendlyMessage` conventions and keep local
-  tracks usable throughout.
+  activities usable throughout.
 
 Keep boolean React state names under the established `is*` convention. The
 request control must render only when `isServerEnabled`, the user is signed in,
@@ -310,7 +310,7 @@ Server tests:
     neither request nor user status changes partially. Add concurrent request
     and concurrent decision tests to exercise uniqueness/idempotency.
 12. Migration tests open a pre-feature database fixture, run startup migration
-    twice, and verify existing users/tracks plus the newly created tables.
+    twice, and verify existing users/activities plus the newly created tables.
 
 Client and E2E automated tests:
 

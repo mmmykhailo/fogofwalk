@@ -1,21 +1,23 @@
-export function TrackStatsSection() {
+export function ActivityStatsSection() {
   return (
     <div className="space-y-3 text-sm leading-relaxed text-muted-foreground">
       <p>
-        Tap any track on the map to select it. The rest of your tracks dim, and
-        a stats panel opens — a drawer from the bottom on a phone, a panel you
-        can drag around on a desktop.
+        Tap any activity on the map to select it. The rest of your activities
+        dim, and a stats panel opens — a drawer from the bottom on a phone, a
+        panel you can drag around on a desktop.
       </p>
       <p>
-        <strong className="text-foreground">For one track</strong> you get
+        <strong className="text-foreground">For one activity</strong> you get
         distance, elapsed and moving time, elevation gain and loss, average pace
         and speed, and an elevation profile chart. FIT activities also get a lap
         dropdown, which narrows every number and the highlighted line on the map
         to a single lap.
       </p>
       <p>
-        <strong className="text-foreground">For several tracks at once</strong>{" "}
-        — tap a second track and you'll be asked whether to{" "}
+        <strong className="text-foreground">
+          For several activities at once
+        </strong>{" "}
+        — tap a second activity and you'll be asked whether to{" "}
         <em>Add to stats</em> (combine the two), <em>Replace</em> (switch the
         selection), or <em>Cancel</em>. With a multi-selection the panel lists
         every chosen activity and totals them, which is the quickest way to add
@@ -33,9 +35,9 @@ export function TrackStatsSection() {
         of not counting GPS noise as climbing.
       </p>
       <p>
-        To remove a track, select it and use the trash button in the panel. If
-        you're signed in for sync, the confirmation offers to delete the server
-        copy too — see <em>Removing things</em> below.
+        To remove an activity, select it and use the trash button in the panel.
+        If you're signed in for sync, the confirmation offers to delete the
+        server copy too — see <em>Removing things</em> below.
       </p>
     </div>
   )

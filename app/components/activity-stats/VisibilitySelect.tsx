@@ -16,8 +16,8 @@ interface VisibilitySelectProps {
 }
 
 /**
- * Public / private switch used in the track stats panel. The server is the
- * source of truth for signed-in users; local-only tracks start private and stay
+ * Public / private switch used in the activity stats panel. The server is the
+ * source of truth for signed-in users; local-only activities start private and stay
  * private until the user publishes them.
  */
 export function VisibilitySelect({
@@ -34,7 +34,7 @@ export function VisibilitySelect({
     >
       <SelectTrigger
         size="sm"
-        aria-label="Track visibility"
+        aria-label="Activity visibility"
         className="bg-muted"
       >
         <SelectValue />

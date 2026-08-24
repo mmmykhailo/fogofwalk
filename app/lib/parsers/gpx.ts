@@ -1,6 +1,10 @@
 import { gpx } from "@tmcw/togeojson"
-import type { ParsedTrack, RawPoint, TrackCoords } from "~/types/tracks"
-import { computeTrackStats } from "~/lib/stats"
+import type {
+  ParsedActivity,
+  RawPoint,
+  ActivityCoords,
+} from "~/types/activities"
+import { computeActivityStats } from "~/lib/stats"
 import { normalizeActivityType } from "~/lib/activityType"
 
 function buildRawPoints(
@@ -15,12 +19,12 @@ function buildRawPoints(
   }))
 }
 
-export async function parseGpxFile(file: File): Promise<ParsedTrack[]> {
+export async function parseGpxFile(file: File): Promise<ParsedActivity[]> {
   const text = await file.text()
   const dom = new DOMParser().parseFromString(text, "text/xml")
   const geo = gpx(dom)
 
-  const tracks: ParsedTrack[] = []
+  const activities: ParsedActivity[] = []
   for (const feat of geo.features) {
     if (!feat.geometry) continue
     const activityType = normalizeActivityType(feat.properties?.type)
@@ -32,12 +36,12 @@ export async function parseGpxFile(file: File): Promise<ParsedTrack[]> {
         const rawPoints = buildRawPoints(rawCoords, times)
         const ts = rawPoints.map((p) => p.timestampMs)
         const validTs = ts.filter((t): t is number => t != null && isFinite(t))
-        const stats = computeTrackStats(rawPoints)
-        tracks.push({
+        const stats = computeActivityStats(rawPoints)
+        activities.push({
           id: crypto.randomUUID(),
           name: file.name,
           startedAtMs: validTs.length > 0 ? validTs[0] : null,
-          coordinates: rawCoords.map((c) => [c[0], c[1]]) as TrackCoords,
+          coordinates: rawCoords.map((c) => [c[0], c[1]]) as ActivityCoords,
           pointTimestamps: ts.every((t) => t == null)
             ? undefined
             : ts.map((t) => t ?? -1),
@@ -57,12 +61,12 @@ export async function parseGpxFile(file: File): Promise<ParsedTrack[]> {
           const validTs = ts.filter(
             (t): t is number => t != null && isFinite(t)
           )
-          const stats = computeTrackStats(rawPoints)
-          tracks.push({
+          const stats = computeActivityStats(rawPoints)
+          activities.push({
             id: crypto.randomUUID(),
             name: `${file.name}[${i}]`,
             startedAtMs: validTs.length > 0 ? validTs[0] : null,
-            coordinates: rawCoords.map((c) => [c[0], c[1]]) as TrackCoords,
+            coordinates: rawCoords.map((c) => [c[0], c[1]]) as ActivityCoords,
             pointTimestamps: ts.every((t) => t == null)
               ? undefined
               : ts.map((t) => t ?? -1),
@@ -74,5 +78,5 @@ export async function parseGpxFile(file: File): Promise<ParsedTrack[]> {
       })
     }
   }
-  return tracks
+  return activities
 }

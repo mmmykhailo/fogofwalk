@@ -41,9 +41,9 @@ export function DeleteAccountBlock({
         Delete your account?
       </p>
       <p className="text-xs/relaxed text-muted-foreground">
-        Your account, your sign-in and every track synced to the server will be
-        permanently deleted. Tracks already on this device stay where they are.
-        This cannot be undone.
+        Your account, your sign-in and every activity synced to the server will
+        be permanently deleted. Activities already on this device stay where
+        they are. This cannot be undone.
       </p>
       {error && <p className="text-xs text-destructive">{error}</p>}
       <div className="flex justify-end gap-2 pt-1">

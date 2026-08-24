@@ -6,7 +6,7 @@ export function SyncSection() {
       <p>
         Everything described so far is local. Fog of Walk needs no account, and
         until you sign in it never sends your data anywhere — the fog, your
-        tracks and your photos are computed and stored on the device you are
+        activities and your photos are computed and stored on the device you are
         using.
       </p>
       <p>
@@ -26,7 +26,7 @@ export function SyncSection() {
         </li>
         <li>
           <strong className="text-foreground">
-            Only tracks are uploaded. Photos are never uploaded
+            Only activities are uploaded. Photos are never uploaded
           </strong>{" "}
           — they stay on the device that imported them, which also means they do
           not appear on your other devices
@@ -37,7 +37,7 @@ export function SyncSection() {
         </li>
         <li>
           The same activity imported on two devices is recognised as one,
-          because tracks are identified by their contents rather than their
+          because activities are identified by their contents rather than their
           filename
         </li>
         <li>
@@ -46,18 +46,18 @@ export function SyncSection() {
           until its owner adds you
         </li>
         <li>
-          After you delete a track locally without removing it from the server,
-          sync pauses until you reload — otherwise the next sync would simply
-          download it again
+          After you delete an activity locally without removing it from the
+          server, sync pauses until you reload — otherwise the next sync would
+          simply download it again
         </li>
       </ul>
       <Alert>
         <AlertTitle>Sync means trusting the server's operator</AlertTitle>
         <AlertDescription>
-          Synced tracks are stored on the server without encryption, so whoever
-          runs it can see where you have been. Only sign in if you trust them —
-          or run your own server. Staying signed out keeps everything on your
-          device, with no loss of features other than sync itself.
+          Synced activities are stored on the server without encryption, so
+          whoever runs it can see where you have been. Only sign in if you trust
+          them — or run your own server. Staying signed out keeps everything on
+          your device, with no loss of features other than sync itself.
         </AlertDescription>
       </Alert>
     </div>

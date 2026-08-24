@@ -1,4 +1,4 @@
-import type { ParsedTrack } from "~/types/tracks"
+import type { ParsedActivity } from "~/types/activities"
 import { haversineKm } from "~/lib/stats"
 
 // Grid resolution: 0.001° ≈ 111 m per cell, matching FOG_CLEAR_RADIUS_METERS = 100 m
@@ -10,12 +10,12 @@ export interface LifetimeTotals {
   totalDistanceKm: number
   totalElevationGainM: number
   totalMovingTimeMs: number
-  totalTracks: number
+  totalActivities: number
   activeDays: number
   /**
    * Library-wide averages — total distance ÷ total time, not the mean of the
-   * per-track averages, so long activities weigh more than short ones. Null
-   * when no track carries the matching time. See the `avgSpeed` vs
+   * per-activity averages, so long activities weigh more than short ones. Null
+   * when no activity carries the matching time. See the `avgSpeed` vs
    * `avgMovingSpeed` note in CLAUDE.md.
    */
   avgSpeedKmh: number | null
@@ -30,7 +30,7 @@ export interface WeeklyBar {
   /** Monday of that week in ms — used for x-axis labels */
   startMs: number
   distanceKm: number
-  trackCount: number
+  activityCount: number
 }
 
 export interface Streaks {
@@ -47,11 +47,11 @@ export interface Streaks {
 }
 
 export interface PersonalRecords {
-  longestActivity: { track: ParsedTrack; distanceKm: number } | null
-  mostElevation: { track: ParsedTrack; elevationGainM: number } | null
-  fastestPace: { track: ParsedTrack; paceMinPerKm: number } | null
-  fastestAvgSpeed: { track: ParsedTrack; avgSpeedKmh: number } | null
-  longestMovingTime: { track: ParsedTrack; movingTimeMs: number } | null
+  longestActivity: { activity: ParsedActivity; distanceKm: number } | null
+  mostElevation: { activity: ParsedActivity; elevationGainM: number } | null
+  fastestPace: { activity: ParsedActivity; paceMinPerKm: number } | null
+  fastestAvgSpeed: { activity: ParsedActivity; avgSpeedKmh: number } | null
+  longestMovingTime: { activity: ParsedActivity; movingTimeMs: number } | null
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -95,13 +95,13 @@ function toLocalDateStr(ms: number): string {
 // ─── Sort helper ──────────────────────────────────────────────────────────────
 
 /**
- * Returns a new array of tracks sorted chronologically by startedAtMs.
- * Tracks without a timestamp are placed last.
+ * Returns a new array of activities sorted chronologically by startedAtMs.
+ * Activities without a timestamp are placed last.
  * Call this once at the data boundary (clientLoader / clientAction) so that
  * aggregators can iterate in order without re-sorting on every call.
  */
-export function sortTracks(tracks: ParsedTrack[]): ParsedTrack[] {
-  return [...tracks].sort((a, b) => {
+export function sortActivities(activities: ParsedActivity[]): ParsedActivity[] {
+  return [...activities].sort((a, b) => {
     if (a.startedAtMs == null && b.startedAtMs == null) return 0
     if (a.startedAtMs == null) return 1
     if (b.startedAtMs == null) return -1
@@ -111,7 +111,9 @@ export function sortTracks(tracks: ParsedTrack[]): ParsedTrack[] {
 
 // ─── Aggregators ──────────────────────────────────────────────────────────────
 
-export function computeLifetimeTotals(tracks: ParsedTrack[]): LifetimeTotals {
+export function computeLifetimeTotals(
+  activities: ParsedActivity[]
+): LifetimeTotals {
   let totalDistanceKm = 0
   let totalElevationGainM = 0
   let totalMovingTimeMs = 0
@@ -123,7 +125,7 @@ export function computeLifetimeTotals(tracks: ParsedTrack[]): LifetimeTotals {
   let movingDistanceKm = 0
   const daySet = new Set<string>()
 
-  for (const t of tracks) {
+  for (const t of activities) {
     const { distanceKm, durationMs, movingTimeMs } = t.stats
     totalDistanceKm += distanceKm
     totalElevationGainM += t.stats.elevationGainM
@@ -145,7 +147,7 @@ export function computeLifetimeTotals(tracks: ParsedTrack[]): LifetimeTotals {
     totalDistanceKm,
     totalElevationGainM,
     totalMovingTimeMs,
-    totalTracks: tracks.length,
+    totalActivities: activities.length,
     activeDays: daySet.size,
     avgSpeedKmh: hasElapsed
       ? timedDistanceKm / (totalDurationMs / 3_600_000)
@@ -162,9 +164,11 @@ export function computeLifetimeTotals(tracks: ParsedTrack[]): LifetimeTotals {
   }
 }
 
-export function computeWeeklyBars(tracks: ParsedTrack[]): WeeklyBar[] {
-  // Only dated tracks contribute to the chart
-  const dated = tracks.filter((t) => t.startedAtMs != null) as (ParsedTrack & {
+export function computeWeeklyBars(activities: ParsedActivity[]): WeeklyBar[] {
+  // Only dated activities contribute to the chart
+  const dated = activities.filter(
+    (t) => t.startedAtMs != null
+  ) as (ParsedActivity & {
     startedAtMs: number
   })[]
   if (dated.length === 0) return []
@@ -176,13 +180,13 @@ export function computeWeeklyBars(tracks: ParsedTrack[]): WeeklyBar[] {
     const existing = weekMap.get(week)
     if (existing) {
       existing.distanceKm += t.stats.distanceKm
-      existing.trackCount += 1
+      existing.activityCount += 1
     } else {
       weekMap.set(week, {
         week,
         startMs: mondayOfISOWeek(t.startedAtMs),
         distanceKm: t.stats.distanceKm,
-        trackCount: 1,
+        activityCount: 1,
       })
     }
   }
@@ -206,7 +210,7 @@ export function computeWeeklyBars(tracks: ParsedTrack[]): WeeklyBar[] {
         week,
         startMs: cursor,
         distanceKm: 0,
-        trackCount: 0,
+        activityCount: 0,
       }
     )
     cursor += ONE_WEEK_MS
@@ -216,10 +220,10 @@ export function computeWeeklyBars(tracks: ParsedTrack[]): WeeklyBar[] {
 }
 
 export function computeStreaks(
-  tracks: ParsedTrack[],
+  activities: ParsedActivity[],
   todayMs: number
 ): Streaks {
-  const dated = tracks.filter((t) => t.startedAtMs != null)
+  const dated = activities.filter((t) => t.startedAtMs != null)
   if (dated.length === 0) {
     return {
       currentStreakDays: 0,
@@ -291,8 +295,10 @@ export function computeStreaks(
   }
 }
 
-export function computePersonalRecords(tracks: ParsedTrack[]): PersonalRecords {
-  if (tracks.length === 0) {
+export function computePersonalRecords(
+  activities: ParsedActivity[]
+): PersonalRecords {
+  if (activities.length === 0) {
     return {
       longestActivity: null,
       mostElevation: null,
@@ -308,7 +314,7 @@ export function computePersonalRecords(tracks: ParsedTrack[]): PersonalRecords {
   let fastestAvgSpeed: PersonalRecords["fastestAvgSpeed"] = null
   let longestMovingTime: PersonalRecords["longestMovingTime"] = null
 
-  for (const t of tracks) {
+  for (const t of activities) {
     const {
       distanceKm,
       elevationGainM,
@@ -318,14 +324,14 @@ export function computePersonalRecords(tracks: ParsedTrack[]): PersonalRecords {
     } = t.stats
 
     if (longestActivity == null || distanceKm > longestActivity.distanceKm) {
-      longestActivity = { track: t, distanceKm }
+      longestActivity = { activity: t, distanceKm }
     }
 
     if (
       mostElevation == null ||
       elevationGainM > mostElevation.elevationGainM
     ) {
-      mostElevation = { track: t, elevationGainM }
+      mostElevation = { activity: t, elevationGainM }
     }
 
     if (
@@ -333,7 +339,7 @@ export function computePersonalRecords(tracks: ParsedTrack[]): PersonalRecords {
       avgMovingPaceMinPerKm > 0 &&
       (fastestPace == null || avgMovingPaceMinPerKm < fastestPace.paceMinPerKm)
     ) {
-      fastestPace = { track: t, paceMinPerKm: avgMovingPaceMinPerKm }
+      fastestPace = { activity: t, paceMinPerKm: avgMovingPaceMinPerKm }
     }
 
     if (
@@ -341,7 +347,7 @@ export function computePersonalRecords(tracks: ParsedTrack[]): PersonalRecords {
       avgSpeedKmh > 0 &&
       (fastestAvgSpeed == null || avgSpeedKmh > fastestAvgSpeed.avgSpeedKmh)
     ) {
-      fastestAvgSpeed = { track: t, avgSpeedKmh }
+      fastestAvgSpeed = { activity: t, avgSpeedKmh }
     }
 
     if (
@@ -350,7 +356,7 @@ export function computePersonalRecords(tracks: ParsedTrack[]): PersonalRecords {
       (longestMovingTime == null ||
         movingTimeMs > longestMovingTime.movingTimeMs)
     ) {
-      longestMovingTime = { track: t, movingTimeMs }
+      longestMovingTime = { activity: t, movingTimeMs }
     }
   }
 
@@ -364,34 +370,34 @@ export function computePersonalRecords(tracks: ParsedTrack[]): PersonalRecords {
 }
 
 /**
- * Returns a Map from track id → km of new ground covered by that track.
+ * Returns a Map from activity id → km of new ground covered by that activity.
  *
  * Uses a grid-based midpoint check (~100 m cells) for O(n_segments) performance —
- * no polygon math, safe for 1000+ tracks.
+ * no polygon math, safe for 1000+ activities.
  *
- * **Tracks must be pre-sorted chronologically** (call `sortTracks` first) so that
- * "new ground" has a deterministic meaning — earlier tracks claim ground first.
+ * **Activities must be pre-sorted chronologically** (call `sortActivities` first) so that
+ * "new ground" has a deterministic meaning — earlier activities claim ground first.
  *
- * Two passes per track:
- *   1. Count all segments whose midpoint cell is NOT in explored (= previous tracks' coverage).
- *   2. Mark this track's 3×3 neighbourhood into explored.
+ * Two passes per activity:
+ *   1. Count all segments whose midpoint cell is NOT in explored (= previous activities' coverage).
+ *   2. Mark this activity's 3×3 neighbourhood into explored.
  *
  * Splitting check and mark into separate passes is critical: marking immediately
  * after each segment (in a single pass) causes the very next GPS point (~5 m away)
  * to land in an already-marked neighbour cell and be silently dropped, collapsing
- * the entire track's unique distance to nearly zero.
+ * the entire activity's unique distance to nearly zero.
  */
-function computePerTrackUniqueDistances(
-  tracks: ParsedTrack[]
+function computePerActivityUniqueDistances(
+  activities: ParsedActivity[]
 ): Map<string, number> {
   const explored = new Set<string>()
   const result = new Map<string, number>()
 
-  for (const track of tracks) {
-    let trackUniqueKm = 0
-    const coords = track.coordinates
+  for (const activity of activities) {
+    let activityUniqueKm = 0
+    const coords = activity.coordinates
 
-    // Pass 1: count segments on new ground (vs. all previously processed tracks)
+    // Pass 1: count segments on new ground (vs. all previously processed activities)
     for (let i = 1; i < coords.length; i++) {
       const [lng1, lat1] = coords[i - 1]
       const [lng2, lat2] = coords[i]
@@ -399,11 +405,11 @@ function computePerTrackUniqueDistances(
       const cy = Math.round(((lat1 + lat2) / 2) * GRID_SCALE)
 
       if (!explored.has(`${cx},${cy}`)) {
-        trackUniqueKm += haversineKm(lng1, lat1, lng2, lat2)
+        activityUniqueKm += haversineKm(lng1, lat1, lng2, lat2)
       }
     }
 
-    // Pass 2: mark this track's buffer as explored so later tracks can check against it
+    // Pass 2: mark this activity's buffer as explored so later activities can check against it
     for (let i = 1; i < coords.length; i++) {
       const [lng1, lat1] = coords[i - 1]
       const [lng2, lat2] = coords[i]
@@ -418,28 +424,29 @@ function computePerTrackUniqueDistances(
       }
     }
 
-    result.set(track.id, trackUniqueKm)
+    result.set(activity.id, activityUniqueKm)
   }
 
   return result
 }
 
 /**
- * Total km traveled on ground not previously covered by any earlier track.
- * Thin wrapper around `computePerTrackUniqueDistances` — kept for the Stats page.
- * Tracks must be pre-sorted (call `sortTracks` first).
+ * Total km traveled on ground not previously covered by any earlier activity.
+ * Thin wrapper around `computePerActivityUniqueDistances` — kept for the Stats page.
+ * Activities must be pre-sorted (call `sortActivities` first).
  */
-export function computeUniqueDistance(tracks: ParsedTrack[]): number {
+export function computeUniqueDistance(activities: ParsedActivity[]): number {
   let total = 0
-  for (const km of computePerTrackUniqueDistances(tracks).values()) total += km
+  for (const km of computePerActivityUniqueDistances(activities).values())
+    total += km
   return total
 }
 
-/** Compute unique distances and write them onto each track in place. Mutates the array elements. */
-export function populateUniqueDistances(tracks: ParsedTrack[]): void {
-  const result = computePerTrackUniqueDistances(tracks)
-  for (const track of tracks) {
-    track.stats.uniqueDistanceKm =
-      result.get(track.id) ?? track.stats.distanceKm
+/** Compute unique distances and write them onto each activity in place. Mutates the array elements. */
+export function populateUniqueDistances(activities: ParsedActivity[]): void {
+  const result = computePerActivityUniqueDistances(activities)
+  for (const activity of activities) {
+    activity.stats.uniqueDistanceKm =
+      result.get(activity.id) ?? activity.stats.distanceKm
   }
 }

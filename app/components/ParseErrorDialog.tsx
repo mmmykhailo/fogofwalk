@@ -28,7 +28,7 @@ export function ParseErrorDialog({
           </DialogTitle>
           <DialogDescription>
             The following file{failedFiles.length !== 1 ? "s" : ""} contained no
-            valid tracks and {failedFiles.length !== 1 ? "were" : "was"}{" "}
+            valid activities and {failedFiles.length !== 1 ? "were" : "was"}{" "}
             skipped:
           </DialogDescription>
         </DialogHeader>
@@ -43,7 +43,7 @@ export function ParseErrorDialog({
           <p>Common reasons:</p>
           <ul className="ml-4 list-disc space-y-1">
             <li>File is corrupted or incompletely downloaded</li>
-            <li>GPX file has malformed XML or missing track segments</li>
+            <li>GPX file has malformed XML or missing activity segments</li>
             <li>FIT file is from an unsupported device or firmware version</li>
           </ul>
         </div>

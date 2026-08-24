@@ -15,7 +15,7 @@ import { env } from "./env"
 import { HttpError, errorBody, statusFor } from "./errors"
 import { createPublicRoutes } from "./public/routes"
 import type { ServerStore } from "./store/types"
-import { createTrackRoutes } from "./tracks/routes"
+import { createActivityRoutes } from "./activities/routes"
 
 export function createApp(store: ServerStore) {
   const app = new Hono()
@@ -24,7 +24,7 @@ export function createApp(store: ServerStore) {
     "*",
     cors({
       // Explicit list, never "*": the API is cross-origin to the client, and
-      // a wildcard would let any page read a signed-in user's tracks.
+      // a wildcard would let any page read a signed-in user's activities.
       origin: env.ALLOWED_ORIGINS,
       allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
       allowHeaders: ["Authorization", "Content-Type", "Content-Encoding"],
@@ -46,7 +46,7 @@ export function createApp(store: ServerStore) {
   app.route("/api", createAccessRoutes(store))
   app.use("/api/admin/*", createRequireAdmin(store))
   app.route("/api/admin", createAdminRoutes(store))
-  app.route("/api/tracks", createTrackRoutes(store))
+  app.route("/api/activities", createActivityRoutes(store))
   app.route("/api/public", createPublicRoutes(store))
 
   app.notFound((c) => c.json(errorBody("not_found"), 404))

@@ -12,9 +12,9 @@ import type {
   AdminUser,
   ManifestPage,
   PublicProfileResponse,
-  PublicTrackMeta,
-  TrackMeta,
-  TrackTombstone,
+  PublicActivityMeta,
+  ActivityMeta,
+  ActivityTombstone,
   UserStatus,
 } from "~shared/api"
 import { SYNC_PAGE_SIZE } from "~shared/constants"
@@ -31,8 +31,8 @@ import type {
   User,
 } from "./types"
 
-interface StoredTrack {
-  meta: TrackMeta
+interface StoredActivity {
+  meta: ActivityMeta
   blob: Uint8Array
   createdAt: number
 }
@@ -44,8 +44,8 @@ export class MemoryStore implements ServerStore {
   private readonly users = new Map<string, User>()
   private readonly identities = new Map<string, Identity>()
   private readonly sessions = new Map<string, Session>()
-  /** userId → contentHash → track */
-  private readonly tracks = new Map<string, Map<string, StoredTrack>>()
+  /** userId → contentHash → activity */
+  private readonly activities = new Map<string, Map<string, StoredActivity>>()
   /** userId → contentHash → deletedAt */
   private readonly tombstones = new Map<string, Map<string, number>>()
   private readonly accessRequests = new Map<string, StoredAccessRequest>()
@@ -189,7 +189,7 @@ export class MemoryStore implements ServerStore {
     for (const [hash, session] of this.sessions) {
       if (session.userId === userId) this.sessions.delete(hash)
     }
-    this.tracks.delete(userId)
+    this.activities.delete(userId)
     this.tombstones.delete(userId)
     this.accessRequests.delete(userId)
   }
@@ -267,7 +267,7 @@ export class MemoryStore implements ServerStore {
           (item) => item.userId === user.id
         )
         const request = this.accessRequests.get(user.id)
-        const tracks = [...(this.tracks.get(user.id)?.values() ?? [])]
+        const activities = [...(this.activities.get(user.id)?.values() ?? [])]
         return {
           id: user.id,
           displayName: user.displayName,
@@ -280,11 +280,12 @@ export class MemoryStore implements ServerStore {
             : null,
           request: request ? this.toAdminRequest(request) : null,
           storage: {
-            trackCount: tracks.length,
-            publicTrackCount: tracks.filter((track) => track.meta.isPublic)
-              .length,
-            trackSizeBytes: tracks.reduce(
-              (total, track) => total + track.meta.sizeBytes,
+            activityCount: activities.length,
+            publicActivityCount: activities.filter(
+              (activity) => activity.meta.isPublic
+            ).length,
+            activitySizeBytes: activities.reduce(
+              (total, activity) => total + activity.meta.sizeBytes,
               0
             ),
           },
@@ -374,7 +375,7 @@ export class MemoryStore implements ServerStore {
     return sessions.sort((a, b) => a.createdAt - b.createdAt)
   }
 
-  // ── tracks ──────────────────────────────────────────────────────────────
+  // ── activities ──────────────────────────────────────────────────────────────
 
   async listManifest(
     userId: string,
@@ -382,8 +383,8 @@ export class MemoryStore implements ServerStore {
   ): Promise<ManifestPage> {
     const since = Number.isFinite(sinceCursor) ? Math.max(0, sinceCursor) : 0
 
-    const trackRows: (Pageable & { meta: TrackMeta })[] = [
-      ...(this.tracks.get(userId)?.values() ?? []),
+    const activityRows: (Pageable & { meta: ActivityMeta })[] = [
+      ...(this.activities.get(userId)?.values() ?? []),
     ]
       .map((stored) => ({
         time: stored.meta.updatedAt,
@@ -392,7 +393,7 @@ export class MemoryStore implements ServerStore {
       }))
       .sort(comparePageable)
 
-    const tombstoneRows: (Pageable & { tombstone: TrackTombstone })[] = [
+    const tombstoneRows: (Pageable & { tombstone: ActivityTombstone })[] = [
       ...(this.tombstones.get(userId)?.entries() ?? []),
     ]
       .map(([contentHash, deletedAt]) => ({
@@ -407,7 +408,11 @@ export class MemoryStore implements ServerStore {
       (from: number, limit: number): T[] =>
         rows.filter((row) => row.time >= from).slice(0, limit)
 
-    const trackPage = await pageStream(slice(trackRows), since, SYNC_PAGE_SIZE)
+    const activityPage = await pageStream(
+      slice(activityRows),
+      since,
+      SYNC_PAGE_SIZE
+    )
     const tombstonePage = await pageStream(
       slice(tombstoneRows),
       since,
@@ -415,27 +420,27 @@ export class MemoryStore implements ServerStore {
     )
 
     const { cursor, hasMore } = combineCursors(since, [
-      trackPage,
+      activityPage,
       tombstonePage,
     ])
 
     return {
-      tracks: trackPage.rows.map((row) => row.meta),
+      activities: activityPage.rows.map((row) => row.meta),
       deletions: tombstonePage.rows.map((row) => row.tombstone),
       cursor,
       hasMore,
     }
   }
 
-  async putTrack(
+  async putActivity(
     userId: string,
-    meta: TrackMeta,
+    meta: ActivityMeta,
     blob: Uint8Array
   ): Promise<void> {
-    let byHash = this.tracks.get(userId)
+    let byHash = this.activities.get(userId)
     if (!byHash) {
-      byHash = new Map<string, StoredTrack>()
-      this.tracks.set(userId, byHash)
+      byHash = new Map<string, StoredActivity>()
+      this.activities.set(userId, byHash)
     }
     const existing = byHash.get(meta.contentHash)
     byHash.set(meta.contentHash, {
@@ -446,33 +451,33 @@ export class MemoryStore implements ServerStore {
     this.tombstones.get(userId)?.delete(meta.contentHash)
   }
 
-  async getTrack(
+  async getActivity(
     userId: string,
     contentHash: string
-  ): Promise<TrackMeta | null> {
-    return this.tracks.get(userId)?.get(contentHash)?.meta ?? null
+  ): Promise<ActivityMeta | null> {
+    return this.activities.get(userId)?.get(contentHash)?.meta ?? null
   }
 
-  async getTrackBlob(
+  async getActivityBlob(
     userId: string,
     contentHash: string
   ): Promise<Uint8Array | null> {
-    return this.tracks.get(userId)?.get(contentHash)?.blob ?? null
+    return this.activities.get(userId)?.get(contentHash)?.blob ?? null
   }
 
-  async setTrackVisibility(
+  async setActivityVisibility(
     userId: string,
     contentHash: string,
     isPublic: boolean
-  ): Promise<TrackMeta | null> {
-    const stored = this.tracks.get(userId)?.get(contentHash)
+  ): Promise<ActivityMeta | null> {
+    const stored = this.activities.get(userId)?.get(contentHash)
     if (!stored) return null
     stored.meta = { ...stored.meta, isPublic }
     return stored.meta
   }
 
-  async deleteTrack(userId: string, contentHash: string): Promise<number> {
-    this.tracks.get(userId)?.delete(contentHash)
+  async deleteActivity(userId: string, contentHash: string): Promise<number> {
+    this.activities.get(userId)?.delete(contentHash)
     let byHash = this.tombstones.get(userId)
     if (!byHash) {
       byHash = new Map<string, number>()
@@ -483,40 +488,40 @@ export class MemoryStore implements ServerStore {
     return deletedAt
   }
 
-  async purgeTracks(userId: string): Promise<number> {
-    const tracks = this.tracks.get(userId)
-    const count = tracks?.size ?? 0
+  async purgeActivities(userId: string): Promise<number> {
+    const activities = this.activities.get(userId)
+    const count = activities?.size ?? 0
     // No tombstones — see the interface docs.
-    tracks?.clear()
+    activities?.clear()
     return count
   }
 
-  async listAllTracksForUser(userId: string): Promise<Array<any>> {
-    const userTracks = this.tracks.get(userId)
-    if (!userTracks) return []
+  async listAllActivitiesForUser(userId: string): Promise<Array<any>> {
+    const userActivities = this.activities.get(userId)
+    if (!userActivities) return []
 
-    const tracks: any[] = []
-    for (const stored of userTracks.values()) {
+    const activities: any[] = []
+    for (const stored of userActivities.values()) {
       try {
         // Decompress the gzipped blob
         const decompressed = Bun.gunzipSync(
           stored.blob as Uint8Array<ArrayBuffer>
         )
         const json = new TextDecoder().decode(decompressed)
-        const trackData = JSON.parse(json)
-        tracks.push({
-          ...trackData,
+        const activityData = JSON.parse(json)
+        activities.push({
+          ...activityData,
           id: stored.meta.contentHash,
         })
       } catch (err) {
         console.error(
-          `[export] Failed to parse track ${stored.meta.contentHash}:`,
+          `[export] Failed to parse activity ${stored.meta.contentHash}:`,
           err
         )
       }
     }
 
-    return tracks.sort(
+    return activities.sort(
       (a, b) => (a.startedAtMs ?? Infinity) - (b.startedAtMs ?? Infinity)
     )
   }
@@ -529,7 +534,7 @@ export class MemoryStore implements ServerStore {
     return null
   }
 
-  async listPublicTracks(userId: string): Promise<PublicProfileResponse> {
+  async listPublicActivities(userId: string): Promise<PublicProfileResponse> {
     const user = await this.getUser(userId)
     if (!user || !user.handle) {
       return {
@@ -538,23 +543,23 @@ export class MemoryStore implements ServerStore {
           displayName: user?.displayName ?? "",
           avatarUrl: user?.avatarUrl ?? null,
         },
-        tracks: [],
+        activities: [],
       }
     }
 
-    const userTracks = this.tracks.get(userId)
-    const tracks: PublicTrackMeta[] = []
+    const userActivities = this.activities.get(userId)
+    const activities: PublicActivityMeta[] = []
 
-    if (userTracks) {
-      for (const stored of userTracks.values()) {
+    if (userActivities) {
+      for (const stored of userActivities.values()) {
         if (!stored.meta.isPublic) continue
-        // Stats are denormalized onto `meta` at upload time (see putTrack),
+        // Stats are denormalized onto `meta` at upload time (see putActivity),
         // so this never needs to decompress/parse the stored blob.
-        tracks.push({ ...stored.meta })
+        activities.push({ ...stored.meta })
       }
     }
 
-    tracks.sort((a, b) => (b.startedAtMs ?? 0) - (a.startedAtMs ?? 0))
+    activities.sort((a, b) => (b.startedAtMs ?? 0) - (a.startedAtMs ?? 0))
 
     return {
       user: {
@@ -562,7 +567,7 @@ export class MemoryStore implements ServerStore {
         displayName: user.displayName,
         avatarUrl: user.avatarUrl,
       },
-      tracks,
+      activities,
     }
   }
 
@@ -570,7 +575,7 @@ export class MemoryStore implements ServerStore {
     this.users.clear()
     this.identities.clear()
     this.sessions.clear()
-    this.tracks.clear()
+    this.activities.clear()
     this.tombstones.clear()
     this.accessRequests.clear()
     this.settings.clear()

@@ -1,7 +1,7 @@
 import { FootprintsIcon } from "@phosphor-icons/react"
 import { Link } from "react-router"
 
-export function EmptyTracksState() {
+export function EmptyActivitiesState() {
   return (
     <div className="flex flex-col items-center justify-center gap-3 rounded-none border border-dashed border-border py-24 text-center">
       <FootprintsIcon
@@ -10,7 +10,7 @@ export function EmptyTracksState() {
         weight="duotone"
       />
       <p className="text-sm text-muted-foreground">
-        Import some tracks to see them here.
+        Import some activities to see them here.
       </p>
       <Link
         to="/"

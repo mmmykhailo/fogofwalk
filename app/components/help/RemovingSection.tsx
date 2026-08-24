@@ -8,8 +8,8 @@ export const REMOVAL_KINDS: {
   body: React.ReactNode
 }[] = [
   {
-    id: "delete-track",
-    title: "Delete one track",
+    id: "delete-activity",
+    title: "Delete one activity",
     where: "trash button in the stats panel",
     body: (
       <>
@@ -27,11 +27,11 @@ export const REMOVAL_KINDS: {
     where: "in the menu",
     body: (
       <>
-        Wipes every track, photo and the fog from{" "}
+        Wipes every activity, photo and the fog from{" "}
         <strong className="text-foreground">this device only</strong>. It
         deliberately leaves the server untouched, so if you are signed in your
-        tracks will download again on the next sync. Photos are not synced, so
-        those are gone for good.
+        activities will download again on the next sync. Photos are not synced,
+        so those are gone for good.
       </>
     ),
   },
@@ -41,8 +41,8 @@ export const REMOVAL_KINDS: {
     where: "in the account dialog",
     body: (
       <>
-        Deletes your tracks from the server. Your other devices keep the copies
-        they already have; they simply stop syncing them. Below it,{" "}
+        Deletes your activities from the server. Your other devices keep the
+        copies they already have; they simply stop syncing them. Below it,{" "}
         <em>delete account</em> erases your account server-side entirely.
       </>
     ),

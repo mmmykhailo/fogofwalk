@@ -1,4 +1,8 @@
-import type { ElevationPoint, RawPoint, TrackStats } from "~/types/tracks"
+import type {
+  ElevationPoint,
+  RawPoint,
+  ActivityStats,
+} from "~/types/activities"
 import {
   MOVING_TIME_STOPPED_GAP_MS,
   MOVING_TIME_MIN_SPEED_KMH,
@@ -11,7 +15,7 @@ const MAX_PROFILE_POINTS = 300
 
 // Trailing moving average of elevationM over a distance window: each output
 // point averages all samples within the last `windowKm` of travelled
-// distance, so the smoothing strength does not depend on the track's
+// distance, so the smoothing strength does not depend on the activity's
 // sampling frequency.
 function smoothElevationByDistance(
   profile: ElevationPoint[],
@@ -81,10 +85,10 @@ export function haversineKm(
   return 2 * EARTH_RADIUS_KM * Math.asin(Math.sqrt(a))
 }
 
-export function computeTrackStats(
+export function computeActivityStats(
   points: RawPoint[],
   maxProfilePoints: number = MAX_PROFILE_POINTS
-): Omit<TrackStats, "uniqueDistanceKm"> {
+): Omit<ActivityStats, "uniqueDistanceKm"> {
   if (points.length < 2) {
     return {
       distanceKm: 0,

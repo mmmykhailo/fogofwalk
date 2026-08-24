@@ -1,4 +1,4 @@
-import type { ParsedTrack } from "~/types/tracks"
+import type { ParsedActivity } from "~/types/activities"
 import type { PhotoEntry } from "~/types/photos"
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -27,7 +27,7 @@ export interface StatsData {
   elevationGainM: number
   elevationLossM: number
   hasElevation: boolean
-  trackCount: number
+  activityCount: number
 }
 
 export interface StatDef {
@@ -41,7 +41,7 @@ export interface StatDef {
 export const CARD_WIDTH = 1080
 export const CARD_HEIGHT = 1440
 
-const TRACK_COLOR = "#ff6b35"
+const ACTIVITY_COLOR = "#ff6b35"
 const FOG_COLOR = "#0a0a1e"
 const FONT_FAMILY = "'JetBrains Mono Variable', 'JetBrains Mono', monospace"
 
@@ -64,8 +64,8 @@ function fmtPace(minPerKm: number): string {
 
 // ─── StatsData converters ─────────────────────────────────────────────────────
 
-export function trackToStatsData(track: ParsedTrack): StatsData {
-  const s = track.stats
+export function activityToStatsData(activity: ParsedActivity): StatsData {
+  const s = activity.stats
   return {
     distanceKm: s.distanceKm,
     uniqueDistanceKm: s.uniqueDistanceKm,
@@ -78,7 +78,7 @@ export function trackToStatsData(track: ParsedTrack): StatsData {
     elevationGainM: s.elevationGainM,
     elevationLossM: s.elevationLossM,
     hasElevation: s.hasElevation,
-    trackCount: 1,
+    activityCount: 1,
   }
 }
 
@@ -95,7 +95,7 @@ export function compositeToStatsData(composite: CompositeStats): StatsData {
     elevationGainM: composite.totalElevationGainM,
     elevationLossM: composite.totalElevationLossM,
     hasElevation: composite.hasElevation,
-    trackCount: composite.trackCount,
+    activityCount: composite.activityCount,
   }
 }
 
@@ -190,28 +190,28 @@ export function getDefaultStats(s: StatsData): StatKey[] {
   return STAT_PRIORITY.filter((k) => available.includes(k)).slice(0, 4)
 }
 
-// ─── Photo → track matching ───────────────────────────────────────────────────
+// ─── Photo → activity matching ───────────────────────────────────────────────────
 
-export function filterPhotosForTrack(
+export function filterPhotosForActivity(
   photos: PhotoEntry[],
-  track: ParsedTrack
+  activity: ParsedActivity
 ): PhotoEntry[] {
   return photos.filter((p) =>
-    track.coordinates.some(
+    activity.coordinates.some(
       ([lng, lat]) =>
         Math.abs(lng - p.lng) < 1e-5 && Math.abs(lat - p.lat) < 1e-5
     )
   )
 }
 
-export function filterPhotosForTracks(
+export function filterPhotosForActivities(
   photos: PhotoEntry[],
-  tracks: ParsedTrack[]
+  activities: ParsedActivity[]
 ): PhotoEntry[] {
   const seen = new Set<string>()
   const result: PhotoEntry[] = []
-  for (const t of tracks) {
-    for (const p of filterPhotosForTrack(photos, t)) {
+  for (const t of activities) {
+    for (const p of filterPhotosForActivity(photos, t)) {
       if (!seen.has(p.id)) {
         seen.add(p.id)
         result.push(p)
@@ -226,7 +226,7 @@ export function filterPhotosForTracks(
 /** Draw all routes scaled to fit within the upper 65% of the canvas. */
 function drawRoutes(
   ctx: CanvasRenderingContext2D,
-  tracks: ParsedTrack[],
+  activities: ParsedActivity[],
   W: number,
   H: number
 ): void {
@@ -234,7 +234,7 @@ function drawRoutes(
     maxLng = -Infinity,
     minLat = Infinity,
     maxLat = -Infinity
-  for (const t of tracks) {
+  for (const t of activities) {
     for (const [lng, lat] of t.coordinates) {
       if (lng < minLng) minLng = lng
       if (lng > maxLng) maxLng = lng
@@ -258,9 +258,9 @@ function drawRoutes(
   const toX = (lng: number) => offsetX + (lng - minLng) * scale
   const toY = (lat: number) => offsetY + (maxLat - lat) * scale
 
-  for (const track of tracks) {
+  for (const activity of activities) {
     const MAX_PTS = 2000
-    const { coordinates } = track
+    const { coordinates } = activity
     const step =
       coordinates.length > MAX_PTS ? Math.ceil(coordinates.length / MAX_PTS) : 1
     const pts = coordinates.filter((_, i) => i % step === 0)
@@ -274,18 +274,18 @@ function drawRoutes(
     }
 
     ctx.save()
-    ctx.strokeStyle = `${TRACK_COLOR}50`
+    ctx.strokeStyle = `${ACTIVITY_COLOR}50`
     ctx.lineWidth = 22
     ctx.lineCap = "round"
     ctx.lineJoin = "round"
-    ctx.shadowColor = TRACK_COLOR
+    ctx.shadowColor = ACTIVITY_COLOR
     ctx.shadowBlur = 30
     buildPath()
     ctx.stroke()
     ctx.restore()
 
     ctx.save()
-    ctx.strokeStyle = TRACK_COLOR
+    ctx.strokeStyle = ACTIVITY_COLOR
     ctx.lineWidth = 7
     ctx.lineCap = "round"
     ctx.lineJoin = "round"
@@ -311,18 +311,18 @@ function drawRouteFromPixels(
   }
 
   ctx.save()
-  ctx.strokeStyle = `${TRACK_COLOR}50`
+  ctx.strokeStyle = `${ACTIVITY_COLOR}50`
   ctx.lineWidth = 22
   ctx.lineCap = "round"
   ctx.lineJoin = "round"
-  ctx.shadowColor = TRACK_COLOR
+  ctx.shadowColor = ACTIVITY_COLOR
   ctx.shadowBlur = 30
   buildPath()
   ctx.stroke()
   ctx.restore()
 
   ctx.save()
-  ctx.strokeStyle = TRACK_COLOR
+  ctx.strokeStyle = ACTIVITY_COLOR
   ctx.lineWidth = 7
   ctx.lineCap = "round"
   ctx.lineJoin = "round"
@@ -364,13 +364,13 @@ function drawImageBackground(
 export type BackgroundMode = "photo" | "dark" | "map"
 
 export interface ShareCardOptions {
-  tracks: ParsedTrack[]
+  activities: ParsedActivity[]
   statsData: StatsData
   enabledStats: StatKey[]
   subtitle: string | null
   photo: PhotoEntry | null
   mapBaseSnapshot: ImageBitmap | null
-  mapTrackPointsPerTrack: Array<{ x: number; y: number }[]> | null
+  mapActivityPointsPerActivity: Array<{ x: number; y: number }[]> | null
   backgroundMode: BackgroundMode
   blurAmount: number
 }
@@ -382,13 +382,13 @@ export async function drawShareCard(
   await document.fonts.ready
 
   const {
-    tracks,
+    activities,
     statsData,
     enabledStats,
     subtitle,
     photo,
     mapBaseSnapshot,
-    mapTrackPointsPerTrack,
+    mapActivityPointsPerActivity,
     backgroundMode,
     blurAmount,
   } = opts
@@ -404,18 +404,18 @@ export async function drawShareCard(
     const bitmap = await createImageBitmap(photo.file)
     drawImageBackground(ctx, bitmap, W, H, blurAmount, 0.52)
     bitmap.close()
-    drawRoutes(ctx, tracks, W, H)
+    drawRoutes(ctx, activities, W, H)
   } else if (backgroundMode === "map" && mapBaseSnapshot) {
     drawImageBackground(ctx, mapBaseSnapshot, W, H, blurAmount, 0.35)
-    if (mapTrackPointsPerTrack) {
-      for (const pts of mapTrackPointsPerTrack) {
+    if (mapActivityPointsPerActivity) {
+      for (const pts of mapActivityPointsPerActivity) {
         if (pts.length >= 2) drawRouteFromPixels(ctx, pts)
       }
     }
   } else {
     ctx.fillStyle = FOG_COLOR
     ctx.fillRect(0, 0, W, H)
-    if (backgroundMode === "dark") drawRoutes(ctx, tracks, W, H)
+    if (backgroundMode === "dark") drawRoutes(ctx, activities, W, H)
   }
 
   const scrimStart = H * 0.52
@@ -537,13 +537,13 @@ export async function exportShareCard(opts: ShareCardOptions): Promise<void> {
         }
         const url = URL.createObjectURL(blob)
         const a = document.createElement("a")
-        const isSingle = opts.tracks.length === 1
+        const isSingle = opts.activities.length === 1
         const safeName = isSingle
-          ? opts.tracks[0].name
+          ? opts.activities[0].name
               .replace(/[^a-z0-9]+/gi, "-")
               .replace(/^-|-$/g, "")
               .toLowerCase()
-          : `${opts.tracks.length}-activities`
+          : `${opts.activities.length}-activities`
         a.href = url
         a.download = `fogofwalk-${safeName || "activity"}.png`
         a.click()
@@ -556,7 +556,7 @@ export async function exportShareCard(opts: ShareCardOptions): Promise<void> {
   }
 }
 
-// ─── Composite stats (used by TrackStatsPanel) ────────────────────────────────
+// ─── Composite stats (used by ActivityStatsPanel) ────────────────────────────────
 
 export interface CompositeStats {
   totalDistanceKm: number
@@ -568,10 +568,12 @@ export interface CompositeStats {
   avgPaceMinPerKm: number | null
   avgMovingSpeedKmh: number | null
   totalUniqueKm: number
-  trackCount: number
+  activityCount: number
 }
 
-export function computeCompositeStats(tracks: ParsedTrack[]): CompositeStats {
+export function computeCompositeStats(
+  activities: ParsedActivity[]
+): CompositeStats {
   let totalDistanceKm = 0
   let totalElevationGainM = 0
   let totalElevationLossM = 0
@@ -583,7 +585,7 @@ export function computeCompositeStats(tracks: ParsedTrack[]): CompositeStats {
   let hasElevation = false
   let totalUniqueKm = 0
 
-  for (const t of tracks) {
+  for (const t of activities) {
     const s = t.stats
     totalDistanceKm += s?.distanceKm ?? 0
     totalElevationGainM += s?.elevationGainM ?? 0
@@ -620,6 +622,6 @@ export function computeCompositeStats(tracks: ParsedTrack[]): CompositeStats {
     avgPaceMinPerKm,
     avgMovingSpeedKmh,
     totalUniqueKm,
-    trackCount: tracks.length,
+    activityCount: activities.length,
   }
 }

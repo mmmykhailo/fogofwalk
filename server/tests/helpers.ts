@@ -1,15 +1,15 @@
 /** Shared fixtures: an app over the memory driver, users, and gzip uploads. */
 
-import type { TrackStats, TrackCoords } from "~shared/tracks"
-import type { TrackUploadPayload } from "~shared/api"
+import type { ActivityStats, ActivityCoords } from "~shared/activities"
+import type { ActivityUploadPayload } from "~shared/api"
 
 import { createApp } from "../src/app"
 import { createSessionFor } from "../src/auth/session"
 import { MemoryStore } from "../src/store/memory"
 import type { UserStatus } from "~shared/api"
-import { computeContentHash } from "../src/tracks/contentHash"
+import { computeContentHash } from "../src/activities/contentHash"
 
-export function makeStats(distanceKm = 4.2): TrackStats {
+export function makeStats(distanceKm = 4.2): ActivityStats {
   return {
     distanceKm,
     uniqueDistanceKm: 0,
@@ -26,10 +26,10 @@ export function makeStats(distanceKm = 4.2): TrackStats {
   }
 }
 
-export function makeTrack(
-  overrides: Partial<TrackUploadPayload> = {}
-): TrackUploadPayload {
-  const coordinates: TrackCoords = [
+export function makeActivity(
+  overrides: Partial<ActivityUploadPayload> = {}
+): ActivityUploadPayload {
+  const coordinates: ActivityCoords = [
     [13.4, 52.5],
     [13.401, 52.501],
     [13.402, 52.502],
@@ -45,8 +45,10 @@ export function makeTrack(
   }
 }
 
-export function gzipTrack(track: TrackUploadPayload): Uint8Array<ArrayBuffer> {
-  return Bun.gzipSync(new TextEncoder().encode(JSON.stringify(track)))
+export function gzipActivity(
+  activity: ActivityUploadPayload
+): Uint8Array<ArrayBuffer> {
+  return Bun.gzipSync(new TextEncoder().encode(JSON.stringify(activity)))
 }
 
 export function setup() {
@@ -77,21 +79,21 @@ export function authHeaders(token: string): Record<string, string> {
   return { Authorization: `Bearer ${token}` }
 }
 
-export async function putTrack(
+export async function putActivity(
   app: ReturnType<typeof createApp>,
   token: string,
-  track: TrackUploadPayload,
+  activity: ActivityUploadPayload,
   hashOverride?: string
 ): Promise<Response> {
-  const hash = hashOverride ?? (await computeContentHash(track))
-  return app.request(`/api/tracks/${hash}`, {
+  const hash = hashOverride ?? (await computeContentHash(activity))
+  return app.request(`/api/activities/${hash}`, {
     method: "PUT",
     headers: {
       ...authHeaders(token),
       "Content-Type": "application/json",
       "Content-Encoding": "gzip",
     },
-    body: gzipTrack(track),
+    body: gzipActivity(activity),
   })
 }
 

@@ -41,7 +41,7 @@ export function ServerUnavailableNotice({
         {action
           ? `Can't reach the sync server, so you can't ${action} right now. `
           : "Can't reach the sync server right now. "}
-        Your tracks on this device are unaffected — the map keeps working
+        Your activities on this device are unaffected — the map keeps working
         offline.
       </p>
       <div className="flex justify-end">

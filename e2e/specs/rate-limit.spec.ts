@@ -42,7 +42,7 @@ async function rejectUploads(
   const rejected = new Set<string>()
   const retryAfterMs = options.retryAfterMs ?? 300
 
-  await page.route(`${API_URL}/api/tracks/*`, async (route) => {
+  await page.route(`${API_URL}/api/activities/*`, async (route) => {
     const request = route.request()
     if (request.method() !== "PUT") return route.fallback()
 
@@ -67,12 +67,12 @@ async function rejectUploads(
 test.describe("upload rate limiting", () => {
   /**
    * Before the retry existed, `pooled` counted a 429 as a failed item and moved
-   * on, so a rate-limited track waited for a later sync trigger — up to five
+   * on, so a rate-limited activity waited for a later sync trigger — up to five
    * minutes — to be attempted again.
    *
    * Nothing here nudges sync: the import's own `add-files` run has to finish the
    * job on its own. Calling `syncNow` would be a *second* run, and a second run
-   * uploads these tracks whether or not the first one retried — which is exactly
+   * uploads these activities whether or not the first one retried — which is exactly
    * the bug, so it would make the test pass against the code it is meant to fail.
    */
   test("a 429 is retried within the same sync", async ({
@@ -83,20 +83,20 @@ test.describe("upload rate limiting", () => {
 
     await app.goto()
     await app.signIn()
-    await app.importTracks(3)
+    await app.importActivities(3)
     await app.waitForImportToSettle()
 
     await expect
-      .poll(async () => (await serverState(app.page)).tracks.length, {
+      .poll(async () => (await serverState(app.page)).activities.length, {
         timeout: 30_000,
       })
       .toBe(3)
 
-    // Every track really did hit the limit — otherwise this passes vacuously.
+    // Every activity really did hit the limit — otherwise this passes vacuously.
     expect(rejected.size).toBe(3)
 
     const state = await serverState(app.page)
-    expect(state.tracks.map((t) => t.name).sort()).toEqual([
+    expect(state.activities.map((t) => t.name).sort()).toEqual([
       "t1.gpx",
       "t2.gpx",
       "t3.gpx",
@@ -118,13 +118,13 @@ test.describe("upload rate limiting", () => {
 
     await app.goto()
     await app.signIn()
-    await app.importTracks(1)
+    await app.importActivities(1)
     await app.waitForImportToSettle()
     await app.syncNow()
 
-    expect((await serverState(app.page)).tracks).toHaveLength(0)
+    expect((await serverState(app.page)).activities).toHaveLength(0)
     expect(await app.accountRowDescription()).toContain(
-      "Some tracks couldn't be uploaded"
+      "Some activities couldn't be uploaded"
     )
   })
 
@@ -142,7 +142,7 @@ test.describe("upload rate limiting", () => {
 
     await app.goto()
     await app.signIn()
-    await app.importTracks(1)
+    await app.importActivities(1)
 
     // The drawer row says it too, not just the dialog behind it.
     await expect
@@ -193,7 +193,7 @@ test.describe("upload rate limiting", () => {
     app,
   }) => {
     let rejections = 0
-    await app.page.route(`${API_URL}/api/tracks/*`, async (route) => {
+    await app.page.route(`${API_URL}/api/activities/*`, async (route) => {
       const response = await route.fetch()
       if (response.status() === 429) rejections++
       return route.fulfill({ response })

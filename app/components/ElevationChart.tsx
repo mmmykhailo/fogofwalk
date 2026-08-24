@@ -1,5 +1,5 @@
-import type { ElevationPoint } from "~/types/tracks"
-import { TRACK_COLOR } from "~/constants/fog"
+import type { ElevationPoint } from "~/types/activities"
+import { ACTIVITY_COLOR } from "~/constants/fog"
 
 interface ElevationChartProps {
   profile: ElevationPoint[]
@@ -39,8 +39,8 @@ export function ElevationChart({ profile, className }: ElevationChartProps) {
     >
       <defs>
         <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor={TRACK_COLOR} stopOpacity={0.3} />
-          <stop offset="100%" stopColor={TRACK_COLOR} stopOpacity={0} />
+          <stop offset="0%" stopColor={ACTIVITY_COLOR} stopOpacity={0.3} />
+          <stop offset="100%" stopColor={ACTIVITY_COLOR} stopOpacity={0} />
         </linearGradient>
       </defs>
 
@@ -48,7 +48,12 @@ export function ElevationChart({ profile, className }: ElevationChartProps) {
       <path d={areaPath} fill={`url(#${gradId})`} />
 
       {/* elevation line */}
-      <path d={linePath} fill="none" stroke={TRACK_COLOR} strokeWidth={1.5} />
+      <path
+        d={linePath}
+        fill="none"
+        stroke={ACTIVITY_COLOR}
+        strokeWidth={1.5}
+      />
 
       {/* y-axis labels */}
       <text

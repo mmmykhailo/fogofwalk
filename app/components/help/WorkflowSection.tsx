@@ -37,7 +37,7 @@ const STEPS = [
     title: "Explore, measure, share",
     body: (
       <>
-        tap a track for its stats and elevation profile, open the statistics
+        tap an activity for its stats and elevation profile, open the statistics
         page for lifetime totals and streaks, and turn any activity into a
         shareable image.
       </>
@@ -47,10 +47,10 @@ const STEPS = [
     title: "Your data stays on your device",
     body: (
       <>
-        tracks, photos and the fog itself are stored in your browser. No account
-        is needed and nothing is uploaded by default. Optional cloud sync exists
-        for people who want their tracks on more than one device — see{" "}
-        <em>Syncing across devices</em> below.
+        activities, photos and the fog itself are stored in your browser. No
+        account is needed and nothing is uploaded by default. Optional cloud
+        sync exists for people who want their activities on more than one device
+        — see <em>Syncing across devices</em> below.
       </>
     ),
   },

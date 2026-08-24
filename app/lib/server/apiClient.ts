@@ -46,7 +46,7 @@ export class ApiRequestError extends Error {
 const FRIENDLY_MESSAGES: Partial<Record<ApiErrorCode | "network", string>> = {
   unauthorized: "Your session has expired. Please sign in again.",
   not_allowed: "This account isn't enabled for sync yet.",
-  too_large: "That track is too large to upload.",
+  too_large: "That activity is too large to upload.",
   rate_limited: "Too many requests — try again in a moment.",
   network: "Couldn't reach the server. Check your connection.",
 }
@@ -62,7 +62,7 @@ interface RequestOptions {
   method?: string
   /** JSON-serialisable body. Mutually exclusive with `rawBody`. */
   body?: unknown
-  /** Pre-encoded body (used for gzipped track uploads). */
+  /** Pre-encoded body (used for gzipped activity uploads). */
   rawBody?: BodyInit
   headers?: Record<string, string>
   signal?: AbortSignal
@@ -168,7 +168,7 @@ export async function apiSend(
   await request(path, { ...opts, method })
 }
 
-/** Raw response, for the gzipped track blob endpoints. */
+/** Raw response, for the gzipped activity blob endpoints. */
 export function apiRaw(
   method: string,
   path: string,

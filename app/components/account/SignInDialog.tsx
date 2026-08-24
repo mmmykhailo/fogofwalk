@@ -62,7 +62,7 @@ export function SignInDialog({ open, onOpenChange }: SignInDialogProps) {
         <DialogHeader>
           <DialogTitle>Sign in</DialogTitle>
           <DialogDescription>
-            Sign in to sync your tracks across devices. Photos are never
+            Sign in to sync your activities across devices. Photos are never
             uploaded — they stay on this device.
           </DialogDescription>
         </DialogHeader>
@@ -141,7 +141,7 @@ export function SignInDialog({ open, onOpenChange }: SignInDialogProps) {
 
         {!isUnreachable && (
           <p className="p-3 text-xs/relaxed text-muted-foreground ring-1 ring-foreground/10">
-            Synced tracks are stored on the server without encryption, so
+            Synced activities are stored on the server without encryption, so
             whoever runs it can read where you have been. Don&rsquo;t use sync
             unless you trust the developer of Fog of Walk.
           </p>

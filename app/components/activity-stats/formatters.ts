@@ -1,4 +1,4 @@
-// Presentation helpers for the track stats panel.
+// Presentation helpers for the activity stats panel.
 //
 // These deliberately differ from the same-named helpers in lib/statsFormatters:
 // the panel wants precise readings (h:mm:ss durations, 2-decimal distances, raw

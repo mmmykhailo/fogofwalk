@@ -1,7 +1,7 @@
 /**
  *   GET    /api/me              user + capabilities (any signed-in user, allowed or not)
  *   GET    /api/account/export  full data export in JSON format (any signed-in user)
- *   DELETE /api/account         erase user, identities, sessions, tracks, blobs
+ *   DELETE /api/account         erase user, identities, sessions, activities, blobs
  *
  * `/api/me` and `/api/account/export` are deliberately **not** behind `requireAllowed`:
  * a pending user still sees their name in the drawer, and should be able to
@@ -60,10 +60,10 @@ export function createAccountRoutes(store: ServerStore) {
 
     try {
       // Collect all user data
-      const [identities, sessions, tracks] = await Promise.all([
+      const [identities, sessions, activities] = await Promise.all([
         store.findIdentitiesForUser(userId),
         store.findSessionsForUser(userId),
-        store.listAllTracksForUser(userId),
+        store.listAllActivitiesForUser(userId),
       ])
 
       const serverUser = await toServerUser(store, user)
@@ -86,7 +86,7 @@ export function createAccountRoutes(store: ServerStore) {
           expiresAt: session.expiresAt,
           lastUsedAt: session.lastUsedAt,
         })),
-        tracks,
+        activities,
       }
 
       // Set response headers for download
@@ -104,7 +104,7 @@ export function createAccountRoutes(store: ServerStore) {
 
   app.delete("/account", requireSession, async (c) => {
     // Server-side only: the device keeps its local IndexedDB copy of every
-    // track, which is what the confirmation copy in the UI promises.
+    // activity, which is what the confirmation copy in the UI promises.
     await store.deleteUser(c.get("user").id)
     return c.body(null, 204)
   })

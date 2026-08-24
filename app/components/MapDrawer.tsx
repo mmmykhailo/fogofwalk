@@ -35,12 +35,12 @@ import { SignInDialog } from "~/components/account/SignInDialog"
 import { TransitionLink } from "~/components/TransitionLink"
 import { useAuth } from "~/lib/server/authStore"
 import type { clientLoader as accessRequestLoader } from "~/routes/account.access-request"
-import type { FogMode, MapMode } from "~/types/tracks"
+import type { FogMode, MapMode } from "~/types/activities"
 
 interface MapDrawerProps {
   isOpen: boolean
   onOpenChange: (open: boolean) => void
-  trackCount: number
+  activityCount: number
   photoCount: number
   isProcessing: boolean
   processedCount: number
@@ -48,8 +48,8 @@ interface MapDrawerProps {
   onAddFiles: () => void
   onAddPhotos: () => void
   onClearAll: () => void
-  showTracks: boolean
-  onShowTracksChange: (v: boolean) => void
+  showActivities: boolean
+  onShowActivitiesChange: (v: boolean) => void
   showFog: boolean
   onShowFogChange: (v: boolean) => void
   fogMode: FogMode
@@ -66,7 +66,7 @@ interface MapDrawerProps {
 export function MapDrawer({
   isOpen,
   onOpenChange,
-  trackCount,
+  activityCount,
   photoCount,
   isProcessing,
   processedCount,
@@ -74,8 +74,8 @@ export function MapDrawer({
   onAddFiles,
   onAddPhotos,
   onClearAll,
-  showTracks,
-  onShowTracksChange,
+  showActivities,
+  onShowActivitiesChange,
   showFog,
   onShowFogChange,
   fogMode,
@@ -167,7 +167,7 @@ export function MapDrawer({
                 <ItemContent>
                   <ItemTitle>
                     {isProcessing
-                      ? `Processing ${processedCount} of ${trackCount}…`
+                      ? `Processing ${processedCount} of ${activityCount}…`
                       : "Add files"}
                   </ItemTitle>
                 </ItemContent>
@@ -205,11 +205,11 @@ export function MapDrawer({
                   weight="duotone"
                   className="mr-3 size-5 shrink-0 text-muted-foreground"
                 />
-                <span className="flex-1 text-sm">Show tracks</span>
+                <span className="flex-1 text-sm">Show activities</span>
                 <Switch
-                  checked={showTracks}
-                  onCheckedChange={onShowTracksChange}
-                  aria-label="Show tracks"
+                  checked={showActivities}
+                  onCheckedChange={onShowActivitiesChange}
+                  aria-label="Show activities"
                 />
               </div>
               <div className="flex items-center px-3 py-2.5">
@@ -320,7 +320,7 @@ export function MapDrawer({
               />
               <Item
                 variant="muted"
-                render={<TransitionLink to="/tracks" />}
+                render={<TransitionLink to="/activities" />}
                 onClick={close}
               >
                 <ItemMedia variant="icon">
@@ -330,7 +330,7 @@ export function MapDrawer({
                   />
                 </ItemMedia>
                 <ItemContent>
-                  <ItemTitle>My tracks</ItemTitle>
+                  <ItemTitle>My activities</ItemTitle>
                 </ItemContent>
                 <CaretRightIcon className="size-4 shrink-0 text-muted-foreground" />
               </Item>
@@ -413,7 +413,7 @@ export function MapDrawer({
             </div>
 
             {/* 4. Destructive — isolated from file actions */}
-            {trackCount > 0 && (
+            {activityCount > 0 && (
               <div className="overflow-hidden ring-1 ring-foreground/10">
                 <Item
                   variant="muted"
@@ -435,16 +435,16 @@ export function MapDrawer({
             )}
 
             {/* 5. Status */}
-            {(isProcessing || trackCount > 0 || photoCount > 0) && (
+            {(isProcessing || activityCount > 0 || photoCount > 0) && (
               <p
                 data-testid="drawer-status"
                 className="py-1 text-center text-xs text-muted-foreground"
               >
                 {isProcessing
-                  ? `Processing ${processedCount} of ${trackCount}…`
+                  ? `Processing ${processedCount} of ${activityCount}…`
                   : [
-                      trackCount > 0 &&
-                        `${trackCount} track${trackCount !== 1 ? "s" : ""}`,
+                      activityCount > 0 &&
+                        `${activityCount} activity${activityCount !== 1 ? "s" : ""}`,
                       photoCount > 0 &&
                         `${photoCount} photo${photoCount !== 1 ? "s" : ""}`,
                     ]
@@ -459,7 +459,7 @@ export function MapDrawer({
       <ClearAllDialog
         open={isClearAllOpen}
         onOpenChange={setIsClearAllOpen}
-        trackCount={trackCount}
+        activityCount={activityCount}
         photoCount={photoCount}
         onConfirm={onClearAll}
       />

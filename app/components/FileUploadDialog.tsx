@@ -34,7 +34,7 @@ export function FileUploadDialog({
   const auth = useAuth()
 
   // Only offered on a build that has a server, and only to someone not already
-  // signed in — a signed-in user's tracks are already on their way down. The
+  // signed in — a signed-in user's activities are already on their way down. The
   // `disabled` status is the no-server build, so this drops out of the GitHub
   // Pages deployment exactly the way `AccountDrawerItem` does.
   const canOfferSignIn = auth.status === "signedOut"

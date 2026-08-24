@@ -12,7 +12,7 @@ import {
 interface ClearAllDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
-  trackCount: number
+  activityCount: number
   photoCount: number
   onConfirm: () => void
 }
@@ -20,7 +20,7 @@ interface ClearAllDialogProps {
 export function ClearAllDialog({
   open,
   onOpenChange,
-  trackCount,
+  activityCount,
   photoCount,
   onConfirm,
 }: ClearAllDialogProps) {
@@ -33,7 +33,7 @@ export function ClearAllDialog({
         <DialogHeader>
           <DialogTitle>Clear all data?</DialogTitle>
           <DialogDescription>
-            All {trackCount} track{trackCount !== 1 ? "s" : ""}
+            All {activityCount} activity{activityCount !== 1 ? "s" : ""}
             {photoCount > 0
               ? ` and ${photoCount} photo${photoCount !== 1 ? "s" : ""}`
               : ""}{" "}
@@ -45,9 +45,9 @@ export function ClearAllDialog({
 
         {isSynced && (
           <p className="p-3 text-xs/relaxed text-muted-foreground ring-1 ring-foreground/10">
-            Your tracks stay on the server and will sync back to this device. To
-            delete them there as well, use <strong>Remove all</strong> in your
-            account.
+            Your activities stay on the server and will sync back to this
+            device. To delete them there as well, use{" "}
+            <strong>Remove all</strong> in your account.
           </p>
         )}
         <DialogFooter>

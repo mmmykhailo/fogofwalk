@@ -1,16 +1,16 @@
-import type { PublicTrackMeta } from "~shared/api"
+import type { PublicActivityMeta } from "~shared/api"
 import { Menu } from "@base-ui/react/menu"
 import { DotsThreeIcon } from "@phosphor-icons/react"
 import { useState } from "react"
 import { AppLink } from "~/components/AppLink"
 import { formatRelativeTime } from "~/lib/formatRelativeTime"
-import { updateTrackVisibility } from "~/lib/server/trackVisibility"
+import { updateActivityVisibility } from "~/lib/server/activityVisibility"
 import {
   formatDistance,
   formatDuration,
   formatElevation,
   formatSpeed,
-} from "~/components/track-stats/formatters"
+} from "~/components/activity-stats/formatters"
 import { Stat } from "~/components/public-profile/Stat"
 
 function stripExtension(name: string): string {
@@ -18,7 +18,7 @@ function stripExtension(name: string): string {
   return lastDot > 0 ? name.slice(0, lastDot) : name
 }
 
-export interface TrackCardData {
+export interface ActivityCardData {
   name: string
   startedAtMs: number | null
   distanceKm: number
@@ -27,33 +27,33 @@ export interface TrackCardData {
   avgMovingSpeedKmh: number | null
 }
 
-interface TrackCardProps {
-  track: PublicTrackMeta | TrackCardData
-  /** Local map destination. Public-profile tracks intentionally have none. */
-  trackHref?: string
+interface ActivityCardProps {
+  activity: PublicActivityMeta | ActivityCardData
+  /** Local map destination. Public-profile activities intentionally have none. */
+  activityHref?: string
   isOwner?: boolean
   onHidden?: (contentHash: string) => void
 }
 
-export function TrackCard({
-  track,
-  trackHref,
+export function ActivityCard({
+  activity,
+  activityHref,
   isOwner = false,
   onHidden,
-}: TrackCardProps) {
+}: ActivityCardProps) {
   const [isHiding, setIsHiding] = useState(false)
-  const trackName = stripExtension(track.name)
-  const contentHash = "contentHash" in track ? track.contentHash : null
+  const activityName = stripExtension(activity.name)
+  const contentHash = "contentHash" in activity ? activity.contentHash : null
 
   async function handleHide() {
     if (contentHash == null) return
 
     setIsHiding(true)
     try {
-      await updateTrackVisibility(contentHash, false)
+      await updateActivityVisibility(contentHash, false)
       onHidden?.(contentHash)
     } catch (err) {
-      console.warn("[public-profile] failed to hide track:", err)
+      console.warn("[public-profile] failed to hide activity:", err)
     } finally {
       setIsHiding(false)
     }
@@ -64,31 +64,31 @@ export function TrackCard({
       <div className="flex items-start justify-between gap-2">
         <div>
           <h3 className="font-heading text-sm font-medium">
-            {trackHref ? (
+            {activityHref ? (
               <AppLink
-                to={trackHref}
+                to={activityHref}
                 className="block truncate"
-                title={trackName}
+                title={activityName}
               >
-                {trackName}
+                {activityName}
               </AppLink>
             ) : (
-              trackName
+              activityName
             )}
           </h3>
-          {track.startedAtMs != null && (
+          {activity.startedAtMs != null && (
             <p
               className="text-xs text-muted-foreground"
-              title={new Date(track.startedAtMs).toLocaleString()}
+              title={new Date(activity.startedAtMs).toLocaleString()}
             >
-              {formatRelativeTime(track.startedAtMs)}
+              {formatRelativeTime(activity.startedAtMs)}
             </p>
           )}
         </div>
         {isOwner && contentHash != null && (
           <Menu.Root>
             <Menu.Trigger
-              aria-label={`Track actions for ${trackName}`}
+              aria-label={`Activity actions for ${activityName}`}
               className="inline-flex size-7 shrink-0 items-center justify-center text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
               disabled={isHiding}
             >
@@ -111,20 +111,20 @@ export function TrackCard({
         )}
       </div>
       <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
-        <Stat label="Distance" value={formatDistance(track.distanceKm)} />
-        {track.durationMs != null && (
-          <Stat label="Duration" value={formatDuration(track.durationMs)} />
+        <Stat label="Distance" value={formatDistance(activity.distanceKm)} />
+        {activity.durationMs != null && (
+          <Stat label="Duration" value={formatDuration(activity.durationMs)} />
         )}
-        {track.elevationGainM > 0 && (
+        {activity.elevationGainM > 0 && (
           <Stat
             label="Elevation gain"
-            value={formatElevation(track.elevationGainM)}
+            value={formatElevation(activity.elevationGainM)}
           />
         )}
-        {track.avgMovingSpeedKmh != null && (
+        {activity.avgMovingSpeedKmh != null && (
           <Stat
             label="Moving speed"
-            value={formatSpeed(track.avgMovingSpeedKmh)}
+            value={formatSpeed(activity.avgMovingSpeedKmh)}
           />
         )}
       </dl>

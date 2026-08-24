@@ -1,9 +1,9 @@
 import { afterAll, describe, expect, test } from "bun:test"
 
-import type { TrackMeta } from "~shared/api"
+import type { ActivityMeta } from "~shared/api"
 
 import { createSqliteFsStore } from "../src/store/sqlite-fs"
-import { gzipTrack, makeTrack } from "./helpers"
+import { gzipActivity, makeActivity } from "./helpers"
 
 const tmpDir = `${import.meta.dir}/../.tmp-public-profile-${crypto.randomUUID()}`
 
@@ -18,16 +18,16 @@ describe("public profile legacy metadata", () => {
       avatarUrl: null,
       email: null,
     })
-    const track = makeTrack({ isPublic: true })
-    const blob = gzipTrack(track)
-    const meta: TrackMeta = {
+    const activity = makeActivity({ isPublic: true })
+    const blob = gzipActivity(activity)
+    const meta: ActivityMeta = {
       contentHash: "c".repeat(64),
-      name: track.name,
+      name: activity.name,
       isPublic: true,
-      format: track.format,
-      startedAtMs: track.startedAtMs,
-      distanceKm: track.stats.distanceKm,
-      pointCount: track.coordinates.length,
+      format: activity.format,
+      startedAtMs: activity.startedAtMs,
+      distanceKm: activity.stats.distanceKm,
+      pointCount: activity.coordinates.length,
       sizeBytes: blob.byteLength,
       updatedAt: Date.now(),
       durationMs: null,
@@ -35,18 +35,22 @@ describe("public profile legacy metadata", () => {
       elevationGainM: 0,
       avgMovingSpeedKmh: null,
     }
-    await store.putTrack(user.id, meta, blob)
+    await store.putActivity(user.id, meta, blob)
 
-    const profile = await store.listPublicTracks(user.id)
-    expect(profile.tracks[0]!.durationMs).toBe(track.stats.durationMs)
-    expect(profile.tracks[0]!.movingTimeMs).toBe(track.stats.movingTimeMs)
-    expect(profile.tracks[0]!.elevationGainM).toBe(track.stats.elevationGainM)
-    expect(profile.tracks[0]!.avgMovingSpeedKmh).toBe(
-      track.stats.avgMovingSpeedKmh
+    const profile = await store.listPublicActivities(user.id)
+    expect(profile.activities[0]!.durationMs).toBe(activity.stats.durationMs)
+    expect(profile.activities[0]!.movingTimeMs).toBe(
+      activity.stats.movingTimeMs
+    )
+    expect(profile.activities[0]!.elevationGainM).toBe(
+      activity.stats.elevationGainM
+    )
+    expect(profile.activities[0]!.avgMovingSpeedKmh).toBe(
+      activity.stats.avgMovingSpeedKmh
     )
     expect(
-      (await store.getTrack(user.id, meta.contentHash))?.elevationGainM
-    ).toBe(track.stats.elevationGainM)
+      (await store.getActivity(user.id, meta.contentHash))?.elevationGainM
+    ).toBe(activity.stats.elevationGainM)
     store.close()
   })
 })

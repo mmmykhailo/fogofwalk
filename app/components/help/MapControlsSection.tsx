@@ -1,5 +1,5 @@
 const TOGGLES = [
-  ["Show tracks", "draw the route lines on top of the cleared fog"],
+  ["Show activities", "draw the route lines on top of the cleared fog"],
   ["Show fog", "turn the fog off entirely to see the bare map underneath"],
   [
     "Show photos",
@@ -31,7 +31,7 @@ export function MapControlsSection() {
         </li>
       </ul>
       <p>
-        Switching <em>Fill loops</em> reprocesses every track, so it takes a
+        Switching <em>Fill loops</em> reprocesses every activity, so it takes a
         moment on a large library. Your map position and zoom are remembered
         between visits, and the compass in the corner resets the view to north
         when you've rotated or tilted the map.
