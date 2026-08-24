@@ -44,6 +44,21 @@ const OAUTH_COOKIE_TTL_S = 10 * 60
 const COOKIE_SECURE = env.PUBLIC_URL.startsWith("https://")
 
 const exchangeSchema = z.object({ code: z.string().min(1).max(512) })
+const fakeNameSchema = z
+  .string()
+  .trim()
+  .min(1, "Enter a test-user name.")
+  .max(64, "Test-user names must be at most 64 characters.")
+
+function fakeLogin(name: string): string {
+  const normalized = name
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+  return normalized || "test-user"
+}
 
 interface OAuthCookiePayload {
   state: string
@@ -81,6 +96,44 @@ export function createAuthRoutes(store: ServerStore) {
   app.get("/providers", (c) => {
     const body: AuthProvidersResponse = { providers: listProviders() }
     return c.json(body)
+  })
+
+  app.get("/fake/start", async (c) => {
+    if (!env.DEV_FAKE_AUTH) {
+      return jsonError(c, "not_found", "Unknown auth provider.")
+    }
+
+    const redirect = resolveRedirectOrigin(c.req.query("redirect"))
+    if (!redirect) {
+      return jsonError(
+        c,
+        "bad_request",
+        "The redirect origin is not in ALLOWED_ORIGINS."
+      )
+    }
+
+    const parsedName = fakeNameSchema.safeParse(c.req.query("name"))
+    if (!parsedName.success) {
+      return jsonError(c, "bad_request", parsedName.error.issues[0]?.message)
+    }
+
+    const name = parsedName.data
+    const login = fakeLogin(name)
+    const user = await store.upsertUserFromIdentity({
+      provider: "fake",
+      providerUserId: login,
+      login,
+      displayName: name,
+      avatarUrl: null,
+      email: null,
+    })
+    const session = await createSessionFor(store, user.id)
+    const handoff = createHandoffCode(user.id, session.token, session.expiresAt)
+
+    return c.redirect(
+      `${redirect}/auth/callback?code=${encodeURIComponent(handoff)}`,
+      302
+    )
   })
 
   app.get("/:provider/start", async (c) => {

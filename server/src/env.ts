@@ -38,6 +38,8 @@ const envSchema = z.object({
     .url("PUBLIC_URL must be an absolute URL"),
   GITHUB_CLIENT_ID: z.string().optional(),
   GITHUB_CLIENT_SECRET: z.string().optional(),
+  /** Explicit, loopback-only sign-in shortcut for local integration testing. */
+  DEV_FAKE_AUTH: z.enum(["true", "false"]).default("false"),
 })
 
 export interface Env {
@@ -53,10 +55,18 @@ export interface Env {
   PUBLIC_URL: string
   GITHUB_CLIENT_ID: string | null
   GITHUB_CLIENT_SECRET: string | null
+  DEV_FAKE_AUTH: boolean
 }
 
 const stripTrailingSlash = (value: string): string =>
   value.endsWith("/") ? value.slice(0, -1) : value
+
+function isLoopbackUrl(value: string): boolean {
+  const hostname = new URL(value).hostname
+  return (
+    hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]"
+  )
+}
 
 export function parseEnv(source: Record<string, string | undefined>): Env {
   const result = envSchema.safeParse(source)
@@ -95,6 +105,18 @@ export function parseEnv(source: Record<string, string | undefined>): Env {
     )
   }
 
+  const isDevFakeAuthEnabled = parsed.DEV_FAKE_AUTH === "true"
+  if (
+    isDevFakeAuthEnabled &&
+    (!isLoopbackUrl(parsed.PUBLIC_URL) ||
+      origins.some((origin) => !isLoopbackUrl(origin)))
+  ) {
+    throw new Error(
+      "Invalid server environment:\n" +
+        "  - DEV_FAKE_AUTH=true is only allowed when PUBLIC_URL and every ALLOWED_ORIGINS entry use localhost, 127.0.0.1, or [::1]."
+    )
+  }
+
   const adminLogins = csv(parsed.ADMIN_LOGINS).map((entry) =>
     entry.toLowerCase()
   )
@@ -118,6 +140,7 @@ export function parseEnv(source: Record<string, string | undefined>): Env {
     PUBLIC_URL: stripTrailingSlash(parsed.PUBLIC_URL),
     GITHUB_CLIENT_ID: parsed.GITHUB_CLIENT_ID ?? null,
     GITHUB_CLIENT_SECRET: parsed.GITHUB_CLIENT_SECRET ?? null,
+    DEV_FAKE_AUTH: isDevFakeAuthEnabled,
   }
 }
 

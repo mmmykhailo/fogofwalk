@@ -20,3 +20,4 @@ process.env.DATA_DIR = "./.test-data"
 // Tests that want a configured provider set these themselves.
 delete process.env.GITHUB_CLIENT_ID
 delete process.env.GITHUB_CLIENT_SECRET
+delete process.env.DEV_FAKE_AUTH

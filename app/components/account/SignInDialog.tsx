@@ -29,6 +29,7 @@ export function SignInDialog({ open, onOpenChange }: SignInDialogProps) {
   const [error, setError] = useState<string | null>(null)
   const health = useServerHealth()
   const [attempt, setAttempt] = useState(0)
+  const [fakeName, setFakeName] = useState("")
 
   const load = useCallback(() => {
     setProviders(null)
@@ -87,6 +88,42 @@ export function SignInDialog({ open, onOpenChange }: SignInDialogProps) {
 
           {providers?.map((provider) => {
             const Icon = PROVIDER_ICONS[provider.id] ?? SignInIcon
+            if (provider.id === "fake") {
+              return (
+                <form
+                  key={provider.id}
+                  className="space-y-2 p-3 ring-1 ring-foreground/10"
+                  onSubmit={(event) => {
+                    event.preventDefault()
+                    const name = fakeName.trim()
+                    if (name)
+                      window.location.href = signInUrl(provider.id, name)
+                  }}
+                >
+                  <label
+                    className="text-xs font-medium"
+                    htmlFor="fake-user-name"
+                  >
+                    Local test-user name
+                  </label>
+                  <div className="flex gap-2">
+                    <input
+                      id="fake-user-name"
+                      className="min-w-0 flex-1 border bg-transparent px-2 text-sm"
+                      value={fakeName}
+                      onChange={(event) => setFakeName(event.target.value)}
+                      placeholder="e.g. Alice"
+                      maxLength={64}
+                      required
+                    />
+                    <Button type="submit">
+                      <Icon weight="bold" className="mr-2" />
+                      Create
+                    </Button>
+                  </div>
+                </form>
+              )
+            }
             return (
               <Button
                 key={provider.id}

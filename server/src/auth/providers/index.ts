@@ -29,6 +29,19 @@ function buildRegistry(): Record<string, OAuthProvider> {
     )
   }
 
+  // Fake accounts are deliberately handled by the local route rather than an
+  // OAuth adapter: no provider redirect or credentials are involved.
+  if (env.DEV_FAKE_AUTH) {
+    registry.fake = {
+      id: "fake",
+      label: "Test user (local)",
+      createAuthUrl: () => new URL(`${env.PUBLIC_URL}/api/auth/fake/start`),
+      exchange: async () => {
+        throw new Error("The fake provider does not exchange OAuth codes.")
+      },
+    }
+  }
+
   // Add a provider here: `registry.google = createGoogleProvider(...)`.
 
   return registry

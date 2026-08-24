@@ -53,6 +53,7 @@ a missing or malformed one aborts startup with a message naming it.
 | `PUBLIC_URL`           | **yes**  | —           | This server's externally reachable base URL. The OAuth callback URI is derived from it.                                       |
 | `GITHUB_CLIENT_ID`     | pair     | —           | Omit both to leave GitHub sign-in off.                                                                                        |
 | `GITHUB_CLIENT_SECRET` | pair     | —           | Must be set together with the id.                                                                                             |
+| `DEV_FAKE_AUTH`        | no       | `false`     | Enables local test users following the normal access-approval flow. Rejected unless the API and every allowed client origin are loopback URLs. |
 
 ## API
 
@@ -123,6 +124,15 @@ demoted by removing it from the list.
 
 The requested scopes are `read:user` and `user:email`. The primary verified
 email is best-effort — an account without one still signs in.
+
+### Local fake users
+
+For local UI and sync testing without GitHub accounts, set `DEV_FAKE_AUTH=true`
+in `server/.env`. The Sign in dialog will then offer a local test-user name.
+Each normalized name identifies a reusable fake account; different names create
+separate accounts. Fake accounts follow the same pending/approval flow as OAuth
+accounts. This switch is rejected at startup unless `PUBLIC_URL` and all
+`ALLOWED_ORIGINS` entries are loopback URLs.
 
 ## Adding another OAuth provider
 

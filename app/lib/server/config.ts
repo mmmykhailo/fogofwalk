@@ -37,9 +37,13 @@ export function clientRedirectBase(): string {
 }
 
 /** URL that starts the OAuth dance for a provider. */
-export function signInUrl(providerId: string): string {
+export function signInUrl(providerId: string, fakeName?: string): string {
   const redirect = encodeURIComponent(clientRedirectBase())
+  const name =
+    providerId === "fake" && fakeName
+      ? `&name=${encodeURIComponent(fakeName)}`
+      : ""
   return apiUrl(
-    `/api/auth/${encodeURIComponent(providerId)}/start?redirect=${redirect}`
+    `/api/auth/${encodeURIComponent(providerId)}/start?redirect=${redirect}${name}`
   )
 }
