@@ -142,4 +142,39 @@ describe("admin access workflow", () => {
       trackSizeBytes: firstMeta.sizeBytes + secondMeta.sizeBytes,
     })
   })
+
+  test("lets an administrator delete another user's account and tracks", async () => {
+    const { app, store } = setup()
+    const admin = await signIn(store, {
+      login: "admin-user",
+      status: "allowed",
+    })
+    const user = await signIn(store, { login: "walker", status: "allowed" })
+    await putTrack(app, user.token, makeTrack())
+
+    const response = await app.request(`/api/admin/users/${user.user.id}`, {
+      method: "DELETE",
+      headers: authHeaders(admin.token),
+    })
+
+    expect(response.status).toBe(204)
+    expect(await store.getUser(user.user.id)).toBeNull()
+    expect(await store.listAllTracksForUser(user.user.id)).toEqual([])
+  })
+
+  test("does not let an administrator delete themselves through admin routes", async () => {
+    const { app, store } = setup()
+    const admin = await signIn(store, {
+      login: "admin-user",
+      status: "allowed",
+    })
+
+    const response = await app.request(`/api/admin/users/${admin.user.id}`, {
+      method: "DELETE",
+      headers: authHeaders(admin.token),
+    })
+
+    expect(response.status).toBe(400)
+    expect(await store.getUser(admin.user.id)).not.toBeNull()
+  })
 })

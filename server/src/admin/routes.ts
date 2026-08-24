@@ -77,6 +77,19 @@ export function createAdminRoutes(store: ServerStore) {
     if (!user) return jsonError(c, "not_found")
     return c.json({ ok: true })
   })
+  app.delete("/users/:id", async (c) => {
+    const userId = c.req.param("id")
+    if (!uuid.safeParse(userId).success) return jsonError(c, "not_found")
+    if (userId === c.get("user").id)
+      return jsonError(
+        c,
+        "bad_request",
+        "Administrators cannot delete themselves here."
+      )
+    if (!(await store.getUser(userId))) return jsonError(c, "not_found")
+    await store.deleteUser(userId)
+    return c.body(null, 204)
+  })
   app.patch("/settings/telegram", async (c) => {
     const body = settingsBody.safeParse(await c.req.json().catch(() => null))
     if (!body.success)
