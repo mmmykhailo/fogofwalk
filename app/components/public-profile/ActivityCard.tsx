@@ -63,7 +63,7 @@ export function ActivityCard({
   }
 
   return (
-    <div className="flex flex-col gap-2 rounded-none bg-card p-4 text-card-foreground ring-1 ring-foreground/10">
+    <div className="@container flex flex-col gap-2 rounded-none bg-card p-4 text-card-foreground ring-1 ring-foreground/10">
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0 flex-1">
           <h3 className="font-heading text-sm font-medium">
@@ -116,7 +116,7 @@ export function ActivityCard({
           )}
         </div>
       </div>
-      <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+      <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs @sm:grid-cols-4">
         <Stat label="Distance" value={formatDistance(activity.distanceKm)} />
         {activity.durationMs != null && (
           <Stat label="Duration" value={formatDuration(activity.durationMs)} />
