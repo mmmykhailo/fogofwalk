@@ -127,6 +127,11 @@ export function createAuthRoutes(store: ServerStore) {
       avatarUrl: null,
       email: null,
     })
+    const refreshed = await store.getUser(user.id)
+    if (refreshed?.status === "pending" && (await isAdmin(store, user.id))) {
+      await store.setUserStatus(user.id, "allowed")
+    }
+
     const session = await createSessionFor(store, user.id)
     const handoff = createHandoffCode(user.id, session.token, session.expiresAt)
 
