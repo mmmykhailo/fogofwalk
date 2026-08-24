@@ -45,7 +45,11 @@ export function ActivityTypeSelect({
         aria-label={`Activity type for ${activityName}`}
         className="w-32 bg-muted"
       >
-        <SelectValue placeholder="Choose type" />
+        <SelectValue>
+          {(selected: ActivityType | null) =>
+            selected ? ACTIVITY_TYPE_LABELS[selected] : "Choose type"
+          }
+        </SelectValue>
       </SelectTrigger>
       <SelectContent align="end" alignItemWithTrigger={false}>
         {ACTIVITY_TYPES.map((type) => (

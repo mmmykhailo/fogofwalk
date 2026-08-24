@@ -17,6 +17,7 @@ import { FileUploadDialog } from "~/components/FileUploadDialog"
 import { PhotoErrorDialog } from "~/components/PhotoErrorDialog"
 import { ParseErrorDialog } from "~/components/ParseErrorDialog"
 import { DuplicateActivitiesDialog } from "~/components/DuplicateActivitiesDialog"
+import { MissingActivityTypeDialog } from "~/components/MissingActivityTypeDialog"
 import { ActivityStatsPanel } from "~/components/activity-stats/ActivityStatsPanel"
 import { ShareDialog } from "~/components/ShareDialog"
 import { PhotoCard } from "~/components/PhotoCard"
@@ -232,6 +233,9 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
       // on a worker DONE that only arrives if something was actually posted.
       newActivitiesCount: added.length,
       duplicateCount: allActivities.length - added.length,
+      missingActivityTypeCount: added.filter(
+        (activity) => activity.activityType == null
+      ).length,
       failedFiles,
     }
   }
@@ -386,6 +390,9 @@ export default function Home() {
   const [isParseErrorOpen, setIsParseErrorOpen] = useState(false)
   const [duplicateCount, setDuplicateCount] = useState(0)
   const [isDuplicateOpen, setIsDuplicateOpen] = useState(false)
+  const [missingActivityTypeCount, setMissingActivityTypeCount] = useState(0)
+  const [isMissingActivityTypeOpen, setIsMissingActivityTypeOpen] =
+    useState(false)
   // Loading overlay: starts visible, fades out when map is ready, then unmounts
   const [overlayDone, setOverlayDone] = useState(false)
 
@@ -551,8 +558,12 @@ export default function Home() {
         setProcessedCount(0)
       }
       if (data.failedFiles.length > 0) {
+        setMissingActivityTypeCount(data.missingActivityTypeCount)
         setParseFailedFiles(data.failedFiles)
         setIsParseErrorOpen(true)
+      } else if (data.missingActivityTypeCount > 0) {
+        setMissingActivityTypeCount(data.missingActivityTypeCount)
+        setIsMissingActivityTypeOpen(true)
       } else if (data.newActivitiesCount === 0 && data.duplicateCount > 0) {
         // Nothing was added and nothing failed — say so, or the import looks
         // like it silently did nothing.
@@ -891,8 +902,21 @@ export default function Home() {
               />
               <ParseErrorDialog
                 open={isParseErrorOpen}
-                onOpenChange={setIsParseErrorOpen}
+                onOpenChange={(open) => {
+                  setIsParseErrorOpen(open)
+                  if (!open && missingActivityTypeCount > 0) {
+                    setIsMissingActivityTypeOpen(true)
+                  }
+                }}
                 failedFiles={parseFailedFiles}
+              />
+              <MissingActivityTypeDialog
+                open={isMissingActivityTypeOpen}
+                onOpenChange={(open) => {
+                  setIsMissingActivityTypeOpen(open)
+                  if (!open) setMissingActivityTypeCount(0)
+                }}
+                activityCount={missingActivityTypeCount}
               />
               <DuplicateActivitiesDialog
                 open={isDuplicateOpen}
