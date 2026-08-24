@@ -3,7 +3,6 @@ import {
   CheckCircleIcon,
   ClockIcon,
   CloudArrowUpIcon,
-  PaperPlaneTiltIcon,
   XCircleIcon,
 } from "@phosphor-icons/react"
 import type { AccessRequest } from "~shared/api"
@@ -61,7 +60,7 @@ export function AccessRequestBlock({ open }: AccessRequestBlockProps) {
             <p className="mt-1 text-xs/relaxed text-muted-foreground">
               {isLoading
                 ? "Checking whether sync is available for your account…"
-                : "Request access to keep your activities available across your devices."}
+                : "Request access to keep your activities available across your devices and use other server features."}
             </p>
             <Button
               size="sm"
@@ -69,7 +68,6 @@ export function AccessRequestBlock({ open }: AccessRequestBlockProps) {
               onClick={submit}
               disabled={isSubmitting || isLoading}
             >
-              <PaperPlaneTiltIcon weight="bold" />
               {isSubmitting ? "Requesting…" : "Request access"}
             </Button>
           </div>
