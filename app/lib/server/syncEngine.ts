@@ -27,6 +27,7 @@ import {
 } from "~/lib/storage"
 import { ingestActivities, mapStore } from "~/lib/mapStore"
 import { backfillContentHashes } from "~/lib/activityHash"
+import { populateUniqueDistances } from "~/lib/statsAggregator"
 import { apiRaw, apiSend, ApiRequestError, friendlyMessage } from "./apiClient"
 import { canSync } from "./authStore"
 import {
@@ -115,6 +116,8 @@ export function resumeAutoSync(): void {
 export interface SyncChanges {
   /** How many activities arrived from the server. */
   downloadedCount: number
+  /** How many existing activities received server-side metadata updates. */
+  updatedCount: number
   /** Local ids of activities a tombstone removed. */
   deletedIds: string[]
 }
@@ -274,6 +277,17 @@ async function syncOnce(reason: string): Promise<void> {
      */
     const isFromScratch = since === 0
 
+    const serverByHash = new Map(
+      serverActivities.map((activity) => [activity.contentHash, activity])
+    )
+    const metadataDiffers = (
+      local: ParsedActivity,
+      server: ActivityMeta
+    ): boolean =>
+      local.name !== server.name ||
+      Boolean(local.isPublic) !== server.isPublic ||
+      local.activityType !== server.activityType
+
     /**
      * A tombstone must be acted on exactly once per device.
      *
@@ -293,21 +307,28 @@ async function syncOnce(reason: string): Promise<void> {
       freshTombstones.map((tomb) => tomb.contentHash)
     )
 
-    const toUpload = [...localByHash.values()].filter(
-      (t) =>
-        t.contentHash &&
-        !serverHashes.has(t.contentHash) &&
+    const toUpload = [...localByHash.values()].filter((t) => {
+      if (!t.contentHash) return false
+      const server = serverByHash.get(t.contentHash)
+      const isMissing = !serverHashes.has(t.contentHash)
+      const shouldRestoreLocalMetadata =
+        isFromScratch && server != null && metadataDiffers(t, server)
+      return (
+        (isMissing || shouldRestoreLocalMetadata) &&
         // Suppressed only while the deletion is still being applied. Once it
         // has been, a local copy means a deliberate re-import — resurrect it.
         (isFromScratch || !freshDeletedHashes.has(t.contentHash)) &&
         // Deliberately unsynced (a server purge, or a local-only delete that
         // was later re-imported). Never push these back up.
         !ignoredHashes.has(t.contentHash)
-    )
-    const toDownload = serverActivities.filter(
-      (t) =>
-        !localByHash.has(t.contentHash) && !ignoredHashes.has(t.contentHash)
-    )
+      )
+    })
+    const toDownload = serverActivities.filter((server) => {
+      if (ignoredHashes.has(server.contentHash)) return false
+      const local = localByHash.get(server.contentHash)
+      if (!local) return true
+      return !isFromScratch && metadataDiffers(local, server)
+    })
     const toDelete = isFromScratch
       ? []
       : [...freshDeletedHashes].filter((h) => localByHash.has(h))
@@ -345,17 +366,37 @@ async function syncOnce(reason: string): Promise<void> {
     })
 
     const downloaded: ParsedActivity[] = []
+    const updated: ParsedActivity[] = []
     const downloadFailures = await pooled(toDownload, async (meta) => {
-      const activity = await downloadActivity(meta)
-      if (activity) downloaded.push(activity)
+      const local = localByHash.get(meta.contentHash)
+      const activity = await downloadActivity(meta, local?.id)
+      if (activity) {
+        if (local) updated.push(activity)
+        else downloaded.push(activity)
+      }
       step()
     })
     // One ingest for the whole batch: a single worker post and a single
     // unique-distance pass rather than one per activity.
     if (downloaded.length > 0) await ingestActivities(downloaded)
 
-    if (downloaded.length > 0 || deletedIds.length > 0) {
-      onChanged?.({ downloadedCount: downloaded.length, deletedIds })
+    if (updated.length > 0) {
+      const byHash = new Map(
+        updated.map((activity) => [activity.contentHash, activity])
+      )
+      mapStore.activities = mapStore.activities.map(
+        (activity) => byHash.get(activity.contentHash) ?? activity
+      )
+      populateUniqueDistances(mapStore.activities)
+      await saveActivities(updated)
+    }
+
+    if (downloaded.length > 0 || updated.length > 0 || deletedIds.length > 0) {
+      onChanged?.({
+        downloadedCount: downloaded.length,
+        updatedCount: updated.length,
+        deletedIds,
+      })
     }
 
     if (downloadFailures > 0) {
@@ -526,16 +567,33 @@ async function uploadActivity(activity: ParsedActivity): Promise<void> {
   }
 }
 
+/** Push a same-geometry metadata edit without waiting for manifest diffing. */
+export async function pushActivityUpdate(
+  activity: ParsedActivity
+): Promise<void> {
+  if (!canSync() || !activity.contentHash) return
+  try {
+    await uploadActivity(activity)
+    requestSync("activity-update")
+  } catch (err) {
+    console.warn("[sync] failed to propagate activity update:", err)
+  }
+}
+
 async function downloadActivity(
-  meta: ActivityMeta
+  meta: ActivityMeta,
+  localId?: string
 ): Promise<ParsedActivity | null> {
   const res = await apiRaw("GET", `/api/activities/${meta.contentHash}`)
   const payload = (await res.json()) as ActivityUploadPayload
   return {
     ...payload,
     // Ids are per-device; the content hash is the shared identity.
-    id: crypto.randomUUID(),
+    id: localId ?? crypto.randomUUID(),
     contentHash: meta.contentHash,
+    name: meta.name,
+    isPublic: meta.isPublic,
+    activityType: meta.activityType ?? payload.activityType,
   }
 }
 

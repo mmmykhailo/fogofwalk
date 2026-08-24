@@ -37,6 +37,11 @@ const visibilitySchema = z.object({
   isPublic: z.boolean(),
 })
 
+function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.byteLength !== b.byteLength) return false
+  return a.every((value, index) => value === b[index])
+}
+
 export function createActivityRoutes(store: ServerStore) {
   const app = new Hono<AuthEnv>()
 
@@ -119,21 +124,26 @@ export function createActivityRoutes(store: ServerStore) {
       )
     }
 
-    // Re-uploading identical geometry keeps the original `updatedAt`, so an
-    // idempotent retry does not churn every other device's manifest. A row
-    // that was deleted has no `existing`, so a resurrect gets a fresh
-    // timestamp and does propagate.
+    // A changed payload can keep the same geometry hash (activity type, name,
+    // and visibility are deliberately excluded from identity). Compare the
+    // bytes so edits get a fresh manifest timestamp while an idempotent retry
+    // keeps the original timestamp and does not churn every other device.
     const existing = await store.getActivity(user.id, contentHash)
+    const existingBlob = existing
+      ? await store.getActivityBlob(user.id, contentHash)
+      : null
+    const isUnchanged = existingBlob ? bytesEqual(existingBlob, stored) : false
     const meta: ActivityMeta = {
       contentHash,
       name: activity.name,
       isPublic: activity.isPublic ?? false,
       format: activity.format,
+      activityType: activity.activityType,
       startedAtMs: activity.startedAtMs,
       distanceKm: activity.stats.distanceKm,
       pointCount: activity.coordinates.length,
       sizeBytes: stored.byteLength,
-      updatedAt: existing?.updatedAt ?? Date.now(),
+      updatedAt: existing && isUnchanged ? existing.updatedAt : Date.now(),
       durationMs: activity.stats.durationMs,
       movingTimeMs: activity.stats.movingTimeMs,
       elevationGainM: activity.stats.elevationGainM,

@@ -10,6 +10,7 @@ import {
   sortActivitiesNewestFirst,
 } from "~/lib/statsAggregator"
 import { isActivityType } from "~/lib/activityType"
+import { pushActivityUpdate } from "~/lib/server/syncEngine"
 import type { ParsedActivity } from "~/types/activities"
 import type { Route } from "./+types/activities"
 
@@ -36,6 +37,7 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
 
   activity.activityType = activityType
   await saveActivities([activity])
+  await pushActivityUpdate(activity)
   return { ok: true as const, activityId, activityType }
 }
 

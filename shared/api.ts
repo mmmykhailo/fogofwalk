@@ -6,7 +6,7 @@
  * field rename fails both typechecks instead of drifting silently.
  */
 
-import type { ParsedActivity, ActivityFormat } from "./activities"
+import type { ActivityFormat, ActivityType, ParsedActivity } from "./activities"
 
 // ─── Auth ──────────────────────────────────────────────────────────────────────
 
@@ -127,6 +127,7 @@ export interface ActivityMeta {
   name: string
   isPublic: boolean
   format: ActivityFormat
+  activityType?: ActivityType
   startedAtMs: number | null
   distanceKm: number
   pointCount: number

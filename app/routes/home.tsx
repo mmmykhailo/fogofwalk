@@ -4,6 +4,7 @@ import {
   useFetcher,
   useLoaderData,
   useLocation,
+  useRevalidator,
   useSearchParams,
 } from "react-router"
 import type maplibregl from "maplibre-gl"
@@ -336,6 +337,7 @@ export default function Home() {
   const fetcher = useFetcher<typeof clientAction>()
   const [searchParams, setSearchParams] = useSearchParams()
   const location = useLocation()
+  const revalidator = useRevalidator()
   const isMapRoute = location.pathname === "/"
   // This parent route stays matched for every in-app page. Delay mounting the
   // expensive WebGL map for direct visits to another page, then keep it alive
@@ -580,7 +582,7 @@ export default function Home() {
 
   // Sync mutates mapStore directly; reconcile the React state it can't reach.
   useEffect(() => {
-    setSyncChangeHandler(({ downloadedCount, deletedIds }) => {
+    setSyncChangeHandler(({ downloadedCount, updatedCount, deletedIds }) => {
       setActivityCount(mapStore.activities.length)
 
       if (deletedIds.length > 0) {
@@ -618,9 +620,13 @@ export default function Home() {
           mapStore.activities.length > 0 && mapStore.isFogRunInFlight
         )
       }
+
+      if (downloadedCount > 0 || updatedCount > 0 || deletedIds.length > 0) {
+        void revalidator.revalidate()
+      }
     })
     return () => setSyncChangeHandler(null)
-  }, [])
+  }, [revalidator])
 
   // Fires on a restored session and on a fresh sign-in alike, then keeps the
   // tab current — otherwise another device's uploads only ever arrive on reload.

@@ -177,6 +177,44 @@ describe("upload", () => {
     expect(manifest.activities).toHaveLength(1)
   })
 
+  test("updates activity type without changing geometry identity", async () => {
+    const { store, app } = setup()
+    const { token } = await signIn(store)
+    const activity = makeActivity({ activityType: "running" })
+    const hash = await computeContentHash(activity)
+
+    const first = await putActivity(app, token, activity)
+    const changed = await putActivity(app, token, {
+      ...activity,
+      activityType: "cycling",
+    })
+
+    expect(first.status).toBe(200)
+    expect(changed.status).toBe(200)
+    expect(((await changed.json()) as ActivityMeta).activityType).toBe(
+      "cycling"
+    )
+
+    const manifest = (await (
+      await app.request("/api/activities/manifest", {
+        headers: authHeaders(token),
+      })
+    ).json()) as ManifestPage
+    expect(manifest.activities).toHaveLength(1)
+    expect(manifest.activities[0]?.contentHash).toBe(hash)
+    expect(manifest.activities[0]?.activityType).toBe("cycling")
+
+    const response = await app.request(`/api/activities/${hash}`, {
+      headers: authHeaders(token),
+    })
+    const payload = JSON.parse(
+      new TextDecoder().decode(
+        Bun.gunzipSync(new Uint8Array(await response.arrayBuffer()))
+      )
+    )
+    expect(payload.activityType).toBe("cycling")
+  })
+
   test("round-trips the gzipped blob", async () => {
     const { store, app } = setup()
     const { token } = await signIn(store)
