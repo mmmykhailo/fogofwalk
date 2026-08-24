@@ -137,7 +137,7 @@ export function AccountDrawerItem({
         </Item>
       )}
 
-      <div className="ml-10 border-t border-foreground/10" />
+      <div className="border-t border-foreground/10" />
     </>
   )
 }

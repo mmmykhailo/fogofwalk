@@ -319,7 +319,7 @@ export function MoreDrawer({
                 </ItemContent>
                 <CaretRightIcon className="size-4 shrink-0 text-muted-foreground" />
               </Item>
-              <div className="ml-10 border-t border-foreground/10" />
+              <div className="border-t border-foreground/10" />
               {auth.status === "signedIn" && auth.user.handle && (
                 <>
                   <Item
@@ -338,7 +338,7 @@ export function MoreDrawer({
                     </ItemContent>
                     <CaretRightIcon className="size-4 shrink-0 text-muted-foreground" />
                   </Item>
-                  <div className="ml-10 border-t border-foreground/10" />
+                  <div className="border-t border-foreground/10" />
                 </>
               )}
               <Item
@@ -357,7 +357,7 @@ export function MoreDrawer({
                 </ItemContent>
                 <CaretRightIcon className="size-4 shrink-0 text-muted-foreground" />
               </Item>
-              <div className="ml-10 border-t border-foreground/10" />
+              <div className="border-t border-foreground/10" />
               <Item
                 variant="muted"
                 render={<TransitionLink to="/help" />}
@@ -376,7 +376,7 @@ export function MoreDrawer({
               </Item>
               {auth.status === "signedIn" && auth.isAdmin && (
                 <>
-                  <div className="ml-10 border-t border-foreground/10" />
+                  <div className="border-t border-foreground/10" />
                   <Item
                     variant="muted"
                     render={<TransitionLink to="/admin" />}
