@@ -1,50 +1,23 @@
-import { useEffect, useState } from "react"
+import type { FetcherWithComponents } from "react-router"
 import {
   CheckCircleIcon,
   ClockIcon,
   CloudArrowUpIcon,
   XCircleIcon,
 } from "@phosphor-icons/react"
-import type { AccessRequest } from "~shared/api"
 import { Button } from "~/components/ui/button"
-import { apiGet, apiPost, friendlyMessage } from "~/lib/server/apiClient"
-import { refreshAuth } from "~/lib/server/authStore"
+import type { AccessRequestData } from "~/routes/account.access-request"
 
 interface AccessRequestBlockProps {
-  open: boolean
+  fetcher: FetcherWithComponents<AccessRequestData>
 }
 
-export function AccessRequestBlock({ open }: AccessRequestBlockProps) {
-  const [request, setRequest] = useState<AccessRequest | null>(null)
-  const [isLoading, setIsLoading] = useState(false)
-  const [isSubmitting, setIsSubmitting] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  async function load() {
-    setIsLoading(true)
-    setError(null)
-    try {
-      setRequest(await apiGet<AccessRequest | null>("/api/access-request"))
-      await refreshAuth()
-    } catch (err) {
-      setError(friendlyMessage(err))
-    } finally {
-      setIsLoading(false)
-    }
-  }
-  useEffect(() => {
-    if (open) void load()
-  }, [open])
-  async function submit() {
-    setIsSubmitting(true)
-    setError(null)
-    try {
-      setRequest(await apiPost<AccessRequest>("/api/access-request"))
-    } catch (err) {
-      setError(friendlyMessage(err))
-    } finally {
-      setIsSubmitting(false)
-    }
-  }
+export function AccessRequestBlock({ fetcher }: AccessRequestBlockProps) {
+  const isLoading = fetcher.state === "loading"
+  const isSubmitting = fetcher.state === "submitting"
+  const request = fetcher.data?.request
+  const error = fetcher.data?.error
+
   return (
     <section
       aria-live="polite"
@@ -62,14 +35,16 @@ export function AccessRequestBlock({ open }: AccessRequestBlockProps) {
                 ? "Checking whether sync is available for your account…"
                 : "Request access to keep your activities available across your devices and use other server features."}
             </p>
-            <Button
-              size="sm"
-              className="mt-3"
-              onClick={submit}
-              disabled={isSubmitting || isLoading}
-            >
-              {isSubmitting ? "Requesting…" : "Request access"}
-            </Button>
+            <fetcher.Form method="post" action="/account/access-request">
+              <Button
+                size="sm"
+                className="mt-3"
+                type="submit"
+                disabled={isSubmitting || isLoading}
+              >
+                {isSubmitting ? "Requesting…" : "Request access"}
+              </Button>
+            </fetcher.Form>
           </div>
         </div>
       )}

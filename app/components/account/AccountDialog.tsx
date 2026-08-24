@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react"
+import type { FetcherWithComponents } from "react-router"
 import { Button } from "~/components/ui/button"
 import {
   Dialog,
@@ -21,8 +22,10 @@ import {
 import { PurgeServerBlock } from "./PurgeServerBlock"
 import { ServerUnavailableNotice } from "./ServerUnavailableNotice"
 import { useSyncAction } from "./useSyncAction"
+import type { AccessRequestData } from "~/routes/account.access-request"
 
 interface AccountDialogProps {
+  accessRequestFetcher: FetcherWithComponents<AccessRequestData>
   open: boolean
   onOpenChange: (open: boolean) => void
 }
@@ -40,7 +43,11 @@ function downloadFile(data: unknown, filename: string): void {
   URL.revokeObjectURL(url)
 }
 
-export function AccountDialog({ open, onOpenChange }: AccountDialogProps) {
+export function AccountDialog({
+  accessRequestFetcher,
+  open,
+  onOpenChange,
+}: AccountDialogProps) {
   const auth = useAuth()
   const { statusLabel, buttonLabel, isSyncing } = useSyncAction()
   const health = useServerHealth(true)
@@ -206,7 +213,9 @@ export function AccountDialog({ open, onOpenChange }: AccountDialogProps) {
           />
         )}
 
-        {!auth.canSync && !isOffline && <AccessRequestBlock open={open} />}
+        {!auth.canSync && !isOffline && (
+          <AccessRequestBlock fetcher={accessRequestFetcher} />
+        )}
 
         {error && <p className="mb-2 text-xs text-destructive">{error}</p>}
 

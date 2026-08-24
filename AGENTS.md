@@ -249,7 +249,7 @@ from one file — that's the registry's layout and splitting it would break `sha
 
 **`@turf/difference` v7 API**: same — `difference(featureCollection([a, b]))` = a minus b.
 
-**Single useFetcher**: all form submissions go through one `useFetcher` in `home.tsx`; results in `fetcher.data`. Children receive callbacks, not their own fetcher instances.
+**React Router owns UI data requests and mutations.** Do not call `apiGet`, `apiPost`, `apiPatch` or `apiSend` from a component's `useEffect` or event handler. Put page data in a route `clientLoader`, mutations in a `clientAction`, and use `useFetcher`/`fetcher.Form` for in-place UI flows. A component that needs data outside its matched route should use a registered resource route loaded with `fetcher.load()`, ideally from the user interaction that reveals it rather than an effect after paint. This prevents stale UI and loading flicker, and gives React Router ownership of request lifecycle and revalidation.
 
 **Mode change triggers reprocess**: toggling corridor/fill in the UI sends RESET then re-sends all `mapStore.tracks` with the new mode. `mapStore.tracks` persists across resets so it can be replayed.
 

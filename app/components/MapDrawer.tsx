@@ -1,4 +1,5 @@
 import { useState } from "react"
+import { useFetcher } from "react-router"
 import { useIsMobile } from "~/lib/useIsMobile"
 import {
   ImageIcon,
@@ -33,6 +34,7 @@ import { AccountDialog } from "~/components/account/AccountDialog"
 import { SignInDialog } from "~/components/account/SignInDialog"
 import { TransitionLink } from "~/components/TransitionLink"
 import { useAuth } from "~/lib/server/authStore"
+import type { clientLoader as accessRequestLoader } from "~/routes/account.access-request"
 import type { FogMode, MapMode } from "~/types/tracks"
 
 interface MapDrawerProps {
@@ -93,6 +95,19 @@ export function MapDrawer({
   const [isLocationHintOpen, setIsLocationHintOpen] = useState(false)
   const isMobile = useIsMobile()
   const auth = useAuth()
+  const accessRequestFetcher = useFetcher<typeof accessRequestLoader>()
+
+  function openAccount() {
+    if (
+      auth.status === "signedIn" &&
+      !auth.canSync &&
+      !accessRequestFetcher.data &&
+      accessRequestFetcher.state === "idle"
+    ) {
+      accessRequestFetcher.load("/account/access-request")
+    }
+    closeThenOpen(setIsAccountOpen)
+  }
 
   /**
    * Close the drawer before opening a dialog, then wait out the close
@@ -301,7 +316,7 @@ export function MapDrawer({
             <div className="overflow-hidden ring-1 ring-foreground/10">
               <AccountDrawerItem
                 onSignIn={() => closeThenOpen(setIsSignInOpen)}
-                onOpenAccount={() => closeThenOpen(setIsAccountOpen)}
+                onOpenAccount={openAccount}
               />
               <Item
                 variant="muted"
@@ -450,7 +465,11 @@ export function MapDrawer({
       />
 
       <SignInDialog open={isSignInOpen} onOpenChange={setIsSignInOpen} />
-      <AccountDialog open={isAccountOpen} onOpenChange={setIsAccountOpen} />
+      <AccountDialog
+        accessRequestFetcher={accessRequestFetcher}
+        open={isAccountOpen}
+        onOpenChange={setIsAccountOpen}
+      />
     </>
   )
 }

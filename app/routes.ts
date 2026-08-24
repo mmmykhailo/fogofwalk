@@ -9,6 +9,7 @@ export default [
     route("privacy", "routes/privacy.tsx"),
     route("terms", "routes/terms.tsx"),
     route("auth/callback", "routes/auth-callback.tsx"),
+    route("account/access-request", "routes/account.access-request.tsx"),
     route("admin", "routes/admin.tsx"),
     route("u/:handle", "routes/u.$handle.tsx"),
   ]),
