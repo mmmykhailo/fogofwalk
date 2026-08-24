@@ -2,6 +2,7 @@ import type { PublicActivityMeta } from "~shared/api"
 import { Menu } from "@base-ui/react/menu"
 import { DotsThreeIcon } from "@phosphor-icons/react"
 import { useState } from "react"
+import type { ReactNode } from "react"
 import { AppLink } from "~/components/AppLink"
 import { formatRelativeTime } from "~/lib/formatRelativeTime"
 import { updateActivityVisibility } from "~/lib/server/activityVisibility"
@@ -31,6 +32,7 @@ interface ActivityCardProps {
   activity: PublicActivityMeta | ActivityCardData
   /** Local map destination. Public-profile activities intentionally have none. */
   activityHref?: string
+  activityTypeControl?: ReactNode
   isOwner?: boolean
   onHidden?: (contentHash: string) => void
 }
@@ -38,6 +40,7 @@ interface ActivityCardProps {
 export function ActivityCard({
   activity,
   activityHref,
+  activityTypeControl,
   isOwner = false,
   onHidden,
 }: ActivityCardProps) {
@@ -62,7 +65,7 @@ export function ActivityCard({
   return (
     <div className="flex flex-col gap-2 rounded-none bg-card p-4 text-card-foreground ring-1 ring-foreground/10">
       <div className="flex items-start justify-between gap-2">
-        <div>
+        <div className="min-w-0 flex-1">
           <h3 className="font-heading text-sm font-medium">
             {activityHref ? (
               <AppLink
@@ -85,30 +88,33 @@ export function ActivityCard({
             </p>
           )}
         </div>
-        {isOwner && contentHash != null && (
-          <Menu.Root>
-            <Menu.Trigger
-              aria-label={`Activity actions for ${activityName}`}
-              className="inline-flex size-7 shrink-0 items-center justify-center text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
-              disabled={isHiding}
-            >
-              <DotsThreeIcon size={18} weight="bold" />
-            </Menu.Trigger>
-            <Menu.Portal>
-              <Menu.Positioner align="end" sideOffset={4}>
-                <Menu.Popup className="z-50 min-w-40 border border-border bg-popover p-1 text-popover-foreground shadow-md outline-none">
-                  <Menu.Item
-                    className="flex w-full cursor-pointer items-center px-2 py-1.5 text-sm outline-none hover:bg-muted data-[highlighted]:bg-muted"
-                    disabled={isHiding}
-                    onClick={handleHide}
-                  >
-                    Hide from profile
-                  </Menu.Item>
-                </Menu.Popup>
-              </Menu.Positioner>
-            </Menu.Portal>
-          </Menu.Root>
-        )}
+        <div className="flex shrink-0 items-center gap-2">
+          {activityTypeControl}
+          {isOwner && contentHash != null && (
+            <Menu.Root>
+              <Menu.Trigger
+                aria-label={`Activity actions for ${activityName}`}
+                className="inline-flex size-7 shrink-0 items-center justify-center text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
+                disabled={isHiding}
+              >
+                <DotsThreeIcon size={18} weight="bold" />
+              </Menu.Trigger>
+              <Menu.Portal>
+                <Menu.Positioner align="end" sideOffset={4}>
+                  <Menu.Popup className="z-50 min-w-40 border border-border bg-popover p-1 text-popover-foreground shadow-md outline-none">
+                    <Menu.Item
+                      className="flex w-full cursor-pointer items-center px-2 py-1.5 text-sm outline-none hover:bg-muted data-[highlighted]:bg-muted"
+                      disabled={isHiding}
+                      onClick={handleHide}
+                    >
+                      Hide from profile
+                    </Menu.Item>
+                  </Menu.Popup>
+                </Menu.Positioner>
+              </Menu.Portal>
+            </Menu.Root>
+          )}
+        </div>
       </div>
       <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
         <Stat label="Distance" value={formatDistance(activity.distanceKm)} />

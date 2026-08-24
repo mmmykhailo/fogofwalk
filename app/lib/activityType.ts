@@ -1,4 +1,20 @@
-import type { ActivityType } from "~/types/activities"
+import { ACTIVITY_TYPES, type ActivityType } from "~/types/activities"
+
+export const ACTIVITY_TYPE_LABELS: Record<ActivityType, string> = {
+  walking: "Walking",
+  running: "Running",
+  cycling: "Cycling",
+  kayaking: "Kayaking",
+  swimming: "Swimming",
+  other: "Other",
+}
+
+export function isActivityType(value: unknown): value is ActivityType {
+  return (
+    typeof value === "string" &&
+    (ACTIVITY_TYPES as readonly string[]).includes(value)
+  )
+}
 
 const WALKING_TYPES = new Set([
   "hike",

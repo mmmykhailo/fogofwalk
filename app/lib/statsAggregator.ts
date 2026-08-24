@@ -109,6 +109,18 @@ export function sortActivities(activities: ParsedActivity[]): ParsedActivity[] {
   })
 }
 
+/** Newest-first activity-library ordering, with undated activities last. */
+export function sortActivitiesNewestFirst(
+  activities: ParsedActivity[]
+): ParsedActivity[] {
+  return [...activities].sort((a, b) => {
+    if (a.startedAtMs == null && b.startedAtMs == null) return 0
+    if (a.startedAtMs == null) return 1
+    if (b.startedAtMs == null) return -1
+    return b.startedAtMs - a.startedAtMs
+  })
+}
+
 // ─── Aggregators ──────────────────────────────────────────────────────────────
 
 export function computeLifetimeTotals(

@@ -9,6 +9,7 @@
  */
 
 export type * from "~shared/activities"
+export { ACTIVITY_TYPES } from "~shared/activities"
 
 import type { ParsedActivity } from "~shared/activities"
 
