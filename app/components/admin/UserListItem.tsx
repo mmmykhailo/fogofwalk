@@ -10,6 +10,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "~/components/ui/select"
+import clsx from "clsx"
 
 interface UserListItemProps {
   user: AdminUser
@@ -53,43 +54,43 @@ export function UserListItem({
   }
 
   return (
-    <div className="relative flex items-center justify-between gap-3 border-t pt-2 text-xs">
-      <div className="min-w-0">
-        <p>
-          {user.displayName}{" "}
-          <span className="text-muted-foreground">{user.identity}</span>
-        </p>
-        <p className="text-muted-foreground">
-          {user.storage.trackCount}{" "}
-          {user.storage.trackCount === 1 ? "track" : "tracks"} ·{" "}
-          {formatBytes(user.storage.trackSizeBytes)}
-          {user.storage.publicTrackCount > 0 &&
-            ` · ${user.storage.publicTrackCount} public`}
-        </p>
-      </div>
-      <div className="flex items-center gap-2">
-        <Select
-          value={user.status}
-          onValueChange={(status) => onStatus(status as UserStatus)}
-          disabled={isMutating}
-        >
-          <SelectTrigger
-            size="sm"
-            aria-label={`Change ${user.displayName}'s status`}
+    <div className="relative">
+      <div className="flex items-center justify-between gap-3 border-t py-2 text-xs">
+        <div className="min-w-0">
+          <p>
+            {user.displayName}{" "}
+            <span className="text-muted-foreground">{user.identity}</span>
+          </p>
+          <p className="text-muted-foreground">
+            {user.storage.trackCount}{" "}
+            {user.storage.trackCount === 1 ? "track" : "tracks"} ·{" "}
+            {formatBytes(user.storage.trackSizeBytes)}
+            {user.storage.publicTrackCount > 0 &&
+              ` · ${user.storage.publicTrackCount} public`}
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <Select
+            value={user.status}
+            onValueChange={(status) => onStatus(status as UserStatus)}
+            disabled={isMutating}
           >
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {(["pending", "allowed", "blocked"] as UserStatus[]).map(
-              (status) => (
-                <SelectItem key={status} value={status}>
-                  {status}
-                </SelectItem>
-              )
-            )}
-          </SelectContent>
-        </Select>
-        {canDelete && (
+            <SelectTrigger
+              size="sm"
+              aria-label={`Change ${user.displayName}'s status`}
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {(["pending", "allowed", "blocked"] as UserStatus[]).map(
+                (status) => (
+                  <SelectItem key={status} value={status}>
+                    {status}
+                  </SelectItem>
+                )
+              )}
+            </SelectContent>
+          </Select>
           <Popover.Root open={isMenuOpen} onOpenChange={setIsMenuOpen}>
             <Popover.Trigger
               render={<Button variant="ghost" size="icon-sm" />}
@@ -99,9 +100,15 @@ export function UserListItem({
               <DotsThreeVerticalIcon />
             </Popover.Trigger>
             <Popover.Portal>
-              <Popover.Positioner side="bottom" align="end" sideOffset={4}>
-                <Popover.Popup className="z-50 bg-popover p-1 text-popover-foreground shadow-md ring-1 ring-foreground/10">
+              <Popover.Positioner
+                className="z-20"
+                side="bottom"
+                align="end"
+                sideOffset={4}
+              >
+                <Popover.Popup className="relative bg-popover p-1 text-popover-foreground shadow-md ring-1 ring-foreground/10">
                   <Button
+                    disabled={!canDelete}
                     variant="destructive"
                     size="sm"
                     onClick={openDeleteConfirmation}
@@ -112,44 +119,36 @@ export function UserListItem({
               </Popover.Positioner>
             </Popover.Portal>
           </Popover.Root>
+        </div>
+
+        {isDeleteConfirmOpen && (
+          <div className="absolute inset-x-0 top-0 z-10 flex min-h-full items-center justify-between gap-3 bg-popover py-1 pr-2 pl-4 ring-1 ring-destructive/30">
+            <div>
+              <p className="font-medium text-destructive">
+                Delete all {user.identity} data?
+              </p>
+            </div>
+            <div className="flex flex-wrap justify-end gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setIsDeleteConfirmOpen(false)}
+                disabled={isMutating}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={onDelete}
+                disabled={!isDeleteUnlocked || isMutating}
+              >
+                {isMutating ? "Deleting…" : "Delete permanently"}
+              </Button>
+            </div>
+          </div>
         )}
       </div>
-
-      {isDeleteConfirmOpen && (
-        <div className="absolute inset-x-0 top-0 z-10 flex min-h-full items-center justify-between gap-3 bg-popover p-3 ring-1 ring-destructive/30">
-          <div>
-            <p className="font-medium text-destructive">
-              Delete all user data?
-            </p>
-            <p className="text-muted-foreground">
-              This permanently deletes the account, sign-in, and every synced
-              track.
-            </p>
-          </div>
-          <div className="flex shrink-0 gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setIsDeleteConfirmOpen(false)}
-              disabled={isMutating}
-            >
-              Cancel
-            </Button>
-            <Button
-              variant="destructive"
-              size="sm"
-              onClick={onDelete}
-              disabled={!isDeleteUnlocked || isMutating}
-            >
-              {isMutating
-                ? "Deleting…"
-                : isDeleteUnlocked
-                  ? "Delete permanently"
-                  : "Wait 3 seconds"}
-            </Button>
-          </div>
-        </div>
-      )}
     </div>
   )
 }

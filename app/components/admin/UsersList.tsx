@@ -17,8 +17,8 @@ export function UsersList({
   isMutating,
 }: UsersListProps) {
   return (
-    <section className="space-y-2 rounded-none p-4 ring-1 ring-foreground/10">
-      <h2 className="font-medium">Users</h2>
+    <section className="rounded-none p-4 ring-1 ring-foreground/10">
+      <h2 className="mb-2 font-medium">Users</h2>
       {users.map((user) => (
         <UserListItem
           key={user.id}
