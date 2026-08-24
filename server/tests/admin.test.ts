@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 
-import { authHeaders, setup, signIn } from "./helpers"
+import { authHeaders, makeTrack, putTrack, setup, signIn } from "./helpers"
 import { encryptTelegramToken } from "../src/telegram"
 
 describe("admin access workflow", () => {
@@ -107,5 +107,39 @@ describe("admin access workflow", () => {
     expect((await store.getAccessRequest(applicant.user.id))?.status).toBe(
       "rejected"
     )
+  })
+
+  test("reports each user's current track storage in the admin bootstrap", async () => {
+    const { app, store } = setup()
+    const admin = await signIn(store, {
+      login: "admin-user",
+      status: "allowed",
+    })
+    const user = await signIn(store, { login: "walker", status: "allowed" })
+    const first = makeTrack({ name: "First" })
+    const second = makeTrack({
+      name: "Second",
+      isPublic: true,
+      startedAtMs: 1_700_100_000_000,
+    })
+    const firstUpload = await putTrack(app, user.token, first)
+    const secondUpload = await putTrack(app, user.token, second)
+    const firstMeta = (await firstUpload.json()) as { sizeBytes: number }
+    const secondMeta = (await secondUpload.json()) as { sizeBytes: number }
+
+    const response = await app.request("/api/admin/bootstrap", {
+      headers: authHeaders(admin.token),
+    })
+    const data = (await response.json()) as {
+      users: Array<{ handle: string | null; storage: unknown }>
+    }
+    const walker = data.users.find((item) => item.handle === "walker")
+
+    expect(response.status).toBe(200)
+    expect(walker?.storage).toEqual({
+      trackCount: 2,
+      publicTrackCount: 1,
+      trackSizeBytes: firstMeta.sizeBytes + secondMeta.sizeBytes,
+    })
   })
 })

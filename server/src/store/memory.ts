@@ -267,6 +267,7 @@ export class MemoryStore implements ServerStore {
           (item) => item.userId === user.id
         )
         const request = this.accessRequests.get(user.id)
+        const tracks = [...(this.tracks.get(user.id)?.values() ?? [])]
         return {
           id: user.id,
           displayName: user.displayName,
@@ -278,6 +279,15 @@ export class MemoryStore implements ServerStore {
             ? `${identity.provider}:${identity.providerLogin}`
             : null,
           request: request ? this.toAdminRequest(request) : null,
+          storage: {
+            trackCount: tracks.length,
+            publicTrackCount: tracks.filter((track) => track.meta.isPublic)
+              .length,
+            trackSizeBytes: tracks.reduce(
+              (total, track) => total + track.meta.sizeBytes,
+              0
+            ),
+          },
         }
       })
       .sort((a, b) => b.updatedAt - a.updatedAt)

@@ -191,6 +191,12 @@ interface TrackRow {
   avg_moving_speed_kmh: number | null
 }
 
+interface AdminUserStorageRow {
+  track_count: number
+  public_track_count: number
+  track_size_bytes: number
+}
+
 interface TombstoneRow {
   content_hash: string
   deleted_at: number
@@ -538,8 +544,22 @@ export class SqliteFsStore implements ServerStore {
     const users = this.db
       .query(`SELECT * FROM users ORDER BY updated_at DESC`)
       .all() as UserRow[]
+    const storageRows = this.db
+      .query(
+        `SELECT user_id,
+                COUNT(*) AS track_count,
+                SUM(CASE WHEN is_public = 1 THEN 1 ELSE 0 END) AS public_track_count,
+                COALESCE(SUM(size_bytes), 0) AS track_size_bytes
+           FROM tracks
+          GROUP BY user_id`
+      )
+      .all() as Array<AdminUserStorageRow & { user_id: string }>
+    const storageByUserId = new Map(
+      storageRows.map((row) => [row.user_id, row])
+    )
     return users.map((row) => {
       const user = toUser(row)
+      const storage = storageByUserId.get(user.id)
       const identity = this.db
         .query(
           `SELECT provider, provider_login FROM identities WHERE user_id = ? ORDER BY created_at LIMIT 1`
@@ -562,6 +582,11 @@ export class SqliteFsStore implements ServerStore {
           ? `${identity.provider}:${identity.provider_login}`
           : null,
         request: request ? this.adminRequest(request) : null,
+        storage: {
+          trackCount: storage?.track_count ?? 0,
+          publicTrackCount: storage?.public_track_count ?? 0,
+          trackSizeBytes: storage?.track_size_bytes ?? 0,
+        },
       }
     })
   }

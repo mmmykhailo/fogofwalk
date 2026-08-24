@@ -90,6 +90,11 @@ export interface AdminUser {
   updatedAt: number
   identity: string | null
   request: AdminAccessRequest | null
+  storage: {
+    trackCount: number
+    publicTrackCount: number
+    trackSizeBytes: number
+  }
 }
 
 export interface AdminBootstrapResponse {
