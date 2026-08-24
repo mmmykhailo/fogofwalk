@@ -4,9 +4,9 @@ import type { AdminBootstrapResponse } from "~shared/api"
 import { PageShell } from "~/components/PageShell"
 import { AccessRequestList } from "~/components/admin/AccessRequestList"
 import { TelegramSettingsCard } from "~/components/admin/TelegramSettingsCard"
-import { UserAccessList } from "~/components/admin/UserAccessList"
+import { UsersList } from "~/components/admin/UsersList"
 import { apiGet, apiSend, friendlyMessage } from "~/lib/server/apiClient"
-import { getAuthState, initAuth } from "~/lib/server/authStore"
+import { getAuthState, initAuth, useAuth } from "~/lib/server/authStore"
 import { isServerEnabled } from "~/lib/server/config"
 
 export async function clientLoader(): Promise<AdminBootstrapResponse> {
@@ -23,6 +23,7 @@ export async function clientLoader(): Promise<AdminBootstrapResponse> {
 
 export default function AdminRoute() {
   const [data, setData] = useState(useLoaderData<typeof clientLoader>())
+  const auth = useAuth()
   const [isMutating, setIsMutating] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -48,12 +49,14 @@ export default function AdminRoute() {
           onMutate={mutate}
           isMutating={isMutating}
         />
-        <UserAccessList
+        <UsersList
           users={data.users}
+          currentUserId={auth.status === "signedIn" ? auth.user.id : null}
           isMutating={isMutating}
           onStatus={(id, status) =>
             void mutate(`/api/admin/users/${id}/status`, "PATCH", { status })
           }
+          onDelete={(id) => void mutate(`/api/admin/users/${id}`, "DELETE")}
         />
         <TelegramSettingsCard
           chatId={data.telegramChatId}
