@@ -1,6 +1,7 @@
 import { gpx } from "@tmcw/togeojson"
 import type { ParsedTrack, RawPoint, TrackCoords } from "~/types/tracks"
 import { computeTrackStats } from "~/lib/stats"
+import { normalizeActivityType } from "~/lib/activityType"
 
 function buildRawPoints(
   coords: [number, number, number?][],
@@ -22,6 +23,7 @@ export async function parseGpxFile(file: File): Promise<ParsedTrack[]> {
   const tracks: ParsedTrack[] = []
   for (const feat of geo.features) {
     if (!feat.geometry) continue
+    const activityType = normalizeActivityType(feat.properties?.type)
     if (feat.geometry.type === "LineString") {
       const rawCoords = feat.geometry.coordinates as [number, number, number?][]
       if (rawCoords.length > 1) {
@@ -40,6 +42,7 @@ export async function parseGpxFile(file: File): Promise<ParsedTrack[]> {
             ? undefined
             : ts.map((t) => t ?? -1),
           format: "gpx",
+          ...(activityType ? { activityType } : {}),
           stats: { ...stats, uniqueDistanceKm: stats.distanceKm },
         })
       }
@@ -64,6 +67,7 @@ export async function parseGpxFile(file: File): Promise<ParsedTrack[]> {
               ? undefined
               : ts.map((t) => t ?? -1),
             format: "gpx",
+            ...(activityType ? { activityType } : {}),
             stats: { ...stats, uniqueDistanceKm: stats.distanceKm },
           })
         }

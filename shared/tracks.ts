@@ -64,6 +64,17 @@ export interface TrackLap {
 
 export type TrackFormat = "gpx" | "fit"
 
+export const ACTIVITY_TYPES = [
+  "walking",
+  "running",
+  "cycling",
+  "kayaking",
+  "swimming",
+  "other",
+] as const
+
+export type ActivityType = (typeof ACTIVITY_TYPES)[number]
+
 export interface ParsedTrack {
   id: string
   name: string
@@ -72,6 +83,8 @@ export interface ParsedTrack {
   coordinates: TrackCoords
   pointTimestamps?: number[]
   format: TrackFormat
+  /** Normalized activity category. Absent when the imported file had no type metadata. */
+  activityType?: ActivityType
   stats: TrackStats
   /** FIT laps, when the file has at least two. Never set for GPX. */
   laps?: TrackLap[]

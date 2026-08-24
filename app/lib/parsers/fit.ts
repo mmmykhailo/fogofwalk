@@ -7,6 +7,7 @@ import type {
 } from "~/types/tracks"
 import { computeTrackStats } from "~/lib/stats"
 import { LAP_PROFILE_POINTS, MAX_LAPS } from "~/constants/fog"
+import { normalizeActivityType } from "~/lib/activityType"
 
 /**
  * `fit-file-parser` decodes every FIT `date_time` field into a `Date` object
@@ -192,6 +193,9 @@ export async function parseFitFile(file: File): Promise<ParsedTrack[]> {
   const validTs = ts.filter((t): t is number => t != null && isFinite(t))
   const stats = computeTrackStats(rawPoints)
   const laps = buildLapsFromFit(rawPoints, data.laps ?? [])
+  const activityType = normalizeActivityType(
+    data.sessions?.[0]?.sport ?? data.sports?.[0]?.sport
+  )
   return [
     {
       id: crypto.randomUUID(),
@@ -202,6 +206,7 @@ export async function parseFitFile(file: File): Promise<ParsedTrack[]> {
         ? undefined
         : ts.map((t) => t ?? -1),
       format: "fit",
+      ...(activityType ? { activityType } : {}),
       stats: { ...stats, uniqueDistanceKm: stats.distanceKm },
       ...(laps ? { laps } : {}),
     },

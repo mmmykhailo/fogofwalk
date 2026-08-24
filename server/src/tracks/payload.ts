@@ -54,6 +54,9 @@ export const trackUploadSchema: z.ZodType<TrackUploadPayload> = z.object({
   coordinates: z.array(coordinateSchema).min(1),
   pointTimestamps: z.array(finite).optional(),
   format: z.union([z.literal("gpx"), z.literal("fit")]),
+  activityType: z
+    .enum(["walking", "running", "cycling", "kayaking", "swimming", "other"])
+    .optional(),
   stats: statsSchema,
   laps: z.array(lapSchema).optional(),
   contentHash: z.string().optional(),
