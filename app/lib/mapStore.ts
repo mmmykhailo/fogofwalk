@@ -94,6 +94,8 @@ interface MapStore {
    * — has already been and gone.
    */
   isFogRunInFlight: boolean
+  /** True once MapView is ready to receive fog-worker replies. */
+  isFogWorkerListenerReady: boolean
   /**
    * In-memory cache of the last share-card map render. Avoids re-creating a
    * WebGL context on every dialog open. Keyed by activityId. The ImageBitmap is
@@ -120,6 +122,7 @@ export const mapStore: MapStore = {
   isRestoreReprocess: false,
   runId: 0,
   isFogRunInFlight: false,
+  isFogWorkerListenerReady: false,
   shareCardCache: null,
 }
 

@@ -28,4 +28,15 @@ export default defineConfig({
     format: "es",
     plugins: () => [tsconfigPaths()],
   },
+  // Playwright starts two Vite instances (synced and serverless). The E2E suite
+  // never needs HMR, and watching the independent server and test packages in
+  // both instances can exhaust the OS file-watch limit before the tests start.
+  server:
+    process.env.E2E === "1"
+      ? {
+          watch: {
+            ignored: ["**/e2e/**", "**/server/**", "**/.git/**"],
+          },
+        }
+      : undefined,
 })

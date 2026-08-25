@@ -33,6 +33,7 @@ export function makeGpx(name: string, seed: number, points = 20): GpxFixture {
 <gpx version="1.1" creator="fogofwalk-e2e" xmlns="http://www.topografix.com/GPX/1/1">
   <trk>
     <name>${name}</name>
+    <type>Walking</type>
     <trkseg>
 ${trkpts}
     </trkseg>

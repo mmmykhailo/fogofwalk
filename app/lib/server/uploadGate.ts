@@ -22,13 +22,45 @@ import {
   UPLOAD_RATE_WINDOW_MS,
 } from "~shared/constants"
 
+declare global {
+  interface Window {
+    /** Test-only pacing override, installed before the app module loads. */
+    __fogofwalkE2eUploadRate?: {
+      budget: number
+      windowMs: number
+    }
+  }
+}
+
+/**
+ * E2E exercises the same pacing path with a tiny window so the regression test
+ * does not spend a real minute waiting for a production rate-limit window.
+ * The E2E page installs this before the app module loads. Production pages do
+ * not, so they retain the shared server limits.
+ */
+function e2eRateLimitValue(value: unknown, fallback: number): number {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
+}
+
+const e2eUploadRate =
+  typeof window === "undefined" ? undefined : window.__fogofwalkE2eUploadRate
+const clientUploadRateWindowMs = e2eRateLimitValue(
+  e2eUploadRate?.windowMs,
+  UPLOAD_RATE_WINDOW_MS
+)
+const clientUploadRateBudget = e2eRateLimitValue(
+  e2eUploadRate?.budget,
+  UPLOAD_RATE_CLIENT_BUDGET
+)
+
 /** Attempts per activity before the upload is left for the next sync. */
 export const MAX_UPLOAD_RETRIES = 3
 
 /**
- * Ceiling on a single pause. The server's own wait can never exceed its window,
- * so anything longer is a proxy or a misconfiguration and should not park the
- * whole sync behind it.
+ * Ceiling on a single server-directed pause. This stays at the server's real
+ * window even in E2E: the test-only local pacer is short, while 429 tests need
+ * their explicit Retry-After delay to remain observable.
  */
 const MAX_UPLOAD_BACKOFF_MS = UPLOAD_RATE_WINDOW_MS
 
@@ -98,10 +130,10 @@ export async function acquireUploadSlot(): Promise<void> {
       continue
     }
 
-    const cutoff = now - UPLOAD_RATE_WINDOW_MS
+    const cutoff = now - clientUploadRateWindowMs
     while (sent.length > 0 && sent[0] <= cutoff) sent.shift()
 
-    if (sent.length < UPLOAD_RATE_CLIENT_BUDGET) {
+    if (sent.length < clientUploadRateBudget) {
       sent.push(now)
       return
     }
@@ -110,7 +142,7 @@ export async function acquireUploadSlot(): Promise<void> {
     // fresh page spends its whole budget in one burst, that first wait is very
     // nearly the entire window. Announcing it is the difference between a
     // countdown and a minute of "Syncing 108 of 195…" with nothing moving.
-    const resumeAt = sent[0] + UPLOAD_RATE_WINDOW_MS
+    const resumeAt = sent[0] + clientUploadRateWindowMs
     announceHold(resumeAt)
     await sleep(resumeAt - now + WAKE_MARGIN_MS)
   }

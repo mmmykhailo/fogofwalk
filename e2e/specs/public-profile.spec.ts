@@ -29,7 +29,7 @@ test.describe("public profile", () => {
     await app.syncNow()
 
     await app.page.goto(PUBLIC_PROFILE_URL(login))
-    await expect(app.page.locator("h2").getByText(`E2E ${login}`)).toBeVisible()
+    await expect(app.page.locator("h1").getByText(login)).toBeVisible()
     await expect(
       app.page.getByText("This user has no public activities yet")
     ).toBeVisible()
@@ -63,8 +63,14 @@ test.describe("public profile", () => {
 
     // Publish should show on the public profile.
     await app.page.goto(PUBLIC_PROFILE_URL(login))
-    await expect(app.page.locator("h2").getByText(`E2E ${login}`)).toBeVisible()
+    await expect(app.page.locator("h1").getByText(login)).toBeVisible()
     await expect(app.page.getByText("t1")).toBeVisible()
-    await expect(app.page.getByText(/^\d+(\.\d+)? km$/)).toBeVisible()
+    await expect(
+      app.page
+        .getByRole("heading", { name: "t1" })
+        .locator("xpath=../../..")
+        .locator("dd")
+        .first()
+    ).toContainText(/\d+(\.\d+)? km/)
   })
 })

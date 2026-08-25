@@ -16,7 +16,8 @@ import { makeGpxSet, type GpxFixture } from "./gpx"
 export class AppPage {
   constructor(
     readonly page: Page,
-    readonly login: string
+    readonly login: string,
+    private readonly approveAccess?: (login: string) => Promise<void>
   ) {}
 
   // ─── Lifecycle ──────────────────────────────────────────────────────────
@@ -96,8 +97,15 @@ export class AppPage {
       await expect(status).toBeHidden()
       return
     }
+    // A remote sync adds activities before the fog worker has rendered their
+    // corridors. Wait with the same budget as the activity assertion below:
+    // a short fixed delay races slower CI workers and reports a false download
+    // failure even though the activities are already in the local library.
+    if (((await status.textContent()) ?? "").includes("Processing")) {
+      await expect(status).not.toContainText("Processing", { timeout: 30_000 })
+    }
     await expect(status).toContainText(
-      new RegExp(`\\b${expected} activities?\\b`),
+      new RegExp(`\\b${expected} activit(?:y|ies)\\b`),
       { timeout: 30_000 }
     )
   }
@@ -140,16 +148,30 @@ export class AppPage {
     return this.drawer.getByRole("button", { name: "Sign in" })
   }
 
-  /** Drives the real OAuth flow; the two GitHub calls are stubbed, not skipped. */
+  /** Creates a local test account through the same sign-in UI as a developer. */
   async signIn() {
     await this.openDrawer()
     await this.signInRow.click()
     const dialog = this.page.getByRole("dialog", { name: "Sign in" })
     await expect(dialog).toBeVisible()
-    await dialog.getByRole("button", { name: /Continue with GitHub/ }).click()
+    await dialog.getByLabel("Local test-user name").fill(this.login)
+    await dialog.getByRole("button", { name: "Create" }).click()
     await this.waitUntilReady()
     await this.openDrawer()
     await expect(this.accountRow).toBeVisible({ timeout: 30_000 })
+
+    if (
+      this.approveAccess &&
+      (await this.accountRow.textContent())?.includes("Not enabled for sync")
+    ) {
+      const account = await this.openAccountDialog()
+      await account.getByRole("button", { name: "Request access" }).click()
+      await expect(account.getByText("Access request pending")).toBeVisible()
+      await this.approveAccess(this.login)
+      await this.reload()
+      await this.openDrawer()
+      await expect(this.accountRow).not.toContainText("Not enabled for sync")
+    }
   }
 
   async openAccountDialog(): Promise<Locator> {
@@ -281,6 +303,9 @@ export class AppPage {
       document.dispatchEvent(new Event("visibilitychange"))
       window.dispatchEvent(new Event("online"))
     })
-    await this.page.waitForTimeout(1500)
+    // Sync is kicked off synchronously by the event handlers. A short pause
+    // gives a regression time to complete its local manifest request without
+    // making each suspension check idle for seconds.
+    await this.page.waitForTimeout(300)
   }
 }

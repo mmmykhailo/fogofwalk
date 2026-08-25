@@ -480,6 +480,7 @@ export function MapView({
   useEffect(() => {
     if (!mapStore.worker) return
 
+    mapStore.isFogWorkerListenerReady = true
     mapStore.worker.onmessage = (e: MessageEvent<WorkerOutboundMessage>) => {
       const msg = e.data
       const map = mapStore.map
@@ -547,6 +548,10 @@ export function MapView({
 
         onProcessingUpdateRef.current?.(msg.processedCount, false)
       }
+    }
+
+    return () => {
+      mapStore.isFogWorkerListenerReady = false
     }
   }, [])
 

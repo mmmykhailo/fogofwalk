@@ -23,7 +23,7 @@ test.describe("deletion semantics", () => {
     await app.syncNow()
 
     // B syncs first, so its cursor is non-zero and tombstones actually apply.
-    const deviceB = await secondDevice()
+    const deviceB = await secondDevice(app.login)
     await deviceB.goto()
     await deviceB.signIn()
     await deviceB.syncNow()
@@ -175,7 +175,7 @@ test.describe("deletion semantics", () => {
     await app.waitForImportToSettle()
     await app.syncNow()
 
-    const deviceB = await secondDevice()
+    const deviceB = await secondDevice(app.login)
     await deviceB.goto()
     await deviceB.signIn()
     await deviceB.syncNow()

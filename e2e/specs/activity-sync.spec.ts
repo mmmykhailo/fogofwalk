@@ -33,7 +33,7 @@ test.describe("activity sync", () => {
     await app.waitForImportToSettle()
     await app.syncNow()
 
-    const deviceB = await secondDevice()
+    const deviceB = await secondDevice(app.login)
     await deviceB.goto()
     await deviceB.signIn()
 
@@ -52,7 +52,7 @@ test.describe("activity sync", () => {
     await app.waitForImportToSettle()
     await app.syncNow()
 
-    const deviceB = await secondDevice()
+    const deviceB = await secondDevice(app.login)
     await deviceB.goto()
     await deviceB.signIn()
     await deviceB.syncNow()

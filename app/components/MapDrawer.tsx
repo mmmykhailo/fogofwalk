@@ -444,7 +444,7 @@ export function MapDrawer({
                   ? `Processing ${processedCount} of ${activityCount}…`
                   : [
                       activityCount > 0 &&
-                        `${activityCount} activity${activityCount !== 1 ? "s" : ""}`,
+                        `${activityCount} activit${activityCount !== 1 ? "ies" : "y"}`,
                       photoCount > 0 &&
                         `${photoCount} photo${photoCount !== 1 ? "s" : ""}`,
                     ]

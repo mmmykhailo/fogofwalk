@@ -416,6 +416,29 @@ export default function Home() {
   // Activity count before the latest upload so fitBounds can identify the new activities.
   const prevActivityCountRef = useRef(0)
 
+  // A fresh OAuth sign-in can start syncing while this loader is still reading
+  // IndexedDB. In that case its first result contains no activities, then the
+  // sync write triggers a revalidation with the downloaded activities. The ref
+  // above is intentionally initialized only once, so reconcile that later
+  // loader result here. If the worker already ran before MapView mounted, its
+  // replies were unobserved; discard that run and replay it once the listener
+  // is installed.
+  useEffect(() => {
+    if (loaderData.restoredActivityCount === 0 || mapStore.fogData !== null) {
+      return
+    }
+
+    if (mapStore.isFogRunInFlight) {
+      if (mapStore.isFogWorkerListenerReady) return
+      startFogRun()
+      postToFogWorker({ type: "RESET" })
+      mapStore.isRestoreReprocess = true
+    }
+
+    needsReprocessRef.current = true
+    setActivityCount(mapStore.activities.length)
+  }, [loaderData.restoredActivityCount])
+
   // Show upload dialog once the map is ready and no activities are loaded.
   // Use mapStore.activities (set synchronously by clientLoader) rather than the
   // activityCount React state, which can read as 0 during the brief window

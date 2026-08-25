@@ -87,8 +87,8 @@ test.describe("server-less build", () => {
     await expect(app.page).toHaveURL(/\/stats$/)
     await expect(app.page.getByTestId("cached-map-canvas")).toHaveCount(1)
     await expect(app.page.locator("[data-map-cache]")).toHaveAttribute(
-      "aria-hidden",
-      "true"
+      "inert",
+      ""
     )
 
     await app.page.getByRole("link", { name: "Back to map" }).click()
