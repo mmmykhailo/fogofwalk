@@ -140,7 +140,7 @@ export function AccountDialog({
         {auth.canSync && !isOffline && (
           <div className="flex items-center gap-3 p-3 ring-1 ring-foreground/10">
             <div className="min-w-0 flex-1">
-              <p className="text-xs font-medium">Track sync</p>
+              <p className="text-xs font-medium">Activity sync</p>
               {/*
                 Wraps rather than truncating: the throttle notice is a whole
                 sentence with a countdown at the end, and an ellipsis would cut

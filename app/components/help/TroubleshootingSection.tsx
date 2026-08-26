@@ -32,14 +32,14 @@ export const TROUBLESHOOTING_ITEMS: {
         so importing the same activity twice — even renamed, even exported again
         from a different app — is recognised as a duplicate and skipped. That is
         what keeps your totals honest when you import a folder twice. If you
-        actually need to replace a track (to pick up laps, for instance), delete
-        it first, then import the file.
+        actually need to replace an activity (to pick up laps, for instance),
+        delete it first, then import the file.
       </>
     ),
   },
   {
-    id: "track-incomplete",
-    q: "Track looks wrong or incomplete",
+    id: "activity-incomplete",
+    q: "Activity looks wrong or incomplete",
     a: (
       <>
         Some apps trim GPS data when exporting. Try exporting as a different
@@ -67,8 +67,8 @@ export const TROUBLESHOOTING_ITEMS: {
     q: "Some photos vanished after a reload",
     a: (
       <>
-        Photos are much larger than tracks and your browser caps how much a site
-        may store. When that cap is hit the remaining photos in a batch are
+        Photos are much larger than activities and your browser caps how much a
+        site may store. When that cap is hit the remaining photos in a batch are
         still shown for the rest of the session but are not saved, so they are
         gone after a reload. Importing fewer photos at a time, or clearing
         space, helps.

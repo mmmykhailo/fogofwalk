@@ -35,12 +35,13 @@ CREATE TABLE IF NOT EXISTS sessions (
 
 CREATE INDEX IF NOT EXISTS sessions_user ON sessions(user_id);
 
-CREATE TABLE IF NOT EXISTS tracks (
+CREATE TABLE IF NOT EXISTS activities (
   user_id TEXT NOT NULL,
   content_hash TEXT NOT NULL,
   name TEXT NOT NULL,
   is_public INTEGER NOT NULL DEFAULT 0,
   format TEXT NOT NULL,
+  activity_type TEXT,
   started_at_ms INTEGER,
   distance_km REAL NOT NULL,
   point_count INTEGER NOT NULL,
@@ -49,7 +50,7 @@ CREATE TABLE IF NOT EXISTS tracks (
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL,
   -- Denormalized from `stats` at upload time so the public profile endpoint
-  -- can list tracks without decompressing/parsing every blob.
+  -- can list activities without decompressing/parsing every blob.
   duration_ms REAL,
   moving_time_ms REAL,
   elevation_gain_m REAL NOT NULL DEFAULT 0,
@@ -59,11 +60,11 @@ CREATE TABLE IF NOT EXISTS tracks (
 
 -- content_hash is part of the index so the manifest cursor can page on the
 -- composite (updated_at, content_hash) key without a filesort.
-CREATE INDEX IF NOT EXISTS tracks_sync ON tracks(user_id, updated_at, content_hash);
+CREATE INDEX IF NOT EXISTS activities_sync ON activities(user_id, updated_at, content_hash);
 
-CREATE INDEX IF NOT EXISTS tracks_public_user ON tracks(user_id, is_public, updated_at);
+CREATE INDEX IF NOT EXISTS activities_public_user ON activities(user_id, is_public, updated_at);
 
-CREATE TABLE IF NOT EXISTS track_tombstones (
+CREATE TABLE IF NOT EXISTS activity_tombstones (
   user_id TEXT NOT NULL,
   content_hash TEXT NOT NULL,
   deleted_at INTEGER NOT NULL,
@@ -71,7 +72,7 @@ CREATE TABLE IF NOT EXISTS track_tombstones (
 );
 
 CREATE INDEX IF NOT EXISTS tombstones_sync
-  ON track_tombstones(user_id, deleted_at, content_hash);
+  ON activity_tombstones(user_id, deleted_at, content_hash);
 
 CREATE TABLE IF NOT EXISTS access_requests (
   id TEXT PRIMARY KEY,

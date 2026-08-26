@@ -7,8 +7,14 @@ import type {
   MeResponse,
 } from "~shared/api"
 
-import { computeContentHash } from "../src/tracks/contentHash"
-import { authHeaders, makeTrack, putTrack, setup, signIn } from "./helpers"
+import { computeContentHash } from "../src/activities/contentHash"
+import {
+  authHeaders,
+  makeActivity,
+  putActivity,
+  setup,
+  signIn,
+} from "./helpers"
 
 describe("GET /api/me", () => {
   test("reports capabilities for an allowed user", async () => {
@@ -49,13 +55,13 @@ describe("GET /api/me", () => {
 })
 
 describe("GET /api/account/export", () => {
-  test("returns all user data including account, identities, sessions, and tracks", async () => {
+  test("returns all user data including account, identities, sessions, and activities", async () => {
     const { store, app } = setup()
     const { token, user } = await signIn(store)
 
-    // Add a track
-    const track = makeTrack()
-    await putTrack(app, token, track)
+    // Add an activity
+    const activity = makeActivity()
+    await putActivity(app, token, activity)
 
     const response = await app.request("/api/account/export", {
       headers: authHeaders(token),
@@ -89,38 +95,42 @@ describe("GET /api/account/export", () => {
     expect(session.expiresAt).toBeDefined()
     expect(session.lastUsedAt).toBeDefined()
 
-    // Check tracks
-    expect(body.tracks).toHaveLength(1)
-    const [exportedTrack] = body.tracks
-    if (!exportedTrack) throw new Error("export omitted the user's track")
-    expect(exportedTrack.name).toBe("Morning run")
-    expect(exportedTrack.format).toBe("gpx")
-    expect(exportedTrack.coordinates).toHaveLength(3)
-    expect(exportedTrack.stats.distanceKm).toBe(4.2)
+    // Check activities
+    expect(body.activities).toHaveLength(1)
+    const [exportedActivity] = body.activities
+    if (!exportedActivity) throw new Error("export omitted the user's activity")
+    expect(exportedActivity.name).toBe("Morning run")
+    expect(exportedActivity.format).toBe("gpx")
+    expect(exportedActivity.coordinates).toHaveLength(3)
+    expect(exportedActivity.stats.distanceKm).toBe(4.2)
   })
 
-  test("includes multiple tracks when uploaded", async () => {
+  test("includes multiple activities when uploaded", async () => {
     const { store, app } = setup()
     const { token } = await signIn(store)
 
-    await putTrack(app, token, makeTrack({ name: "Run 1" }))
-    await putTrack(
+    await putActivity(app, token, makeActivity({ name: "Run 1" }))
+    await putActivity(
       app,
       token,
-      makeTrack({ name: "Run 2", startedAtMs: 1_700_000_001_000 })
+      makeActivity({ name: "Run 2", startedAtMs: 1_700_000_001_000 })
     )
-    await putTrack(
+    await putActivity(
       app,
       token,
-      makeTrack({ name: "Run 3", startedAtMs: 1_700_000_002_000 })
+      makeActivity({ name: "Run 3", startedAtMs: 1_700_000_002_000 })
     )
 
     const response = await app.request("/api/account/export", {
       headers: authHeaders(token),
     })
     const body = (await response.json()) as DataExportResponse
-    expect(body.tracks).toHaveLength(3)
-    expect(body.tracks.map((t) => t.name)).toEqual(["Run 1", "Run 2", "Run 3"])
+    expect(body.activities).toHaveLength(3)
+    expect(body.activities.map((t) => t.name)).toEqual([
+      "Run 1",
+      "Run 2",
+      "Run 3",
+    ])
   })
 
   test("works for a pending user without sync", async () => {
@@ -191,11 +201,11 @@ describe("GET /api/account/export", () => {
     const user1 = await signIn(store, { login: "user1", providerUserId: "1" })
     const user2 = await signIn(store, { login: "user2", providerUserId: "2" })
 
-    // User1 adds a track
-    await putTrack(app, user1.token, makeTrack({ name: "User1 Run" }))
+    // User1 adds an activity
+    await putActivity(app, user1.token, makeActivity({ name: "User1 Run" }))
 
-    // User2 adds a different track
-    await putTrack(app, user2.token, makeTrack({ name: "User2 Run" }))
+    // User2 adds a different activity
+    await putActivity(app, user2.token, makeActivity({ name: "User2 Run" }))
 
     // Each user only sees their own data
     const export1 = (await (
@@ -211,12 +221,12 @@ describe("GET /api/account/export", () => {
     ).json()) as DataExportResponse
 
     expect(export1.account.displayName).toBe("user1")
-    expect(export1.tracks).toHaveLength(1)
-    expect(export1.tracks[0]?.name).toBe("User1 Run")
+    expect(export1.activities).toHaveLength(1)
+    expect(export1.activities[0]?.name).toBe("User1 Run")
 
     expect(export2.account.displayName).toBe("user2")
-    expect(export2.tracks).toHaveLength(1)
-    expect(export2.tracks[0]?.name).toBe("User2 Run")
+    expect(export2.activities).toHaveLength(1)
+    expect(export2.activities[0]?.name).toBe("User2 Run")
   })
 
   test("returns proper content headers for download", async () => {
@@ -237,7 +247,7 @@ describe("GET /api/account/export", () => {
 })
 
 describe("DELETE /api/account", () => {
-  test("erases the user, their session and all of their tracks", async () => {
+  test("erases the user, their session and all of their activities", async () => {
     const { store, app } = setup()
     const { token, user } = await signIn(store)
     const other = await signIn(store, {
@@ -245,15 +255,15 @@ describe("DELETE /api/account", () => {
       providerUserId: "b",
     })
 
-    const track = makeTrack()
-    const hash = await computeContentHash(track)
-    await putTrack(app, token, track)
-    await putTrack(app, other.token, makeTrack({ name: "Theirs" }))
-    await app.request(`/api/tracks/${hash}`, {
+    const activity = makeActivity()
+    const hash = await computeContentHash(activity)
+    await putActivity(app, token, activity)
+    await putActivity(app, other.token, makeActivity({ name: "Theirs" }))
+    await app.request(`/api/activities/${hash}`, {
       method: "DELETE",
       headers: authHeaders(token),
     })
-    await putTrack(app, token, makeTrack({ name: "Second" }))
+    await putActivity(app, token, makeActivity({ name: "Second" }))
 
     const deleted = await app.request("/api/account", {
       method: "DELETE",
@@ -266,7 +276,7 @@ describe("DELETE /api/account", () => {
     expect(await store.findUserByIdentity("github", "allowed-user")).toBeNull()
     expect(await store.findPrimaryIdentity(user.id)).toBeNull()
     const manifest = await store.listManifest(user.id, 0)
-    expect(manifest.tracks).toEqual([])
+    expect(manifest.activities).toEqual([])
     expect(manifest.deletions).toEqual([])
 
     // The token is dead.
@@ -276,11 +286,11 @@ describe("DELETE /api/account", () => {
 
     // The other user is untouched.
     const theirs = (await (
-      await app.request("/api/tracks/manifest", {
+      await app.request("/api/activities/manifest", {
         headers: authHeaders(other.token),
       })
     ).json()) as ManifestPage
-    expect(theirs.tracks).toHaveLength(1)
+    expect(theirs.activities).toHaveLength(1)
   })
 
   test("is 401 without a token", async () => {

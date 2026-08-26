@@ -12,7 +12,7 @@ import { describe, expect, test, beforeEach } from "bun:test"
 
 import { UPLOAD_RATE_MAX_PER_WINDOW } from "~shared/constants"
 
-import { checkRateLimit, resetRateLimits } from "../src/tracks/rateLimit"
+import { checkRateLimit, resetRateLimits } from "../src/activities/rateLimit"
 
 const WINDOW = 1000
 const MAX = 3

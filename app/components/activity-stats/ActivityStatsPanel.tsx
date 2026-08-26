@@ -7,7 +7,11 @@ import {
   CheckIcon,
 } from "@phosphor-icons/react"
 import { useCopyToClipboard } from "~/lib/useCopyToClipboard"
-import type { ParsedTrack, TrackLap, TrackStats } from "~/types/tracks"
+import type {
+  ParsedActivity,
+  ActivityLap,
+  ActivityStats,
+} from "~/types/activities"
 import {
   Card,
   CardHeader,
@@ -26,26 +30,26 @@ import {
 import { useDraggable } from "~/lib/useDraggable"
 import { useIsMobile } from "~/lib/useIsMobile"
 import { computeCompositeStats } from "~/lib/shareCard"
-import { DeleteTrackDialog } from "./DeleteTrackDialog"
-import { MultiTrackStats } from "./MultiTrackStats"
-import { SingleTrackStats } from "./SingleTrackStats"
+import { DeleteActivityDialog } from "./DeleteActivityDialog"
+import { MultiActivityStats } from "./MultiActivityStats"
+import { SingleActivityStats } from "./SingleActivityStats"
 
-interface TrackStatsPanelProps {
-  tracks: ParsedTrack[]
+interface ActivityStatsPanelProps {
+  activities: ParsedActivity[]
   onClose: () => void
-  onRemoveTrack?: (id: string) => void
+  onRemoveActivity?: (id: string) => void
   onShare?: () => void
   /** Receives whether the server copy should go too. */
   onDelete?: (alsoOnServer: boolean) => void
-  /** The selected lap, already validated by the parent. Null = whole track. */
-  activeLap?: TrackLap | null
+  /** The selected lap, already validated by the parent. Null = whole activity. */
+  activeLap?: ActivityLap | null
   onLapSelect?: (lapNumber: number | null) => void
-  /** Called when the user changes the single track's public/private setting. */
+  /** Called when the user changes the single activity's public/private setting. */
   onVisibilityChange?: (isPublic: boolean) => void
   isVisibilityLoading?: boolean
 }
 
-const EMPTY_STATS: TrackStats = {
+const EMPTY_STATS: ActivityStats = {
   distanceKm: 0,
   uniqueDistanceKm: 0,
   elevationGainM: 0,
@@ -62,24 +66,24 @@ const EMPTY_STATS: TrackStats = {
 
 /**
  * Chrome around the stats: a vaul Drawer on mobile, a draggable Card on
- * desktop. The numbers themselves live in SingleTrackStats / MultiTrackStats.
+ * desktop. The numbers themselves live in SingleActivityStats / MultiActivityStats.
  */
-export function TrackStatsPanel({
-  tracks,
+export function ActivityStatsPanel({
+  activities,
   onClose,
-  onRemoveTrack,
+  onRemoveActivity,
   onShare,
   onDelete,
   activeLap = null,
   onLapSelect,
   onVisibilityChange,
   isVisibilityLoading,
-}: TrackStatsPanelProps) {
-  const isMulti = tracks.length > 1
-  const track = tracks[0]
-  // stats may be absent on tracks loaded before this field was added (HMR / future compat)
-  const stats = activeLap ? activeLap.stats : (track?.stats ?? EMPTY_STATS)
-  const composite = isMulti ? computeCompositeStats(tracks) : null
+}: ActivityStatsPanelProps) {
+  const isMulti = activities.length > 1
+  const activity = activities[0]
+  // stats may be absent on activities loaded before this field was added (HMR / future compat)
+  const stats = activeLap ? activeLap.stats : (activity?.stats ?? EMPTY_STATS)
+  const composite = isMulti ? computeCompositeStats(activities) : null
 
   const [isDeleteOpen, setIsDeleteOpen] = useState(false)
   const [isNameCopied, copyName] = useCopyToClipboard()
@@ -112,8 +116,8 @@ export function TrackStatsPanel({
         <Button
           variant="ghost"
           size="icon-sm"
-          onClick={() => copyName(track.name)}
-          aria-label="Copy track name"
+          onClick={() => copyName(activity.name)}
+          aria-label="Copy activity name"
         >
           {isNameCopied ? (
             <CheckIcon weight="bold" />
@@ -137,7 +141,7 @@ export function TrackStatsPanel({
           variant="ghost"
           size="icon-sm"
           onClick={() => setIsDeleteOpen(true)}
-          aria-label="Delete track"
+          aria-label="Delete activity"
         >
           <TrashIcon weight="duotone" />
         </Button>
@@ -156,18 +160,18 @@ export function TrackStatsPanel({
 
   const statsContent =
     isMulti && composite ? (
-      <MultiTrackStats
-        tracks={tracks}
+      <MultiActivityStats
+        activities={activities}
         composite={composite}
-        onRemoveTrack={onRemoveTrack}
+        onRemoveActivity={onRemoveActivity}
       />
     ) : (
-      <SingleTrackStats
+      <SingleActivityStats
         stats={stats}
-        laps={track?.laps}
+        laps={activity?.laps}
         activeLap={activeLap}
         onLapSelect={onLapSelect}
-        isPublic={track?.isPublic}
+        isPublic={activity?.isPublic}
         onVisibilityChange={onVisibilityChange}
         isVisibilityLoading={isVisibilityLoading}
       />
@@ -175,13 +179,13 @@ export function TrackStatsPanel({
 
   // No lap indicator here — the LapSelector trigger right below already reads
   // "Lap 3", so repeating it in the title was redundant.
-  const panelTitle = isMulti ? `${tracks.length} activities` : track.name
+  const panelTitle = isMulti ? `${activities.length} activities` : activity.name
 
   const deleteDialog = onDelete && !isMulti && (
-    <DeleteTrackDialog
+    <DeleteActivityDialog
       open={isDeleteOpen}
       onOpenChange={setIsDeleteOpen}
-      trackName={track.name}
+      activityName={activity.name}
       onConfirm={onDelete}
     />
   )
@@ -198,7 +202,7 @@ export function TrackStatsPanel({
         >
           <DrawerContent>
             <DrawerDescription className="sr-only">
-              Track statistics
+              Activity statistics
             </DrawerDescription>
             <DrawerHeader>
               <div className="flex items-center justify-between gap-2">

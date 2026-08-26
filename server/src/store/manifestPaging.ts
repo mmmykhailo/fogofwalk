@@ -5,7 +5,7 @@
  * ## The problem
  *
  * `ManifestPage.cursor` is a plain number on the wire, so the cursor can only
- * be a timestamp: `updated_at` for tracks, `deleted_at` for tombstones. Rows
+ * be a timestamp: `updated_at` for activities, `deleted_at` for tombstones. Rows
  * that share a millisecond therefore cannot be separated by the cursor alone,
  * and the two classic failure modes are:
  *
@@ -34,7 +34,7 @@
  *    is picked up by the next sync instead of being lost. The cost is that the
  *    final millisecond group is re-sent once per sync.
  *
- * A page carries one cursor for two streams (tracks and tombstones), so the
+ * A page carries one cursor for two streams (activities and tombstones), so the
  * combined cursor is the **minimum** of the boundaries of the streams that
  * still have more rows — a stream that is fully drained imposes no constraint,
  * because nothing of its is left unserved. When both are drained the cursor is

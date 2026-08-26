@@ -1,5 +1,5 @@
 import exifr from "exifr"
-import type { ParsedTrack } from "~/types/tracks"
+import type { ParsedActivity } from "~/types/activities"
 import type { PhotoEntry } from "~/types/photos"
 
 const MATCH_TOLERANCE_MS = 5 * 60 * 1000
@@ -36,15 +36,15 @@ export async function readExifTimestamp(file: File): Promise<number | null> {
   }
 }
 
-export function matchPhotoToTrack(
+export function matchPhotoToActivity(
   photoMs: number,
-  tracks: ParsedTrack[]
+  activities: ParsedActivity[]
 ): { lng: number; lat: number } | null {
   let bestDt = Infinity
   let bestCoord: [number, number] | null = null
 
-  for (const track of tracks) {
-    const ts = track.pointTimestamps
+  for (const activity of activities) {
+    const ts = activity.pointTimestamps
     if (!ts) continue
     for (let i = 0; i < ts.length; i++) {
       const t = ts[i]
@@ -52,7 +52,7 @@ export function matchPhotoToTrack(
       const dt = Math.abs(t - photoMs)
       if (dt < bestDt && dt <= MATCH_TOLERANCE_MS) {
         bestDt = dt
-        bestCoord = track.coordinates[i]
+        bestCoord = activity.coordinates[i]
       }
     }
   }
@@ -62,7 +62,7 @@ export function matchPhotoToTrack(
 
 export async function processPhotoFiles(
   files: File[],
-  tracks: ParsedTrack[],
+  activities: ParsedActivity[],
   existingPhotos: PhotoEntry[]
 ): Promise<PhotoEntry[]> {
   const newEntries: PhotoEntry[] = []
@@ -71,7 +71,7 @@ export async function processPhotoFiles(
     const takenAtMs = await readExifTimestamp(file)
     if (takenAtMs == null) continue
 
-    const match = matchPhotoToTrack(takenAtMs, tracks)
+    const match = matchPhotoToActivity(takenAtMs, activities)
     if (!match) continue
 
     // Skip if this exact file was already added (same name + timestamp)

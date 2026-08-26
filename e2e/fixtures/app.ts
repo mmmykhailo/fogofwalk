@@ -1,11 +1,18 @@
 import {
   test as base,
   expect,
+  type APIRequestContext,
   type BrowserContext,
   type Page,
 } from "@playwright/test"
 
-import { ADMIN_LOGIN_POOL, API_URL, LOGINS_PER_WORKER, WEB_URL } from "./ports"
+import {
+  ADMIN_LOGIN,
+  API_URL,
+  LOCAL_LOGIN_POOL,
+  LOGINS_PER_WORKER,
+  WEB_URL,
+} from "./ports"
 import { AppPage } from "./app-page"
 
 export { expect }
@@ -15,14 +22,14 @@ interface Fixtures {
   login: string
   /** The page-object wrapper around the app under test. */
   app: AppPage
-  /** Opens an independent browser context signed in as the *same* user. */
-  secondDevice: (login?: string) => Promise<AppPage>
+  /** Opens an independent browser context signed in as the specified user. */
+  secondDevice: (login: string) => Promise<AppPage>
   /** Authenticated API client, for asserting state the UI cannot show. */
   serverState: (page: Page) => Promise<ServerState>
 }
 
 export interface ServerState {
-  tracks: { contentHash: string; name: string }[]
+  activities: { contentHash: string; name: string }[]
   tombstones: string[]
 }
 
@@ -67,68 +74,59 @@ async function stubMapTiles(context: BrowserContext) {
   }
 }
 
-/**
- * Intercepts the browser half of the OAuth dance.
- *
- * The server half (token exchange + user lookup) is redirected by the
- * `stub-github.ts` preload; this is the half Playwright can see. The `code` we
- * hand back carries the identity, and `state` is echoed from the real request
- * so the server's signed state cookie still validates.
- */
-/**
- * Replaces the provider leg of the OAuth dance.
- *
- * It intercepts `/api/auth/github/start` rather than the github.com navigation,
- * because **Playwright cannot route a request reached through a redirect** —
- * only the request that begins the chain. Our server answers `/start` with a
- * 302 to github.com, so that hop is untouchable and the browser sails through
- * to the real site.
- *
- * So: let the real `/start` run via `route.fetch` (it mints the state and sets
- * the signed state cookie), then hand the browser the same response with the
- * `Location` swapped for the callback plus a code the fake IdP understands. The
- * cookie rides along on the passed-through response, so the callback's state
- * validation is exercised for real rather than bypassed.
- */
-async function stubOAuthRedirect(context: BrowserContext, login: string) {
-  await context.route(/\/api\/auth\/[^/]+\/start/, async (route) => {
-    const response = await route.fetch({ maxRedirects: 0 })
-    const location = response.headers()["location"]
-    if (!location) {
-      // Not a redirect — an error the spec should see verbatim (bad origin, etc).
-      return route.fulfill({ response })
-    }
-
-    const target = new URL(`${API_URL}/api/auth/github/callback`)
-    target.searchParams.set("code", `user:${login}`)
-    target.searchParams.set(
-      "state",
-      new URL(location).searchParams.get("state") ?? ""
-    )
-
-    return route.fulfill({
-      response,
-      status: 302,
-      headers: { ...response.headers(), location: target.toString() },
-    })
-  })
-
-  // Nothing in a test should ever reach the real site.
-  await context.route(
-    /^https:\/\/(github|api\.github|github\.githubassets)\.com\//,
-    (route) => route.abort()
-  )
-}
-
 // Per worker process; combined with the worker index below.
 let loginCursor = 0
+
+async function localAdminToken(request: APIRequestContext): Promise<string> {
+  const response = await request.get(`${API_URL}/api/auth/fake/start`, {
+    params: { redirect: WEB_URL, name: ADMIN_LOGIN },
+    maxRedirects: 0,
+  })
+  const location = response.headers()["location"]
+  if (!location) throw new Error("local admin sign-in did not redirect")
+  const handoff = new URL(location).searchParams.get("code")
+  if (!handoff) throw new Error("local admin sign-in did not return a handoff")
+
+  const exchange = await request.post(`${API_URL}/api/auth/exchange`, {
+    data: { code: handoff },
+  })
+  const body = (await exchange.json()) as { token?: string }
+  if (!body.token) throw new Error("local admin sign-in did not return a token")
+  return body.token
+}
+
+async function approveLocalAccess(
+  request: APIRequestContext,
+  login: string
+): Promise<void> {
+  const token = await localAdminToken(request)
+  const headers = { Authorization: `Bearer ${token}` }
+  const bootstrap = await request.get(`${API_URL}/api/admin/bootstrap`, {
+    headers,
+  })
+  const body = (await bootstrap.json()) as {
+    requests: { id: string; identity: string | null; status: string }[]
+  }
+  const accessRequest = body.requests.find(
+    (item) => item.identity === `fake:${login}` && item.status === "pending"
+  )
+  if (!accessRequest) throw new Error(`no pending access request for ${login}`)
+
+  const approval = await request.patch(
+    `${API_URL}/api/admin/requests/${accessRequest.id}`,
+    { headers, data: { decision: "approve" } }
+  )
+  if (!approval.ok()) {
+    throw new Error(`failed to approve ${login}: ${approval.status()}`)
+  }
+}
 
 export const test = base.extend<Fixtures>({
   login: async ({}, use, testInfo) => {
     // Each worker owns a disjoint slice of the pool. Multiplying the cursor by
     // the worker index (the previous attempt) overlaps — worker 0 takes 0,1,2…
     // and worker 1 takes 0,2,4… — so two tests shared a user and each other's
-    // tracks, which surfaced as unexplained duplicate-import dialogs.
+    // activities, which surfaced as unexplained duplicate-import dialogs.
     const offset = loginCursor++
     if (offset >= LOGINS_PER_WORKER) {
       throw new Error(
@@ -136,24 +134,24 @@ export const test = base.extend<Fixtures>({
       )
     }
     await use(
-      ADMIN_LOGIN_POOL[testInfo.workerIndex * LOGINS_PER_WORKER + offset]
+      LOCAL_LOGIN_POOL[testInfo.workerIndex * LOGINS_PER_WORKER + offset]
     )
   },
 
-  app: async ({ page, context, login }, use) => {
+  app: async ({ page, context, login, request }, use) => {
     await stubMapTiles(context)
-    await stubOAuthRedirect(context, login)
-    await use(new AppPage(page, login))
+    await use(
+      new AppPage(page, login, (name) => approveLocalAccess(request, name))
+    )
   },
 
-  secondDevice: async ({ browser, login }, use) => {
+  secondDevice: async ({ browser }, use) => {
     const opened: BrowserContext[] = []
-    await use(async (asLogin = login) => {
+    await use(async (login) => {
       const context = await browser.newContext({ baseURL: WEB_URL })
       opened.push(context)
       await stubMapTiles(context)
-      await stubOAuthRedirect(context, asLogin)
-      return new AppPage(await context.newPage(), asLogin)
+      return new AppPage(await context.newPage(), login)
     })
     for (const context of opened) await context.close()
   },
@@ -161,15 +159,18 @@ export const test = base.extend<Fixtures>({
   serverState: async ({ request }, use) => {
     await use(async (page: Page) => {
       const token = await readSessionToken(page)
-      const res = await request.get(`${API_URL}/api/tracks/manifest?since=0`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
+      const res = await request.get(
+        `${API_URL}/api/activities/manifest?since=0`,
+        {
+          headers: { Authorization: `Bearer ${token}` },
+        }
+      )
       const body = (await res.json()) as {
-        tracks: { contentHash: string; name: string }[]
+        activities: { contentHash: string; name: string }[]
         deletions: { contentHash: string }[]
       }
       return {
-        tracks: body.tracks,
+        activities: body.activities,
         tombstones: body.deletions.map((d) => d.contentHash),
       }
     })

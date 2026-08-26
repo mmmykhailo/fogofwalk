@@ -5,11 +5,9 @@ import { join } from "node:path"
 import { fileURLToPath } from "node:url"
 
 import {
-  ADMIN_LOGIN_POOL,
+  ADMIN_LOGIN,
   API_PORT,
   API_URL,
-  IDP_PORT,
-  IDP_URL,
   WEB_URL,
   WEB_URL_SERVERLESS,
 } from "./fixtures/ports"
@@ -18,53 +16,38 @@ const here = fileURLToPath(new URL(".", import.meta.url))
 const repoRoot = join(here, "..")
 
 /**
- * Boots the fake IdP and the real sync server before any spec runs.
+ * Boots the real sync server before any spec runs.
  *
  * A single shared server rather than one per worker: the client dev server
  * bakes `VITE_API_URL` in at startup, so every worker has to point at the same
  * API. Isolation comes from each test claiming its own login out of
- * `ADMIN_LOGIN_POOL` — every store method is scoped by user id, so two tests
- * cannot see each other's data. The test identities are administrators so
- * existing sync specs can exercise their own isolated libraries.
+ * a unique local account. Each account requests access through the app and a
+ * dedicated local administrator approves it through the real admin route.
  */
 export default async function globalSetup() {
   const dataDir = mkdtempSync(join(tmpdir(), "fogofwalk-e2e-"))
 
-  const idp = spawn("bun", [join(here, "fixtures", "fake-idp.ts")], {
-    cwd: repoRoot,
+  const server = spawn("bun", ["src/index.ts"], {
+    cwd: join(repoRoot, "server"),
     stdio: "inherit",
-    env: { ...process.env, IDP_PORT: String(IDP_PORT) },
+    env: {
+      ...process.env,
+      PORT: String(API_PORT),
+      DATA_DIR: dataDir,
+      STORE_DRIVER: "sqlite-fs",
+      PUBLIC_URL: API_URL,
+      // Both client projects must be allowed to sign in and to be redirected to.
+      ALLOWED_ORIGINS: `${WEB_URL},${WEB_URL_SERVERLESS}`,
+      ADMIN_LOGINS: `fake:${ADMIN_LOGIN}`,
+      DEV_FAKE_AUTH: "true",
+      SESSION_SECRET: "e2e-session-secret-that-is-long-enough-0123456789",
+    },
   })
 
-  const server = spawn(
-    "bun",
-    ["--preload", join(here, "fixtures", "stub-github.ts"), "src/index.ts"],
-    {
-      cwd: join(repoRoot, "server"),
-      stdio: "inherit",
-      env: {
-        ...process.env,
-        E2E_IDP_URL: IDP_URL,
-        PORT: String(API_PORT),
-        DATA_DIR: dataDir,
-        STORE_DRIVER: "sqlite-fs",
-        PUBLIC_URL: API_URL,
-        // Both client projects must be allowed to sign in and to be redirected to.
-        ALLOWED_ORIGINS: `${WEB_URL},${WEB_URL_SERVERLESS}`,
-        ADMIN_LOGINS: ADMIN_LOGIN_POOL.map((l) => `github:${l}`).join(","),
-        SESSION_SECRET: "e2e-session-secret-that-is-long-enough-0123456789",
-        GITHUB_CLIENT_ID: "e2e-client-id",
-        GITHUB_CLIENT_SECRET: "e2e-client-secret",
-      },
-    }
-  )
-
-  await waitForHealth(`${IDP_URL}/health`, "fake IdP")
   await waitForHealth(`${API_URL}/health`, "sync server")
 
   return () => {
     server.kill()
-    idp.kill()
     rmSync(dataDir, { recursive: true, force: true })
   }
 }

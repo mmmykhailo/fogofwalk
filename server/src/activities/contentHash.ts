@@ -1,38 +1,38 @@
 /**
- * Server-side recomputation of a track's content hash.
+ * Server-side recomputation of an activity's content hash.
  *
  * The client sends the hash in the URL, but the server must never take its
  * word for it: the hash is the primary key, so a client that could declare an
- * arbitrary one could overwrite another device's track with different
+ * arbitrary one could overwrite another device's activity with different
  * geometry. Recomputing from the payload and rejecting mismatches is what
  * makes the key trustworthy.
  *
- * The canonical form must stay byte-identical to `app/lib/trackHash.ts`.
+ * The canonical form must stay byte-identical to `app/lib/activityHash.ts`.
  */
 
 import { HASH_COORD_PRECISION } from "~shared/constants"
-import type { TrackCoords, TrackFormat } from "~shared/tracks"
+import type { ActivityCoords, ActivityFormat } from "~shared/activities"
 
 export interface HashInput {
-  format: TrackFormat
+  format: ActivityFormat
   startedAtMs: number | null
-  coordinates: TrackCoords
+  coordinates: ActivityCoords
 }
 
-export function canonicalHashString(track: HashInput): string {
-  const points = track.coordinates
+export function canonicalHashString(activity: HashInput): string {
+  const points = activity.coordinates
     .map(
       ([lng, lat]) =>
         `${lng.toFixed(HASH_COORD_PRECISION)},${lat.toFixed(HASH_COORD_PRECISION)}`
     )
     .join(";")
-  return `${track.format}|${track.startedAtMs ?? ""}|${track.coordinates.length}|${points}`
+  return `${activity.format}|${activity.startedAtMs ?? ""}|${activity.coordinates.length}|${points}`
 }
 
-export async function computeContentHash(track: HashInput): Promise<string> {
+export async function computeContentHash(activity: HashInput): Promise<string> {
   const digest = await crypto.subtle.digest(
     "SHA-256",
-    new TextEncoder().encode(canonicalHashString(track))
+    new TextEncoder().encode(canonicalHashString(activity))
   )
   return Array.from(new Uint8Array(digest))
     .map((byte) => byte.toString(16).padStart(2, "0"))

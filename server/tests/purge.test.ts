@@ -2,14 +2,20 @@ import { beforeEach, describe, expect, test } from "bun:test"
 
 import type { ManifestPage } from "~shared/api"
 
-import { resetRateLimits } from "../src/tracks/rateLimit"
-import { computeContentHash } from "../src/tracks/contentHash"
-import { authHeaders, makeTrack, putTrack, setup, signIn } from "./helpers"
+import { resetRateLimits } from "../src/activities/rateLimit"
+import { computeContentHash } from "../src/activities/contentHash"
+import {
+  authHeaders,
+  makeActivity,
+  putActivity,
+  setup,
+  signIn,
+} from "./helpers"
 
-import type { TrackCoords } from "~shared/tracks"
+import type { ActivityCoords } from "~shared/activities"
 
-/** Distinct geometry per track, so each gets its own content hash. */
-const coords = (n: number): TrackCoords => [
+/** Distinct geometry per activity, so each gets its own content hash. */
+const coords = (n: number): ActivityCoords => [
   [13.4 + n, 52.5],
   [13.401 + n, 52.501],
 ]
@@ -22,52 +28,52 @@ async function manifest(
   app: ReturnType<typeof setup>["app"],
   token: string
 ): Promise<ManifestPage> {
-  const res = await app.request("/api/tracks/manifest?since=0", {
+  const res = await app.request("/api/activities/manifest?since=0", {
     headers: authHeaders(token),
   })
   return (await res.json()) as ManifestPage
 }
 
-describe("DELETE /api/tracks — server-only purge", () => {
-  test("removes every track and reports the count", async () => {
+describe("DELETE /api/activities — server-only purge", () => {
+  test("removes every activity and reports the count", async () => {
     const { store, app } = setup()
     const { token } = await signIn(store, { login: "allowed-user" })
 
-    await putTrack(
+    await putActivity(
       app,
       token,
-      makeTrack({ name: "a.gpx", coordinates: coords(1) })
+      makeActivity({ name: "a.gpx", coordinates: coords(1) })
     )
-    await putTrack(
+    await putActivity(
       app,
       token,
-      makeTrack({ name: "b.gpx", coordinates: coords(2) })
+      makeActivity({ name: "b.gpx", coordinates: coords(2) })
     )
-    expect((await manifest(app, token)).tracks).toHaveLength(2)
+    expect((await manifest(app, token)).activities).toHaveLength(2)
 
-    const purge = await app.request("/api/tracks", {
+    const purge = await app.request("/api/activities", {
       method: "DELETE",
       headers: authHeaders(token),
     })
     expect(purge.status).toBe(200)
     expect(await purge.json()).toEqual({ deleted: 2 })
-    expect((await manifest(app, token)).tracks).toHaveLength(0)
+    expect((await manifest(app, token)).activities).toHaveLength(0)
   })
 
   /**
    * The property that makes this "server only". A tombstone would tell every
    * other device to delete its local copy, which is the opposite of the intent.
    */
-  test("writes no tombstones, so other devices keep their tracks", async () => {
+  test("writes no tombstones, so other devices keep their activities", async () => {
     const { store, app } = setup()
     const { token } = await signIn(store, { login: "allowed-user" })
-    await putTrack(
+    await putActivity(
       app,
       token,
-      makeTrack({ name: "a.gpx", coordinates: coords(1) })
+      makeActivity({ name: "a.gpx", coordinates: coords(1) })
     )
 
-    await app.request("/api/tracks", {
+    await app.request("/api/activities", {
       method: "DELETE",
       headers: authHeaders(token),
     })
@@ -76,13 +82,13 @@ describe("DELETE /api/tracks — server-only purge", () => {
     expect(page.deletions).toHaveLength(0)
   })
 
-  test("a single-track delete still writes a tombstone", async () => {
+  test("a single-activity delete still writes a tombstone", async () => {
     const { store, app } = setup()
     const { token } = await signIn(store, { login: "allowed-user" })
-    const track = makeTrack({ name: "a.gpx", coordinates: coords(1) })
-    await putTrack(app, token, track)
+    const activity = makeActivity({ name: "a.gpx", coordinates: coords(1) })
+    await putActivity(app, token, activity)
 
-    await app.request(`/api/tracks/${await computeContentHash(track)}`, {
+    await app.request(`/api/activities/${await computeContentHash(activity)}`, {
       method: "DELETE",
       headers: authHeaders(token),
     })
@@ -90,28 +96,28 @@ describe("DELETE /api/tracks — server-only purge", () => {
     expect((await manifest(app, token)).deletions).toHaveLength(1)
   })
 
-  test("purges only the caller's tracks", async () => {
+  test("purges only the caller's activities", async () => {
     const { store, app } = setup()
     const a = await signIn(store, { login: "allowed-user" })
     const b = await signIn(store, { login: "other-user", status: "allowed" })
 
-    await putTrack(
+    await putActivity(
       app,
       a.token,
-      makeTrack({ name: "a.gpx", coordinates: coords(1) })
+      makeActivity({ name: "a.gpx", coordinates: coords(1) })
     )
-    await putTrack(
+    await putActivity(
       app,
       b.token,
-      makeTrack({ name: "b.gpx", coordinates: coords(2) })
+      makeActivity({ name: "b.gpx", coordinates: coords(2) })
     )
 
-    const purge = await app.request("/api/tracks", {
+    const purge = await app.request("/api/activities", {
       method: "DELETE",
       headers: authHeaders(a.token),
     })
     expect(await purge.json()).toEqual({ deleted: 1 })
-    expect((await manifest(app, b.token)).tracks).toHaveLength(1)
+    expect((await manifest(app, b.token)).activities).toHaveLength(1)
   })
 
   test("is refused for a user without approval", async () => {
@@ -120,7 +126,7 @@ describe("DELETE /api/tracks — server-only purge", () => {
       login: "stranger",
       status: "pending",
     })
-    const purge = await app.request("/api/tracks", {
+    const purge = await app.request("/api/activities", {
       method: "DELETE",
       headers: authHeaders(token),
     })
@@ -130,7 +136,7 @@ describe("DELETE /api/tracks — server-only purge", () => {
   test("is idempotent on an empty library", async () => {
     const { store, app } = setup()
     const { token } = await signIn(store, { login: "allowed-user" })
-    const purge = await app.request("/api/tracks", {
+    const purge = await app.request("/api/activities", {
       method: "DELETE",
       headers: authHeaders(token),
     })

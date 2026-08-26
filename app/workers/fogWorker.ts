@@ -8,15 +8,15 @@ import { lineString, polygon, featureCollection } from "@turf/helpers"
 import type { Feature, Polygon, MultiPolygon } from "geojson"
 import type {
   FogMode,
-  ParsedTrack,
+  ParsedActivity,
   WorkerInboundMessage,
   WorkerOutboundMessage,
-} from "~/types/tracks"
+} from "~/types/activities"
 import {
   FOG_CLEAR_RADIUS_METERS,
   FOG_EMIT_INTERVAL_MS,
   SIMPLIFY_TOLERANCE,
-  TRACK_SIMPLIFY_TOLERANCE,
+  ACTIVITY_SIMPLIFY_TOLERANCE,
   BUFFER_STEPS,
 } from "~/constants/fog"
 
@@ -57,9 +57,9 @@ function stripInnerRings(feat: FogFeature): FogFeature {
 
 // Corridor mode: fog maintained incrementally via difference
 let fogPolygon: FogFeature = worldFog()
-// Corridor mode: track buffers batched since last emit, applied once per flush
+// Corridor mode: activity buffers batched since last emit, applied once per flush
 let pendingBuffer: FogFeature | null = null
-// Fill mode: cumulative union of ALL track buffers since last RESET.
+// Fill mode: cumulative union of ALL activity buffers since last RESET.
 // Never cleared between emits so loops formed across any number of files are detected.
 let accumulated: FogFeature | null = null
 
@@ -69,7 +69,7 @@ let lastEmitTime = 0
 // Generation token of the run that owns the state above. Set from every inbound
 // message; a running loop bails as soon as it no longer matches.
 let currentRunId = -1
-// Serialises PROCESS_TRACKS batches. The loop yields now, so two batches of the
+// Serialises PROCESS_ACTIVITIES batches. The loop yields now, so two batches of the
 // same run must not interleave over the shared accumulators above.
 let jobChain: Promise<void> = Promise.resolve()
 
@@ -138,31 +138,31 @@ function flushAndEmit(mode: FogMode, runId: number) {
   lastEmitTime = performance.now()
 }
 
-async function processTracks(
-  tracks: ParsedTrack[],
+async function processActivities(
+  activities: ParsedActivity[],
   mode: FogMode,
   runId: number
 ): Promise<void> {
   // Abandoned while queued behind an earlier batch.
   if (runId !== currentRunId) return
-  console.debug("[worker] PROCESS_TRACKS", {
-    count: tracks.length,
+  console.debug("[worker] PROCESS_ACTIVITIES", {
+    count: activities.length,
     mode,
     runId,
   })
 
-  for (const track of tracks) {
+  for (const activity of activities) {
     // Cancellation checkpoint. Yield first so any RESET the main thread posted
     // is actually dispatched, then re-read currentRunId. The loop is parked
     // exactly here whenever the message handler runs, so RESET's resetState()
-    // can never land mid-track.
+    // can never land mid-activity.
     await yieldToTaskQueue()
     if (runId !== currentRunId) {
       console.debug("[worker] run abandoned", { runId, currentRunId })
       return
     }
 
-    const validCoords = track.coordinates.filter(
+    const validCoords = activity.coordinates.filter(
       ([lng, lat]) =>
         isFinite(lng) &&
         isFinite(lat) &&
@@ -173,7 +173,10 @@ async function processTracks(
         (Math.abs(lat) > 0.001 || Math.abs(lng) > 0.001)
     )
     if (validCoords.length < 2) {
-      console.debug("[worker] skipping track with < 2 valid coords", track.name)
+      console.debug(
+        "[worker] skipping activity with < 2 valid coords",
+        activity.name
+      )
       processedCount++
       continue
     }
@@ -181,7 +184,7 @@ async function processTracks(
     try {
       const line = lineString(validCoords)
       const simplified = simplify(line, {
-        tolerance: TRACK_SIMPLIFY_TOLERANCE,
+        tolerance: ACTIVITY_SIMPLIFY_TOLERANCE,
         highQuality: false,
         mutate: true,
       })
@@ -205,7 +208,7 @@ async function processTracks(
         }
       }
     } catch (err) {
-      console.debug("[worker] error processing track", track.name, err)
+      console.debug("[worker] error processing activity", activity.name, err)
     }
 
     processedCount++
@@ -239,14 +242,14 @@ self.onmessage = (e: MessageEvent<WorkerInboundMessage>) => {
     return
   }
 
-  if (msg.type === "PROCESS_TRACKS") {
+  if (msg.type === "PROCESS_ACTIVITIES") {
     // Defensive: a new generation always arrives via RESET in app code, but if
     // it ever didn't, the accumulators would still hold the abandoned run's
     // geometry and leak it into the new fog.
     if (isNewRun) resetState()
-    const { tracks, mode, runId } = msg
+    const { activities, mode, runId } = msg
     jobChain = jobChain
-      .then(() => processTracks(tracks, mode, runId))
+      .then(() => processActivities(activities, mode, runId))
       .catch((err) => console.debug("[worker] job failed", err))
   }
 }

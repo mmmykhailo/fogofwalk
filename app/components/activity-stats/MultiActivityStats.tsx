@@ -1,5 +1,5 @@
 import { XIcon } from "@phosphor-icons/react"
-import type { ParsedTrack } from "~/types/tracks"
+import type { ParsedActivity } from "~/types/activities"
 import { Button } from "~/components/ui/button"
 import type { CompositeStats } from "~/lib/shareCard"
 import { formatPace } from "~/lib/statsFormatters"
@@ -11,31 +11,31 @@ import {
   formatSpeed,
 } from "./formatters"
 
-interface MultiTrackStatsProps {
-  tracks: ParsedTrack[]
+interface MultiActivityStatsProps {
+  activities: ParsedActivity[]
   composite: CompositeStats
-  onRemoveTrack?: (id: string) => void
+  onRemoveActivity?: (id: string) => void
 }
 
-/** Totals across a multi-track selection. No lap selector, no elevation chart. */
-export function MultiTrackStats({
-  tracks,
+/** Totals across a multi-activity selection. No lap selector, no elevation chart. */
+export function MultiActivityStats({
+  activities,
   composite,
-  onRemoveTrack,
-}: MultiTrackStatsProps) {
+  onRemoveActivity,
+}: MultiActivityStatsProps) {
   return (
     <div className="flex flex-col gap-3">
       <div className="flex flex-col gap-0.5">
-        {tracks.map((t) => (
+        {activities.map((t) => (
           <div key={t.id} className="flex items-center gap-1">
             <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
               {t.name}
             </span>
-            {onRemoveTrack && (
+            {onRemoveActivity && (
               <Button
                 variant="ghost"
                 size="icon-xs"
-                onClick={() => onRemoveTrack(t.id)}
+                onClick={() => onRemoveActivity(t.id)}
                 aria-label={`Remove ${t.name}`}
                 className="shrink-0 text-muted-foreground/50 hover:text-foreground"
               >

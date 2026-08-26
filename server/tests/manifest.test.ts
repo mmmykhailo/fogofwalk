@@ -7,7 +7,7 @@
 
 import { describe, expect, test } from "bun:test"
 
-import type { TrackMeta } from "~shared/api"
+import type { ActivityMeta } from "~shared/api"
 import { SYNC_PAGE_SIZE } from "~shared/constants"
 
 import {
@@ -18,14 +18,14 @@ import {
 import { MemoryStore } from "../src/store/memory"
 import { fakeHash, makeStats } from "./helpers"
 
-/** Denormalized stat fields TrackMeta needs — irrelevant to these paging tests. */
+/** Denormalized stat fields ActivityMeta needs — irrelevant to these paging tests. */
 const noStats = {
   durationMs: null,
   movingTimeMs: null,
   elevationGainM: 0,
   avgMovingSpeedKmh: null,
 } satisfies Pick<
-  TrackMeta,
+  ActivityMeta,
   "durationMs" | "movingTimeMs" | "elevationGainM" | "avgMovingSpeedKmh"
 >
 
@@ -101,21 +101,21 @@ describe("pageStream", () => {
 
 describe("combineCursors", () => {
   test("the stream with more rows constrains the cursor", async () => {
-    const tracks = await pageStream(fetcherFor(rowsAt([1, 2, 3, 4])), 0, 2)
+    const activities = await pageStream(fetcherFor(rowsAt([1, 2, 3, 4])), 0, 2)
     const tombstones = await pageStream(fetcherFor(rowsAt([50])), 0, 2)
 
     // Tombstones are drained, so they impose no constraint — the cursor must
-    // follow the tracks, not jump to 50 and skip tracks 3 and 4.
-    expect(combineCursors(0, [tracks, tombstones])).toEqual({
+    // follow the activities, not jump to 50 and skip activities 3 and 4.
+    expect(combineCursors(0, [activities, tombstones])).toEqual({
       cursor: 3,
       hasMore: true,
     })
   })
 
   test("when both streams are drained the cursor is the newest row served", async () => {
-    const tracks = await pageStream(fetcherFor(rowsAt([10])), 0, 5)
+    const activities = await pageStream(fetcherFor(rowsAt([10])), 0, 5)
     const tombstones = await pageStream(fetcherFor(rowsAt([4])), 0, 5)
-    expect(combineCursors(0, [tracks, tombstones])).toEqual({
+    expect(combineCursors(0, [activities, tombstones])).toEqual({
       cursor: 10,
       hasMore: false,
     })
@@ -132,14 +132,14 @@ describe("MemoryStore.listManifest", () => {
     const store = new MemoryStore()
     const userId = "user-a"
 
-    // Three tracks per millisecond, so the SYNC_PAGE_SIZE boundary always
+    // Three activities per millisecond, so the SYNC_PAGE_SIZE boundary always
     // lands in the middle of a group.
     const total = SYNC_PAGE_SIZE * 2 + 7
     const hashes: string[] = []
     for (let index = 0; index < total; index += 1) {
-      const meta: TrackMeta = {
+      const meta: ActivityMeta = {
         contentHash: fakeHash(index),
-        name: `track ${index}`,
+        name: `activity ${index}`,
         isPublic: false,
         format: "gpx",
         startedAtMs: null,
@@ -153,7 +153,7 @@ describe("MemoryStore.listManifest", () => {
         avgMovingSpeedKmh: null,
       }
       hashes.push(meta.contentHash)
-      await store.putTrack(userId, meta, new Uint8Array([1]))
+      await store.putActivity(userId, meta, new Uint8Array([1]))
     }
 
     const seen = new Set<string>()
@@ -162,7 +162,7 @@ describe("MemoryStore.listManifest", () => {
 
     for (;;) {
       const page = await store.listManifest(userId, cursor)
-      for (const track of page.tracks) seen.add(track.contentHash)
+      for (const activity of page.activities) seen.add(activity.contentHash)
       pages += 1
       if (!page.hasMore) break
       expect(page.cursor).toBeGreaterThan(cursor)
@@ -175,16 +175,16 @@ describe("MemoryStore.listManifest", () => {
     for (const hash of hashes) expect(seen.has(hash)).toBe(true)
   })
 
-  test("tombstones and tracks share one cursor without losing either", async () => {
+  test("tombstones and activities share one cursor without losing either", async () => {
     const store = new MemoryStore()
     const userId = "user-b"
 
     for (let index = 0; index < 5; index += 1) {
-      await store.putTrack(
+      await store.putActivity(
         userId,
         {
           contentHash: fakeHash(index),
-          name: `track ${index}`,
+          name: `activity ${index}`,
           isPublic: false,
           format: "fit",
           startedAtMs: null,
@@ -197,11 +197,11 @@ describe("MemoryStore.listManifest", () => {
         new Uint8Array([1])
       )
     }
-    await store.deleteTrack(userId, fakeHash(1))
-    await store.deleteTrack(userId, fakeHash(2))
+    await store.deleteActivity(userId, fakeHash(1))
+    await store.deleteActivity(userId, fakeHash(2))
 
     const page = await store.listManifest(userId, 0)
-    expect(page.tracks).toHaveLength(3)
+    expect(page.activities).toHaveLength(3)
     expect(page.deletions).toHaveLength(2)
     expect(page.hasMore).toBe(false)
   })
@@ -210,7 +210,7 @@ describe("MemoryStore.listManifest", () => {
     const store = new MemoryStore()
     const userId = "user-c"
 
-    await store.putTrack(
+    await store.putActivity(
       userId,
       {
         contentHash: fakeHash(1),
@@ -228,10 +228,10 @@ describe("MemoryStore.listManifest", () => {
     )
 
     const first = await store.listManifest(userId, 0)
-    expect(first.tracks).toHaveLength(1)
+    expect(first.activities).toHaveLength(1)
     expect(first.cursor).toBe(1_000)
 
-    await store.putTrack(
+    await store.putActivity(
       userId,
       {
         contentHash: fakeHash(2),
@@ -252,7 +252,7 @@ describe("MemoryStore.listManifest", () => {
     // The final cursor stays *on* the newest row served rather than past it,
     // so the old row is re-sent once — cheap, and it means a row written into
     // that same millisecond after the read can never be lost.
-    expect(second.tracks.map((track) => track.name).sort()).toEqual([
+    expect(second.activities.map((activity) => activity.name).sort()).toEqual([
       "new",
       "old",
     ])

@@ -3,14 +3,14 @@
  * a gunzip that cannot be turned into a zip bomb.
  */
 
-import { MAX_TRACK_BYTES } from "~shared/constants"
+import { MAX_ACTIVITY_BYTES } from "~shared/constants"
 
-/** Ratio a well-formed track never approaches; well under gzip's ~1000×. */
+/** Ratio a well-formed activity never approaches; well under gzip's ~1000×. */
 const MAX_DECOMPRESSION_RATIO = 20
 
 export class BodyTooLargeError extends Error {
   constructor() {
-    super("body exceeds MAX_TRACK_BYTES")
+    super("body exceeds MAX_ACTIVITY_BYTES")
     this.name = "BodyTooLargeError"
   }
 }
@@ -23,7 +23,7 @@ export class BodyTooLargeError extends Error {
  */
 export async function readCappedBody(
   request: Request,
-  maxBytes: number = MAX_TRACK_BYTES
+  maxBytes: number = MAX_ACTIVITY_BYTES
 ): Promise<Uint8Array<ArrayBuffer>> {
   const declared = Number(request.headers.get("content-length") ?? "")
   if (Number.isFinite(declared) && declared > maxBytes) {
@@ -69,7 +69,7 @@ export function looksGzipped(bytes: Uint8Array): boolean {
  */
 export async function gunzipCapped(
   bytes: Uint8Array,
-  maxBytes: number = MAX_TRACK_BYTES * MAX_DECOMPRESSION_RATIO
+  maxBytes: number = MAX_ACTIVITY_BYTES * MAX_DECOMPRESSION_RATIO
 ): Promise<Uint8Array<ArrayBuffer>> {
   const source = new Blob([bytes])
     .stream()

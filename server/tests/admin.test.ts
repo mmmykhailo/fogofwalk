@@ -1,6 +1,12 @@
 import { describe, expect, test } from "bun:test"
 
-import { authHeaders, makeTrack, putTrack, setup, signIn } from "./helpers"
+import {
+  authHeaders,
+  makeActivity,
+  putActivity,
+  setup,
+  signIn,
+} from "./helpers"
 import { encryptTelegramToken } from "../src/telegram"
 
 describe("admin access workflow", () => {
@@ -109,21 +115,21 @@ describe("admin access workflow", () => {
     )
   })
 
-  test("reports each user's current track storage in the admin bootstrap", async () => {
+  test("reports each user's current activity storage in the admin bootstrap", async () => {
     const { app, store } = setup()
     const admin = await signIn(store, {
       login: "admin-user",
       status: "allowed",
     })
     const user = await signIn(store, { login: "walker", status: "allowed" })
-    const first = makeTrack({ name: "First" })
-    const second = makeTrack({
+    const first = makeActivity({ name: "First" })
+    const second = makeActivity({
       name: "Second",
       isPublic: true,
       startedAtMs: 1_700_100_000_000,
     })
-    const firstUpload = await putTrack(app, user.token, first)
-    const secondUpload = await putTrack(app, user.token, second)
+    const firstUpload = await putActivity(app, user.token, first)
+    const secondUpload = await putActivity(app, user.token, second)
     const firstMeta = (await firstUpload.json()) as { sizeBytes: number }
     const secondMeta = (await secondUpload.json()) as { sizeBytes: number }
 
@@ -137,20 +143,20 @@ describe("admin access workflow", () => {
 
     expect(response.status).toBe(200)
     expect(walker?.storage).toEqual({
-      trackCount: 2,
-      publicTrackCount: 1,
-      trackSizeBytes: firstMeta.sizeBytes + secondMeta.sizeBytes,
+      activityCount: 2,
+      publicActivityCount: 1,
+      activitySizeBytes: firstMeta.sizeBytes + secondMeta.sizeBytes,
     })
   })
 
-  test("lets an administrator delete another user's account and tracks", async () => {
+  test("lets an administrator delete another user's account and activities", async () => {
     const { app, store } = setup()
     const admin = await signIn(store, {
       login: "admin-user",
       status: "allowed",
     })
     const user = await signIn(store, { login: "walker", status: "allowed" })
-    await putTrack(app, user.token, makeTrack())
+    await putActivity(app, user.token, makeActivity())
 
     const response = await app.request(`/api/admin/users/${user.user.id}`, {
       method: "DELETE",
@@ -159,7 +165,7 @@ describe("admin access workflow", () => {
 
     expect(response.status).toBe(204)
     expect(await store.getUser(user.user.id)).toBeNull()
-    expect(await store.listAllTracksForUser(user.user.id)).toEqual([])
+    expect(await store.listAllActivitiesForUser(user.user.id)).toEqual([])
   })
 
   test("does not let an administrator delete themselves through admin routes", async () => {

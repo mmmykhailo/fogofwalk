@@ -2,27 +2,27 @@
 
 Import your GPS activity files and geotagged photos, and watch the fog of war lift over every trail you've run, every road you've cycled, every path you've ever walked.
 
-**Local-first.** All parsing, geometry and rendering happen in your browser, and the app is fully usable with no account and no server — that is how the public build is deployed. An **optional** sync server (`server/`) can be added to sync tracks between your own devices; photos never leave the device that imported them.
+**Local-first.** All parsing, geometry and rendering happen in your browser, and the app is fully usable with no account and no server — that is how the public build is deployed. An **optional** sync server (`server/`) can be added to sync activities between your own devices; photos never leave the device that imported them.
 
 ---
 
 ## Features
 
 - Import `.gpx` and `.fit` activity files
-- Import `.jpg` / `.heic` photos taken during your activities — automatically placed on the map by matching the photo's timestamp to your tracks (no GPS in the photo required)
+- Import `.jpg` / `.heic` photos taken during your activities — automatically placed on the map by matching the photo's timestamp to your activities (no GPS in the photo required)
 - Two fog modes:
   - **Corridor** — clears everything within 100 m of your route (a ~200 m-wide band)
   - **Fill** — also clears the interior of closed loops
 - Real-time fog rendering as files are processed
-- Track stats with elevation profile — single track or a multi-select of several
+- Activity stats with elevation profile — single activity or a multi-select of several
 - **FIT laps** — the splits your watch recorded, with per-lap stats and per-lap sharing
 - Lifetime statistics page: totals, unique distance, weekly chart, streaks, personal records
 - Shareable 3:4 stat cards rendered from a map snapshot or one of your photos
-- **Persistent** — tracks, photos, and fog survive page reloads (IndexedDB + localStorage)
+- **Persistent** — activities, photos, and fog survive page reloads (IndexedDB + localStorage)
 - Map position and zoom remembered between sessions
 - Satellite / terrain map mode
 - Installable PWA — share a GPX or FIT straight from another app into Fog of Walk, and keep working offline after the first load
-- Optional GitHub sign-in and cross-device track sync when a server is configured
+- Optional GitHub sign-in and cross-device activity sync when a server is configured
 
 ## Getting started
 
@@ -62,7 +62,7 @@ rollback path are in [`server/README.md`](server/README.md).
 
 Parsing runs on the main thread (it needs browser APIs — `DOMParser` for GPX); all geometry runs
 in a Web Worker. The fog is a single GeoJSON polygon covering the world with your explored areas
-cut out of it, re-emitted at most every 300 ms as tracks are processed. Tracks, photos and the fog
+cut out of it, re-emitted at most every 300 ms as activities are processed. Activities, photos and the fog
 cache live in IndexedDB; map position is written to localStorage on every move, synchronously, so
 it survives a reload mid-transaction.
 

@@ -1,7 +1,11 @@
 import type maplibregl from "maplibre-gl"
-import type { ParsedTrack, FogMode, WorkerInboundMessage } from "~/types/tracks"
-import { sortTracks, populateUniqueDistances } from "~/lib/statsAggregator"
-import { saveTracks, clearFogCache } from "~/lib/storage"
+import type {
+  ParsedActivity,
+  FogMode,
+  WorkerInboundMessage,
+} from "~/types/activities"
+import { sortActivities, populateUniqueDistances } from "~/lib/statsAggregator"
+import { saveActivities, clearFogCache } from "~/lib/storage"
 
 // ─── Map position persistence (localStorage — synchronous, survives page unload) ──
 
@@ -57,7 +61,7 @@ interface MapStore {
   map: maplibregl.Map | null
   worker: Worker | null
   fogData: GeoJSON.Feature<GeoJSON.Polygon | GeoJSON.MultiPolygon> | null
-  tracks: ParsedTrack[]
+  activities: ParsedActivity[]
   isProcessing: boolean
   processedCount: number
   sourcesReady: boolean
@@ -68,19 +72,19 @@ interface MapStore {
   /** Map zoom restored from localStorage; used once by MapView on initialization. */
   initialZoom: number | null
   /**
-   * True when tracks were restored but the fog cache was stale, triggering a
+   * True when activities were restored but the fog cache was stale, triggering a
    * worker reprocess. MapView skips fitBounds in this case so the saved map
    * position is preserved.
    */
   isRestoreReprocess: boolean
   /**
    * Generation token for fog-worker runs. Bumped by `startFogRun()` wherever
-   * the app abandons in-flight work (fog-mode toggle, delete-track, clear-all).
+   * the app abandons in-flight work (fog-mode toggle, delete-activity, clear-all).
    * Every message to and from the worker carries it.
    */
   runId: number
   /**
-   * True between posting PROCESS_TRACKS and the matching DONE.
+   * True between posting PROCESS_ACTIVITIES and the matching DONE.
    *
    * The progress UI cannot just assume work is outstanding after an action:
    * the worker can finish a small batch *before* the action returns, since the
@@ -90,15 +94,17 @@ interface MapStore {
    * — has already been and gone.
    */
   isFogRunInFlight: boolean
+  /** True once MapView is ready to receive fog-worker replies. */
+  isFogWorkerListenerReady: boolean
   /**
    * In-memory cache of the last share-card map render. Avoids re-creating a
-   * WebGL context on every dialog open. Keyed by trackId. The ImageBitmap is
+   * WebGL context on every dialog open. Keyed by activityId. The ImageBitmap is
    * owned by this cache — call .close() before replacing or clearing it.
    */
   shareCardCache: {
-    trackId: string
+    activityId: string
     baseMap: ImageBitmap
-    trackPoints: { x: number; y: number }[]
+    activityPoints: { x: number; y: number }[]
   } | null
 }
 
@@ -106,7 +112,7 @@ export const mapStore: MapStore = {
   map: null,
   worker: null,
   fogData: null,
-  tracks: [],
+  activities: [],
   isProcessing: false,
   processedCount: 0,
   sourcesReady: false,
@@ -116,6 +122,7 @@ export const mapStore: MapStore = {
   isRestoreReprocess: false,
   runId: 0,
   isFogRunInFlight: false,
+  isFogWorkerListenerReady: false,
   shareCardCache: null,
 }
 
@@ -131,7 +138,7 @@ type DistributiveOmit<T, K extends keyof T> = T extends unknown
  * and every reply is dropped, leaving the progress bar stuck.
  *
  * Only call this where the app genuinely discards prior work. `add-files` posts
- * just the new tracks and relies on the worker's accumulated state, so it must
+ * just the new activities and relies on the worker's accumulated state, so it must
  * join the current run rather than start one.
  */
 export function startFogRun(): number {
@@ -144,35 +151,35 @@ export function startFogRun(): number {
 export function postToFogWorker(
   msg: DistributiveOmit<WorkerInboundMessage, "runId">
 ): void {
-  if (msg.type === "PROCESS_TRACKS") mapStore.isFogRunInFlight = true
+  if (msg.type === "PROCESS_ACTIVITIES") mapStore.isFogRunInFlight = true
   if (msg.type === "RESET") mapStore.isFogRunInFlight = false
   mapStore.worker?.postMessage({ ...msg, runId: mapStore.runId })
 }
 
 /**
- * Add newly-acquired tracks to the library: merge, recompute unique distances,
+ * Add newly-acquired activities to the library: merge, recompute unique distances,
  * hand them to the fog worker, persist, invalidate the fog cache.
  *
- * Both entry points for new tracks go through here — the `add-files` action and
- * the sync engine's downloads — so a downloaded track is indistinguishable from
+ * Both entry points for new activities go through here — the `add-files` action and
+ * the sync engine's downloads — so a downloaded activity is indistinguishable from
  * an imported one.
  *
  * Note it **joins** the current fog run rather than calling `startFogRun()`:
- * only the new tracks are posted, and the worker's accumulated fog polygon has
+ * only the new activities are posted, and the worker's accumulated fog polygon has
  * to survive for that to be correct.
  */
-export async function ingestTracks(
-  newTracks: ParsedTrack[],
+export async function ingestActivities(
+  newActivities: ParsedActivity[],
   mode: FogMode = mapStore.fogMode
-): Promise<ParsedTrack[]> {
+): Promise<ParsedActivity[]> {
   // Drop anything already held under the same content hash. Re-importing a
   // file, or importing one the server had just restored, must not produce two
-  // identical tracks — content-addressing is what makes that detectable.
-  // Tracks with no hash (imported before sync existed) are always kept.
+  // identical activities — content-addressing is what makes that detectable.
+  // Activities with no hash (imported before sync existed) are always kept.
   const present = new Set(
-    mapStore.tracks.map((t) => t.contentHash).filter(Boolean)
+    mapStore.activities.map((t) => t.contentHash).filter(Boolean)
   )
-  const added = newTracks.filter((t) => {
+  const added = newActivities.filter((t) => {
     if (!t.contentHash) return true
     if (present.has(t.contentHash)) return false
     present.add(t.contentHash)
@@ -182,13 +189,13 @@ export async function ingestTracks(
   // Returns what was actually taken, never what was offered. Callers drive the
   // progress UI off this: reporting the offered count when everything was a
   // duplicate leaves "Processing 0 of N…" on screen forever, because no
-  // PROCESS_TRACKS was posted and so no DONE ever comes back.
+  // PROCESS_ACTIVITIES was posted and so no DONE ever comes back.
   if (added.length === 0) return added
 
-  mapStore.tracks = sortTracks([...mapStore.tracks, ...added])
-  populateUniqueDistances(mapStore.tracks)
-  postToFogWorker({ type: "PROCESS_TRACKS", tracks: added, mode })
-  await saveTracks(added)
+  mapStore.activities = sortActivities([...mapStore.activities, ...added])
+  populateUniqueDistances(mapStore.activities)
+  postToFogWorker({ type: "PROCESS_ACTIVITIES", activities: added, mode })
+  await saveActivities(added)
   await clearFogCache()
   return added
 }

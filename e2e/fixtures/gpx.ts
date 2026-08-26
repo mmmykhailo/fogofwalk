@@ -13,7 +13,7 @@ export interface GpxFixture {
 }
 
 /**
- * A track whose geometry is derived from `seed`, so two fixtures with different
+ * An activity whose geometry is derived from `seed`, so two fixtures with different
  * seeds get different content hashes and the same seed always reproduces the
  * same hash — which is what the dedupe assertions rely on.
  */
@@ -33,6 +33,7 @@ export function makeGpx(name: string, seed: number, points = 20): GpxFixture {
 <gpx version="1.1" creator="fogofwalk-e2e" xmlns="http://www.topografix.com/GPX/1/1">
   <trk>
     <name>${name}</name>
+    <type>Walking</type>
     <trkseg>
 ${trkpts}
     </trkseg>
@@ -46,7 +47,7 @@ ${trkpts}
   }
 }
 
-/** `count` distinct tracks, named `t1.gpx`…, each with its own geometry. */
+/** `count` distinct activities, named `t1.gpx`…, each with its own geometry. */
 export function makeGpxSet(count: number, seedOffset = 0): GpxFixture[] {
   return Array.from({ length: count }, (_, i) =>
     makeGpx(`t${i + 1}.gpx`, seedOffset + i + 1)

@@ -11,26 +11,26 @@ import {
 import { Switch } from "~/components/ui/switch"
 import { useAuth } from "~/lib/server/authStore"
 
-interface DeleteTrackDialogProps {
+interface DeleteActivityDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
-  trackName: string
+  activityName: string
   /**
-   * `alsoOnServer` is meaningful only when the track is synced; it is false
+   * `alsoOnServer` is meaningful only when the activity is synced; it is false
    * whenever the sync server is absent or the user is signed out.
    */
   onConfirm: (alsoOnServer: boolean) => void
 }
 
-export function DeleteTrackDialog({
+export function DeleteActivityDialog({
   open,
   onOpenChange,
-  trackName,
+  activityName,
   onConfirm,
-}: DeleteTrackDialogProps) {
+}: DeleteActivityDialogProps) {
   const auth = useAuth()
   const isSynced = auth.status === "signedIn" && auth.canSync
-  // Defaults on: "delete" normally means everywhere, and a track that came
+  // Defaults on: "delete" normally means everywhere, and an activity that came
   // back on the next sync would look like the delete had failed.
   const [isAlsoOnServer, setIsAlsoOnServer] = useState(true)
 
@@ -42,9 +42,9 @@ export function DeleteTrackDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent showCloseButton={false}>
         <DialogHeader>
-          <DialogTitle>Delete this track?</DialogTitle>
+          <DialogTitle>Delete this activity?</DialogTitle>
           <DialogDescription>
-            &ldquo;{trackName}&rdquo; will be removed and the fog map will be
+            &ldquo;{activityName}&rdquo; will be removed and the fog map will be
             recalculated. This cannot be undone.
           </DialogDescription>
         </DialogHeader>

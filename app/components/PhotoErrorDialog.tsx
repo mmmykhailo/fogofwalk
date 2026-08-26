@@ -22,20 +22,22 @@ export function PhotoErrorDialog({
         <DialogHeader>
           <DialogTitle>No photos were added</DialogTitle>
           <DialogDescription>
-            None of the selected photos could be matched to your tracks.
+            None of the selected photos could be matched to your activities.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-2 text-sm text-muted-foreground">
           <p>Common reasons:</p>
           <ul className="ml-4 list-disc space-y-1">
-            <li>No activity tracks loaded yet — add GPX or FIT files first</li>
+            <li>
+              No activities loaded yet — add GPX or FIT files first
+            </li>
             <li>
               Photos have no timestamp (screenshots or heavily edited photos
               often lose EXIF data)
             </li>
             <li>
-              Photos were taken more than 5 minutes away from any recorded track
-              point
+              Photos were taken more than 5 minutes away from any recorded
+              activity point
             </li>
           </ul>
           <p>

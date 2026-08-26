@@ -4,13 +4,13 @@ export function getStorageDescription(
 ): string {
   if (purgedCount === null) {
     if (canSync) {
-      return "Delete tracks from server or export your data"
+      return "Delete activities from server or export your data"
     }
     return "See which of your data we have"
   }
 
   const suffix = purgedCount === 1 ? "" : "s"
-  return `Removed ${purgedCount} track${suffix} from the server`
+  return `Removed ${purgedCount} activity${suffix} from the server`
 }
 
 export function getExportButtonLabel(

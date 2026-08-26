@@ -42,19 +42,19 @@ test.describe("server-less build", () => {
     })
 
     await app.goto()
-    await app.importTracks(2)
+    await app.importActivities(2)
     await app.waitForImportToSettle()
-    await app.expectTrackCount(2)
+    await app.expectActivityCount(2)
 
     await app.reload()
-    await app.expectTrackCount(2)
+    await app.expectActivityCount(2)
 
     expect(apiCalls).toEqual([])
   })
 
   test("clear all simply clears, with no server caveat", async ({ app }) => {
     await app.goto()
-    await app.importTracks(2)
+    await app.importActivities(2)
     await app.waitForImportToSettle()
 
     await app.openDrawer()
@@ -66,7 +66,7 @@ test.describe("server-less build", () => {
     await dialog.getByRole("button", { name: "Clear all" }).click()
     await expect(dialog).toBeHidden()
 
-    await app.expectTrackCount(0)
+    await app.expectActivityCount(0)
   })
 
   test("keeps the live map mounted while visiting statistics", async ({
@@ -87,8 +87,8 @@ test.describe("server-less build", () => {
     await expect(app.page).toHaveURL(/\/stats$/)
     await expect(app.page.getByTestId("cached-map-canvas")).toHaveCount(1)
     await expect(app.page.locator("[data-map-cache]")).toHaveAttribute(
-      "aria-hidden",
-      "true"
+      "inert",
+      ""
     )
 
     await app.page.getByRole("link", { name: "Back to map" }).click()

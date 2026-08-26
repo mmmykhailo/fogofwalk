@@ -1,7 +1,7 @@
 /** Limits and timings agreed between the browser app and the sync server. */
 
-/** Largest accepted gzipped track upload. Rejected with 413 above this. */
-export const MAX_TRACK_BYTES = 8 * 1024 * 1024
+/** Largest accepted gzipped activity upload. Rejected with 413 above this. */
+export const MAX_ACTIVITY_BYTES = 8 * 1024 * 1024
 
 /** Manifest rows returned per page. The client follows `hasMore` until dry. */
 export const SYNC_PAGE_SIZE = 500
@@ -15,10 +15,10 @@ export const SESSION_TTL_MS = 90 * 24 * 60 * 60 * 1000
  */
 export const HANDOFF_TTL_MS = 60 * 1000
 
-/** In-flight track uploads/downloads the sync engine allows at once. */
+/** In-flight activity uploads/downloads the sync engine allows at once. */
 export const SYNC_CONCURRENCY = 3
 
-/** The server's per-user upload window (`PUT /api/tracks/:contentHash`). */
+/** The server's per-user upload window (`PUT /api/activities/:contentHash`). */
 export const UPLOAD_RATE_WINDOW_MS = 60_000
 export const UPLOAD_RATE_MAX_PER_WINDOW = 120
 

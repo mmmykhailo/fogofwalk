@@ -4,17 +4,17 @@ import { Badge } from "~/components/ui/badge"
 
 interface RecordRowProps {
   label: string
-  trackId: string
-  trackName: string
+  activityId: string
+  activityName: string
   value: React.ReactNode
   divider?: boolean
 }
 
-/** One personal record: label, a link back to the track on the map, and a value. */
+/** One personal record: label, a link back to the activity on the map, and a value. */
 export function RecordRow({
   label,
-  trackId,
-  trackName,
+  activityId,
+  activityName,
   value,
   divider = false,
 }: RecordRowProps) {
@@ -27,11 +27,11 @@ export function RecordRow({
       <div className="min-w-0">
         <CardDescription>{label}</CardDescription>
         <AppLink
-          to={`/?track=${trackId}`}
+          to={`/?activity=${activityId}`}
           className="mt-0.5 block truncate"
-          title={trackName}
+          title={activityName}
         >
-          {trackName}
+          {activityName}
         </AppLink>
       </div>
       <Badge variant="secondary" className="shrink-0 tabular-nums">

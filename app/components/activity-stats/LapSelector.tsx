@@ -1,4 +1,4 @@
-import type { TrackLap } from "~/types/tracks"
+import type { ActivityLap } from "~/types/activities"
 import {
   Select,
   SelectContent,
@@ -11,7 +11,7 @@ import { formatDistance } from "./formatters"
 const ALL_LAPS = "all"
 
 interface LapSelectorProps {
-  laps: TrackLap[]
+  laps: ActivityLap[]
   activeLapNumber: number | null
   onLapSelect: (lapNumber: number | null) => void
 }

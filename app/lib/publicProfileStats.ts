@@ -1,4 +1,4 @@
-import type { PublicTrackMeta } from "~shared/api"
+import type { PublicActivityMeta } from "~shared/api"
 import type { LifetimeTotals, WeeklyBar } from "~/lib/statsAggregator"
 
 export interface PublicProfileStats {
@@ -34,25 +34,25 @@ function toWeekLabel(startMs: number): string {
   return new Date(startMs).toISOString().slice(0, 10)
 }
 
-function buildWeeklyBars(tracks: PublicTrackMeta[]): WeeklyBar[] {
-  const datedTracks = tracks.filter(
-    (track): track is PublicTrackMeta & { startedAtMs: number } =>
-      track.startedAtMs != null
+function buildWeeklyBars(activities: PublicActivityMeta[]): WeeklyBar[] {
+  const datedActivities = activities.filter(
+    (activity): activity is PublicActivityMeta & { startedAtMs: number } =>
+      activity.startedAtMs != null
   )
-  if (datedTracks.length === 0) return []
+  if (datedActivities.length === 0) return []
 
   const bars = new Map<number, WeeklyBar>()
 
-  for (const track of datedTracks) {
-    const startMs = startOfWeek(track.startedAtMs)
+  for (const activity of datedActivities) {
+    const startMs = startOfWeek(activity.startedAtMs)
     const bar = bars.get(startMs) ?? {
       startMs,
       week: toWeekLabel(startMs),
       distanceKm: 0,
-      trackCount: 0,
+      activityCount: 0,
     }
-    bar.distanceKm += track.distanceKm
-    bar.trackCount += 1
+    bar.distanceKm += activity.distanceKm
+    bar.activityCount += 1
     bars.set(startMs, bar)
   }
 
@@ -70,13 +70,13 @@ function buildWeeklyBars(tracks: PublicTrackMeta[]): WeeklyBar[] {
             startMs: bar.startMs,
             week: bar.week,
             distanceKm: bar.distanceKm,
-            trackCount: bar.trackCount,
+            activityCount: bar.activityCount,
           }
         : {
             startMs: cursor,
             week: toWeekLabel(cursor),
             distanceKm: 0,
-            trackCount: 0,
+            activityCount: 0,
           }
     )
   }
@@ -84,7 +84,7 @@ function buildWeeklyBars(tracks: PublicTrackMeta[]): WeeklyBar[] {
 }
 
 export function computePublicProfileStats(
-  tracks: PublicTrackMeta[]
+  activities: PublicActivityMeta[]
 ): PublicProfileStats {
   let totalDistanceKm = 0
   let totalElevationGainM = 0
@@ -95,20 +95,20 @@ export function computePublicProfileStats(
   const dates: number[] = []
   const recentDays = new Set<string>()
 
-  for (const track of tracks) {
-    totalDistanceKm += track.distanceKm
-    totalElevationGainM += track.elevationGainM
-    if (track.durationMs != null && track.durationMs > 0) {
-      timedDistanceKm += track.distanceKm
-      totalDurationMs += track.durationMs
+  for (const activity of activities) {
+    totalDistanceKm += activity.distanceKm
+    totalElevationGainM += activity.elevationGainM
+    if (activity.durationMs != null && activity.durationMs > 0) {
+      timedDistanceKm += activity.distanceKm
+      totalDurationMs += activity.durationMs
     }
-    if (track.movingTimeMs != null && track.movingTimeMs > 0) {
-      movingDistanceKm += track.distanceKm
-      totalMovingTimeMs += track.movingTimeMs
+    if (activity.movingTimeMs != null && activity.movingTimeMs > 0) {
+      movingDistanceKm += activity.distanceKm
+      totalMovingTimeMs += activity.movingTimeMs
     }
-    if (track.startedAtMs != null) {
-      dates.push(track.startedAtMs)
-      recentDays.add(toLocalDateStr(track.startedAtMs))
+    if (activity.startedAtMs != null) {
+      dates.push(activity.startedAtMs)
+      recentDays.add(toLocalDateStr(activity.startedAtMs))
     }
   }
 
@@ -118,7 +118,7 @@ export function computePublicProfileStats(
       totalDistanceKm,
       totalElevationGainM,
       totalMovingTimeMs,
-      totalTracks: tracks.length,
+      totalActivities: activities.length,
       activeDays: recentDays.size,
       avgSpeedKmh:
         totalDurationMs > 0
@@ -138,6 +138,6 @@ export function computePublicProfileStats(
     firstActivityMs: dates[0] ?? null,
     latestActivityMs: dates.at(-1) ?? null,
     recentDays: [...recentDays],
-    weekly: buildWeeklyBars(tracks),
+    weekly: buildWeeklyBars(activities),
   }
 }

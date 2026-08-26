@@ -1,32 +1,33 @@
 /**
- * Track synchronisation.
+ * Activity synchronisation.
  *
- * Tracks are content-addressed and immutable, so there is nothing to merge:
+ * Activities are content-addressed and immutable, so there is nothing to merge:
  * a hash the server lacks is uploaded, a hash this device lacks is downloaded,
  * and a tombstone deletes locally. That is the whole conflict model.
  *
- * Every step is individually resumable — a failed track is simply retried on
+ * Every step is individually resumable — a failed activity is simply retried on
  * the next run, and the manifest cursor only advances after a clean page.
  */
 
 import { useSyncExternalStore } from "react"
 import type {
   ManifestPage,
-  TrackDeleteResponse,
-  TrackMeta,
-  TrackTombstone,
-  TrackUploadPayload,
+  ActivityDeleteResponse,
+  ActivityMeta,
+  ActivityTombstone,
+  ActivityUploadPayload,
 } from "~shared/api"
-import { MAX_TRACK_BYTES, SYNC_CONCURRENCY } from "~shared/constants"
-import type { ParsedTrack } from "~/types/tracks"
+import { MAX_ACTIVITY_BYTES, SYNC_CONCURRENCY } from "~shared/constants"
+import type { ParsedActivity } from "~/types/activities"
 import {
-  deleteTrack as deleteTrackFromIdb,
+  deleteActivity as deleteActivityFromIdb,
   loadSyncState,
   saveSyncState,
-  saveTracks,
+  saveActivities,
 } from "~/lib/storage"
-import { ingestTracks, mapStore } from "~/lib/mapStore"
-import { backfillContentHashes } from "~/lib/trackHash"
+import { ingestActivities, mapStore } from "~/lib/mapStore"
+import { backfillContentHashes } from "~/lib/activityHash"
+import { populateUniqueDistances } from "~/lib/statsAggregator"
 import { apiRaw, apiSend, ApiRequestError, friendlyMessage } from "./apiClient"
 import { canSync } from "./authStore"
 import {
@@ -73,7 +74,7 @@ export function useSyncStatus(): SyncStatus {
 /**
  * Deliberately in-memory, so a reload clears it.
  *
- * Deleting tracks locally while leaving them on the server is a legitimate
+ * Deleting activities locally while leaving them on the server is a legitimate
  * thing to want, but the next automatic sync would faithfully download them
  * straight back — the delete would look like it never happened. Pausing until
  * the page is reloaded makes the local state stick for as long as the user is
@@ -113,9 +114,11 @@ export function resumeAutoSync(): void {
 // ─── Change notification ──────────────────────────────────────────────────────
 
 export interface SyncChanges {
-  /** How many tracks arrived from the server. */
+  /** How many activities arrived from the server. */
   downloadedCount: number
-  /** Local ids of tracks a tombstone removed. */
+  /** How many existing activities received server-side metadata updates. */
+  updatedCount: number
+  /** Local ids of activities a tombstone removed. */
   deletedIds: string[]
 }
 
@@ -123,7 +126,7 @@ let onChanged: ((changes: SyncChanges) => void) | null = null
 
 /**
  * Registered by `home.tsx`. Sync mutates `mapStore` directly, but rebuilding
- * the fog after a remote delete and dropping deleted tracks out of the
+ * the fog after a remote delete and dropping deleted activities out of the
  * selection are React concerns that belong in the route.
  */
 export function setSyncChangeHandler(
@@ -194,7 +197,7 @@ const SYNC_POLL_MS = 5 * 60 * 1000
 /**
  * Keep a long-lived tab up to date.
  *
- * Without this, sync only ran at sign-in and after an import, so a track added
+ * Without this, sync only ran at sign-in and after an import, so an activity added
  * on another device never appeared until a reload — which reads exactly like
  * "sync doesn't download anything". Focus covers the common case (switch back
  * to the tab), the interval covers a tab left open.
@@ -236,26 +239,26 @@ async function syncOnce(reason: string): Promise<void> {
   console.debug("[sync] start", reason)
 
   try {
-    // Tracks imported before sync existed have no hash yet.
-    const backfilled = await backfillContentHashes(mapStore.tracks)
-    if (backfilled.length > 0) await saveTracks(backfilled)
+    // Activities imported before sync existed have no hash yet.
+    const backfilled = await backfillContentHashes(mapStore.activities)
+    if (backfilled.length > 0) await saveActivities(backfilled)
 
     const state = await loadSyncState()
     const since = state?.cursor ?? 0
-    const { serverTracks, deletions, cursor } = await fetchManifest(since)
+    const { serverActivities, deletions, cursor } = await fetchManifest(since)
 
-    const localByHash = new Map<string, ParsedTrack>()
-    for (const track of mapStore.tracks) {
-      if (track.contentHash) localByHash.set(track.contentHash, track)
+    const localByHash = new Map<string, ParsedActivity>()
+    for (const activity of mapStore.activities) {
+      if (activity.contentHash) localByHash.set(activity.contentHash, activity)
     }
 
     // Accumulated across syncs — this window only describes what changed since
     // `since`, so the previously-known set has to carry forward.
     const serverHashes = new Set(since === 0 ? [] : (state?.serverHashes ?? []))
-    for (const t of serverTracks) serverHashes.add(t.contentHash)
+    for (const t of serverActivities) serverHashes.add(t.contentHash)
     for (const tomb of deletions) serverHashes.delete(tomb.contentHash)
 
-    // Tracks this device deleted locally while choosing to leave the server
+    // Activities this device deleted locally while choosing to leave the server
     // copy alone. Without this they would be downloaded straight back.
     const ignoredHashes = new Set(state?.ignoredHashes ?? [])
 
@@ -267,12 +270,23 @@ async function syncOnce(reason: string): Promise<void> {
      * tombstone says nothing about *this* device: it describes a deletion
      * relative to a history it no longer has. `clear-all` drops syncState, so
      * every tombstone the account ever wrote replays here. Honouring them would
-     * delete tracks the user had just re-imported and refuse to upload them.
+     * delete activities the user had just re-imported and refuse to upload them.
      *
      * Incremental walks keep the real semantics — that is where a delete on one
      * device has to reach the others.
      */
     const isFromScratch = since === 0
+
+    const serverByHash = new Map(
+      serverActivities.map((activity) => [activity.contentHash, activity])
+    )
+    const metadataDiffers = (
+      local: ParsedActivity,
+      server: ActivityMeta
+    ): boolean =>
+      local.name !== server.name ||
+      Boolean(local.isPublic) !== server.isPublic ||
+      local.activityType !== server.activityType
 
     /**
      * A tombstone must be acted on exactly once per device.
@@ -293,21 +307,28 @@ async function syncOnce(reason: string): Promise<void> {
       freshTombstones.map((tomb) => tomb.contentHash)
     )
 
-    const toUpload = [...localByHash.values()].filter(
-      (t) =>
-        t.contentHash &&
-        !serverHashes.has(t.contentHash) &&
+    const toUpload = [...localByHash.values()].filter((t) => {
+      if (!t.contentHash) return false
+      const server = serverByHash.get(t.contentHash)
+      const isMissing = !serverHashes.has(t.contentHash)
+      const shouldRestoreLocalMetadata =
+        isFromScratch && server != null && metadataDiffers(t, server)
+      return (
+        (isMissing || shouldRestoreLocalMetadata) &&
         // Suppressed only while the deletion is still being applied. Once it
         // has been, a local copy means a deliberate re-import — resurrect it.
         (isFromScratch || !freshDeletedHashes.has(t.contentHash)) &&
         // Deliberately unsynced (a server purge, or a local-only delete that
         // was later re-imported). Never push these back up.
         !ignoredHashes.has(t.contentHash)
-    )
-    const toDownload = serverTracks.filter(
-      (t) =>
-        !localByHash.has(t.contentHash) && !ignoredHashes.has(t.contentHash)
-    )
+      )
+    })
+    const toDownload = serverActivities.filter((server) => {
+      if (ignoredHashes.has(server.contentHash)) return false
+      const local = localByHash.get(server.contentHash)
+      if (!local) return true
+      return !isFromScratch && metadataDiffers(local, server)
+    })
     const toDelete = isFromScratch
       ? []
       : [...freshDeletedHashes].filter((h) => localByHash.has(h))
@@ -329,43 +350,63 @@ async function syncOnce(reason: string): Promise<void> {
     // Deletions first — cheap, and it shrinks what we might re-upload.
     const deletedIds: string[] = []
     for (const hash of toDelete) {
-      const track = localByHash.get(hash)
-      if (track) {
-        await removeLocalTrack(track)
-        deletedIds.push(track.id)
+      const activity = localByHash.get(hash)
+      if (activity) {
+        await removeLocalActivity(activity)
+        deletedIds.push(activity.id)
       }
       step()
     }
 
-    const uploadFailures = await pooled(toUpload, async (track) => {
-      await uploadTrack(track)
+    const uploadFailures = await pooled(toUpload, async (activity) => {
+      await uploadActivity(activity)
       // Only on success: a failed upload must be retried next run.
-      if (track.contentHash) serverHashes.add(track.contentHash)
+      if (activity.contentHash) serverHashes.add(activity.contentHash)
       step()
     })
 
-    const downloaded: ParsedTrack[] = []
+    const downloaded: ParsedActivity[] = []
+    const updated: ParsedActivity[] = []
     const downloadFailures = await pooled(toDownload, async (meta) => {
-      const track = await downloadTrack(meta)
-      if (track) downloaded.push(track)
+      const local = localByHash.get(meta.contentHash)
+      const activity = await downloadActivity(meta, local?.id)
+      if (activity) {
+        if (local) updated.push(activity)
+        else downloaded.push(activity)
+      }
       step()
     })
     // One ingest for the whole batch: a single worker post and a single
-    // unique-distance pass rather than one per track.
-    if (downloaded.length > 0) await ingestTracks(downloaded)
+    // unique-distance pass rather than one per activity.
+    if (downloaded.length > 0) await ingestActivities(downloaded)
 
-    if (downloaded.length > 0 || deletedIds.length > 0) {
-      onChanged?.({ downloadedCount: downloaded.length, deletedIds })
+    if (updated.length > 0) {
+      const byHash = new Map(
+        updated.map((activity) => [activity.contentHash, activity])
+      )
+      mapStore.activities = mapStore.activities.map(
+        (activity) => byHash.get(activity.contentHash) ?? activity
+      )
+      populateUniqueDistances(mapStore.activities)
+      await saveActivities(updated)
+    }
+
+    if (downloaded.length > 0 || updated.length > 0 || deletedIds.length > 0) {
+      onChanged?.({
+        downloadedCount: downloaded.length,
+        updatedCount: updated.length,
+        deletedIds,
+      })
     }
 
     if (downloadFailures > 0) {
-      // Hold the cursor where it was. Advancing past a track we failed to
+      // Hold the cursor where it was. Advancing past an activity we failed to
       // fetch would skip it forever — the window never covers it again.
       console.warn(`[sync] ${downloadFailures} download(s) failed; cursor held`)
       await finish(since, serverHashes, ignoredHashes, applied)
       setStatus({
         phase: "error",
-        message: "Some tracks couldn't be downloaded",
+        message: "Some activities couldn't be downloaded",
         lastSyncAt,
       })
       return
@@ -375,7 +416,7 @@ async function syncOnce(reason: string): Promise<void> {
     if (uploadFailures > 0) {
       setStatus({
         phase: "error",
-        message: "Some tracks couldn't be uploaded",
+        message: "Some activities couldn't be uploaded",
         lastSyncAt: Date.now(),
       })
     }
@@ -419,7 +460,7 @@ async function finish(
  * Runs `fn` over `items` with a bounded number in flight.
  *
  * Returns the number that failed rather than swallowing it. The caller needs
- * that: advancing the manifest cursor past a track that failed to download
+ * that: advancing the manifest cursor past an activity that failed to download
  * would skip it permanently, turning one transient error into missing data.
  */
 async function pooled<T>(
@@ -449,56 +490,60 @@ async function pooled<T>(
 // ─── Manifest ─────────────────────────────────────────────────────────────────
 
 async function fetchManifest(since: number): Promise<{
-  serverTracks: TrackMeta[]
-  deletions: TrackTombstone[]
+  serverActivities: ActivityMeta[]
+  deletions: ActivityTombstone[]
   cursor: number
 }> {
-  const serverTracks: TrackMeta[] = []
-  const deletions: TrackTombstone[] = []
+  const serverActivities: ActivityMeta[] = []
+  const deletions: ActivityTombstone[] = []
   let cursor = since
 
   // Follow `hasMore` to the end; the server pages by (updatedAt, contentHash).
   for (;;) {
     const res = await apiRaw(
       "GET",
-      `/api/tracks/manifest?since=${encodeURIComponent(String(cursor))}`
+      `/api/activities/manifest?since=${encodeURIComponent(String(cursor))}`
     )
     const page = (await res.json()) as ManifestPage
-    serverTracks.push(...page.tracks)
+    serverActivities.push(...page.activities)
     deletions.push(...page.deletions)
     cursor = page.cursor
     if (!page.hasMore) break
   }
 
-  return { serverTracks, deletions, cursor }
+  return { serverActivities, deletions, cursor }
 }
 
 // ─── Upload / download / delete ───────────────────────────────────────────────
 
-async function uploadTrack(track: ParsedTrack): Promise<void> {
-  const { id: _id, ...rest } = track
-  const payload: TrackUploadPayload = {
+async function uploadActivity(activity: ParsedActivity): Promise<void> {
+  const { id: _id, ...rest } = activity
+  const payload: ActivityUploadPayload = {
     ...rest,
     // Recomputed per-library on the receiving device; uploading it would ship
-    // a number that is only meaningful relative to this device's other tracks.
-    stats: { ...track.stats, uniqueDistanceKm: 0 },
+    // a number that is only meaningful relative to this device's other activities.
+    stats: { ...activity.stats, uniqueDistanceKm: 0 },
   }
 
   const body = await gzip(JSON.stringify(payload))
-  if (body.size > MAX_TRACK_BYTES) {
-    console.warn("[sync] track too large to upload:", track.name, body.size)
+  if (body.size > MAX_ACTIVITY_BYTES) {
+    console.warn(
+      "[sync] activity too large to upload:",
+      activity.name,
+      body.size
+    )
     return
   }
 
   // Bounded retry rather than one shot: the only expected failure here is the
-  // upload rate limit, and dropping the track for the whole run over it means
+  // upload rate limit, and dropping the activity for the whole run over it means
   // waiting for a later sync trigger to try again. `acquireUploadSlot` should
   // keep us under the limit in the first place — this is the fallback for when
   // the client's view of the window and the server's disagree.
   for (let attempt = 0; ; attempt++) {
     await acquireUploadSlot()
     try {
-      await apiSend("PUT", `/api/tracks/${track.contentHash}`, {
+      await apiSend("PUT", `/api/activities/${activity.contentHash}`, {
         rawBody: body,
         headers: {
           "Content-Type": "application/json",
@@ -522,35 +567,59 @@ async function uploadTrack(track: ParsedTrack): Promise<void> {
   }
 }
 
-async function downloadTrack(meta: TrackMeta): Promise<ParsedTrack | null> {
-  const res = await apiRaw("GET", `/api/tracks/${meta.contentHash}`)
-  const payload = (await res.json()) as TrackUploadPayload
-  return {
-    ...payload,
-    // Ids are per-device; the content hash is the shared identity.
-    id: crypto.randomUUID(),
-    contentHash: meta.contentHash,
+/** Push a same-geometry metadata edit without waiting for manifest diffing. */
+export async function pushActivityUpdate(
+  activity: ParsedActivity
+): Promise<void> {
+  if (!canSync() || !activity.contentHash) return
+  try {
+    await uploadActivity(activity)
+    requestSync("activity-update")
+  } catch (err) {
+    console.warn("[sync] failed to propagate activity update:", err)
   }
 }
 
-async function removeLocalTrack(track: ParsedTrack): Promise<void> {
-  mapStore.tracks = mapStore.tracks.filter((t) => t.id !== track.id)
-  await deleteTrackFromIdb(track.id)
+async function downloadActivity(
+  meta: ActivityMeta,
+  localId?: string
+): Promise<ParsedActivity | null> {
+  const res = await apiRaw("GET", `/api/activities/${meta.contentHash}`)
+  const payload = (await res.json()) as ActivityUploadPayload
+  return {
+    ...payload,
+    // Ids are per-device; the content hash is the shared identity.
+    id: localId ?? crypto.randomUUID(),
+    contentHash: meta.contentHash,
+    name: meta.name,
+    isPublic: meta.isPublic,
+    activityType: meta.activityType ?? payload.activityType,
+  }
+}
+
+async function removeLocalActivity(activity: ParsedActivity): Promise<void> {
+  mapStore.activities = mapStore.activities.filter((t) => t.id !== activity.id)
+  await deleteActivityFromIdb(activity.id)
 }
 
 /**
- * Propagate a local delete to the server. Called by the `delete-track` action;
- * a no-op when signed out, and never fatal — the track is already gone locally.
+ * Propagate a local delete to the server. Called by the `delete-activity` action;
+ * a no-op when signed out, and never fatal — the activity is already gone locally.
  */
-export async function pushTrackDeletion(track: ParsedTrack): Promise<void> {
-  if (!canSync() || !track.contentHash) return
+export async function pushActivityDeletion(
+  activity: ParsedActivity
+): Promise<void> {
+  if (!canSync() || !activity.contentHash) return
   try {
-    const res = await apiRaw("DELETE", `/api/tracks/${track.contentHash}`)
-    const { deletedAt } = (await res.json()) as TrackDeleteResponse
+    const res = await apiRaw(
+      "DELETE",
+      `/api/activities/${activity.contentHash}`
+    )
+    const { deletedAt } = (await res.json()) as ActivityDeleteResponse
     // Record our own tombstone as already applied. Without this the next sync
-    // reads it back out of the manifest as news and deletes the track again —
+    // reads it back out of the manifest as news and deletes the activity again —
     // including a copy the user has deliberately re-imported since.
-    await recordAppliedTombstone(track.contentHash, deletedAt)
+    await recordAppliedTombstone(activity.contentHash, deletedAt)
   } catch (err) {
     console.warn("[sync] failed to propagate deletion:", err)
   }
@@ -575,12 +644,14 @@ async function recordAppliedTombstone(
 }
 
 /**
- * Record that this device dropped a track locally but left the server copy
+ * Record that this device dropped an activity locally but left the server copy
  * alone, so the next sync does not download it straight back.
  */
-export async function ignoreTrackLocally(track: ParsedTrack): Promise<void> {
-  if (!canSync() || !track.contentHash) return
-  await addIgnoredHashes([track.contentHash])
+export async function ignoreActivityLocally(
+  activity: ParsedActivity
+): Promise<void> {
+  if (!canSync() || !activity.contentHash) return
+  await addIgnoredHashes([activity.contentHash])
 }
 
 /**
@@ -604,24 +675,24 @@ async function addIgnoredHashes(hashes: string[]): Promise<void> {
 }
 
 /**
- * Wipe every track from the server while leaving local libraries intact.
+ * Wipe every activity from the server while leaving local libraries intact.
  *
  * No tombstones are written, which is what makes this "server only": other
- * devices never learn of it, so they keep their tracks. They also keep their
- * cached `serverHashes`, so they believe those tracks are still stored and do
+ * devices never learn of it, so they keep their activities. They also keep their
+ * cached `serverHashes`, so they believe those activities are still stored and do
  * not re-upload them — sync simply goes quiet for everything that existed at
  * this moment. `syncState` here is left untouched for exactly that reason.
  */
-export async function purgeServerTracks(): Promise<number> {
-  const res = await apiRaw("DELETE", "/api/tracks")
+export async function purgeServerActivities(): Promise<number> {
+  const res = await apiRaw("DELETE", "/api/activities")
   const body = (await res.json()) as { deleted: number }
 
-  // Record every track currently held here as unsynced. Relying on the cached
+  // Record every activity currently held here as unsynced. Relying on the cached
   // `serverHashes` to suppress a re-upload would be an accident waiting to
   // happen: the moment the cursor resets that cache is rebuilt from an empty
   // server and this device would helpfully upload everything straight back.
   await addIgnoredHashes(
-    mapStore.tracks
+    mapStore.activities
       .map((t) => t.contentHash)
       .filter((h): h is string => Boolean(h))
   )

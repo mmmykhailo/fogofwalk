@@ -21,7 +21,7 @@ export default defineConfig({
    * worker count the dev server becomes the bottleneck and tests fail on page
    * load rather than on anything they are actually asserting.
    */
-  workers: process.env.CI ? 2 : 4,
+  workers: process.env.CI ? 2 : 8,
   forbidOnly: !!process.env.CI,
   retries: 0,
   reporter: [["list"], ["html", { open: "never" }]],
@@ -64,7 +64,12 @@ export default defineConfig({
       url: WEB_URL,
       reuseExistingServer: false,
       timeout: 120_000,
-      env: { VITE_API_URL: API_URL },
+      env: {
+        CHOKIDAR_USEPOLLING: "true",
+        E2E: "1",
+        VITE_API_URL: API_URL,
+        VITE_E2E: "1",
+      },
     },
     {
       // The same client with no server configured — the GitHub Pages build.
@@ -73,7 +78,12 @@ export default defineConfig({
       url: WEB_URL_SERVERLESS,
       reuseExistingServer: false,
       timeout: 120_000,
-      env: { VITE_API_URL: "" },
+      env: {
+        CHOKIDAR_USEPOLLING: "true",
+        E2E: "1",
+        VITE_API_URL: "",
+        VITE_E2E: "1",
+      },
     },
   ],
 })

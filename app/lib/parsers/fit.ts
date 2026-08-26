@@ -1,12 +1,13 @@
 import FitParser from "fit-file-parser"
 import type {
-  ParsedTrack,
+  ParsedActivity,
   RawPoint,
-  TrackCoords,
-  TrackLap,
-} from "~/types/tracks"
-import { computeTrackStats } from "~/lib/stats"
+  ActivityCoords,
+  ActivityLap,
+} from "~/types/activities"
+import { computeActivityStats } from "~/lib/stats"
 import { LAP_PROFILE_POINTS, MAX_LAPS } from "~/constants/fog"
+import { normalizeActivityType } from "~/lib/activityType"
 
 /**
  * `fit-file-parser` decodes every FIT `date_time` field into a `Date` object
@@ -53,7 +54,7 @@ interface LapBoundary {
 export function buildLapsFromFit(
   rawPoints: RawPoint[],
   fitLaps: unknown[]
-): TrackLap[] | undefined {
+): ActivityLap[] | undefined {
   if (rawPoints.length < 2 || fitLaps.length < 2) return undefined
   if (fitLaps.length > MAX_LAPS) return undefined
 
@@ -101,18 +102,18 @@ export function buildLapsFromFit(
     lastIndex[lapIdx] = i
   }
 
-  const laps: TrackLap[] = []
+  const laps: ActivityLap[] = []
   for (let k = 0; k < boundaries.length; k++) {
     if (firstIndex[k] === -1) continue // lap with no surviving GPS points
     // Extend backwards to the previous lap's last point so the highlighted
-    // polylines are contiguous and lap distances sum to the track distance.
+    // polylines are contiguous and lap distances sum to the activity distance.
     const prev = laps[laps.length - 1]
     const startIndex = prev ? prev.endIndex : firstIndex[k]
     const endIndex = lastIndex[k]
     if (endIndex - startIndex < 1) continue // needs 2+ points to be a LineString
 
     const slice = rawPoints.slice(startIndex, endIndex + 1)
-    const stats = computeTrackStats(slice, LAP_PROFILE_POINTS)
+    const stats = computeActivityStats(slice, LAP_PROFILE_POINTS)
 
     // The shared boundary point means durationMs would also count the gap
     // bridging into this lap — minutes if the user pressed lap while standing
@@ -146,7 +147,7 @@ export function buildLapsFromFit(
         avgPaceMinPerKm,
         avgSpeedKmh,
         // Unique distance is a library-wide grid computation that would shift
-        // whenever an unrelated track is imported. Not meaningful per lap.
+        // whenever an unrelated activity is imported. Not meaningful per lap.
         uniqueDistanceKm: 0,
       },
     })
@@ -157,7 +158,7 @@ export function buildLapsFromFit(
   return laps.length >= 2 ? laps : undefined
 }
 
-export async function parseFitFile(file: File): Promise<ParsedTrack[]> {
+export async function parseFitFile(file: File): Promise<ParsedActivity[]> {
   const buffer = await file.arrayBuffer()
   const parser = new FitParser({ force: true, speedUnit: "m/s" })
   const data = await parser.parseAsync(buffer)
@@ -186,12 +187,15 @@ export async function parseFitFile(file: File): Promise<ParsedTrack[]> {
     }
   })
 
-  const coords: TrackCoords = rawPoints.map((p) => [p.lng, p.lat])
+  const coords: ActivityCoords = rawPoints.map((p) => [p.lng, p.lat])
   const ts = rawPoints.map((p) => p.timestampMs)
 
   const validTs = ts.filter((t): t is number => t != null && isFinite(t))
-  const stats = computeTrackStats(rawPoints)
+  const stats = computeActivityStats(rawPoints)
   const laps = buildLapsFromFit(rawPoints, data.laps ?? [])
+  const activityType = normalizeActivityType(
+    data.sessions?.[0]?.sport ?? data.sports?.[0]?.sport
+  )
   return [
     {
       id: crypto.randomUUID(),
@@ -202,6 +206,7 @@ export async function parseFitFile(file: File): Promise<ParsedTrack[]> {
         ? undefined
         : ts.map((t) => t ?? -1),
       format: "fit",
+      ...(activityType ? { activityType } : {}),
       stats: { ...stats, uniqueDistanceKm: stats.distanceKm },
       ...(laps ? { laps } : {}),
     },

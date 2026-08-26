@@ -25,12 +25,12 @@ export function StatisticsSection() {
         </li>
         <li>
           Personal records — your longest, hilliest and fastest single
-          activities. Each links straight back to that track on the map
+          activities. Each links straight back to that activity on the map
         </li>
       </ul>
       <p>
-        Everything here is recomputed from the tracks on this device each time
-        you open the page, so it reflects exactly what you have imported.
+        Everything here is recomputed from the activities on this device each
+        time you open the page, so it reflects exactly what you have imported.
       </p>
     </div>
   )

@@ -33,8 +33,8 @@ export function PersonalRecordsCard({ records }: PersonalRecordsCardProps) {
             {records.longestActivity && (
               <RecordRow
                 label="Longest activity"
-                trackId={records.longestActivity.track.id}
-                trackName={records.longestActivity.track.name}
+                activityId={records.longestActivity.activity.id}
+                activityName={records.longestActivity.activity.name}
                 value={`${records.longestActivity.distanceKm.toFixed(1)} km`}
               />
             )}
@@ -42,8 +42,8 @@ export function PersonalRecordsCard({ records }: PersonalRecordsCardProps) {
               <RecordRow
                 divider
                 label="Most elevation gain"
-                trackId={records.mostElevation.track.id}
-                trackName={records.mostElevation.track.name}
+                activityId={records.mostElevation.activity.id}
+                activityName={records.mostElevation.activity.name}
                 value={formatElevation(records.mostElevation.elevationGainM)}
               />
             )}
@@ -51,8 +51,8 @@ export function PersonalRecordsCard({ records }: PersonalRecordsCardProps) {
               <RecordRow
                 divider
                 label="Fastest moving pace"
-                trackId={records.fastestPace.track.id}
-                trackName={records.fastestPace.track.name}
+                activityId={records.fastestPace.activity.id}
+                activityName={records.fastestPace.activity.name}
                 value={formatPace(records.fastestPace.paceMinPerKm)}
               />
             )}
@@ -60,8 +60,8 @@ export function PersonalRecordsCard({ records }: PersonalRecordsCardProps) {
               <RecordRow
                 divider
                 label="Fastest avg speed"
-                trackId={records.fastestAvgSpeed.track.id}
-                trackName={records.fastestAvgSpeed.track.name}
+                activityId={records.fastestAvgSpeed.activity.id}
+                activityName={records.fastestAvgSpeed.activity.name}
                 value={`${records.fastestAvgSpeed.avgSpeedKmh.toFixed(1)} km/h`}
               />
             )}
@@ -69,8 +69,8 @@ export function PersonalRecordsCard({ records }: PersonalRecordsCardProps) {
               <RecordRow
                 divider
                 label="Longest moving time"
-                trackId={records.longestMovingTime.track.id}
-                trackName={records.longestMovingTime.track.name}
+                activityId={records.longestMovingTime.activity.id}
+                activityName={records.longestMovingTime.activity.name}
                 value={formatMovingTime(records.longestMovingTime.movingTimeMs)}
               />
             )}

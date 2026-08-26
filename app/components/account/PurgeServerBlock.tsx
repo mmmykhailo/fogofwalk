@@ -1,7 +1,7 @@
 import { useState } from "react"
 import { Button } from "~/components/ui/button"
 import { friendlyMessage } from "~/lib/server/apiClient"
-import { purgeServerTracks } from "~/lib/server/syncEngine"
+import { purgeServerActivities } from "~/lib/server/syncEngine"
 
 interface PurgeServerBlockProps {
   onCancel: () => void
@@ -9,7 +9,7 @@ interface PurgeServerBlockProps {
 }
 
 /**
- * Second verification for wiping the server's copy of every track, in place
+ * Second verification for wiping the server's copy of every activity, in place
  * inside the account dialog — same reasoning as `DeleteAccountBlock`: a nested
  * dialog opened from a vaul drawer is the combination this codebase carries
  * focus workarounds for.
@@ -28,7 +28,7 @@ export function PurgeServerBlock({
     setIsPurging(true)
     setError(null)
     try {
-      onPurged(await purgeServerTracks())
+      onPurged(await purgeServerActivities())
     } catch (err) {
       setError(friendlyMessage(err))
       setIsPurging(false)
@@ -38,12 +38,12 @@ export function PurgeServerBlock({
   return (
     <div className="space-y-2 p-3 ring-1 ring-destructive/30">
       <p className="text-sm font-medium text-destructive">
-        Remove all tracks from the server?
+        Remove all activities from the server?
       </p>
       <p className="text-xs/relaxed text-muted-foreground">
-        Every track stored on the server is deleted and your account stays.
+        Every activity stored on the server is deleted and your account stays.
         Nothing is removed from this device or from your other devices — they
-        simply stop syncing the tracks they already have. New activities you
+        simply stop syncing the activities they already have. New activities you
         import afterwards will sync as normal.
       </p>
       {error && <p className="text-xs text-destructive">{error}</p>}

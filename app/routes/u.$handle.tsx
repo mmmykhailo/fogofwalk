@@ -3,7 +3,7 @@ import { useLoaderData } from "react-router"
 import { FootprintsIcon } from "@phosphor-icons/react"
 import { PageShell } from "~/components/PageShell"
 import { AccountAvatar } from "~/components/account/AccountAvatar"
-import { TrackCard } from "~/components/public-profile/TrackCard"
+import { ActivityCard } from "~/components/public-profile/ActivityCard"
 import { PublicActivityGrid } from "~/components/public-profile/PublicActivityGrid"
 import { PublicProfileSummary } from "~/components/public-profile/PublicProfileSummary"
 import { StatCards } from "~/components/stats/StatCards"
@@ -50,7 +50,7 @@ export function meta({ params }: Route.MetaArgs) {
     { title: `${handle} — Fog of Walk` },
     {
       name: "description",
-      content: `Public tracks by ${handle} on Fog of Walk.`,
+      content: `Public activities by ${handle} on Fog of Walk.`,
     },
   ]
 }
@@ -58,21 +58,21 @@ export function meta({ params }: Route.MetaArgs) {
 export default function PublicProfilePage() {
   const { profile, error } = useLoaderData<typeof clientLoader>()
   const auth = useAuth()
-  const [tracks, setTracks] = useState(() => profile?.tracks ?? [])
+  const [activities, setActivities] = useState(() => profile?.activities ?? [])
 
   useEffect(() => {
-    setTracks(profile?.tracks ?? [])
+    setActivities(profile?.activities ?? [])
   }, [profile])
 
   const isOwner =
     auth.status === "signedIn" &&
     auth.canSync &&
     auth.user.handle?.toLowerCase() === profile?.user.handle.toLowerCase()
-  const stats = computePublicProfileStats(tracks)
+  const stats = computePublicProfileStats(activities)
 
-  function handleTrackHidden(contentHash: string) {
-    setTracks((current) =>
-      current.filter((track) => track.contentHash !== contentHash)
+  function handleActivityHidden(contentHash: string) {
+    setActivities((current) =>
+      current.filter((activity) => activity.contentHash !== contentHash)
     )
   }
 
@@ -108,7 +108,7 @@ export default function PublicProfilePage() {
         </div>
       )}
 
-      {!error && profile && tracks.length === 0 && (
+      {!error && profile && activities.length === 0 && (
         <div className="flex flex-col items-center justify-center gap-3 rounded-none border border-dashed border-border py-24 text-center">
           <FootprintsIcon
             size={40}
@@ -116,12 +116,12 @@ export default function PublicProfilePage() {
             weight="duotone"
           />
           <p className="text-sm text-muted-foreground">
-            This user has no public tracks yet
+            This user has no public activities yet
           </p>
         </div>
       )}
 
-      {!error && profile && tracks.length > 0 && (
+      {!error && profile && activities.length > 0 && (
         <div className="space-y-6">
           <StatCards totals={stats.totals} />
           <WeeklyChart weekly={stats.weekly} />
@@ -134,12 +134,12 @@ export default function PublicProfilePage() {
               Public activities
             </h2>
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              {tracks.map((track) => (
-                <TrackCard
-                  key={track.contentHash}
-                  track={track}
+              {activities.map((activity) => (
+                <ActivityCard
+                  key={activity.contentHash}
+                  activity={activity}
                   isOwner={isOwner}
-                  onHidden={handleTrackHidden}
+                  onHidden={handleActivityHidden}
                 />
               ))}
             </div>
