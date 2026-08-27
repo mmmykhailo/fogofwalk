@@ -98,7 +98,7 @@ export function AchievementsSection({
           to={viewAllTo}
           className={cn(
             buttonVariants({ variant: "outline", size: "sm" }),
-            "mt-5"
+            "mt-3"
           )}
         >
           View all achievements
