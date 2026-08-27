@@ -3,6 +3,7 @@ import { AchievementCard } from "~/components/public-profile/AchievementCard"
 import { TransitionLink } from "~/components/TransitionLink"
 import { buttonVariants } from "~/components/ui/button"
 import { cn } from "~/lib/utils"
+import { Grid } from "~/components/Grid"
 
 interface AchievementsSectionProps {
   achievements: EarnedAchievement[]
@@ -71,27 +72,27 @@ export function AchievementsSection({
                   >
                     {label}
                   </h3>
-                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <Grid columns={{ base: 1, sm: 2 }} gap={3}>
                     {familyAchievements.map((achievement) => (
                       <AchievementCard
                         key={achievement.definition.id}
                         achievement={achievement}
                       />
                     ))}
-                  </div>
+                  </Grid>
                 </section>
               )
           )}
         </div>
       ) : (
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <Grid columns={{ base: 1, sm: 2 }} gap={3}>
           {visibleAchievements.map((achievement) => (
             <AchievementCard
               key={achievement.definition.id}
               achievement={achievement}
             />
           ))}
-        </div>
+        </Grid>
       )}
       {hasHiddenAchievements && viewAllTo && (
         <TransitionLink

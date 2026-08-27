@@ -1,5 +1,6 @@
 import { ActivityCard } from "~/components/public-profile/ActivityCard"
 import { ActivityTypeSelect } from "~/components/activities/ActivityTypeSelect"
+import { Grid } from "~/components/Grid"
 import type { ParsedActivity } from "~/types/activities"
 
 interface ActivitiesGridProps {
@@ -8,7 +9,7 @@ interface ActivitiesGridProps {
 
 export function ActivitiesGrid({ activities }: ActivitiesGridProps) {
   return (
-    <div className="grid grid-cols-1 gap-4">
+    <Grid>
       {activities.map((activity) => (
         <ActivityCard
           key={activity.id}
@@ -30,6 +31,6 @@ export function ActivitiesGrid({ activities }: ActivitiesGridProps) {
           }
         />
       ))}
-    </div>
+    </Grid>
   )
 }

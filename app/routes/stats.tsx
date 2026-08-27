@@ -21,6 +21,7 @@ import { WeeklyChart } from "~/components/stats/WeeklyChart"
 import { StreaksCard } from "~/components/stats/StreaksCard"
 import { PersonalRecordsCard } from "~/components/stats/PersonalRecordsCard"
 import { TransitionLink } from "~/components/TransitionLink"
+import { Grid } from "~/components/Grid"
 
 // ─── Loader ───────────────────────────────────────────────────────────────────
 
@@ -89,10 +90,10 @@ export default function StatsPage() {
         <div className="space-y-4">
           <StatCards totals={totals} uniqueDistanceKm={uniqueDistanceKm} />
           <WeeklyChart weekly={weekly} />
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <Grid columns={{ base: 1, sm: 2 }}>
             <StreaksCard streaks={streaks} />
             <PersonalRecordsCard records={records} />
-          </div>
+          </Grid>
         </div>
       )}
     </PageShell>

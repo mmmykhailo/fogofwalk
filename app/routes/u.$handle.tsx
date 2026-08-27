@@ -10,6 +10,7 @@ import { PublicProfileSummary } from "~/components/public-profile/PublicProfileS
 import { StatCards } from "~/components/stats/StatCards"
 import { WeeklyChart } from "~/components/stats/WeeklyChart"
 import { TransitionLink } from "~/components/TransitionLink"
+import { Grid } from "~/components/Grid"
 import { computePublicProfileStats } from "~/lib/publicProfileStats"
 import {
   computeEarnedAchievements,
@@ -117,10 +118,10 @@ export default function PublicProfilePage() {
         <div className="space-y-6">
           <StatCards totals={stats.totals} />
           <WeeklyChart weekly={stats.weekly} />
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <Grid columns={{ base: 1, sm: 2 }}>
             <PublicActivityGrid recentDays={stats.recentDays} />
             <PublicProfileSummary stats={stats} />
-          </div>
+          </Grid>
           <AchievementsSection
             achievements={achievements}
             maxAchievements={4}
@@ -131,7 +132,7 @@ export default function PublicProfilePage() {
             <h2 className="mb-3 font-heading text-lg font-semibold">
               Public activities
             </h2>
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <Grid columns={{ base: 1, sm: 2 }}>
               {activities.map((activity) => (
                 <ActivityCard
                   key={activity.contentHash}
@@ -140,7 +141,7 @@ export default function PublicProfilePage() {
                   onHidden={handleActivityHidden}
                 />
               ))}
-            </div>
+            </Grid>
           </section>
         </div>
       )}
