@@ -242,6 +242,8 @@ from one file — that's the registry's layout and splitting it would break `sha
 
 **Boolean state variables use the `is` prefix**: `useState<boolean>` variables should be named `isFoo` / `setIsFoo` — e.g. `isDeleteOpen`, `isCopied`, `isExporting`. Never use bare adjectives like `deleteOpen` or `copied`.
 
+**Classnames use the shared `cn` helper**: import `cn` from `~/lib/utils` and pass conditional or composed classes through it. Do not build `className` values with template strings or import `clsx` directly in components.
+
 **Phosphor icons — always use the `Icon` suffix**: `@phosphor-icons/react` exports every icon both as `Trash` and `TrashIcon`; the suffix-free names are deprecated. Always import and use the `*Icon` form — `TrashIcon`, `XIcon`, `PlusIcon`, etc. Never import the bare name.
 
 **FIT coordinates**: `fit-file-parser` already returns degrees — do NOT multiply by `180/2^31`. Pre-GPS-lock records have near-zero coordinates; filter with `Math.abs(lat) < 0.001 && Math.abs(lng) < 0.001`.

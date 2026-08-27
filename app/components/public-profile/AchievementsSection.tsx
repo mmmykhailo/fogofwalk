@@ -2,6 +2,7 @@ import type { EarnedAchievement } from "~/lib/achievements"
 import { AchievementCard } from "~/components/public-profile/AchievementCard"
 import { TransitionLink } from "~/components/TransitionLink"
 import { buttonVariants } from "~/components/ui/button"
+import { cn } from "~/lib/utils"
 
 interface AchievementsSectionProps {
   achievements: EarnedAchievement[]
@@ -95,7 +96,10 @@ export function AchievementsSection({
       {hasHiddenAchievements && viewAllTo && (
         <TransitionLink
           to={viewAllTo}
-          className={`${buttonVariants({ variant: "outline", size: "sm" })} mt-5`}
+          className={cn(
+            buttonVariants({ variant: "outline", size: "sm" }),
+            "mt-5"
+          )}
         >
           View all achievements
         </TransitionLink>
