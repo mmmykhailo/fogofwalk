@@ -84,6 +84,7 @@ describe("public profiles", () => {
         [13.502, 52.502],
       ],
       isPublic: true,
+      startSunPhase: "before_sunrise",
     })
 
     await putActivity(app, token, privateActivity)
@@ -105,6 +106,7 @@ describe("public profiles", () => {
     expect(body.activities[0]!.movingTimeMs).toBe(1_700_000)
     expect(body.activities[0]!.elevationGainM).toBe(12)
     expect(body.activities[0]!.avgMovingSpeedKmh).toBe(8.9)
+    expect(body.activities[0]!.startSunPhase).toBe("before_sunrise")
   })
 
   test("private activities are hidden from the public endpoint", async () => {

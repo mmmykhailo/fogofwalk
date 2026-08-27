@@ -3,6 +3,7 @@ import { useLoaderData } from "react-router"
 import { FootprintsIcon } from "@phosphor-icons/react"
 import { PageShell } from "~/components/PageShell"
 import { AccountAvatar } from "~/components/account/AccountAvatar"
+import { AchievementsSection } from "~/components/public-profile/AchievementsSection"
 import { ActivityCard } from "~/components/public-profile/ActivityCard"
 import { PublicActivityGrid } from "~/components/public-profile/PublicActivityGrid"
 import { PublicProfileSummary } from "~/components/public-profile/PublicProfileSummary"
@@ -10,6 +11,7 @@ import { StatCards } from "~/components/stats/StatCards"
 import { WeeklyChart } from "~/components/stats/WeeklyChart"
 import { TransitionLink } from "~/components/TransitionLink"
 import { computePublicProfileStats } from "~/lib/publicProfileStats"
+import { computeEarnedAchievements } from "~/lib/achievements"
 import { apiUrl } from "~/lib/server/config"
 import { useAuth } from "~/lib/server/authStore"
 import type { PublicProfileResponse } from "~shared/api"
@@ -69,6 +71,7 @@ export default function PublicProfilePage() {
     auth.canSync &&
     auth.user.handle?.toLowerCase() === profile?.user.handle.toLowerCase()
   const stats = computePublicProfileStats(activities)
+  const achievements = computeEarnedAchievements(activities)
 
   function handleActivityHidden(contentHash: string) {
     setActivities((current) =>
@@ -129,6 +132,7 @@ export default function PublicProfilePage() {
             <PublicActivityGrid recentDays={stats.recentDays} />
             <PublicProfileSummary stats={stats} />
           </div>
+          <AchievementsSection achievements={achievements} />
           <section>
             <h2 className="mb-3 font-heading text-lg font-semibold">
               Public activities

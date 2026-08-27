@@ -6,6 +6,7 @@ import type {
 } from "~/types/activities"
 import { computeActivityStats } from "~/lib/stats"
 import { normalizeActivityType } from "~/lib/activityType"
+import { deriveStartSunPhase } from "~/lib/sunPhase"
 
 function buildRawPoints(
   coords: [number, number, number?][],
@@ -37,11 +38,14 @@ export async function parseGpxFile(file: File): Promise<ParsedActivity[]> {
         const ts = rawPoints.map((p) => p.timestampMs)
         const validTs = ts.filter((t): t is number => t != null && isFinite(t))
         const stats = computeActivityStats(rawPoints)
+        const coordinates = rawCoords.map((c) => [c[0], c[1]]) as ActivityCoords
+        const startedAtMs = validTs.length > 0 ? validTs[0] : null
         activities.push({
           id: crypto.randomUUID(),
           name: file.name,
-          startedAtMs: validTs.length > 0 ? validTs[0] : null,
-          coordinates: rawCoords.map((c) => [c[0], c[1]]) as ActivityCoords,
+          startedAtMs,
+          coordinates,
+          startSunPhase: deriveStartSunPhase(coordinates, startedAtMs),
           pointTimestamps: ts.every((t) => t == null)
             ? undefined
             : ts.map((t) => t ?? -1),
@@ -62,11 +66,17 @@ export async function parseGpxFile(file: File): Promise<ParsedActivity[]> {
             (t): t is number => t != null && isFinite(t)
           )
           const stats = computeActivityStats(rawPoints)
+          const coordinates = rawCoords.map((c) => [
+            c[0],
+            c[1],
+          ]) as ActivityCoords
+          const startedAtMs = validTs.length > 0 ? validTs[0] : null
           activities.push({
             id: crypto.randomUUID(),
             name: `${file.name}[${i}]`,
-            startedAtMs: validTs.length > 0 ? validTs[0] : null,
-            coordinates: rawCoords.map((c) => [c[0], c[1]]) as ActivityCoords,
+            startedAtMs,
+            coordinates,
+            startSunPhase: deriveStartSunPhase(coordinates, startedAtMs),
             pointTimestamps: ts.every((t) => t == null)
               ? undefined
               : ts.map((t) => t ?? -1),

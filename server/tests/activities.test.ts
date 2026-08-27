@@ -187,13 +187,14 @@ describe("upload", () => {
     const changed = await putActivity(app, token, {
       ...activity,
       activityType: "cycling",
+      startSunPhase: "after_sunset",
     })
 
     expect(first.status).toBe(200)
     expect(changed.status).toBe(200)
-    expect(((await changed.json()) as ActivityMeta).activityType).toBe(
-      "cycling"
-    )
+    const changedMeta = (await changed.json()) as ActivityMeta
+    expect(changedMeta.activityType).toBe("cycling")
+    expect(changedMeta.startSunPhase).toBe("after_sunset")
 
     const manifest = (await (
       await app.request("/api/activities/manifest", {
@@ -203,6 +204,7 @@ describe("upload", () => {
     expect(manifest.activities).toHaveLength(1)
     expect(manifest.activities[0]?.contentHash).toBe(hash)
     expect(manifest.activities[0]?.activityType).toBe("cycling")
+    expect(manifest.activities[0]?.startSunPhase).toBe("after_sunset")
 
     const response = await app.request(`/api/activities/${hash}`, {
       headers: authHeaders(token),
@@ -213,6 +215,7 @@ describe("upload", () => {
       )
     )
     expect(payload.activityType).toBe("cycling")
+    expect(payload.startSunPhase).toBe("after_sunset")
   })
 
   test("round-trips the gzipped blob", async () => {

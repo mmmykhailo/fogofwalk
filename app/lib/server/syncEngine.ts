@@ -594,6 +594,7 @@ async function downloadActivity(
     name: meta.name,
     isPublic: meta.isPublic,
     activityType: meta.activityType ?? payload.activityType,
+    startSunPhase: meta.startSunPhase ?? payload.startSunPhase,
   }
 }
 

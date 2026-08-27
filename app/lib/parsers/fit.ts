@@ -8,6 +8,7 @@ import type {
 import { computeActivityStats } from "~/lib/stats"
 import { LAP_PROFILE_POINTS, MAX_LAPS } from "~/constants/fog"
 import { normalizeActivityType } from "~/lib/activityType"
+import { deriveStartSunPhase } from "~/lib/sunPhase"
 
 /**
  * `fit-file-parser` decodes every FIT `date_time` field into a `Date` object
@@ -202,6 +203,10 @@ export async function parseFitFile(file: File): Promise<ParsedActivity[]> {
       name: file.name,
       startedAtMs: validTs.length > 0 ? validTs[0] : null,
       coordinates: coords,
+      startSunPhase: deriveStartSunPhase(
+        coords,
+        validTs.length > 0 ? validTs[0] : null
+      ),
       pointTimestamps: ts.every((t) => t == null)
         ? undefined
         : ts.map((t) => t ?? -1),

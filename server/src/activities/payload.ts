@@ -57,6 +57,9 @@ export const activityUploadSchema: z.ZodType<ActivityUploadPayload> = z.object({
   activityType: z
     .enum(["walking", "running", "cycling", "kayaking", "swimming", "other"])
     .optional(),
+  startSunPhase: z
+    .enum(["before_sunrise", "daylight", "after_sunset", "unknown"])
+    .optional(),
   stats: statsSchema,
   laps: z.array(lapSchema).optional(),
   contentHash: z.string().optional(),

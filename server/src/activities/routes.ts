@@ -139,6 +139,7 @@ export function createActivityRoutes(store: ServerStore) {
       isPublic: activity.isPublic ?? false,
       format: activity.format,
       activityType: activity.activityType,
+      startSunPhase: activity.startSunPhase,
       startedAtMs: activity.startedAtMs,
       distanceKm: activity.stats.distanceKm,
       pointCount: activity.coordinates.length,

@@ -75,6 +75,16 @@ export const ACTIVITY_TYPES = [
 
 export type ActivityType = (typeof ACTIVITY_TYPES)[number]
 
+/**
+ * The sun's state at an activity's starting point and instant. Calculated
+ * locally during import so public profiles never need location data.
+ */
+export type StartSunPhase =
+  | "before_sunrise"
+  | "daylight"
+  | "after_sunset"
+  | "unknown"
+
 export interface ParsedActivity {
   id: string
   name: string
@@ -85,6 +95,11 @@ export interface ParsedActivity {
   format: ActivityFormat
   /** Normalized activity category. Absent when the imported file had no type metadata. */
   activityType?: ActivityType
+  /**
+   * Sun state derived locally from the first valid coordinate and start time.
+   * Optional for activities imported before this fact was introduced.
+   */
+  startSunPhase?: StartSunPhase
   stats: ActivityStats
   /** FIT laps, when the file has at least two. Never set for GPX. */
   laps?: ActivityLap[]
