@@ -9,6 +9,7 @@ import { computeActivityStats } from "~/lib/stats"
 import { LAP_PROFILE_POINTS, MAX_LAPS } from "~/constants/fog"
 import { normalizeActivityType } from "~/lib/activityType"
 import { deriveStartSunPhase } from "~/lib/sunPhase"
+import { smoothTrack } from "~/lib/trackSmoothing"
 
 /**
  * `fit-file-parser` decodes every FIT `date_time` field into a `Date` object
@@ -177,16 +178,18 @@ export async function parseFitFile(file: File): Promise<ParsedActivity[]> {
 
   if (validRecords.length < 2) return []
 
-  const rawPoints: RawPoint[] = validRecords.map((r) => {
-    const alt = r.enhanced_altitude ?? r.altitude
-    const ts = fitTimeToMs(r.timestamp)
-    return {
-      lng: r.position_long as number,
-      lat: r.position_lat as number,
-      elevationM: typeof alt === "number" && isFinite(alt) ? alt : undefined,
-      timestampMs: isFinite(ts) ? ts : undefined,
-    }
-  })
+  const rawPoints = smoothTrack(
+    validRecords.map((r) => {
+      const alt = r.enhanced_altitude ?? r.altitude
+      const ts = fitTimeToMs(r.timestamp)
+      return {
+        lng: r.position_long as number,
+        lat: r.position_lat as number,
+        elevationM: typeof alt === "number" && isFinite(alt) ? alt : undefined,
+        timestampMs: isFinite(ts) ? ts : undefined,
+      }
+    })
+  )
 
   const coords: ActivityCoords = rawPoints.map((p) => [p.lng, p.lat])
   const ts = rawPoints.map((p) => p.timestampMs)

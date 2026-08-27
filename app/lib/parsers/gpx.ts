@@ -7,6 +7,7 @@ import type {
 import { computeActivityStats } from "~/lib/stats"
 import { normalizeActivityType } from "~/lib/activityType"
 import { deriveStartSunPhase } from "~/lib/sunPhase"
+import { smoothTrack } from "~/lib/trackSmoothing"
 
 function buildRawPoints(
   coords: [number, number, number?][],
@@ -34,11 +35,14 @@ export async function parseGpxFile(file: File): Promise<ParsedActivity[]> {
       if (rawCoords.length > 1) {
         const times: string[] | undefined =
           feat.properties?.coordinateProperties?.times
-        const rawPoints = buildRawPoints(rawCoords, times)
+        const rawPoints = smoothTrack(buildRawPoints(rawCoords, times))
         const ts = rawPoints.map((p) => p.timestampMs)
         const validTs = ts.filter((t): t is number => t != null && isFinite(t))
         const stats = computeActivityStats(rawPoints)
-        const coordinates = rawCoords.map((c) => [c[0], c[1]]) as ActivityCoords
+        const coordinates = rawPoints.map((p) => [
+          p.lng,
+          p.lat,
+        ]) as ActivityCoords
         const startedAtMs = validTs.length > 0 ? validTs[0] : null
         activities.push({
           id: crypto.randomUUID(),
@@ -60,15 +64,17 @@ export async function parseGpxFile(file: File): Promise<ParsedActivity[]> {
       feat.geometry.coordinates.forEach((coords, i) => {
         if (coords.length > 1) {
           const rawCoords = coords as [number, number, number?][]
-          const rawPoints = buildRawPoints(rawCoords, allTimes?.[i])
+          const rawPoints = smoothTrack(
+            buildRawPoints(rawCoords, allTimes?.[i])
+          )
           const ts = rawPoints.map((p) => p.timestampMs)
           const validTs = ts.filter(
             (t): t is number => t != null && isFinite(t)
           )
           const stats = computeActivityStats(rawPoints)
-          const coordinates = rawCoords.map((c) => [
-            c[0],
-            c[1],
+          const coordinates = rawPoints.map((p) => [
+            p.lng,
+            p.lat,
           ]) as ActivityCoords
           const startedAtMs = validTs.length > 0 ? validTs[0] : null
           activities.push({
