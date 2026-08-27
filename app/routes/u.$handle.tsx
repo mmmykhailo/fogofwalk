@@ -115,7 +115,7 @@ export default function PublicProfilePage() {
       )}
 
       {!error && profile && activities.length > 0 && (
-        <div className="space-y-6">
+        <div className="space-y-3">
           <StatCards totals={stats.totals} />
           <WeeklyChart weekly={stats.weekly} />
           <Grid columns={{ base: 1, sm: 2 }}>
