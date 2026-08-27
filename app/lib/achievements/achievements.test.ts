@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import type { PublicActivityMeta } from "~shared/api"
-import { computeEarnedAchievements } from "../achievements"
+import { computeEarnedAchievements, sortEarnedAchievementsNewestFirst } from "."
 
 function activity(
   overrides: Partial<PublicActivityMeta> = {}
@@ -141,6 +141,20 @@ describe("computeEarnedAchievements", () => {
       earned.find(({ definition }) => definition.id === "running-10k")
         ?.earnedAtMs
     ).toBe(10)
+  })
+
+  test("sorts earned achievements newest first and leaves undated awards last", () => {
+    const earned = computeEarnedAchievements([
+      activity({ activityType: "running", distanceKm: 5, startedAtMs: 10 }),
+      activity({ activityType: "cycling", distanceKm: 50, startedAtMs: 20 }),
+      activity({ activityType: "walking", distanceKm: 10 }),
+    ])
+
+    expect(
+      sortEarnedAchievementsNewestFirst(earned).map(
+        ({ definition }) => definition.id
+      )
+    ).toEqual(["cycling-50k", "running-5k", "walking-10k"])
   })
 
   test("keeps an achievement earned by an undated legacy activity, with no award date", () => {

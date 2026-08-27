@@ -2,16 +2,19 @@ import { useEffect, useState } from "react"
 import { useLoaderData } from "react-router"
 import { FootprintsIcon } from "@phosphor-icons/react"
 import { PageShell } from "~/components/PageShell"
-import { AccountAvatar } from "~/components/account/AccountAvatar"
 import { AchievementsSection } from "~/components/public-profile/AchievementsSection"
 import { ActivityCard } from "~/components/public-profile/ActivityCard"
+import { PublicProfileHeader } from "~/components/public-profile/PublicProfileHeader"
 import { PublicActivityGrid } from "~/components/public-profile/PublicActivityGrid"
 import { PublicProfileSummary } from "~/components/public-profile/PublicProfileSummary"
 import { StatCards } from "~/components/stats/StatCards"
 import { WeeklyChart } from "~/components/stats/WeeklyChart"
 import { TransitionLink } from "~/components/TransitionLink"
 import { computePublicProfileStats } from "~/lib/publicProfileStats"
-import { computeEarnedAchievements } from "~/lib/achievements"
+import {
+  computeEarnedAchievements,
+  sortEarnedAchievementsNewestFirst,
+} from "~/lib/achievements"
 import { apiUrl } from "~/lib/server/config"
 import { useAuth } from "~/lib/server/authStore"
 import type { PublicProfileResponse } from "~shared/api"
@@ -71,7 +74,9 @@ export default function PublicProfilePage() {
     auth.canSync &&
     auth.user.handle?.toLowerCase() === profile?.user.handle.toLowerCase()
   const stats = computePublicProfileStats(activities)
-  const achievements = computeEarnedAchievements(activities)
+  const achievements = sortEarnedAchievementsNewestFirst(
+    computeEarnedAchievements(activities)
+  )
 
   function handleActivityHidden(contentHash: string) {
     setActivities((current) =>
@@ -81,23 +86,7 @@ export default function PublicProfilePage() {
 
   return (
     <PageShell>
-      {profile && (
-        <div className="mb-8 flex items-center gap-4">
-          <AccountAvatar
-            displayName={profile.user.displayName}
-            avatarUrl={profile.user.avatarUrl}
-            className="size-16"
-          />
-          <div>
-            <h1 className="text-xl font-semibold">
-              {profile.user.displayName}
-            </h1>
-            <p className="text-sm text-muted-foreground">
-              @{profile.user.handle}
-            </p>
-          </div>
-        </div>
-      )}
+      {profile && <PublicProfileHeader user={profile.user} />}
 
       {error && (
         <div className="flex flex-col items-center justify-center gap-3 rounded-none border border-dashed border-border py-24 text-center">
@@ -132,7 +121,12 @@ export default function PublicProfilePage() {
             <PublicActivityGrid recentDays={stats.recentDays} />
             <PublicProfileSummary stats={stats} />
           </div>
-          <AchievementsSection achievements={achievements} />
+          <AchievementsSection
+            achievements={achievements}
+            maxAchievements={4}
+            viewAllTo={`/u/${encodeURIComponent(profile.user.handle)}/achievements`}
+            groupByFamily={false}
+          />
           <section>
             <h2 className="mb-3 font-heading text-lg font-semibold">
               Public activities

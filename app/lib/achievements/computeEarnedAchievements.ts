@@ -36,3 +36,15 @@ export function computeEarnedAchievements(
     ]
   })
 }
+
+/** Returns a newest-first copy, keeping undated legacy achievements last. */
+export function sortEarnedAchievementsNewestFirst(
+  achievements: readonly EarnedAchievement[]
+): EarnedAchievement[] {
+  return [...achievements].sort((a, b) => {
+    if (a.earnedAtMs === null && b.earnedAtMs === null) return 0
+    if (a.earnedAtMs === null) return 1
+    if (b.earnedAtMs === null) return -1
+    return b.earnedAtMs - a.earnedAtMs
+  })
+}
