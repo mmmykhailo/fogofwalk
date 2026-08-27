@@ -289,6 +289,15 @@ async function syncOnce(reason: string): Promise<void> {
       local.activityType !== server.activityType ||
       local.startSunPhase !== server.startSunPhase
 
+    // Unlike user-editable metadata, sun phase is derived during import. A
+    // newly derived value may safely backfill an older server record even in
+    // an incremental sync; never let the missing legacy value overwrite it.
+    const shouldBackfillSunPhase = (
+      local: ParsedActivity,
+      server: ActivityMeta
+    ): boolean =>
+      local.startSunPhase !== undefined && server.startSunPhase === undefined
+
     /**
      * A tombstone must be acted on exactly once per device.
      *
@@ -313,7 +322,9 @@ async function syncOnce(reason: string): Promise<void> {
       const server = serverByHash.get(t.contentHash)
       const isMissing = !serverHashes.has(t.contentHash)
       const shouldRestoreLocalMetadata =
-        isFromScratch && server != null && metadataDiffers(t, server)
+        server != null &&
+        metadataDiffers(t, server) &&
+        (isFromScratch || shouldBackfillSunPhase(t, server))
       return (
         (isMissing || shouldRestoreLocalMetadata) &&
         // Suppressed only while the deletion is still being applied. Once it
@@ -328,7 +339,11 @@ async function syncOnce(reason: string): Promise<void> {
       if (ignoredHashes.has(server.contentHash)) return false
       const local = localByHash.get(server.contentHash)
       if (!local) return true
-      return !isFromScratch && metadataDiffers(local, server)
+      return (
+        !isFromScratch &&
+        metadataDiffers(local, server) &&
+        !shouldBackfillSunPhase(local, server)
+      )
     })
     const toDelete = isFromScratch
       ? []
