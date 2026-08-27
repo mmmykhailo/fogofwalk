@@ -9,8 +9,6 @@ export type GridColumns = Partial<Record<GridBreakpoint, GridColumnCount>>
 interface GridProps extends ComponentProps<"div"> {
   /** Column count at each breakpoint. Omitted breakpoints inherit the previous count. */
   columns?: GridColumns
-  /** Tailwind gap scale, applied consistently across section grids. */
-  gap?: 2 | 3 | 4 | 5 | 6 | 8
 }
 
 const columnClasses: Record<GridBreakpoint, Record<GridColumnCount, string>> = {
@@ -56,27 +54,16 @@ const columnClasses: Record<GridBreakpoint, Record<GridColumnCount, string>> = {
   },
 }
 
-const gapClasses: Record<NonNullable<GridProps["gap"]>, string> = {
-  2: "gap-2",
-  3: "gap-3",
-  4: "gap-4",
-  5: "gap-5",
-  6: "gap-6",
-  8: "gap-8",
-}
-
 export function Grid({
   className,
   columns = { base: 1 },
-  gap = 4,
   ...props
 }: GridProps) {
   return (
     <div
       data-slot="grid"
       className={cn(
-        "grid",
-        gapClasses[gap],
+        "grid gap-3",
         ...Object.entries(columns).map(
           ([breakpoint, count]) =>
             columnClasses[breakpoint as GridBreakpoint][count]

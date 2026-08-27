@@ -27,7 +27,7 @@ When creating a worktree, symlink the primary worktree's ignored `.env` and `ser
 ## UI conventions
 
 - Outside `components/ui/`, every presentational component has its own file. Route modules export only route concerns; extract rendered subcomponents.
-- Use `Grid` from `app/components/Grid.tsx` for responsive page-section grids. Its `columns` prop declares breakpoint-specific counts and `gap` declares the shared spacing scale. Use raw CSS Grid only for component-internal layouts or specialised visualisations.
+- Use `Grid` from `app/components/Grid.tsx` for responsive page-section grids. Its `columns` prop declares breakpoint-specific counts; its spacing is always `gap-3`. Use raw CSS Grid only for component-internal layouts or specialised visualisations.
 - Name boolean React state `isFoo` / `setIsFoo`.
 - Build conditional class names with `cn` from `~/lib/utils`; do not import `clsx` directly.
 - Use Phosphor's `*Icon` exports, never deprecated suffix-free names.

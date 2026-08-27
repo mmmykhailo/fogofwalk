@@ -72,7 +72,7 @@ export function AchievementsSection({
                   >
                     {label}
                   </h3>
-                  <Grid columns={{ base: 1, sm: 2 }} gap={3}>
+                  <Grid columns={{ base: 1, sm: 2 }}>
                     {familyAchievements.map((achievement) => (
                       <AchievementCard
                         key={achievement.definition.id}
@@ -85,7 +85,7 @@ export function AchievementsSection({
           )}
         </div>
       ) : (
-        <Grid columns={{ base: 1, sm: 2 }} gap={3}>
+        <Grid columns={{ base: 1, sm: 2 }}>
           {visibleAchievements.map((achievement) => (
             <AchievementCard
               key={achievement.definition.id}

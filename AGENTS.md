@@ -12,7 +12,7 @@ Read the focused references before changing their area:
 
 `routes/home.tsx` restores IndexedDB state, owns file mutations, and coordinates the fog worker. `MapView.tsx` owns MapLibre sources and worker updates. `lib/mapStore.ts` is the module-level map/worker/activity store; `workers/fogWorker.ts` owns all fog geometry.
 
-`routes/stats.tsx`, `routes/help.tsx`, and public profile routes are explicitly registered in `app/routes.ts`. Shared page chrome is in `components/PageShell.tsx` and `components/PageSection.tsx`. Reusable responsive page-section layouts use `components/Grid.tsx`; configure it with `columns` and `gap` rather than repeating standard grid utility combinations.
+`routes/stats.tsx`, `routes/help.tsx`, and public profile routes are explicitly registered in `app/routes.ts`. Shared page chrome is in `components/PageShell.tsx` and `components/PageSection.tsx`. Reusable responsive page-section layouts use `components/Grid.tsx`; configure its `columns` rather than repeating standard grid utility combinations. Grid spacing is always `gap-3`.
 
 The sync server is an independent package in `server/`; its shared contracts live in `shared/`. The server-optional invariant is non-negotiable: an unset `VITE_API_URL` must leave the client fully usable without network access.
 
