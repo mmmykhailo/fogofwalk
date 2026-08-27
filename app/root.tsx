@@ -1,4 +1,4 @@
-import { useEffect } from "react"
+import { useEffect, useState } from "react"
 import {
   Links,
   Meta,
@@ -8,6 +8,7 @@ import {
   isRouteErrorResponse,
 } from "react-router"
 import { WarningOctagonIcon } from "@phosphor-icons/react"
+import { PageTransitionProvider } from "~/components/PageTransitionProvider"
 
 import type { Route } from "./+types/root"
 import "./app.css"
@@ -27,12 +28,16 @@ if (
 }
 
 export function Layout({ children }: { children: React.ReactNode }) {
+  const [isLoaderMounted, setIsLoaderMounted] = useState(true)
+  const [isLoaderFading, setIsLoaderFading] = useState(false)
+
   useEffect(() => {
-    const loader = document.getElementById("js-loader")
-    if (!loader) return
-    loader.style.opacity = "0"
-    const onEnd = () => loader.remove()
-    loader.addEventListener("transitionend", onEnd, { once: true })
+    setIsLoaderFading(true)
+    // Keep this lifecycle in React. Removing #js-loader directly from the DOM
+    // leaves React holding a stale child reference; a later layout update then
+    // attempts a second removal and throws a NotFoundError.
+    const timer = window.setTimeout(() => setIsLoaderMounted(false), 400)
+    return () => window.clearTimeout(timer)
   }, [])
 
   return (
@@ -59,10 +64,17 @@ export function Layout({ children }: { children: React.ReactNode }) {
         <Links />
       </head>
       <body className="h-full bg-[#0a0a1e]">
-        <div id="js-loader" role="status" aria-label="Loading Fog of Walk">
-          <h1>Fog of Walk</h1>
-          <div className="fow-spinner" />
-        </div>
+        {isLoaderMounted && (
+          <div
+            id="js-loader"
+            role="status"
+            aria-label="Loading Fog of Walk"
+            style={{ opacity: isLoaderFading ? 0 : 1 }}
+          >
+            <h1>Fog of Walk</h1>
+            <div className="fow-spinner" />
+          </div>
+        )}
         {children}
         <ScrollRestoration />
         <Scripts />
@@ -72,7 +84,11 @@ export function Layout({ children }: { children: React.ReactNode }) {
 }
 
 export default function App() {
-  return <Outlet />
+  return (
+    <PageTransitionProvider>
+      <Outlet />
+    </PageTransitionProvider>
+  )
 }
 
 export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {

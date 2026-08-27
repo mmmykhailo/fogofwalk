@@ -1,0 +1,41 @@
+[Unit]
+Description=Fog of Walk sync server
+Documentation=https://github.com/mmmykhailo/fogofwalk
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=fogofwalk
+Group=fogofwalk
+
+# Through the `current` symlink, which systemd resolves at every start — the
+# symlink swap plus a restart is what a release *is*.
+WorkingDirectory=/srv/fogofwalk/current/server
+
+# Rendered by the deploy workflow from GitHub secrets, 0600, root-owned.
+# systemd reads it as root before dropping to the fogofwalk user.
+EnvironmentFile=/srv/fogofwalk/server.env
+
+# ProtectHome/ProtectSystem make the real home unusable; give Bun somewhere
+# writable of its own rather than letting it fail obscurely.
+Environment=HOME=/srv/fogofwalk/cache
+
+ExecStart=/usr/local/bin/bun src/index.ts
+Restart=always
+RestartSec=2
+
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+# The only writable paths: the SQLite file + blobs, and Bun's cache.
+ReadWritePaths=/srv/fogofwalk/data /srv/fogofwalk/cache
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

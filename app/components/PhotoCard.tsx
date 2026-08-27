@@ -11,6 +11,7 @@ import { Button } from "~/components/ui/button"
 import {
   Drawer,
   DrawerContent,
+  DrawerDescription,
   DrawerHeader,
   DrawerTitle,
 } from "~/components/ui/drawer"
@@ -28,9 +29,10 @@ export function PhotoCard({ group, onClose }: PhotoCardProps) {
   const [isOpen, setIsOpen] = useState(true)
   const isDismissingRef = useRef(false)
   const isMobile = useIsMobile()
-  const { style, onMouseDown, onTouchStart } = useDraggable({
-    x: typeof window !== "undefined" ? window.innerWidth - 336 : 0,
-    y: 16,
+  const { style, ref, onMouseDown, onTouchStart } = useDraggable({
+    x: Infinity,
+    y: 0,
+    padding: 12,
   })
 
   useEffect(() => {
@@ -96,6 +98,9 @@ export function PhotoCard({ group, onClose }: PhotoCardProps) {
         }}
       >
         <DrawerContent>
+          <DrawerDescription className="sr-only">
+            Photo viewer
+          </DrawerDescription>
           <DrawerHeader>
             <div className="flex items-center justify-between gap-2">
               <DrawerTitle className="truncate text-xs">
@@ -113,13 +118,15 @@ export function PhotoCard({ group, onClose }: PhotoCardProps) {
             </div>
           </DrawerHeader>
           <div className="pb-4">
-            {photo.objectUrl && (
-              <img
-                src={photo.objectUrl}
-                alt="Photo"
-                className="block max-h-[55vh] w-full object-contain"
-              />
-            )}
+            <div className="aspect-[4/3] w-full">
+              {photo.objectUrl && (
+                <img
+                  src={photo.objectUrl}
+                  alt="Photo"
+                  className="block size-full object-contain"
+                />
+              )}
+            </div>
             {navControls}
           </div>
         </DrawerContent>
@@ -128,7 +135,7 @@ export function PhotoCard({ group, onClose }: PhotoCardProps) {
   }
 
   return (
-    <div className="absolute z-20 w-80" style={style}>
+    <div ref={ref} className="absolute z-20 w-80" style={style}>
       <Card className="overflow-hidden bg-background/80 backdrop-blur-md">
         <CardHeader
           onMouseDown={onMouseDown}
@@ -151,13 +158,15 @@ export function PhotoCard({ group, onClose }: PhotoCardProps) {
           </CardAction>
         </CardHeader>
         <CardContent className="p-0">
-          {photo.objectUrl && (
-            <img
-              src={photo.objectUrl}
-              alt="Photo"
-              className="block h-auto w-full"
-            />
-          )}
+          <div className="aspect-[4/3] w-full">
+            {photo.objectUrl && (
+              <img
+                src={photo.objectUrl}
+                alt="Photo"
+                className="block size-full object-contain"
+              />
+            )}
+          </div>
           {navControls}
         </CardContent>
       </Card>

@@ -12,21 +12,21 @@ import {
   MAP_STYLE_URL,
   FOG_COLOR,
   FOG_OPACITY,
-  TRACK_COLOR,
-  TRACK_WIDTH_DEFAULT,
-  TRACK_WIDTH_SELECTED,
-  TRACK_OPACITY_DEFAULT,
-  TRACK_OPACITY_SELECTED,
-  TRACK_OPACITY_DIM,
-  TRACK_HIT_WIDTH,
-  TRACK_COLOR_DIM,
+  ACTIVITY_COLOR,
+  ACTIVITY_WIDTH_DEFAULT,
+  ACTIVITY_WIDTH_SELECTED,
+  ACTIVITY_OPACITY_DEFAULT,
+  ACTIVITY_OPACITY_SELECTED,
+  ACTIVITY_OPACITY_DIM,
+  ACTIVITY_HIT_WIDTH,
+  ACTIVITY_COLOR_DIM,
   LAP_HIGHLIGHT_WIDTH,
 } from "~/constants/fog"
 import type {
   MapMode,
-  TrackCoords,
+  ActivityCoords,
   WorkerOutboundMessage,
-} from "~/types/tracks"
+} from "~/types/activities"
 import type { PhotoEntry, PhotoGroup } from "~/types/photos"
 import { MapCompass } from "~/components/MapCompass"
 
@@ -128,48 +128,48 @@ function setupMapLayers(map: maplibregl.Map, mode: MapMode): void {
     })
   }
 
-  const trackFeatures = mapStore.tracks.map((t) =>
+  const activityFeatures = mapStore.activities.map((t) =>
     lineString(t.coordinates, { name: t.name, id: t.id })
   )
-  map.addSource("tracks-source", {
+  map.addSource("activities-source", {
     type: "geojson",
-    data: featureCollection(trackFeatures),
+    data: featureCollection(activityFeatures),
   })
   map.addLayer({
-    id: "tracks-layer",
+    id: "activities-layer",
     type: "line",
-    source: "tracks-source",
+    source: "activities-source",
     layout: {
       "line-join": "round",
       "line-cap": "round",
       visibility: "visible",
     },
     paint: {
-      "line-color": TRACK_COLOR,
-      "line-width": TRACK_WIDTH_DEFAULT,
-      "line-opacity": TRACK_OPACITY_DEFAULT,
+      "line-color": ACTIVITY_COLOR,
+      "line-width": ACTIVITY_WIDTH_DEFAULT,
+      "line-opacity": ACTIVITY_OPACITY_DEFAULT,
     },
   })
   // Invisible wide line for hit-testing only — the visible line stays thin
-  // but taps/clicks within TRACK_HIT_WIDTH px of it still register.
+  // but taps/clicks within ACTIVITY_HIT_WIDTH px of it still register.
   map.addLayer({
-    id: "tracks-hit-layer",
+    id: "activities-hit-layer",
     type: "line",
-    source: "tracks-source",
+    source: "activities-source",
     layout: {
       "line-join": "round",
       "line-cap": "round",
       visibility: "visible",
     },
     paint: {
-      "line-color": TRACK_COLOR,
-      "line-width": TRACK_HIT_WIDTH,
+      "line-color": ACTIVITY_COLOR,
+      "line-width": ACTIVITY_HIT_WIDTH,
       "line-opacity": 0,
     },
   })
 
-  // Highlight for the selected lap. Its own source, so the tracks-source
-  // FeatureCollection cache (keyed on track count) can never swallow it and the
+  // Highlight for the selected lap. Its own source, so the activities-source
+  // FeatureCollection cache (keyed on activity count) can never swallow it and the
   // 300ms FOG_UPDATE tick never touches it. Data is pushed by the highlight
   // effect and re-pushed from a ref after setStyle wipes everything.
   map.addSource("lap-source", { type: "geojson", data: featureCollection([]) })
@@ -183,62 +183,70 @@ function setupMapLayers(map: maplibregl.Map, mode: MapMode): void {
       visibility: "visible",
     },
     paint: {
-      "line-color": TRACK_COLOR,
+      "line-color": ACTIVITY_COLOR,
       "line-width": LAP_HIGHLIGHT_WIDTH,
       "line-opacity": 1,
     },
   })
 
-  map.on("mouseenter", "tracks-hit-layer", () => {
+  map.on("mouseenter", "activities-hit-layer", () => {
     map.getCanvas().style.cursor = "pointer"
   })
-  map.on("mouseleave", "tracks-hit-layer", () => {
+  map.on("mouseleave", "activities-hit-layer", () => {
     map.getCanvas().style.cursor = ""
   })
 }
 
 /**
- * Paints selection state onto tracks-layer: the selected tracks keep the orange
- * TRACK_COLOR and go thicker, everything else drops to a gray and fades back.
+ * Paints selection state onto activities-layer: the selected activities keep the orange
+ * ACTIVITY_COLOR and go thicker, everything else drops to a gray and fades back.
  *
- * When a lap is active, `tracks-layer` goes gray *everywhere* — including the
- * selected track — so the orange lap-layer segment is the only saturated line
- * on the map. The selected track keeps its extra width and full opacity, so it
+ * When a lap is active, `activities-layer` goes gray *everywhere* — including the
+ * selected activity — so the orange lap-layer segment is the only saturated line
+ * on the map. The selected activity keeps its extra width and full opacity, so it
  * still reads as the one in focus, just without competing for colour.
  *
  * Shared by the selection effect and the `styledata` handler — `setStyle` wipes
  * every paint property, so the two must stay in lockstep.
  */
-function applyTrackSelectionPaint(
+function applyActivitySelectionPaint(
   map: maplibregl.Map,
-  selectedTrackIds: string[],
+  selectedActivityIds: string[],
   isLapActive: boolean
 ): void {
-  if (selectedTrackIds.length === 0) {
-    map.setPaintProperty("tracks-layer", "line-width", TRACK_WIDTH_DEFAULT)
-    map.setPaintProperty("tracks-layer", "line-opacity", TRACK_OPACITY_DEFAULT)
-    map.setPaintProperty("tracks-layer", "line-color", TRACK_COLOR)
+  if (selectedActivityIds.length === 0) {
+    map.setPaintProperty(
+      "activities-layer",
+      "line-width",
+      ACTIVITY_WIDTH_DEFAULT
+    )
+    map.setPaintProperty(
+      "activities-layer",
+      "line-opacity",
+      ACTIVITY_OPACITY_DEFAULT
+    )
+    map.setPaintProperty("activities-layer", "line-color", ACTIVITY_COLOR)
     return
   }
-  const selectionExpr = ["in", ["get", "id"], ["literal", selectedTrackIds]]
-  map.setPaintProperty("tracks-layer", "line-width", [
+  const selectionExpr = ["in", ["get", "id"], ["literal", selectedActivityIds]]
+  map.setPaintProperty("activities-layer", "line-width", [
     "case",
     selectionExpr,
-    TRACK_WIDTH_SELECTED,
-    TRACK_WIDTH_DEFAULT,
+    ACTIVITY_WIDTH_SELECTED,
+    ACTIVITY_WIDTH_DEFAULT,
   ])
-  map.setPaintProperty("tracks-layer", "line-opacity", [
+  map.setPaintProperty("activities-layer", "line-opacity", [
     "case",
     selectionExpr,
-    TRACK_OPACITY_SELECTED,
-    TRACK_OPACITY_DIM,
+    ACTIVITY_OPACITY_SELECTED,
+    ACTIVITY_OPACITY_DIM,
   ])
   map.setPaintProperty(
-    "tracks-layer",
+    "activities-layer",
     "line-color",
     isLapActive
-      ? TRACK_COLOR_DIM
-      : ["case", selectionExpr, TRACK_COLOR, TRACK_COLOR_DIM]
+      ? ACTIVITY_COLOR_DIM
+      : ["case", selectionExpr, ACTIVITY_COLOR, ACTIVITY_COLOR_DIM]
   )
 }
 
@@ -248,7 +256,7 @@ function applyTrackSelectionPaint(
  */
 export function setLapHighlightData(
   map: maplibregl.Map,
-  coordinates: TrackCoords | null
+  coordinates: ActivityCoords | null
 ): void {
   const source = map.getSource("lap-source") as
     | maplibregl.GeoJSONSource
@@ -264,20 +272,23 @@ export function setLapHighlightData(
 interface MapViewProps {
   onMapReady?: () => void
   onProcessingUpdate?: (count: number, done: boolean) => void
-  showTracks: boolean
+  showActivities: boolean
   showFog: boolean
-  selectedTrackIds: string[]
-  onTrackSelect: (id: string | null) => void
+  selectedActivityIds: string[]
+  onActivitySelect: (id: string | null) => void
   mapMode: MapMode
   photos: PhotoEntry[]
   showPhotos: boolean
   onPhotoSelect: (group: PhotoGroup | null) => void
-  /** Geometry drawn on lap-layer. Null when the whole track is shown. */
-  highlightCoordinates: TrackCoords | null
-  /** Geometry the camera frames — the lap, or the whole track on "All laps". */
-  focusCoordinates: TrackCoords | null
+  showMyLocation: boolean
+  /** Current geolocation as [lng, lat], or null while unavailable. */
+  myLocation: [number, number] | null
+  /** Geometry drawn on lap-layer. Null when the whole activity is shown. */
+  highlightCoordinates: ActivityCoords | null
+  /** Geometry the camera frames — the lap, or the whole activity on "All laps". */
+  focusCoordinates: ActivityCoords | null
   /**
-   * Identity of the current focus: "<trackId>#lap3", "<trackId>#all", or null.
+   * Identity of the current focus: "<activityId>#lap3", "<activityId>#all", or null.
    * The effect keys on this rather than on the coordinate arrays, whose
    * `slice()` returns a fresh array every render and would refit continuously.
    */
@@ -287,14 +298,16 @@ interface MapViewProps {
 export function MapView({
   onMapReady,
   onProcessingUpdate,
-  showTracks,
+  showActivities,
   showFog,
-  selectedTrackIds,
-  onTrackSelect,
+  selectedActivityIds,
+  onActivitySelect,
   mapMode,
   photos,
   showPhotos,
   onPhotoSelect,
+  showMyLocation,
+  myLocation,
   highlightCoordinates,
   focusCoordinates,
   focusKey,
@@ -302,35 +315,36 @@ export function MapView({
   const containerRef = useRef<HTMLDivElement>(null)
   const onProcessingUpdateRef = useRef(onProcessingUpdate)
   onProcessingUpdateRef.current = onProcessingUpdate
-  const onTrackSelectRef = useRef(onTrackSelect)
-  onTrackSelectRef.current = onTrackSelect
+  const onActivitySelectRef = useRef(onActivitySelect)
+  onActivitySelectRef.current = onActivitySelect
   const onPhotoSelectRef = useRef(onPhotoSelect)
   onPhotoSelectRef.current = onPhotoSelect
-  const showTracksRef = useRef(showTracks)
-  showTracksRef.current = showTracks
+  const showActivitiesRef = useRef(showActivities)
+  showActivitiesRef.current = showActivities
   const showFogRef = useRef(showFog)
   showFogRef.current = showFog
-  const selectedTrackIdsRef = useRef(selectedTrackIds)
-  selectedTrackIdsRef.current = selectedTrackIds
+  const selectedActivityIdsRef = useRef(selectedActivityIds)
+  selectedActivityIdsRef.current = selectedActivityIds
   const highlightCoordinatesRef = useRef(highlightCoordinates)
   highlightCoordinatesRef.current = highlightCoordinates
-  // Previous focus, so the effect can tell "switched lap view within a track"
-  // (refit) from "a different track just got selected" (leave the camera).
+  // Previous focus, so the effect can tell "switched lap view within an activity"
+  // (refit) from "a different activity just got selected" (leave the camera).
   const prevFocusKeyRef = useRef<string | null>(null)
   const pendingStyleLoadRef = useRef<(() => void) | null>(null)
   const photoMarkersRef = useRef<Map<string, maplibregl.Marker>>(new Map())
+  const myLocationMarkerRef = useRef<maplibregl.Marker | null>(null)
   const photosRef = useRef<PhotoEntry[]>(photos)
   photosRef.current = photos
   const showPhotosRef = useRef(showPhotos)
   showPhotosRef.current = showPhotos
 
   const clusterCacheRef = useRef<Map<number, PhotoGroup[]>>(new Map())
-  // Cache for the tracks FeatureCollection — only rebuilt when mapStore.tracks.length changes.
+  // Cache for the activities FeatureCollection — only rebuilt when mapStore.activities.length changes.
   // Prevents redundant GeoJSON reconstruction + GPU re-upload on every 300ms FOG_UPDATE.
-  const cachedTracksGeoJSON = useRef<ReturnType<
+  const cachedActivitiesGeoJSON = useRef<ReturnType<
     typeof featureCollection
   > | null>(null)
-  const cachedTracksLength = useRef(-1)
+  const cachedActivitiesLength = useRef(-1)
   const [bearing, setBearing] = useState(0)
   const [pitch, setPitch] = useState(0)
 
@@ -426,11 +440,13 @@ export function MapView({
     })
 
     map.on("click", (e) => {
-      const trackFeatures = map.queryRenderedFeatures(e.point, {
-        layers: ["tracks-hit-layer"],
+      const activityFeatures = map.queryRenderedFeatures(e.point, {
+        layers: ["activities-hit-layer"],
       })
-      if (trackFeatures.length > 0) {
-        onTrackSelectRef.current?.(trackFeatures[0].properties?.id ?? null)
+      if (activityFeatures.length > 0) {
+        onActivitySelectRef.current?.(
+          activityFeatures[0].properties?.id ?? null
+        )
         return
       }
       if (map.getLayer("fog-layer")) {
@@ -438,7 +454,7 @@ export function MapView({
           layers: ["fog-layer"],
         })
         if (fogFeatures.length > 0) {
-          onTrackSelectRef.current?.(null)
+          onActivitySelectRef.current?.(null)
         }
       }
     })
@@ -464,32 +480,34 @@ export function MapView({
   useEffect(() => {
     if (!mapStore.worker) return
 
+    mapStore.isFogWorkerListenerReady = true
     mapStore.worker.onmessage = (e: MessageEvent<WorkerOutboundMessage>) => {
       const msg = e.data
       const map = mapStore.map
 
-      // Replies from an abandoned run (fog-mode toggle, delete-track,
+      // Replies from an abandoned run (fog-mode toggle, delete-activity,
       // clear-all) must not repaint the fog, save its cache, or clear the
       // progress bar — messages already queued on this thread still arrive
       // after the worker has bailed out.
       if (msg.runId !== mapStore.runId) return
 
-      // DONE: always notify the UI so the spinner and track count are updated
+      // DONE: always notify the UI so the spinner and activity count are updated
       // even if map sources are temporarily unavailable (e.g. during a style switch).
       // fitBounds is handled in handleProcessingUpdate (home.tsx) — it only needs the
       // map object, not sourcesReady.
       if (msg.type === "DONE") {
+        mapStore.isFogRunInFlight = false
         onProcessingUpdateRef.current?.(msg.processedCount, true)
 
         // Persist the computed fog cache (requires live sources)
         if (
           map &&
           mapStore.sourcesReady &&
-          mapStore.tracks.length > 0 &&
+          mapStore.activities.length > 0 &&
           mapStore.fogData
         ) {
           saveFogCache({
-            trackIds: mapStore.tracks.map((t) => t.id).sort(),
+            activityIds: mapStore.activities.map((t) => t.id).sort(),
             fogMode: mapStore.fogMode,
             fogData: mapStore.fogData,
           })
@@ -510,26 +528,30 @@ export function MapView({
         ) as maplibregl.GeoJSONSource
         fogSource?.setData(msg.fogData)
 
-        // Only rebuild and re-push tracks when the list has changed.
-        // mapStore.tracks is frozen during a processing run, so this fires at most
+        // Only rebuild and re-push activities when the list has changed.
+        // mapStore.activities is frozen during a processing run, so this fires at most
         // once per add/delete — not on every 300ms FOG_UPDATE.
         if (
-          mapStore.tracks.length !== cachedTracksLength.current ||
-          !cachedTracksGeoJSON.current
+          mapStore.activities.length !== cachedActivitiesLength.current ||
+          !cachedActivitiesGeoJSON.current
         ) {
-          const trackFeatures = mapStore.tracks.map((t) =>
+          const activityFeatures = mapStore.activities.map((t) =>
             lineString(t.coordinates, { name: t.name, id: t.id })
           )
-          cachedTracksGeoJSON.current = featureCollection(trackFeatures)
-          cachedTracksLength.current = mapStore.tracks.length
-          const tracksSource = map.getSource(
-            "tracks-source"
+          cachedActivitiesGeoJSON.current = featureCollection(activityFeatures)
+          cachedActivitiesLength.current = mapStore.activities.length
+          const activitiesSource = map.getSource(
+            "activities-source"
           ) as maplibregl.GeoJSONSource
-          tracksSource?.setData(cachedTracksGeoJSON.current)
+          activitiesSource?.setData(cachedActivitiesGeoJSON.current)
         }
 
         onProcessingUpdateRef.current?.(msg.processedCount, false)
       }
+    }
+
+    return () => {
+      mapStore.isFogWorkerListenerReady = false
     }
   }, [])
 
@@ -551,24 +573,24 @@ export function MapView({
 
       setupMapLayers(map, mapMode)
 
-      // Invalidate tracks cache so FOG_UPDATE re-pushes to the new source.
-      cachedTracksGeoJSON.current = null
-      cachedTracksLength.current = -1
+      // Invalidate activities cache so FOG_UPDATE re-pushes to the new source.
+      cachedActivitiesGeoJSON.current = null
+      cachedActivitiesLength.current = -1
 
       map.setLayoutProperty(
-        "tracks-layer",
+        "activities-layer",
         "visibility",
-        showTracksRef.current ? "visible" : "none"
+        showActivitiesRef.current ? "visible" : "none"
       )
       map.setLayoutProperty(
-        "tracks-hit-layer",
+        "activities-hit-layer",
         "visibility",
-        showTracksRef.current ? "visible" : "none"
+        showActivitiesRef.current ? "visible" : "none"
       )
       map.setLayoutProperty(
         "lap-layer",
         "visibility",
-        showTracksRef.current ? "visible" : "none"
+        showActivitiesRef.current ? "visible" : "none"
       )
 
       // setStyle destroyed lap-source along with everything else — re-push the
@@ -583,9 +605,9 @@ export function MapView({
         )
       }
 
-      applyTrackSelectionPaint(
+      applyActivitySelectionPaint(
         map,
-        selectedTrackIdsRef.current,
+        selectedActivityIdsRef.current,
         highlightCoordinatesRef.current != null
       )
 
@@ -601,22 +623,22 @@ export function MapView({
   useEffect(() => {
     if (!mapStore.sourcesReady) return
     mapStore.map?.setLayoutProperty(
-      "tracks-layer",
+      "activities-layer",
       "visibility",
-      showTracks ? "visible" : "none"
+      showActivities ? "visible" : "none"
     )
     mapStore.map?.setLayoutProperty(
-      "tracks-hit-layer",
+      "activities-hit-layer",
       "visibility",
-      showTracks ? "visible" : "none"
+      showActivities ? "visible" : "none"
     )
-    // Without this, hiding tracks would leave an orphan lap line on the map.
+    // Without this, hiding activities would leave an orphan lap line on the map.
     mapStore.map?.setLayoutProperty(
       "lap-layer",
       "visibility",
-      showTracks ? "visible" : "none"
+      showActivities ? "visible" : "none"
     )
-  }, [showTracks])
+  }, [showActivities])
 
   // Push the lap geometry, then frame the current focus.
   useEffect(() => {
@@ -628,12 +650,13 @@ export function MapView({
 
     setLapHighlightData(map, highlightCoordinates)
 
-    // Only move the camera when staying within one track's lap views — going
-    // lap 3 → All frames the whole track, All → lap 3 frames the lap. A missing
-    // previous focus, or a different track id, means this is a fresh selection,
-    // where clicking a track has never moved the camera.
-    const trackIdOf = (key: string | null) => key?.split("#")[0] ?? null
-    if (!prevFocusKey || trackIdOf(prevFocusKey) !== trackIdOf(focusKey)) return
+    // Only move the camera when staying within one activity's lap views — going
+    // lap 3 → All frames the whole activity, All → lap 3 frames the lap. A missing
+    // previous focus, or a different activity id, means this is a fresh selection,
+    // where clicking an activity has never moved the camera.
+    const activityIdOf = (key: string | null) => key?.split("#")[0] ?? null
+    if (!prevFocusKey || activityIdOf(prevFocusKey) !== activityIdOf(focusKey))
+      return
 
     const coords = focusCoordinates
     if (!coords || coords.length < 2) return
@@ -662,13 +685,49 @@ export function MapView({
   const isLapActive = highlightCoordinates != null
   useEffect(() => {
     if (!mapStore.sourcesReady || !mapStore.map) return
-    applyTrackSelectionPaint(mapStore.map, selectedTrackIds, isLapActive)
-  }, [selectedTrackIds, isLapActive])
+    applyActivitySelectionPaint(mapStore.map, selectedActivityIds, isLapActive)
+  }, [selectedActivityIds, isLapActive])
 
   useEffect(() => {
     clusterCacheRef.current.clear()
     rebuildPhotoMarkers()
   }, [photos, showPhotos, rebuildPhotoMarkers])
+
+  // Plain maplibregl.Marker rather than a source/layer: it's a single point,
+  // and markers aren't destroyed by setStyle (unlike fog/activities/lap sources),
+  // so it survives the flat/relief toggle with no re-add logic needed.
+  useEffect(() => {
+    const map = mapStore.map
+    if (!map) return
+
+    if (!showMyLocation || !myLocation) {
+      myLocationMarkerRef.current?.remove()
+      myLocationMarkerRef.current = null
+      return
+    }
+
+    if (myLocationMarkerRef.current) {
+      myLocationMarkerRef.current.setLngLat(myLocation)
+    } else {
+      const el = document.createElement("div")
+      el.style.cssText =
+        "width:14px;height:14px;border-radius:50%;background:#4285f4;" +
+        "border:2px solid white;box-shadow:0 0 0 4px rgba(66,133,244,0.35);"
+      myLocationMarkerRef.current = new maplibregl.Marker({ element: el })
+        .setLngLat(myLocation)
+        .addTo(map)
+    }
+  }, [showMyLocation, myLocation])
+
+  // Unmount-only cleanup — the effect above already handles removal when the
+  // toggle turns off, and re-running it as a cleanup on every position update
+  // would tear down and rebuild the marker element on each watchPosition tick.
+  useEffect(() => {
+    return () => {
+      myLocationMarkerRef.current?.remove()
+      myLocationMarkerRef.current = null
+    }
+  }, [])
 
   return (
     <>

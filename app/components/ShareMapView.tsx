@@ -1,41 +1,41 @@
 import { useEffect, useRef } from "react"
 import maplibregl from "maplibre-gl"
-import type { ParsedTrack } from "~/types/tracks"
-import { MAP_STYLE_URL, TRACK_COLOR } from "~/constants/fog"
+import type { ParsedActivity } from "~/types/activities"
+import { MAP_STYLE_URL, ACTIVITY_COLOR } from "~/constants/fog"
 import { CARD_WIDTH, CARD_HEIGHT } from "~/lib/shareCard"
 
 interface ShareMapViewProps {
-  tracks: ParsedTrack[]
+  activities: ParsedActivity[]
   onReady: (
     baseMap: ImageBitmap,
-    trackPointsPerTrack: Array<{ x: number; y: number }[]>
+    activityPointsPerActivity: Array<{ x: number; y: number }[]>
   ) => void
 }
 
 /**
- * Renders a clean MapLibre map centred on the given tracks and calls onReady
+ * Renders a clean MapLibre map centred on the given activities and calls onReady
  * once the map is fully captured.
  *
  * Two-phase capture:
- * 1. After base tiles are idle (no track layers): capture the base map bitmap.
- *    This bitmap is safe to blur without blurring the tracks.
- * 2. Add one layer per track, wait for the second idle, then project each
- *    track's coordinates to canvas pixels. One pixel array per track is
+ * 1. After base tiles are idle (no activity layers): capture the base map bitmap.
+ *    This bitmap is safe to blur without blurring the activities.
+ * 2. Add one layer per activity, wait for the second idle, then project each
+ *    activity's coordinates to canvas pixels. One pixel array per activity is
  *    returned so callers can draw them as separate paths.
  *
  * The container is positioned off-screen so the map renders without being
  * visible to the user.
  */
-export function ShareMapView({ tracks, onReady }: ShareMapViewProps) {
+export function ShareMapView({ activities, onReady }: ShareMapViewProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const onReadyRef = useRef(onReady)
   useEffect(() => {
     onReadyRef.current = onReady
   })
 
-  // Stable dep — only rebuild map when the actual track set changes,
-  // not on every parent render (tracks array reference changes each time).
-  const trackIds = tracks.map((t) => t.id).join(",")
+  // Stable dep — only rebuild map when the actual activity set changes,
+  // not on every parent render (activities array reference changes each time).
+  const activityIds = activities.map((t) => t.id).join(",")
 
   useEffect(() => {
     const container = containerRef.current
@@ -60,18 +60,18 @@ export function ShareMapView({ tracks, onReady }: ShareMapViewProps) {
       createImageBitmap(map.getCanvas()).then((bitmap) => {
         onReadyRef.current(
           bitmap,
-          tracks.map(() => [])
+          activities.map(() => [])
         )
       })
     }, 10_000)
 
     map.once("load", () => {
-      // ── Compute combined bounds of all tracks ─────────────────────────────
+      // ── Compute combined bounds of all activities ─────────────────────────────
       let minLng = Infinity,
         maxLng = -Infinity,
         minLat = Infinity,
         maxLat = -Infinity
-      for (const t of tracks) {
+      for (const t of activities) {
         for (const [lng, lat] of t.coordinates) {
           if (lng < minLng) minLng = lng
           if (lng > maxLng) maxLng = lng
@@ -81,7 +81,7 @@ export function ShareMapView({ tracks, onReady }: ShareMapViewProps) {
       }
 
       // Asymmetric padding: reserve bottom ~520px for the stats panel so the
-      // track(s) stay in the upper portion of the card.
+      // activity(s) stay in the upper portion of the card.
       // maxZoom stops a short subject (e.g. a 200m lap) from zooming past the
       // basemap's data and rendering a blank card background.
       map.fitBounds(
@@ -96,15 +96,15 @@ export function ShareMapView({ tracks, onReady }: ShareMapViewProps) {
         }
       )
 
-      // ── Phase 1: base map idle (no track layers yet) ──────────────────────
+      // ── Phase 1: base map idle (no activity layers yet) ──────────────────────
       map.once("idle", async () => {
         if (captured) return
 
         const baseMapBitmap = await createImageBitmap(map.getCanvas())
 
-        // Add one source + layer per track
-        tracks.forEach((t, i) => {
-          map.addSource(`share-track-${i}`, {
+        // Add one source + layer per activity
+        activities.forEach((t, i) => {
+          map.addSource(`share-activity-${i}`, {
             type: "geojson",
             data: {
               type: "Feature",
@@ -116,26 +116,26 @@ export function ShareMapView({ tracks, onReady }: ShareMapViewProps) {
             },
           })
           map.addLayer({
-            id: `share-track-line-${i}`,
+            id: `share-activity-line-${i}`,
             type: "line",
-            source: `share-track-${i}`,
+            source: `share-activity-${i}`,
             layout: { "line-cap": "round", "line-join": "round" },
             paint: {
-              "line-color": TRACK_COLOR,
+              "line-color": ACTIVITY_COLOR,
               "line-width": 4,
               "line-opacity": 0.95,
             },
           })
         })
 
-        // ── Phase 2: all track layers idle → project pixel coords ─────────
+        // ── Phase 2: all activity layers idle → project pixel coords ─────────
         map.once("idle", () => {
           if (captured) return
           captured = true
           clearTimeout(fallbackTimer)
 
           const MAX_PTS = 2000
-          const trackPointsPerTrack = tracks.map((t) => {
+          const activityPointsPerActivity = activities.map((t) => {
             const { coordinates } = t
             const step =
               coordinates.length > MAX_PTS
@@ -149,7 +149,7 @@ export function ShareMapView({ tracks, onReady }: ShareMapViewProps) {
               })
           })
 
-          onReadyRef.current(baseMapBitmap, trackPointsPerTrack)
+          onReadyRef.current(baseMapBitmap, activityPointsPerActivity)
         })
       })
     })
@@ -159,7 +159,7 @@ export function ShareMapView({ tracks, onReady }: ShareMapViewProps) {
       map.remove()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [trackIds])
+  }, [activityIds])
 
   return (
     <div

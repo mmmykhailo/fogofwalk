@@ -5,9 +5,11 @@
     "**/.client/**/*",
     ".react-router/types/**/*"
   ],
+  "//": "server/ and e2e/ are independent packages with their own tsconfigs — typecheck them with `bun run typecheck` inside each.",
+  "exclude": ["node_modules", "build", "server", "e2e"],
   "compilerOptions": {
     "lib": ["DOM", "DOM.Iterable", "ES2022"],
-    "types": ["node", "vite/client"],
+    "types": ["bun", "node", "vite/client"],
     "target": "ES2022",
     "module": "ES2022",
     "moduleResolution": "bundler",
@@ -15,7 +17,8 @@
     "rootDirs": [".", "./.react-router/types"],
     "baseUrl": ".",
     "paths": {
-      "~/*": ["./app/*"]
+      "~/*": ["./app/*"],
+      "~shared/*": ["./shared/*"]
     },
     "esModuleInterop": true,
     "verbatimModuleSyntax": true,

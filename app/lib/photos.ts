@@ -1,10 +1,15 @@
 import exifr from "exifr"
-import type { ParsedTrack } from "~/types/tracks"
+import type { ParsedActivity } from "~/types/activities"
 import type { PhotoEntry } from "~/types/photos"
 
 const MATCH_TOLERANCE_MS = 5 * 60 * 1000
 
-function haversineM(lng1: number, lat1: number, lng2: number, lat2: number): number {
+function haversineM(
+  lng1: number,
+  lat1: number,
+  lng2: number,
+  lat2: number
+): number {
   const R = 6371000
   const dLat = ((lat2 - lat1) * Math.PI) / 180
   const dLng = ((lng2 - lng1) * Math.PI) / 180
@@ -22,22 +27,24 @@ export async function readExifTimestamp(file: File): Promise<number | null> {
     const dt = tags?.DateTimeOriginal ?? tags?.DateTime
     if (!dt) return null
     if (dt instanceof Date) return dt.getTime()
-    const ms = Date.parse(String(dt).replace(/^(\d{4}):(\d{2}):(\d{2})/, "$1-$2-$3"))
+    const ms = Date.parse(
+      String(dt).replace(/^(\d{4}):(\d{2}):(\d{2})/, "$1-$2-$3")
+    )
     return isFinite(ms) ? ms : null
   } catch {
     return null
   }
 }
 
-export function matchPhotoToTrack(
+export function matchPhotoToActivity(
   photoMs: number,
-  tracks: ParsedTrack[],
+  activities: ParsedActivity[]
 ): { lng: number; lat: number } | null {
   let bestDt = Infinity
   let bestCoord: [number, number] | null = null
 
-  for (const track of tracks) {
-    const ts = track.pointTimestamps
+  for (const activity of activities) {
+    const ts = activity.pointTimestamps
     if (!ts) continue
     for (let i = 0; i < ts.length; i++) {
       const t = ts[i]
@@ -45,7 +52,7 @@ export function matchPhotoToTrack(
       const dt = Math.abs(t - photoMs)
       if (dt < bestDt && dt <= MATCH_TOLERANCE_MS) {
         bestDt = dt
-        bestCoord = track.coordinates[i]
+        bestCoord = activity.coordinates[i]
       }
     }
   }
@@ -55,8 +62,8 @@ export function matchPhotoToTrack(
 
 export async function processPhotoFiles(
   files: File[],
-  tracks: ParsedTrack[],
-  existingPhotos: PhotoEntry[],
+  activities: ParsedActivity[],
+  existingPhotos: PhotoEntry[]
 ): Promise<PhotoEntry[]> {
   const newEntries: PhotoEntry[] = []
 
@@ -64,22 +71,30 @@ export async function processPhotoFiles(
     const takenAtMs = await readExifTimestamp(file)
     if (takenAtMs == null) continue
 
-    const match = matchPhotoToTrack(takenAtMs, tracks)
+    const match = matchPhotoToActivity(takenAtMs, activities)
     if (!match) continue
 
     // Skip if this exact file was already added (same name + timestamp)
     const alreadyExists = existingPhotos.some(
-      (p) => p.file.name === file.name && p.takenAtMs === takenAtMs,
+      (p) => p.file.name === file.name && p.takenAtMs === takenAtMs
     )
     if (alreadyExists) continue
 
     // Skip if a photo was taken at the exact same moment (genuine duplicate)
     const isDuplicate = existingPhotos.some(
-      (p) => p.takenAtMs === takenAtMs && haversineM(p.lng, p.lat, match.lng, match.lat) < 1,
+      (p) =>
+        p.takenAtMs === takenAtMs &&
+        haversineM(p.lng, p.lat, match.lng, match.lat) < 1
     )
     if (isDuplicate) continue
 
-    newEntries.push({ id: crypto.randomUUID(), file, takenAtMs, lng: match.lng, lat: match.lat })
+    newEntries.push({
+      id: crypto.randomUUID(),
+      file,
+      takenAtMs,
+      lng: match.lng,
+      lat: match.lat,
+    })
   }
 
   return newEntries

@@ -12,20 +12,26 @@ import {
   CardDescription,
   CardTitle,
 } from "~/components/ui/card"
+import { Grid } from "~/components/Grid"
 
 interface StatCardsProps {
   totals: LifetimeTotals
-  uniqueDistanceKm: number
+  /** Unique distance requires private activity geometry, so public profiles omit it. */
+  uniqueDistanceKm?: number
 }
 
 export function StatCards({ totals, uniqueDistanceKm }: StatCardsProps) {
   const avgDistanceKm =
-    totals.totalTracks > 0 ? totals.totalDistanceKm / totals.totalTracks : 0
+    totals.totalActivities > 0
+      ? totals.totalDistanceKm / totals.totalActivities
+      : 0
   const avgElevationM =
-    totals.totalTracks > 0 ? totals.totalElevationGainM / totals.totalTracks : 0
+    totals.totalActivities > 0
+      ? totals.totalElevationGainM / totals.totalActivities
+      : 0
 
   return (
-    <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+    <Grid columns={{ base: 2, md: 4 }}>
       <Card>
         <CardHeader>
           <CardDescription>Distance</CardDescription>
@@ -35,14 +41,16 @@ export function StatCards({ totals, uniqueDistanceKm }: StatCardsProps) {
         </CardHeader>
       </Card>
 
-      <Card>
-        <CardHeader>
-          <CardDescription>Unique distance</CardDescription>
-          <CardTitle className="text-2xl tabular-nums">
-            {formatKm(uniqueDistanceKm)}
-          </CardTitle>
-        </CardHeader>
-      </Card>
+      {uniqueDistanceKm != null && (
+        <Card>
+          <CardHeader>
+            <CardDescription>Unique distance</CardDescription>
+            <CardTitle className="text-2xl tabular-nums">
+              {formatKm(uniqueDistanceKm)}
+            </CardTitle>
+          </CardHeader>
+        </Card>
+      )}
 
       <Card>
         <CardHeader>
@@ -68,7 +76,7 @@ export function StatCards({ totals, uniqueDistanceKm }: StatCardsProps) {
         <CardHeader>
           <CardDescription>Activities</CardDescription>
           <CardTitle className="text-2xl tabular-nums">
-            {totals.totalTracks}
+            {totals.totalActivities}
           </CardTitle>
         </CardHeader>
       </Card>
@@ -141,6 +149,6 @@ export function StatCards({ totals, uniqueDistanceKm }: StatCardsProps) {
           </CardTitle>
         </CardHeader>
       </Card>
-    </div>
+    </Grid>
   )
 }

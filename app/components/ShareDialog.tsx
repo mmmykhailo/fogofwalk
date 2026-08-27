@@ -6,12 +6,13 @@ import {
   DownloadSimpleIcon,
   XIcon,
 } from "@phosphor-icons/react"
-import type { ParsedTrack } from "~/types/tracks"
+import type { ParsedActivity } from "~/types/activities"
 import type { PhotoEntry } from "~/types/photos"
 import { mapStore } from "~/lib/mapStore"
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogFooter,
@@ -25,15 +26,15 @@ import {
   CARD_WIDTH,
   CARD_HEIGHT,
   computeCompositeStats,
-  trackToStatsData,
+  activityToStatsData,
   compositeToStatsData,
   drawShareCard,
   exportShareCard,
   copyShareCard,
   getAvailableStats,
   getDefaultStats,
-  filterPhotosForTrack,
-  filterPhotosForTracks,
+  filterPhotosForActivity,
+  filterPhotosForActivities,
   type ShareCardOptions,
 } from "~/lib/shareCard"
 import { ShareMapView } from "~/components/ShareMapView"
@@ -46,11 +47,11 @@ const BLUR_PRESETS = [0, 2, 4, 6, 8, 12, 20]
 interface ShareDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
-  tracks: ParsedTrack[]
+  activities: ParsedActivity[]
   photos: PhotoEntry[]
   /**
-   * Overrides the computed subtitle. Needed because the card draws no track
-   * name of its own and the computed subtitle is null for a single track — a
+   * Overrides the computed subtitle. Needed because the card draws no activity
+   * name of its own and the computed subtitle is null for a single activity — a
    * lap would otherwise render with nothing identifying it.
    */
   subtitle?: string
@@ -59,14 +60,13 @@ interface ShareDialogProps {
 function useShareMapSnapshot(
   backgroundMode: BackgroundMode,
   isSingle: boolean,
-  trackId: string | undefined
+  activityId: string | undefined
 ) {
   const [mapBaseSnapshot, setMapBaseSnapshot] = useState<ImageBitmap | null>(
     null
   )
-  const [mapTrackPointsPerTrack, setMapTrackPointsPerTrack] = useState<Array<
-    { x: number; y: number }[]
-  > | null>(null)
+  const [mapActivityPointsPerActivity, setMapActivityPointsPerActivity] =
+    useState<Array<{ x: number; y: number }[]> | null>(null)
   const [isMapReady, setIsMapReady] = useState(false)
 
   useEffect(() => {
@@ -78,72 +78,79 @@ function useShareMapSnapshot(
         }
         return null
       })
-      setMapTrackPointsPerTrack(null)
+      setMapActivityPointsPerActivity(null)
       setIsMapReady(false)
       return
     }
     if (isSingle) {
       const cached = mapStore.shareCardCache
-      if (cached && cached.trackId === trackId) {
+      if (cached && cached.activityId === activityId) {
         setMapBaseSnapshot(cached.baseMap)
-        setMapTrackPointsPerTrack([cached.trackPoints])
+        setMapActivityPointsPerActivity([cached.activityPoints])
         setIsMapReady(true)
         return
       }
     }
     // Cache miss: drop the outgoing snapshot so ShareMapView (rendered only
     // while !isMapReady) re-captures. Without this, switching subject — e.g.
-    // between laps of one track — would keep painting the previous subject's
+    // between laps of one activity — would keep painting the previous subject's
     // map bitmap under the new stats.
     setMapBaseSnapshot((prev) => {
       if (prev && mapStore.shareCardCache?.baseMap !== prev) prev.close()
       return null
     })
-    setMapTrackPointsPerTrack(null)
+    setMapActivityPointsPerActivity(null)
     setIsMapReady(false)
-  }, [backgroundMode, isSingle, trackId])
+  }, [backgroundMode, isSingle, activityId])
 
   const handleMapReady = useCallback(
     (baseMap: ImageBitmap, pts: Array<{ x: number; y: number }[]>) => {
-      if (isSingle && trackId) {
-        const trackPoints = pts[0] ?? []
+      if (isSingle && activityId) {
+        const activityPoints = pts[0] ?? []
         if (
           mapStore.shareCardCache &&
-          mapStore.shareCardCache.trackId !== trackId
+          mapStore.shareCardCache.activityId !== activityId
         ) {
           mapStore.shareCardCache.baseMap.close()
         }
-        mapStore.shareCardCache = { trackId, baseMap, trackPoints }
+        mapStore.shareCardCache = { activityId, baseMap, activityPoints }
       }
       setMapBaseSnapshot(baseMap)
-      setMapTrackPointsPerTrack(pts)
+      setMapActivityPointsPerActivity(pts)
       setIsMapReady(true)
     },
-    [isSingle, trackId]
+    [isSingle, activityId]
   )
 
-  return { mapBaseSnapshot, mapTrackPointsPerTrack, isMapReady, handleMapReady }
+  return {
+    mapBaseSnapshot,
+    mapActivityPointsPerActivity,
+    isMapReady,
+    handleMapReady,
+  }
 }
 
 export function ShareDialog({
   open,
   onOpenChange,
-  tracks,
+  activities,
   photos,
   subtitle: subtitleOverride,
 }: ShareDialogProps) {
-  const isSingle = tracks.length === 1
-  const track = tracks[0]
+  const isSingle = activities.length === 1
+  const activity = activities[0]
 
   const composite = useMemo(
-    () => (isSingle ? null : computeCompositeStats(tracks)),
-    [isSingle, tracks]
+    () => (isSingle ? null : computeCompositeStats(activities)),
+    [isSingle, activities]
   )
 
   const statsData: StatsData = useMemo(
     () =>
-      isSingle ? trackToStatsData(track) : compositeToStatsData(composite!),
-    [isSingle, track, composite]
+      isSingle
+        ? activityToStatsData(activity)
+        : compositeToStatsData(composite!),
+    [isSingle, activity, composite]
   )
 
   const availableStats = useMemo(
@@ -151,29 +158,29 @@ export function ShareDialog({
     [statsData]
   )
 
-  const trackPhotos = useMemo(
+  const activityPhotos = useMemo(
     () =>
       isSingle
-        ? filterPhotosForTrack(photos, track)
-        : filterPhotosForTracks(photos, tracks),
-    [isSingle, photos, track, tracks]
+        ? filterPhotosForActivity(photos, activity)
+        : filterPhotosForActivities(photos, activities),
+    [isSingle, photos, activity, activities]
   )
 
   const subtitle = useMemo(() => {
     if (subtitleOverride) return subtitleOverride
     if (isSingle) return null
     const days = new Set<string>()
-    for (const t of tracks) {
+    for (const t of activities) {
       if (t.startedAtMs != null) {
         const d = new Date(t.startedAtMs)
         days.add(`${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`)
       }
     }
-    const n = tracks.length
-    if (days.size === 0) return `${n} tracks`
-    if (days.size === 1) return `${n} tracks from a single day`
-    return `${n} tracks from ${days.size} days`
-  }, [subtitleOverride, isSingle, tracks])
+    const n = activities.length
+    if (days.size === 0) return `${n} activities`
+    if (days.size === 1) return `${n} activities from a single day`
+    return `${n} activities from ${days.size} days`
+  }, [subtitleOverride, isSingle, activities])
 
   const [backgroundMode, setBackgroundMode] = useState<BackgroundMode>("map")
   const [blurAmount, setBlurAmount] = useState(0)
@@ -190,10 +197,10 @@ export function ShareDialog({
 
   const {
     mapBaseSnapshot,
-    mapTrackPointsPerTrack,
+    mapActivityPointsPerActivity,
     isMapReady,
     handleMapReady,
-  } = useShareMapSnapshot(backgroundMode, isSingle, track?.id)
+  } = useShareMapSnapshot(backgroundMode, isSingle, activity?.id)
 
   // enabledStats is only seeded once, so a subject change can leave behind a key
   // that is no longer available (e.g. uniqueDistance, which laps never have).
@@ -209,15 +216,15 @@ export function ShareDialog({
       if (!canvas) return
       canvas.width = CARD_WIDTH
       canvas.height = CARD_HEIGHT
-      const photo = trackPhotos[selectedPhotoIndex] ?? null
+      const photo = activityPhotos[selectedPhotoIndex] ?? null
       await drawShareCard(canvas, {
-        tracks,
+        activities,
         statsData,
         enabledStats: effectiveStats,
         subtitle,
         photo,
         mapBaseSnapshot,
-        mapTrackPointsPerTrack,
+        mapActivityPointsPerActivity,
         backgroundMode,
         blurAmount,
       })
@@ -225,13 +232,13 @@ export function ShareDialog({
     return () => cancelAnimationFrame(raf)
   }, [
     open,
-    tracks,
+    activities,
     statsData,
     effectiveStats,
-    trackPhotos,
+    activityPhotos,
     selectedPhotoIndex,
     mapBaseSnapshot,
-    mapTrackPointsPerTrack,
+    mapActivityPointsPerActivity,
     backgroundMode,
     blurAmount,
     subtitle,
@@ -250,13 +257,13 @@ export function ShareDialog({
 
   function buildOpts(): ShareCardOptions {
     return {
-      tracks,
+      activities,
       statsData,
       enabledStats: effectiveStats,
       subtitle,
-      photo: trackPhotos[selectedPhotoIndex] ?? null,
+      photo: activityPhotos[selectedPhotoIndex] ?? null,
       mapBaseSnapshot,
-      mapTrackPointsPerTrack,
+      mapActivityPointsPerActivity,
       backgroundMode,
       blurAmount,
     }
@@ -291,7 +298,7 @@ export function ShareDialog({
   }
 
   const hasPrev = selectedPhotoIndex > 0
-  const hasNext = selectedPhotoIndex < trackPhotos.length - 1
+  const hasNext = selectedPhotoIndex < activityPhotos.length - 1
 
   const bgModes: { key: BackgroundMode; label: string }[] = [
     { key: "photo", label: "Photo" },
@@ -302,7 +309,7 @@ export function ShareDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       {backgroundMode === "map" && !isMapReady && (
-        <ShareMapView tracks={tracks} onReady={handleMapReady} />
+        <ShareMapView activities={activities} onReady={handleMapReady} />
       )}
 
       <DialogContent
@@ -315,8 +322,11 @@ export function ShareDialog({
             <DialogTitle>
               {isSingle
                 ? "Share activity"
-                : `Share ${tracks.length} activities`}
+                : `Share ${activities.length} activities`}
             </DialogTitle>
+            <DialogDescription className="sr-only">
+              Customize and export a shareable image of this activity
+            </DialogDescription>
             <Button
               variant="ghost"
               size="icon-xs"
@@ -357,7 +367,7 @@ export function ShareDialog({
           <span className="text-xs text-muted-foreground">Background</span>
           <div className="flex gap-1.5">
             {bgModes.map(({ key, label }) => {
-              if (key === "photo" && trackPhotos.length === 0) return null
+              if (key === "photo" && activityPhotos.length === 0) return null
               return (
                 <Button
                   key={key}
@@ -372,7 +382,7 @@ export function ShareDialog({
           </div>
         </div>
 
-        {backgroundMode === "photo" && trackPhotos.length > 1 && (
+        {backgroundMode === "photo" && activityPhotos.length > 1 && (
           <div className="flex flex-col gap-2">
             <span className="text-xs text-muted-foreground">Photo</span>
             <div className="flex items-center gap-1">
@@ -386,7 +396,7 @@ export function ShareDialog({
                 <CaretLeftIcon />
               </Button>
               <span className="min-w-[3rem] text-center text-xs tabular-nums">
-                {selectedPhotoIndex + 1} / {trackPhotos.length}
+                {selectedPhotoIndex + 1} / {activityPhotos.length}
               </span>
               <Button
                 variant="ghost"

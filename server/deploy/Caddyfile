@@ -1,0 +1,25 @@
+# Installed at /etc/caddy/Caddyfile by provision.sh. TLS is automatic:
+# Caddy obtains and renews a Let's Encrypt certificate on its own, which is why
+# port 80 has to stay open (ACME HTTP challenge) even though nothing is served
+# there.
+#
+# Deliberately no CORS headers here — the app owns CORS (server/src/app.ts) and
+# a second Access-Control-Allow-Origin header makes every browser check fail.
+
+api.fog-of-walk.mykhailo.net {
+	encode zstd gzip
+
+	# The server binds 127.0.0.1 (HOST in server.env), so this proxy is the
+	# only way in.
+	reverse_proxy 127.0.0.1:8787 {
+		transport http {
+			dial_timeout 5s
+			response_header_timeout 30s
+		}
+	}
+
+	log {
+		output file /var/log/caddy/fogofwalk.log
+		format json
+	}
+}

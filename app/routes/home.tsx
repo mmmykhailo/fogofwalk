@@ -1,5 +1,12 @@
 import { useState, useEffect, useMemo, useRef } from "react"
-import { useFetcher, useLoaderData, useSearchParams } from "react-router"
+import {
+  Outlet,
+  useFetcher,
+  useLoaderData,
+  useLocation,
+  useRevalidator,
+  useSearchParams,
+} from "react-router"
 import type maplibregl from "maplibre-gl"
 import { featureCollection, lineString } from "@turf/helpers"
 import bbox from "@turf/bbox"
@@ -9,7 +16,9 @@ import { ControlPanel } from "~/components/ControlPanel"
 import { FileUploadDialog } from "~/components/FileUploadDialog"
 import { PhotoErrorDialog } from "~/components/PhotoErrorDialog"
 import { ParseErrorDialog } from "~/components/ParseErrorDialog"
-import { TrackStatsPanel } from "~/components/track-stats/TrackStatsPanel"
+import { DuplicateActivitiesDialog } from "~/components/DuplicateActivitiesDialog"
+import { MissingActivityTypeDialog } from "~/components/MissingActivityTypeDialog"
+import { ActivityStatsPanel } from "~/components/activity-stats/ActivityStatsPanel"
 import { ShareDialog } from "~/components/ShareDialog"
 import { PhotoCard } from "~/components/PhotoCard"
 import { ErrorBoundary } from "~/components/ErrorBoundary"
@@ -19,6 +28,7 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
+  DialogDescription,
   DialogFooter,
 } from "~/components/ui/dialog"
 import { Button } from "~/components/ui/button"
@@ -27,13 +37,13 @@ import {
   worldFogGeoJSON,
   startFogRun,
   postToFogWorker,
+  ingestActivities,
 } from "~/lib/mapStore"
 import { parseFile } from "~/lib/parsers"
-import { buildLapTrack, lapSubtitle } from "~/lib/laps"
+import { buildLapActivity, lapSubtitle } from "~/lib/laps"
 import { processPhotoFiles } from "~/lib/photos"
 import {
-  saveTracks,
-  loadTracks,
+  loadActivities,
   savePhotos,
   loadPhotos,
   saveFogMode,
@@ -41,12 +51,23 @@ import {
   loadFogCache,
   clearFogCache,
   clearAll,
-  deleteTrack,
+  deleteActivity,
   isFogCacheValid,
 } from "~/lib/storage"
 import { clearMapPosition } from "~/lib/mapStore"
-import { sortTracks, populateUniqueDistances } from "~/lib/statsAggregator"
-import type { FogMode, MapMode, ParsedTrack } from "~/types/tracks"
+import { initAuth, useAuth } from "~/lib/server/authStore"
+import {
+  ignoreActivityLocally,
+  pushActivityDeletion,
+  requestSync,
+  setSyncChangeHandler,
+  startSyncScheduler,
+  suspendAutoSync,
+} from "~/lib/server/syncEngine"
+import { sortActivities, populateUniqueDistances } from "~/lib/statsAggregator"
+import { useMyLocation } from "~/lib/useMyLocation"
+import { useActivityVisibility } from "~/lib/useActivityVisibility"
+import type { FogMode, MapMode, ParsedActivity } from "~/types/activities"
 import type { PhotoEntry, PhotoGroup } from "~/types/photos"
 
 export function meta({}: Route.MetaArgs) {
@@ -81,7 +102,7 @@ let _restoredPhotos: PhotoEntry[] = []
 
 export async function clientLoader(): Promise<{
   initialized: boolean
-  restoredTrackCount: number
+  restoredActivityCount: number
   restoredFogMode: FogMode
 }> {
   if (!mapStore.worker) {
@@ -94,9 +115,14 @@ export async function clientLoader(): Promise<{
     console.debug("[clientLoader] worker created", mapStore.worker)
   }
 
+  // Restore + revalidate the sync session. Deliberately not awaited: the map
+  // must never wait on the network, and it is a no-op when the build has no
+  // server. Signing in later re-renders the drawer through the auth store.
+  void initAuth()
+
   // Restore persisted data in parallel
-  const [tracks, photos, fogMode, fogCache] = await Promise.all([
-    loadTracks(),
+  const [activities, photos, fogMode, fogCache] = await Promise.all([
+    loadActivities(),
     loadPhotos(),
     loadFogMode(),
     loadFogCache(),
@@ -106,17 +132,17 @@ export async function clientLoader(): Promise<{
   mapStore.fogMode = restoredFogMode
   _restoredPhotos = photos
 
-  if (tracks.length > 0) {
-    mapStore.tracks = sortTracks(tracks)
-    populateUniqueDistances(mapStore.tracks)
-    const trackIds = tracks.map((t) => t.id).sort()
-    if (fogCache && isFogCacheValid(fogCache, trackIds, restoredFogMode)) {
+  if (activities.length > 0) {
+    mapStore.activities = sortActivities(activities)
+    populateUniqueDistances(mapStore.activities)
+    const activityIds = activities.map((t) => t.id).sort()
+    if (fogCache && isFogCacheValid(fogCache, activityIds, restoredFogMode)) {
       // Cache hit: restore fog directly — setupMapLayers will use mapStore.fogData
       mapStore.fogData = fogCache.fogData
       console.debug(
         "[clientLoader] restored fog cache for",
-        tracks.length,
-        "tracks"
+        activities.length,
+        "activities"
       )
     } else {
       // Cache miss: fog will be null, world fog shown until worker reprocesses
@@ -124,8 +150,8 @@ export async function clientLoader(): Promise<{
       mapStore.isRestoreReprocess = true
       console.debug(
         "[clientLoader] fog cache stale/absent — will reprocess",
-        tracks.length,
-        "tracks"
+        activities.length,
+        "activities"
       )
     }
   }
@@ -135,14 +161,14 @@ export async function clientLoader(): Promise<{
 
   console.debug(
     "[clientLoader] restored",
-    tracks.length,
-    "tracks,",
+    activities.length,
+    "activities,",
     photos.length,
     "photos"
   )
   return {
     initialized: true,
-    restoredTrackCount: tracks.length,
+    restoredActivityCount: activities.length,
     restoredFogMode,
   }
 }
@@ -160,7 +186,7 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
       mode,
       files: files.map((f) => f.name),
     })
-    const allTracks: ParsedTrack[] = []
+    const allActivities: ParsedActivity[] = []
     const failedFiles: string[] = []
     const results = await Promise.allSettled(files.map((f) => parseFile(f)))
     for (let i = 0; i < results.length; i++) {
@@ -171,10 +197,10 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
           files[i].name,
           "→",
           r.value.length,
-          "tracks, first track coords:",
+          "activities, first activity coords:",
           r.value[0]?.coordinates.length
         )
-        allTracks.push(...r.value)
+        allActivities.push(...r.value)
       } else {
         if (r.status === "rejected") {
           console.warn(
@@ -182,43 +208,44 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
             r.reason
           )
         } else {
-          console.warn(`[clientAction] no tracks found in ${files[i].name}`)
+          console.warn(`[clientAction] no activities found in ${files[i].name}`)
         }
         failedFiles.push(files[i].name)
       }
     }
     console.debug(
-      "[clientAction] total tracks parsed:",
-      allTracks.length,
+      "[clientAction] total activities parsed:",
+      allActivities.length,
       "worker ready:",
       !!mapStore.worker
     )
-    if (allTracks.length > 0) {
-      mapStore.tracks = sortTracks([...mapStore.tracks, ...allTracks])
-      populateUniqueDistances(mapStore.tracks)
-      // Joins the current run rather than starting one: only the new tracks are
-      // posted, so this depends on the worker's accumulated state surviving.
-      postToFogWorker({
-        type: "PROCESS_TRACKS",
-        tracks: allTracks,
-        mode,
-      })
-      // Persist new tracks and invalidate stale fog cache
-      await saveTracks(allTracks)
-      await clearFogCache()
-    }
+    // Shared with the sync engine's downloads — merge, recompute, post to the
+    // worker (joining the current run), persist, invalidate the fog cache.
+    // Returns only the activities that were genuinely new.
+    const added = await ingestActivities(allActivities, mode)
+    if (added.length > 0) void requestSync("add-files")
+
     return {
       intent: "add-files" as const,
       count: files.length,
-      trackCount: mapStore.tracks.length,
-      newTracksCount: allTracks.length,
+      activityCount: mapStore.activities.length,
+      // Must be what was ingested, not what was parsed — the progress UI waits
+      // on a worker DONE that only arrives if something was actually posted.
+      newActivitiesCount: added.length,
+      duplicateCount: allActivities.length - added.length,
+      missingActivityTypeCount: added.filter(
+        (activity) => activity.activityType == null
+      ).length,
       failedFiles,
     }
   }
 
   if (intent === "clear-all") {
+    // Local only, deliberately. This resets *this device*; the server copies
+    // are left alone and sync pulls them back. Deleting them is a separate,
+    // explicit action — "Remove all" in the account dialog.
     mapStore.fogData = null
-    mapStore.tracks = []
+    mapStore.activities = []
     mapStore.processedCount = 0
     // Abandons the in-flight run so its FOG_UPDATEs cannot repaint the map
     // we just cleared, and its DONE cannot save a stale fog cache.
@@ -229,24 +256,32 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
       ;(map.getSource("fog-source") as maplibregl.GeoJSONSource)?.setData(
         worldFogGeoJSON()
       )
-      ;(map.getSource("tracks-source") as maplibregl.GeoJSONSource)?.setData(
-        featureCollection([])
-      )
+      ;(
+        map.getSource("activities-source") as maplibregl.GeoJSONSource
+      )?.setData(featureCollection([]))
       // Blanked here too — these run synchronously, before the fetcher effect
       // resets React state, so the old lap line would otherwise linger a frame.
       setLapHighlightData(map, null)
     }
     await clearAll()
     clearMapPosition()
-    return { intent: "clear-all" as const, trackCount: 0 }
+    // Pause automatic syncing. `clearAll` dropped syncState, so the next sync
+    // walks from scratch and would download everything straight back — the
+    // clear would undo itself within seconds. It resumes on reload, or when
+    // the user asks for it with "Sync now".
+    suspendAutoSync("clear-all")
+    return { intent: "clear-all" as const, activityCount: 0 }
   }
 
-  if (intent === "delete-track") {
-    const trackId = formData.get("trackId") as string
+  if (intent === "delete-activity") {
+    const activityId = formData.get("activityId") as string
 
-    // Remove from in-memory store and recompute unique distances for remaining tracks
-    mapStore.tracks = mapStore.tracks.filter((t) => t.id !== trackId)
-    populateUniqueDistances(mapStore.tracks)
+    // Captured before the filter — the content hash is what the server keys on.
+    const deletedActivity = mapStore.activities.find((t) => t.id === activityId)
+
+    // Remove from in-memory store and recompute unique distances for remaining activities
+    mapStore.activities = mapStore.activities.filter((t) => t.id !== activityId)
+    populateUniqueDistances(mapStore.activities)
     mapStore.processedCount = 0
 
     // Reset worker + update map sources immediately
@@ -259,30 +294,42 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
       ;(map.getSource("fog-source") as maplibregl.GeoJSONSource)?.setData(
         worldFogGeoJSON()
       )
-      ;(map.getSource("tracks-source") as maplibregl.GeoJSONSource)?.setData(
-        featureCollection([])
-      )
+      ;(
+        map.getSource("activities-source") as maplibregl.GeoJSONSource
+      )?.setData(featureCollection([]))
       // Blanked here too — these run synchronously, before the fetcher effect
       // resets React state, so the old lap line would otherwise linger a frame.
       setLapHighlightData(map, null)
     }
 
-    // Replay remaining tracks
-    if (mapStore.tracks.length > 0) {
+    // Replay remaining activities
+    if (mapStore.activities.length > 0) {
       postToFogWorker({
-        type: "PROCESS_TRACKS",
-        tracks: mapStore.tracks,
+        type: "PROCESS_ACTIVITIES",
+        activities: mapStore.activities,
         mode: mapStore.fogMode,
       })
     }
 
     // Persist and invalidate fog cache
-    await deleteTrack(trackId)
+    await deleteActivity(activityId)
     await clearFogCache()
 
+    if (deletedActivity) {
+      if (formData.get("alsoOnServer") === "0") {
+        // Local-only: the server copy stays, so this device has to remember
+        // not to download it back on the next sync.
+        await ignoreActivityLocally(deletedActivity)
+        suspendAutoSync("local-only-delete")
+      } else {
+        // Writes the tombstone that removes it from the user's other devices.
+        await pushActivityDeletion(deletedActivity)
+      }
+    }
+
     return {
-      intent: "delete-track" as const,
-      trackCount: mapStore.tracks.length,
+      intent: "delete-activity" as const,
+      activityCount: mapStore.activities.length,
     }
   }
 
@@ -293,67 +340,124 @@ export default function Home() {
   const loaderData = useLoaderData<typeof clientLoader>()
   const fetcher = useFetcher<typeof clientAction>()
   const [searchParams, setSearchParams] = useSearchParams()
+  const location = useLocation()
+  const revalidator = useRevalidator()
+  const isMapRoute = location.pathname === "/"
+  // This parent route stays matched for every in-app page. Delay mounting the
+  // expensive WebGL map for direct visits to another page, then keep it alive
+  // for the rest of the document session after the first map visit.
+  const [hasMountedMap, setHasMountedMap] = useState(isMapRoute)
+
+  useEffect(() => {
+    if (isMapRoute) setHasMountedMap(true)
+  }, [isMapRoute])
 
   // Initialise from restored data (falls back to defaults on first load)
-  const [trackCount, setTrackCount] = useState(loaderData.restoredTrackCount)
+  const [activityCount, setActivityCount] = useState(
+    loaderData.restoredActivityCount
+  )
   const [processedCount, setProcessedCount] = useState(0)
   const [isProcessing, setIsProcessing] = useState(false)
-  const [showTracks, setShowTracks] = useState(true)
+  const [showActivities, setShowActivities] = useState(true)
   const [showFog, setShowFog] = useState(true)
   const [fogMode, setFogMode] = useState<FogMode>(loaderData.restoredFogMode)
   const [mapMode, setMapMode] = useState<MapMode>("flat")
   const [showUploadDialog, setShowUploadDialog] = useState(false)
   const [mapReady, setMapReady] = useState(false)
-  const [selectedTrackIds, setSelectedTrackIds] = useState<string[]>([])
-  // Keyed by track id, not a bare number: a bare number would still match
-  // during the render in which the selection moves to a different track that
+  const [selectedActivityIds, setSelectedActivityIds] = useState<string[]>([])
+  // Keyed by activity id, not a bare number: a bare number would still match
+  // during the render in which the selection moves to a different activity that
   // happens to have that lap, flashing the wrong lap and refitting the camera.
   const [selectedLap, setSelectedLap] = useState<{
-    trackId: string
+    activityId: string
     number: number
   } | null>(null)
-  const [pendingTrackId, setPendingTrackId] = useState<string | null>(null)
+  const [pendingActivityId, setPendingActivityId] = useState<string | null>(
+    null
+  )
   const [showShareDialog, setShowShareDialog] = useState(false)
   const [photos, setPhotos] = useState<PhotoEntry[]>(_restoredPhotos)
   const [showPhotos, setShowPhotos] = useState(true)
+  const {
+    showMyLocation,
+    permissionDenied: locationPermissionDenied,
+    position: myLocationPosition,
+    toggle: handleShowMyLocationChange,
+  } = useMyLocation()
   const [selectedGroup, setSelectedGroup] = useState<PhotoGroup | null>(null)
   const [photoErrorOpen, setPhotoErrorOpen] = useState(false)
   const [parseFailedFiles, setParseFailedFiles] = useState<string[]>([])
   const [isParseErrorOpen, setIsParseErrorOpen] = useState(false)
+  const [duplicateCount, setDuplicateCount] = useState(0)
+  const [isDuplicateOpen, setIsDuplicateOpen] = useState(false)
+  const [missingActivityTypeCount, setMissingActivityTypeCount] = useState(0)
+  const [isMissingActivityTypeOpen, setIsMissingActivityTypeOpen] =
+    useState(false)
   // Loading overlay: starts visible, fades out when map is ready, then unmounts
   const [overlayDone, setOverlayDone] = useState(false)
 
-  // Reprocess flag: true when tracks were restored but fog cache was stale/absent.
+  // The cached map keeps its layout while hidden, but MapLibre still needs a
+  // resize after returning from a page that may have changed the viewport.
+  useEffect(() => {
+    if (!isMapRoute || !mapReady) return
+    const frame = requestAnimationFrame(() => mapStore.map?.resize())
+    return () => cancelAnimationFrame(frame)
+  }, [isMapRoute, mapReady])
+
+  // Reprocess flag: true when activities were restored but fog cache was stale/absent.
   // mapStore.fogData is null in that case; checked once after map is ready.
   const needsReprocessRef = useRef(
-    loaderData.restoredTrackCount > 0 && mapStore.fogData === null
+    loaderData.restoredActivityCount > 0 && mapStore.fogData === null
   )
   // Set to true when the user uploads new files; cleared after fitBounds fires.
   // Lets the isProcessing useEffect distinguish new uploads from restore-reprocesses
   // and fog-mode reprocesses (both of which should NOT zoom the map).
   const isNewUploadRef = useRef(false)
-  // Track count before the latest upload so fitBounds can identify the new tracks.
-  const prevTrackCountRef = useRef(0)
+  // Activity count before the latest upload so fitBounds can identify the new activities.
+  const prevActivityCountRef = useRef(0)
 
-  // Show upload dialog once the map is ready and no tracks are loaded.
-  // Use mapStore.tracks (set synchronously by clientLoader) rather than the
-  // trackCount React state, which can read as 0 during the brief window
+  // A fresh OAuth sign-in can start syncing while this loader is still reading
+  // IndexedDB. In that case its first result contains no activities, then the
+  // sync write triggers a revalidation with the downloaded activities. The ref
+  // above is intentionally initialized only once, so reconcile that later
+  // loader result here. If the worker already ran before MapView mounted, its
+  // replies were unobserved; discard that run and replay it once the listener
+  // is installed.
+  useEffect(() => {
+    if (loaderData.restoredActivityCount === 0 || mapStore.fogData !== null) {
+      return
+    }
+
+    if (mapStore.isFogRunInFlight) {
+      if (mapStore.isFogWorkerListenerReady) return
+      startFogRun()
+      postToFogWorker({ type: "RESET" })
+      mapStore.isRestoreReprocess = true
+    }
+
+    needsReprocessRef.current = true
+    setActivityCount(mapStore.activities.length)
+  }, [loaderData.restoredActivityCount])
+
+  // Show upload dialog once the map is ready and no activities are loaded.
+  // Use mapStore.activities (set synchronously by clientLoader) rather than the
+  // activityCount React state, which can read as 0 during the brief window
   // between initial render and loader-data reconciliation.
   useEffect(() => {
-    if (mapReady && mapStore.tracks.length === 0) {
+    if (mapReady && mapStore.activities.length === 0) {
       setShowUploadDialog(true)
     }
   }, [mapReady])
 
-  // Select and zoom to a track when ?track=<id> is present in the URL
+  // Select and zoom to an activity when ?activity=<id> is present in the URL
   useEffect(() => {
     if (!mapReady) return
-    const trackId = searchParams.get("track")
-    if (!trackId) return
-    setSelectedTrackIds([trackId])
-    const track = mapStore.tracks.find((t) => t.id === trackId)
-    if (!track || !mapStore.map) return
-    const fc = featureCollection([lineString(track.coordinates)])
+    const activityId = searchParams.get("activity")
+    if (!activityId) return
+    setSelectedActivityIds([activityId])
+    const activity = mapStore.activities.find((t) => t.id === activityId)
+    if (!activity || !mapStore.map) return
+    const fc = featureCollection([lineString(activity.coordinates)])
     const [w, s, e, n] = bbox(fc)
     if (isFinite(w)) {
       mapStore.map.fitBounds(
@@ -364,7 +468,7 @@ export default function Home() {
         { padding: 80, maxZoom: 14 }
       )
     }
-  }, [mapReady])
+  }, [mapReady, searchParams])
 
   // Handle files shared via the Web Share Target API (PWA installed).
   // The service worker intercepts the POST to /?share-target, buffers the files
@@ -399,17 +503,17 @@ export default function Home() {
   useEffect(() => {
     if (!mapReady || !needsReprocessRef.current) return
     needsReprocessRef.current = false
-    if (mapStore.tracks.length === 0) return
+    if (mapStore.activities.length === 0) return
     setIsProcessing(true)
     setProcessedCount(0)
     postToFogWorker({
-      type: "PROCESS_TRACKS",
-      tracks: mapStore.tracks,
+      type: "PROCESS_ACTIVITIES",
+      activities: mapStore.activities,
       mode: loaderData.restoredFogMode,
     })
   }, [mapReady])
 
-  // Zoom to tracks after a new upload finishes processing.
+  // Zoom to activities after a new upload finishes processing.
   // Using useEffect (instead of calling fitBounds directly inside the worker's
   // onmessage) guarantees we're in a normal render cycle where the map is
   // fully ready and React state is settled.
@@ -419,11 +523,11 @@ export default function Home() {
     if (isProcessing || !isNewUploadRef.current) return
     isNewUploadRef.current = false
     const map = mapStore.map
-    if (mapStore.tracks.length === 0 || !map) return
+    if (mapStore.activities.length === 0 || !map) return
 
-    // Compute bbox for all tracks and check the zoom needed to fit them.
+    // Compute bbox for all activities and check the zoom needed to fit them.
     const allFc = featureCollection(
-      mapStore.tracks.map((t) => lineString(t.coordinates))
+      mapStore.activities.map((t) => lineString(t.coordinates))
     )
     const [w, s, e, n] = bbox(allFc)
     if (!isFinite(w)) return
@@ -437,15 +541,17 @@ export default function Home() {
       typeof camera?.zoom === "number" ? camera.zoom : Infinity
 
     if (wouldBeZoom >= 5) {
-      // All tracks fit at an acceptable zoom level — show them all.
+      // All activities fit at an acceptable zoom level — show them all.
       map.fitBounds(allBounds, { padding: 60, maxZoom: 14 })
     } else {
-      // Tracks are too spread out (different countries/continents). Zoom to
+      // Activities are too spread out (different countries/continents). Zoom to
       // just the newly added ones so the user sees what they just uploaded.
-      const newTracks = mapStore.tracks.slice(prevTrackCountRef.current)
-      if (newTracks.length === 0) return
+      const newActivities = mapStore.activities.slice(
+        prevActivityCountRef.current
+      )
+      if (newActivities.length === 0) return
       const newFc = featureCollection(
-        newTracks.map((t) => lineString(t.coordinates))
+        newActivities.map((t) => lineString(t.coordinates))
       )
       const [nw, ns, ne, nn] = bbox(newFc)
       if (isFinite(nw)) {
@@ -465,43 +571,113 @@ export default function Home() {
     const data = fetcher.data
     if (!data) return
     if (data.intent === "add-files") {
-      prevTrackCountRef.current = trackCount // snapshot pre-upload count for fitBounds fallback
+      prevActivityCountRef.current = activityCount // snapshot pre-upload count for fitBounds fallback
       setShowUploadDialog(false)
-      if (data.newTracksCount > 0) {
+      if (data.newActivitiesCount > 0) {
         isNewUploadRef.current = true // triggers fitBounds in the isProcessing effect below
-        setTrackCount(data.trackCount)
-        setIsProcessing(true)
+        setActivityCount(data.activityCount)
+        // Only if the worker has not already finished — see isFogRunInFlight.
+        setIsProcessing(mapStore.isFogRunInFlight)
         setProcessedCount(0)
       }
       if (data.failedFiles.length > 0) {
+        setMissingActivityTypeCount(data.missingActivityTypeCount)
         setParseFailedFiles(data.failedFiles)
         setIsParseErrorOpen(true)
+      } else if (data.missingActivityTypeCount > 0) {
+        setMissingActivityTypeCount(data.missingActivityTypeCount)
+        setIsMissingActivityTypeOpen(true)
+      } else if (data.newActivitiesCount === 0 && data.duplicateCount > 0) {
+        // Nothing was added and nothing failed — say so, or the import looks
+        // like it silently did nothing.
+        setDuplicateCount(data.duplicateCount)
+        setIsDuplicateOpen(true)
       }
     }
     if (data.intent === "clear-all") {
-      setTrackCount(0)
+      setActivityCount(0)
       setProcessedCount(0)
       setIsProcessing(false)
-      setSelectedTrackIds([])
-      setPendingTrackId(null)
+      setSelectedActivityIds([])
+      setPendingActivityId(null)
       setShowShareDialog(false)
       setPhotos([])
       setSelectedGroup(null)
     }
-    if (data.intent === "delete-track") {
-      setSelectedTrackIds([])
-      setPendingTrackId(null)
+    if (data.intent === "delete-activity") {
+      setSelectedActivityIds([])
+      setPendingActivityId(null)
       setShowShareDialog(false)
-      setTrackCount(data.trackCount)
-      if (data.trackCount > 0) {
-        setIsProcessing(true)
-        setProcessedCount(0)
-      } else {
-        setIsProcessing(false)
-        setProcessedCount(0)
-      }
+      setActivityCount(data.activityCount)
+      setProcessedCount(0)
+      setIsProcessing(data.activityCount > 0 && mapStore.isFogRunInFlight)
     }
   }, [fetcher.data])
+
+  // Sync mutates mapStore directly; reconcile the React state it can't reach.
+  useEffect(() => {
+    setSyncChangeHandler(({ downloadedCount, updatedCount, deletedIds }) => {
+      setActivityCount(mapStore.activities.length)
+
+      if (deletedIds.length > 0) {
+        // A removal invalidates the accumulated fog, so the run is abandoned
+        // and the survivors replayed — the same dance as `delete-activity`.
+        setSelectedActivityIds((prev) =>
+          prev.filter((id) => !deletedIds.includes(id))
+        )
+        setPendingActivityId(null)
+        mapStore.processedCount = 0
+        startFogRun()
+        postToFogWorker({ type: "RESET" })
+        const map = mapStore.map
+        if (map && mapStore.sourcesReady) {
+          ;(map.getSource("fog-source") as maplibregl.GeoJSONSource)?.setData(
+            worldFogGeoJSON()
+          )
+          ;(
+            map.getSource("activities-source") as maplibregl.GeoJSONSource
+          )?.setData(featureCollection([]))
+          setLapHighlightData(map, null)
+        }
+        if (mapStore.activities.length > 0) {
+          postToFogWorker({
+            type: "PROCESS_ACTIVITIES",
+            activities: mapStore.activities,
+            mode: mapStore.fogMode,
+          })
+        }
+      }
+
+      if (downloadedCount > 0 || deletedIds.length > 0) {
+        setProcessedCount(0)
+        setIsProcessing(
+          mapStore.activities.length > 0 && mapStore.isFogRunInFlight
+        )
+      }
+
+      if (downloadedCount > 0 || updatedCount > 0 || deletedIds.length > 0) {
+        void revalidator.revalidate()
+      }
+    })
+    return () => setSyncChangeHandler(null)
+  }, [revalidator])
+
+  // Fires on a restored session and on a fresh sign-in alike, then keeps the
+  // tab current — otherwise another device's uploads only ever arrive on reload.
+  const auth = useAuth()
+  const isSyncEnabled = auth.status === "signedIn" && auth.canSync
+  useEffect(() => {
+    if (!isSyncEnabled) return
+    requestSync("auth-ready")
+    return startSyncScheduler()
+  }, [isSyncEnabled])
+
+  const visibility = useActivityVisibility((activityId, isPublic) => {
+    const index = mapStore.activities.findIndex((t) => t.id === activityId)
+    if (index >= 0) {
+      mapStore.activities[index]!.isPublic = isPublic
+    }
+  })
 
   function handleAddFiles(files: FileList, mode: FogMode = fogMode) {
     const formData = new FormData()
@@ -525,17 +701,18 @@ export default function Home() {
     fetcher.submit(formData, { method: "post" })
   }
 
-  function handleDeleteTrack(trackId: string) {
+  function handleDeleteActivity(activityId: string, alsoOnServer = true) {
     const fd = new FormData()
-    fd.set("intent", "delete-track")
-    fd.set("trackId", trackId)
+    fd.set("intent", "delete-activity")
+    fd.set("activityId", activityId)
+    fd.set("alsoOnServer", alsoOnServer ? "1" : "0")
     fetcher.submit(fd, { method: "post" })
   }
 
   async function handleAddPhotos(files: FileList) {
     const newEntries = await processPhotoFiles(
       Array.from(files),
-      mapStore.tracks,
+      mapStore.activities,
       photos
     )
     if (newEntries.length > 0) {
@@ -570,7 +747,7 @@ export default function Home() {
     // old one. Replies from the abandoned run are dropped by their stale runId.
     startFogRun()
     postToFogWorker({ type: "RESET" })
-    if (mapStore.tracks.length === 0) {
+    if (mapStore.activities.length === 0) {
       // Nothing to replay — clear the bar the abandoned run's DONE will no
       // longer clear.
       setIsProcessing(false)
@@ -580,8 +757,8 @@ export default function Home() {
     setIsProcessing(true)
     setProcessedCount(0)
     postToFogWorker({
-      type: "PROCESS_TRACKS",
-      tracks: mapStore.tracks,
+      type: "PROCESS_ACTIVITIES",
+      activities: mapStore.activities,
       mode: newMode,
     })
   }
@@ -590,245 +767,304 @@ export default function Home() {
     setProcessedCount(count)
     if (done) {
       setIsProcessing(false)
-      setTrackCount(mapStore.tracks.length)
+      setActivityCount(mapStore.activities.length)
       // fitBounds is handled by the useEffect([isProcessing]) above:
       // it fires after React re-renders, when map state is fully settled.
     }
   }
 
-  function handleTrackSelect(id: string | null) {
-    // Dropped on every selection change so reopening a track starts on the
+  function handleActivitySelect(id: string | null) {
+    // Dropped on every selection change so reopening an activity starts on the
     // whole activity rather than silently restoring a zoomed-in lap. The
-    // trackId key on selectedLap covers everything this doesn't reach.
+    // activityId key on selectedLap covers everything this doesn't reach.
     setSelectedLap(null)
     if (!id) {
-      setSelectedTrackIds([])
-      setPendingTrackId(null)
+      setSelectedActivityIds([])
+      setPendingActivityId(null)
       return
     }
-    if (selectedTrackIds.includes(id)) {
-      setSelectedTrackIds((prev) => prev.filter((x) => x !== id))
-      setPendingTrackId(null)
+    if (selectedActivityIds.includes(id)) {
+      setSelectedActivityIds((prev) => prev.filter((x) => x !== id))
+      setPendingActivityId(null)
       return
     }
-    if (selectedTrackIds.length === 0) {
-      setSelectedTrackIds([id])
+    if (selectedActivityIds.length === 0) {
+      setSelectedActivityIds([id])
     } else {
-      setPendingTrackId(id)
+      setPendingActivityId(id)
     }
   }
 
-  const selectedTracks = selectedTrackIds
-    .map((id) => mapStore.tracks.find((t) => t.id === id))
-    .filter((t): t is ParsedTrack => t != null)
+  const selectedActivities = selectedActivityIds
+    .map((id) => mapStore.activities.find((t) => t.id === id))
+    .filter((t): t is ParsedActivity => t != null)
 
   // Derived and re-validated every render rather than reset imperatively: a
-  // stale selection, a multi-select, a deleted track or a GPX track all
+  // stale selection, a multi-select, a deleted activity or a GPX activity all
   // collapse to null on their own, so none of the many places that mutate
-  // selectedTrackIds need to know laps exist.
+  // selectedActivityIds need to know laps exist.
   const activeLap =
-    selectedTracks.length === 1 && selectedLap?.trackId === selectedTracks[0].id
-      ? (selectedTracks[0].laps?.find((l) => l.number === selectedLap.number) ??
-        null)
+    selectedActivities.length === 1 &&
+    selectedLap?.activityId === selectedActivities[0].id
+      ? (selectedActivities[0].laps?.find(
+          (l) => l.number === selectedLap.number
+        ) ?? null)
       : null
 
   function handleLapSelect(lapNumber: number | null) {
-    const trackId = selectedTracks[0]?.id
+    const activityId = selectedActivities[0]?.id
     setSelectedLap(
-      lapNumber != null && trackId ? { trackId, number: lapNumber } : null
+      lapNumber != null && activityId ? { activityId, number: lapNumber } : null
     )
   }
 
   // Memoized: a fresh object each render would invalidate ShareDialog's
-  // statsData/trackPhotos memos and re-fire its preview draw continuously.
-  const activeLapTrack = useMemo(
-    () => (activeLap ? buildLapTrack(selectedTracks[0], activeLap) : null),
-    [selectedTracks[0]?.id, activeLap]
+  // statsData/activityPhotos memos and re-fire its preview draw continuously.
+  const activeLapActivity = useMemo(
+    () =>
+      activeLap ? buildLapActivity(selectedActivities[0], activeLap) : null,
+    [selectedActivities[0]?.id, activeLap]
   )
 
   // Highlight is lap-only, so picking "All laps" clears lap-layer. Focus is
-  // separate: on "All laps" it points at the whole track, which is what lets
-  // the camera zoom back out. Both null for tracks without laps, so a plain
-  // track selection never becomes a camera target.
+  // separate: on "All laps" it points at the whole activity, which is what lets
+  // the camera zoom back out. Both null for activities without laps, so a plain
+  // activity selection never becomes a camera target.
   //
   // Not gated on isProcessing: an import's whole-library fitBounds runs from
   // the worker DONE handler, strictly after any render-time fit, so it wins on
   // its own. Suppressing during processing would only add a second refit after.
-  const focusTrack =
-    selectedTracks.length === 1 && (selectedTracks[0].laps?.length ?? 0) >= 2
-      ? selectedTracks[0]
+  const focusActivity =
+    selectedActivities.length === 1 &&
+    (selectedActivities[0].laps?.length ?? 0) >= 2
+      ? selectedActivities[0]
       : null
-  const highlightCoordinates = activeLapTrack?.coordinates ?? null
+  const highlightCoordinates = activeLapActivity?.coordinates ?? null
   const focusCoordinates =
-    activeLapTrack?.coordinates ?? focusTrack?.coordinates ?? null
+    activeLapActivity?.coordinates ?? focusActivity?.coordinates ?? null
   const focusKey =
-    activeLapTrack?.id ?? (focusTrack ? `${focusTrack.id}#all` : null)
+    activeLapActivity?.id ?? (focusActivity ? `${focusActivity.id}#all` : null)
 
-  const pendingTrack = pendingTrackId
-    ? (mapStore.tracks.find((t) => t.id === pendingTrackId) ?? null)
+  const pendingActivity = pendingActivityId
+    ? (mapStore.activities.find((t) => t.id === pendingActivityId) ?? null)
     : null
 
   return (
-    <div className="relative h-screen w-screen overflow-hidden">
-      {/* Dark overlay: hides the white→tiles→fog flash; fades out once map is ready */}
-      {!overlayDone && (
+    <>
+      {hasMountedMap && (
         <div
-          className="pointer-events-none absolute inset-0 z-50 transition-opacity duration-500"
-          style={{ backgroundColor: "#0a0a1e", opacity: mapReady ? 0 : 1 }}
-          onTransitionEnd={() => setOverlayDone(true)}
-        />
-      )}
-      <ErrorBoundary>
-        <MapView
-          showTracks={showTracks}
-          showFog={showFog}
-          onMapReady={() => setMapReady(true)}
-          onProcessingUpdate={handleProcessingUpdate}
-          selectedTrackIds={selectedTrackIds}
-          onTrackSelect={handleTrackSelect}
-          mapMode={mapMode}
-          photos={photos}
-          showPhotos={showPhotos}
-          onPhotoSelect={setSelectedGroup}
-          highlightCoordinates={highlightCoordinates}
-          focusCoordinates={focusCoordinates}
-          focusKey={focusKey}
-        />
-      </ErrorBoundary>
-      {mapReady && (
-        <>
-          <ControlPanel
-            trackCount={trackCount}
-            processedCount={processedCount}
-            isProcessing={isProcessing}
-            showTracks={showTracks}
-            onShowTracksChange={setShowTracks}
-            showFog={showFog}
-            onShowFogChange={setShowFog}
-            fogMode={fogMode}
-            onFogModeChange={handleFogModeChange}
-            mapMode={mapMode}
-            onMapModeChange={setMapMode}
-            onAddFiles={handleAddFiles}
-            onClearAll={handleClearAll}
-            photoCount={photos.length}
-            onAddPhotos={handleAddPhotos}
-            showPhotos={showPhotos}
-            onShowPhotosChange={setShowPhotos}
-          />
-          <FileUploadDialog
-            open={showUploadDialog}
-            onOpenChange={setShowUploadDialog}
-            onAddFiles={(files) => handleAddFiles(files, fogMode)}
-            onLoadSampleData={handleLoadSampleData}
-          />
-          <PhotoErrorDialog
-            open={photoErrorOpen}
-            onOpenChange={setPhotoErrorOpen}
-          />
-          <ParseErrorDialog
-            open={isParseErrorOpen}
-            onOpenChange={setIsParseErrorOpen}
-            failedFiles={parseFailedFiles}
-          />
-          <PhotoCard
-            group={selectedGroup}
-            onClose={() => setSelectedGroup(null)}
-          />
-          {selectedTracks.length > 0 && (
-            <ErrorBoundary
-              fallback={(error, reset) => (
-                <div className="absolute right-4 bottom-4 z-10 w-80">
-                  <ErrorCard error={error} reset={reset} className="" />
-                </div>
-              )}
-            >
-              <TrackStatsPanel
-                tracks={selectedTracks}
-                onRemoveTrack={(id) =>
-                  setSelectedTrackIds((prev) => prev.filter((x) => x !== id))
-                }
-                onClose={() => {
-                  setSelectedTrackIds([])
-                  setSelectedLap(null)
-                  setPendingTrackId(null)
-                  setSearchParams(
-                    (prev) => {
-                      const next = new URLSearchParams(prev)
-                      next.delete("track")
-                      return next
-                    },
-                    { replace: true }
-                  )
-                }}
-                onShare={() => setShowShareDialog(true)}
-                onDelete={
-                  selectedTracks.length === 1
-                    ? () => handleDeleteTrack(selectedTracks[0].id)
-                    : undefined
-                }
-                activeLap={activeLap}
-                onLapSelect={handleLapSelect}
-              />
-            </ErrorBoundary>
-          )}
-          {showShareDialog && selectedTracks.length > 0 && (
-            <ShareDialog
-              open={showShareDialog}
-              onOpenChange={setShowShareDialog}
-              tracks={activeLapTrack ? [activeLapTrack] : selectedTracks}
-              photos={photos}
-              subtitle={
-                activeLap
-                  ? lapSubtitle(selectedTracks[0], activeLap)
-                  : undefined
-              }
+          data-map-cache
+          aria-hidden={isMapRoute ? undefined : "true"}
+          inert={isMapRoute ? undefined : true}
+          className={
+            isMapRoute
+              ? "relative h-screen w-screen overflow-hidden"
+              : "pointer-events-none invisible fixed inset-0 overflow-hidden"
+          }
+        >
+          {/* Dark overlay: hides the white→tiles→fog flash; fades out once map is ready */}
+          {!overlayDone && (
+            <div
+              className="pointer-events-none absolute inset-0 z-50 transition-opacity duration-500"
+              style={{ backgroundColor: "#0a0a1e", opacity: mapReady ? 0 : 1 }}
+              onTransitionEnd={() => setOverlayDone(true)}
             />
           )}
-          {pendingTrack && (
-            <Dialog
-              open
-              onOpenChange={(open) => {
-                if (!open) setPendingTrackId(null)
-              }}
-            >
-              <DialogContent showCloseButton={false}>
-                <DialogHeader>
-                  <DialogTitle>Add to stats?</DialogTitle>
-                </DialogHeader>
-                <p className="text-sm text-muted-foreground">
-                  &ldquo;{pendingTrack.name}&rdquo;
-                </p>
-                <DialogFooter className="flex-col gap-2 sm:flex-row">
-                  <Button
-                    variant="outline"
-                    onClick={() => setPendingTrackId(null)}
-                  >
-                    Cancel
-                  </Button>
-                  <Button
-                    variant="outline"
-                    onClick={() => {
-                      setSelectedTrackIds([pendingTrackId!])
-                      setPendingTrackId(null)
+          <ErrorBoundary>
+            <MapView
+              showActivities={showActivities}
+              showFog={showFog}
+              onMapReady={() => setMapReady(true)}
+              onProcessingUpdate={handleProcessingUpdate}
+              selectedActivityIds={selectedActivityIds}
+              onActivitySelect={handleActivitySelect}
+              mapMode={mapMode}
+              photos={photos}
+              showPhotos={showPhotos}
+              onPhotoSelect={setSelectedGroup}
+              showMyLocation={showMyLocation}
+              myLocation={myLocationPosition}
+              highlightCoordinates={highlightCoordinates}
+              focusCoordinates={focusCoordinates}
+              focusKey={focusKey}
+            />
+          </ErrorBoundary>
+          {mapReady && isMapRoute && (
+            <>
+              <ControlPanel
+                activityCount={activityCount}
+                processedCount={processedCount}
+                isProcessing={isProcessing}
+                showActivities={showActivities}
+                onShowActivitiesChange={setShowActivities}
+                showFog={showFog}
+                onShowFogChange={setShowFog}
+                fogMode={fogMode}
+                onFogModeChange={handleFogModeChange}
+                mapMode={mapMode}
+                onMapModeChange={setMapMode}
+                onAddFiles={handleAddFiles}
+                onClearAll={handleClearAll}
+                photoCount={photos.length}
+                onAddPhotos={handleAddPhotos}
+                showPhotos={showPhotos}
+                onShowPhotosChange={setShowPhotos}
+                showMyLocation={showMyLocation}
+                onShowMyLocationChange={handleShowMyLocationChange}
+                locationPermissionDenied={locationPermissionDenied}
+              />
+              <FileUploadDialog
+                open={showUploadDialog}
+                onOpenChange={setShowUploadDialog}
+                onAddFiles={(files) => handleAddFiles(files, fogMode)}
+                onLoadSampleData={handleLoadSampleData}
+              />
+              <PhotoErrorDialog
+                open={photoErrorOpen}
+                onOpenChange={setPhotoErrorOpen}
+              />
+              <ParseErrorDialog
+                open={isParseErrorOpen}
+                onOpenChange={(open) => {
+                  setIsParseErrorOpen(open)
+                  if (!open && missingActivityTypeCount > 0) {
+                    setIsMissingActivityTypeOpen(true)
+                  }
+                }}
+                failedFiles={parseFailedFiles}
+              />
+              <MissingActivityTypeDialog
+                open={isMissingActivityTypeOpen}
+                onOpenChange={(open) => {
+                  setIsMissingActivityTypeOpen(open)
+                  if (!open) setMissingActivityTypeCount(0)
+                }}
+                activityCount={missingActivityTypeCount}
+              />
+              <DuplicateActivitiesDialog
+                open={isDuplicateOpen}
+                onOpenChange={setIsDuplicateOpen}
+                duplicateCount={duplicateCount}
+              />
+              <PhotoCard
+                group={selectedGroup}
+                onClose={() => setSelectedGroup(null)}
+              />
+              {selectedActivities.length > 0 && (
+                <ErrorBoundary
+                  fallback={(error, reset) => (
+                    <div className="absolute right-4 bottom-4 z-10 w-80">
+                      <ErrorCard error={error} reset={reset} className="" />
+                    </div>
+                  )}
+                >
+                  <ActivityStatsPanel
+                    activities={selectedActivities}
+                    onRemoveActivity={(id) =>
+                      setSelectedActivityIds((prev) =>
+                        prev.filter((x) => x !== id)
+                      )
+                    }
+                    onClose={() => {
+                      setSelectedActivityIds([])
+                      setSelectedLap(null)
+                      setPendingActivityId(null)
+                      setSearchParams(
+                        (prev) => {
+                          const next = new URLSearchParams(prev)
+                          next.delete("activity")
+                          return next
+                        },
+                        { replace: true }
+                      )
                     }}
-                  >
-                    Replace
-                  </Button>
-                  <Button
-                    onClick={() => {
-                      setSelectedTrackIds((prev) => [...prev, pendingTrackId!])
-                      setPendingTrackId(null)
-                    }}
-                  >
-                    Add to stats
-                  </Button>
-                </DialogFooter>
-              </DialogContent>
-            </Dialog>
+                    onShare={() => setShowShareDialog(true)}
+                    onDelete={
+                      selectedActivities.length === 1
+                        ? (alsoOnServer) =>
+                            handleDeleteActivity(
+                              selectedActivities[0].id,
+                              alsoOnServer
+                            )
+                        : undefined
+                    }
+                    activeLap={activeLap}
+                    onLapSelect={handleLapSelect}
+                    onVisibilityChange={
+                      isSyncEnabled && selectedActivities.length === 1
+                        ? (isPublic) =>
+                            visibility.change(selectedActivities[0], isPublic)
+                        : undefined
+                    }
+                    isVisibilityLoading={visibility.isLoading}
+                  />
+                </ErrorBoundary>
+              )}
+              {showShareDialog && selectedActivities.length > 0 && (
+                <ShareDialog
+                  open={showShareDialog}
+                  onOpenChange={setShowShareDialog}
+                  activities={
+                    activeLapActivity ? [activeLapActivity] : selectedActivities
+                  }
+                  photos={photos}
+                  subtitle={
+                    activeLap
+                      ? lapSubtitle(selectedActivities[0], activeLap)
+                      : undefined
+                  }
+                />
+              )}
+              {pendingActivity && (
+                <Dialog
+                  open
+                  onOpenChange={(open) => {
+                    if (!open) setPendingActivityId(null)
+                  }}
+                >
+                  <DialogContent showCloseButton={false}>
+                    <DialogHeader>
+                      <DialogTitle>Add to stats?</DialogTitle>
+                      <DialogDescription>
+                        &ldquo;{pendingActivity.name}&rdquo;
+                      </DialogDescription>
+                    </DialogHeader>
+                    <DialogFooter className="flex-col gap-2 sm:flex-row">
+                      <Button
+                        variant="outline"
+                        onClick={() => setPendingActivityId(null)}
+                      >
+                        Cancel
+                      </Button>
+                      <Button
+                        variant="outline"
+                        onClick={() => {
+                          setSelectedActivityIds([pendingActivityId!])
+                          setPendingActivityId(null)
+                        }}
+                      >
+                        Replace
+                      </Button>
+                      <Button
+                        onClick={() => {
+                          setSelectedActivityIds((prev) => [
+                            ...prev,
+                            pendingActivityId!,
+                          ])
+                          setPendingActivityId(null)
+                        }}
+                      >
+                        Add to stats
+                      </Button>
+                    </DialogFooter>
+                  </DialogContent>
+                </Dialog>
+              )}
+            </>
           )}
-        </>
+        </div>
       )}
-    </div>
+      <Outlet />
+    </>
   )
 }

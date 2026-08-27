@@ -1,15 +1,15 @@
 import { useRef, useState } from "react"
 import { DotsThreeIcon } from "@phosphor-icons/react"
 import { Button } from "~/components/ui/button"
-import type { FogMode, MapMode } from "~/types/tracks"
-import { MoreDrawer } from "~/components/MoreDrawer"
+import type { FogMode, MapMode } from "~/types/activities"
+import { MapDrawer } from "~/components/MapDrawer"
 
 interface ControlPanelProps {
-  trackCount: number
+  activityCount: number
   processedCount: number
   isProcessing: boolean
-  showTracks: boolean
-  onShowTracksChange: (value: boolean) => void
+  showActivities: boolean
+  onShowActivitiesChange: (value: boolean) => void
   showFog: boolean
   onShowFogChange: (value: boolean) => void
   fogMode: FogMode
@@ -22,14 +22,17 @@ interface ControlPanelProps {
   onAddPhotos: (files: FileList) => void
   showPhotos: boolean
   onShowPhotosChange: (value: boolean) => void
+  showMyLocation: boolean
+  onShowMyLocationChange: (value: boolean) => void
+  locationPermissionDenied: boolean
 }
 
 export function ControlPanel({
-  trackCount,
+  activityCount,
   processedCount,
   isProcessing,
-  showTracks,
-  onShowTracksChange,
+  showActivities,
+  onShowActivitiesChange,
   showFog,
   onShowFogChange,
   fogMode,
@@ -42,6 +45,9 @@ export function ControlPanel({
   onAddPhotos,
   showPhotos,
   onShowPhotosChange,
+  showMyLocation,
+  onShowMyLocationChange,
+  locationPermissionDenied,
 }: ControlPanelProps) {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const photoInputRef = useRef<HTMLInputElement>(null)
@@ -61,7 +67,8 @@ export function ControlPanel({
     e.target.value = ""
   }
 
-  const showAddPhotosOption = trackCount > 0 && (showPhotos || photoCount === 0)
+  const showAddPhotosOption =
+    activityCount > 0 && (showPhotos || photoCount === 0)
 
   return (
     <>
@@ -88,13 +95,13 @@ export function ControlPanel({
         {isProcessing && (
           <div className="flex h-8 items-center gap-2 border border-border bg-background/80 px-2.5 backdrop-blur-md">
             <span className="text-xs text-muted-foreground tabular-nums">
-              {processedCount}/{trackCount}
+              {processedCount}/{activityCount}
             </span>
             <div className="relative h-1 w-20 overflow-hidden bg-muted">
               <div
                 className="absolute inset-y-0 left-0 bg-primary transition-[width] duration-300"
                 style={{
-                  width: `${trackCount > 0 ? Math.round((processedCount / trackCount) * 100) : 0}%`,
+                  width: `${activityCount > 0 ? Math.round((processedCount / activityCount) * 100) : 0}%`,
                 }}
               />
             </div>
@@ -112,10 +119,10 @@ export function ControlPanel({
       </div>
 
       {/* All controls in one drawer */}
-      <MoreDrawer
+      <MapDrawer
         isOpen={isDrawerOpen}
         onOpenChange={setIsDrawerOpen}
-        trackCount={trackCount}
+        activityCount={activityCount}
         photoCount={photoCount}
         isProcessing={isProcessing}
         processedCount={processedCount}
@@ -123,8 +130,8 @@ export function ControlPanel({
         onAddFiles={() => fileInputRef.current?.click()}
         onAddPhotos={() => photoInputRef.current?.click()}
         onClearAll={onClearAll}
-        showTracks={showTracks}
-        onShowTracksChange={onShowTracksChange}
+        showActivities={showActivities}
+        onShowActivitiesChange={onShowActivitiesChange}
         showFog={showFog}
         onShowFogChange={onShowFogChange}
         fogMode={fogMode}
@@ -133,6 +140,9 @@ export function ControlPanel({
         onMapModeChange={onMapModeChange}
         showPhotos={showPhotos}
         onShowPhotosChange={onShowPhotosChange}
+        showMyLocation={showMyLocation}
+        onShowMyLocationChange={onShowMyLocationChange}
+        locationPermissionDenied={locationPermissionDenied}
       />
     </>
   )
