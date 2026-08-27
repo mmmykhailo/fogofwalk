@@ -286,7 +286,8 @@ async function syncOnce(reason: string): Promise<void> {
     ): boolean =>
       local.name !== server.name ||
       Boolean(local.isPublic) !== server.isPublic ||
-      local.activityType !== server.activityType
+      local.activityType !== server.activityType ||
+      local.startSunPhase !== server.startSunPhase
 
     /**
      * A tombstone must be acted on exactly once per device.
