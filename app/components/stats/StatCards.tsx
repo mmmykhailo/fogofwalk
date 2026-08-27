@@ -12,6 +12,7 @@ import {
   CardDescription,
   CardTitle,
 } from "~/components/ui/card"
+import { Grid } from "~/components/Grid"
 
 interface StatCardsProps {
   totals: LifetimeTotals
@@ -30,7 +31,7 @@ export function StatCards({ totals, uniqueDistanceKm }: StatCardsProps) {
       : 0
 
   return (
-    <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+    <Grid columns={{ base: 2, md: 4 }}>
       <Card>
         <CardHeader>
           <CardDescription>Distance</CardDescription>
@@ -148,6 +149,6 @@ export function StatCards({ totals, uniqueDistanceKm }: StatCardsProps) {
           </CardTitle>
         </CardHeader>
       </Card>
-    </div>
+    </Grid>
   )
 }

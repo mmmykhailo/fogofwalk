@@ -1,3 +1,5 @@
+import { cn } from "~/lib/utils"
+
 interface HelpContentsLinkProps {
   targetId: string
   /** Rendered number, e.g. "3." or "3.2". */
@@ -57,7 +59,10 @@ export function HelpContentsLink({
     <span className="flex gap-2">
       <span
         aria-hidden="true"
-        className={`${markerWidth} shrink-0 text-right text-muted-foreground tabular-nums`}
+        className={cn(
+          markerWidth,
+          "shrink-0 text-right text-muted-foreground tabular-nums"
+        )}
       >
         {marker}
       </span>

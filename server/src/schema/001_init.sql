@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS activities (
   is_public INTEGER NOT NULL DEFAULT 0,
   format TEXT NOT NULL,
   activity_type TEXT,
+  start_sun_phase TEXT,
   started_at_ms INTEGER,
   distance_km REAL NOT NULL,
   point_count INTEGER NOT NULL,

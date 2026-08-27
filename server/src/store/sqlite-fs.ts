@@ -23,7 +23,11 @@ import type {
   UserStatus,
 } from "~shared/api"
 import { SYNC_PAGE_SIZE } from "~shared/constants"
-import type { ActivityFormat, ActivityType } from "~shared/activities"
+import type {
+  ActivityFormat,
+  ActivityType,
+  StartSunPhase,
+} from "~shared/activities"
 
 import { combineCursors, pageStream } from "./manifestPaging"
 import type { Pageable } from "./manifestPaging"
@@ -148,6 +152,12 @@ function migrateSchema(db: Database) {
   ) {
     db.exec("ALTER TABLE activities ADD COLUMN activity_type TEXT")
   }
+  if (
+    hasTable(db, "activities") &&
+    !hasColumn(db, "activities", "start_sun_phase")
+  ) {
+    db.exec("ALTER TABLE activities ADD COLUMN start_sun_phase TEXT")
+  }
 
   // Denormalized stat fields for the public profile endpoint (avoids
   // decompressing every public activity's blob on each request). Nullable:
@@ -214,6 +224,7 @@ interface ActivityRow {
   is_public: number
   format: string
   activity_type: string | null
+  start_sun_phase: string | null
   started_at_ms: number | null
   distance_km: number
   point_count: number
@@ -301,6 +312,7 @@ function toMeta(row: ActivityRow): ActivityMeta {
     isPublic: Boolean(row.is_public),
     format: row.format as ActivityFormat,
     activityType: (row.activity_type as ActivityType | null) ?? undefined,
+    startSunPhase: (row.start_sun_phase as StartSunPhase | null) ?? undefined,
     startedAtMs: row.started_at_ms,
     distanceKm: row.distance_km,
     pointCount: row.point_count,
@@ -737,7 +749,7 @@ export class SqliteFsStore implements ServerStore {
       (from, limit) => {
         const rows = this.db
           .query(
-            `SELECT content_hash, name, is_public, format, activity_type, started_at_ms, distance_km,
+            `SELECT content_hash, name, is_public, format, activity_type, start_sun_phase, started_at_ms, distance_km,
                     point_count, size_bytes, updated_at,
                     duration_ms, moving_time_ms, elevation_gain_m, avg_moving_speed_kmh
                FROM activities
@@ -808,15 +820,16 @@ export class SqliteFsStore implements ServerStore {
       this.db
         .query(
           `INSERT INTO activities
-             (user_id, content_hash, name, is_public, format, activity_type, started_at_ms, distance_km,
+             (user_id, content_hash, name, is_public, format, activity_type, start_sun_phase, started_at_ms, distance_km,
               point_count, size_bytes, blob_ref, created_at, updated_at,
               duration_ms, moving_time_ms, elevation_gain_m, avg_moving_speed_kmh)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT (user_id, content_hash) DO UPDATE SET
              name = excluded.name,
              is_public = excluded.is_public,
              format = excluded.format,
              activity_type = excluded.activity_type,
+             start_sun_phase = excluded.start_sun_phase,
              started_at_ms = excluded.started_at_ms,
              distance_km = excluded.distance_km,
              point_count = excluded.point_count,
@@ -835,6 +848,7 @@ export class SqliteFsStore implements ServerStore {
           meta.isPublic ? 1 : 0,
           meta.format,
           meta.activityType ?? null,
+          meta.startSunPhase ?? null,
           meta.startedAtMs,
           meta.distanceKm,
           meta.pointCount,
@@ -864,7 +878,7 @@ export class SqliteFsStore implements ServerStore {
     if (!isSafeContentHash(contentHash)) return null
     const row = this.db
       .query(
-        `SELECT content_hash, name, is_public, format, activity_type, started_at_ms, distance_km,
+        `SELECT content_hash, name, is_public, format, activity_type, start_sun_phase, started_at_ms, distance_km,
                 point_count, size_bytes, updated_at,
                 duration_ms, moving_time_ms, elevation_gain_m, avg_moving_speed_kmh
            FROM activities WHERE user_id = ? AND content_hash = ?`
@@ -948,7 +962,7 @@ export class SqliteFsStore implements ServerStore {
   async listAllActivitiesForUser(userId: string): Promise<Array<any>> {
     const rows = this.db
       .query(
-        `SELECT content_hash, name, is_public, format, activity_type, started_at_ms, distance_km,
+        `SELECT content_hash, name, is_public, format, activity_type, start_sun_phase, started_at_ms, distance_km,
                 point_count, size_bytes, updated_at,
                 duration_ms, moving_time_ms, elevation_gain_m, avg_moving_speed_kmh
            FROM activities WHERE user_id = ? ORDER BY updated_at ASC`
@@ -1010,7 +1024,7 @@ export class SqliteFsStore implements ServerStore {
 
     const rows = this.db
       .query(
-        `SELECT t.content_hash, t.name, t.is_public, t.format, t.activity_type, t.started_at_ms,
+        `SELECT t.content_hash, t.name, t.is_public, t.format, t.activity_type, t.start_sun_phase, t.started_at_ms,
                 t.distance_km, t.point_count, t.size_bytes, t.updated_at,
                 t.duration_ms, t.moving_time_ms, t.elevation_gain_m, t.avg_moving_speed_kmh
            FROM activities t
