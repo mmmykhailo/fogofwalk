@@ -12,6 +12,7 @@ import { WeeklyChart } from "~/components/stats/WeeklyChart"
 import { TransitionLink } from "~/components/TransitionLink"
 import { Grid } from "~/components/Grid"
 import { computePublicProfileStats } from "~/lib/publicProfileStats"
+import { socialMeta } from "~/lib/socialMeta"
 import {
   computeEarnedAchievements,
   sortEarnedAchievementsNewestFirst,
@@ -50,15 +51,16 @@ export async function clientLoader({
   }
 }
 
-export function meta({ params }: Route.MetaArgs) {
-  const handle = params.handle
-  return [
-    { title: `${handle} — Fog of Walk` },
-    {
-      name: "description",
-      content: `Public activities by ${handle} on Fog of Walk.`,
-    },
-  ]
+export function meta({ data, params }: Route.MetaArgs) {
+  const handle = data?.profile?.user.handle || params.handle || "Profile"
+  const displayName = data?.profile?.user.displayName || handle
+  return socialMeta({
+    title: `${displayName} — Fog of Walk`,
+    description: `Public activities by ${displayName} on Fog of Walk.`,
+    path: `/u/${encodeURIComponent(handle)}`,
+    type: "profile",
+    profileHandle: handle,
+  })
 }
 
 export default function PublicProfilePage() {

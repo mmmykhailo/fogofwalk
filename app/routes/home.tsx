@@ -67,33 +67,17 @@ import {
 import { sortActivities, populateUniqueDistances } from "~/lib/statsAggregator"
 import { useMyLocation } from "~/lib/useMyLocation"
 import { useActivityVisibility } from "~/lib/useActivityVisibility"
+import { socialMeta } from "~/lib/socialMeta"
 import type { FogMode, MapMode, ParsedActivity } from "~/types/activities"
 import type { PhotoEntry, PhotoGroup } from "~/types/photos"
 
 export function meta({}: Route.MetaArgs) {
-  return [
-    { title: "Fog of Walk — Explore the unknown" },
-    {
-      name: "description",
-      content:
-        "Import your GPX and FIT activity files. Watch the fog of war lift over every trail you've run, every road you've cycled, every path you've ever walked.",
-    },
-    { property: "og:type", content: "website" },
-    { property: "og:title", content: "Fog of Walk" },
-    {
-      property: "og:description",
-      content:
-        "Import your GPX and FIT activity files. Watch the fog of war lift over every trail you've run, every road you've cycled, every path you've ever walked.",
-    },
-    { property: "og:site_name", content: "Fog of Walk" },
-    { name: "twitter:card", content: "summary" },
-    { name: "twitter:title", content: "Fog of Walk" },
-    {
-      name: "twitter:description",
-      content:
-        "Import your GPX and FIT activity files. Watch the fog of war lift over every trail you've run, every road you've cycled, every path you've ever walked.",
-    },
-  ]
+  return socialMeta({
+    title: "Fog of Walk — Explore the unknown",
+    description:
+      "Import your GPX and FIT activity files. Watch the fog of war lift over every trail you've run, every road you've cycled, every path you've ever walked.",
+    path: "/",
+  })
 }
 
 // Module-level cache for restored photos — avoids passing File objects through
