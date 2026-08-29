@@ -138,7 +138,10 @@ export function SavedPointForm({
           onValueChange={(value) => setColor(value as SavedPointColor)}
           modal={false}
         >
-          <SelectTrigger aria-label="Saved point colour" className="w-full">
+          <SelectTrigger
+            aria-label="Saved point colour"
+            className="w-full bg-white"
+          >
             <SelectValue />
           </SelectTrigger>
           <SelectContent alignItemWithTrigger={false}>
@@ -161,7 +164,10 @@ export function SavedPointForm({
           onValueChange={(value) => setIsPublic(value === PUBLIC)}
           modal={false}
         >
-          <SelectTrigger aria-label="Saved point visibility" className="w-full">
+          <SelectTrigger
+            aria-label="Saved point visibility"
+            className="w-full bg-white"
+          >
             <SelectValue />
           </SelectTrigger>
           <SelectContent alignItemWithTrigger={false}>
