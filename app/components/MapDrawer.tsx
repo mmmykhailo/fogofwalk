@@ -15,6 +15,7 @@ import {
   GlobeIcon,
   MountainsIcon,
   NavigationArrowIcon,
+  MapPinIcon,
   ShieldCheckIcon,
   XIcon,
   UserIcon,
@@ -59,6 +60,9 @@ interface MapDrawerProps {
   onMapModeChange: (mode: MapMode) => void
   showPhotos: boolean
   onShowPhotosChange: (v: boolean) => void
+  savedPointCount: number
+  showSavedPoints: boolean
+  onShowSavedPointsChange: (v: boolean) => void
   showMyLocation: boolean
   onShowMyLocationChange: (v: boolean) => void
   locationPermissionDenied: boolean
@@ -85,6 +89,9 @@ export function MapDrawer({
   onMapModeChange,
   showPhotos,
   onShowPhotosChange,
+  savedPointCount,
+  showSavedPoints,
+  onShowSavedPointsChange,
   showMyLocation,
   onShowMyLocationChange,
   locationPermissionDenied,
@@ -250,6 +257,20 @@ export function MapDrawer({
                     checked={showPhotos}
                     onCheckedChange={onShowPhotosChange}
                     aria-label="Show photos"
+                  />
+                </div>
+              )}
+              {savedPointCount > 0 && (
+                <div className="flex items-center px-3 py-2.5">
+                  <MapPinIcon
+                    weight="duotone"
+                    className="mr-3 size-5 shrink-0 text-muted-foreground"
+                  />
+                  <span className="flex-1 text-sm">Show saved points</span>
+                  <Switch
+                    checked={showSavedPoints}
+                    onCheckedChange={onShowSavedPointsChange}
+                    aria-label="Show saved points"
                   />
                 </div>
               )}

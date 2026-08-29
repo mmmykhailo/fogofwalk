@@ -21,6 +21,7 @@ import { MissingActivityTypeDialog } from "~/components/MissingActivityTypeDialo
 import { ActivityStatsPanel } from "~/components/activity-stats/ActivityStatsPanel"
 import { ShareDialog } from "~/components/ShareDialog"
 import { PhotoCard } from "~/components/PhotoCard"
+import { SavedPointForm } from "~/components/SavedPointForm"
 import { ErrorBoundary } from "~/components/ErrorBoundary"
 import { ErrorCard } from "~/components/ErrorCard"
 import {
@@ -52,6 +53,8 @@ import {
   clearFogCache,
   clearAll,
   loadSavedPoints,
+  saveSavedPoint,
+  deleteSavedPoint as deleteStoredSavedPoint,
   deleteActivity,
   isFogCacheValid,
 } from "~/lib/storage"
@@ -379,6 +382,8 @@ export default function Home() {
   const [showPhotos, setShowPhotos] = useState(true)
   const [savedPoints, setSavedPoints] = useState<SavedPoint[]>(_restoredSavedPoints)
   const [showSavedPoints, setShowSavedPoints] = useState(true)
+  const [editingSavedPointId, setEditingSavedPointId] = useState<string | null>(null)
+  const [newSavedPointCoordinate, setNewSavedPointCoordinate] = useState<[number, number] | null>(null)
   const {
     showMyLocation,
     permissionDenied: locationPermissionDenied,
@@ -470,6 +475,15 @@ export default function Home() {
       )
     }
   }, [mapReady, searchParams])
+
+  useEffect(() => {
+    if (!mapReady) return
+    const id = searchParams.get("savedPoint")
+    const point = savedPoints.find((savedPoint) => savedPoint.id === id)
+    if (!point || !mapStore.map) return
+    mapStore.map.easeTo({ center: [point.lng, point.lat], zoom: Math.max(mapStore.map.getZoom(), 16) })
+    setEditingSavedPointId(point.id)
+  }, [mapReady, savedPoints, searchParams])
 
   // Handle files shared via the Web Share Target API (PWA installed).
   // The service worker intercepts the POST to /?share-target, buffers the files
@@ -893,8 +907,11 @@ export default function Home() {
               savedPoints={savedPoints}
               showSavedPoints={showSavedPoints}
               onSavedPointSelect={(id) => {
-                const point = savedPoints.find((candidate) => candidate.id === id)
-                if (point) window.alert(`${point.name}\n${point.description ?? ""}`)
+                setEditingSavedPointId(id)
+              }}
+              onSavedPointCreate={({ lng, lat }) => {
+                setEditingSavedPointId(null)
+                setNewSavedPointCoordinate([lng, lat])
               }}
             />
           </ErrorBoundary>
@@ -921,7 +938,24 @@ export default function Home() {
                 showMyLocation={showMyLocation}
                 onShowMyLocationChange={handleShowMyLocationChange}
                 locationPermissionDenied={locationPermissionDenied}
+                savedPointCount={savedPoints.length}
+                showSavedPoints={showSavedPoints}
+                onShowSavedPointsChange={setShowSavedPoints}
               />
+              {(editingSavedPointId || newSavedPointCoordinate) && (
+                <Dialog open onOpenChange={(open) => { if (!open) { setEditingSavedPointId(null); setNewSavedPointCoordinate(null) } }}>
+                  <DialogContent>
+                    <DialogHeader><DialogTitle>{editingSavedPointId ? "Edit saved point" : "Save point"}</DialogTitle></DialogHeader>
+                    <SavedPointForm
+                      point={savedPoints.find((point) => point.id === editingSavedPointId) ?? null}
+                      coordinate={newSavedPointCoordinate}
+                      onCancel={() => { setEditingSavedPointId(null); setNewSavedPointCoordinate(null) }}
+                      onSave={(input) => { const now = Date.now(); const point = { ...input, createdAt: savedPoints.find((saved) => saved.id === input.id)?.createdAt ?? now, updatedAt: now }; setSavedPoints((points) => [...points.filter((saved) => saved.id !== point.id), point]); void saveSavedPoint(point); setEditingSavedPointId(null); setNewSavedPointCoordinate(null) }}
+                      onDelete={editingSavedPointId ? () => { if (window.confirm("Delete this saved point?")) { setSavedPoints((points) => points.filter((point) => point.id !== editingSavedPointId)); void deleteStoredSavedPoint(editingSavedPointId); setEditingSavedPointId(null) } } : undefined}
+                    />
+                  </DialogContent>
+                </Dialog>
+              )}
               <FileUploadDialog
                 open={showUploadDialog}
                 onOpenChange={setShowUploadDialog}
