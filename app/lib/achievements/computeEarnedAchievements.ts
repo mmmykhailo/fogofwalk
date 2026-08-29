@@ -2,6 +2,16 @@ import type { PublicActivityMeta } from "~shared/api"
 import { ACHIEVEMENT_DEFINITIONS } from "./definitions"
 import type { AchievementDefinition, EarnedAchievement } from "./types"
 
+const ACHIEVEMENT_DIFFICULTY = new Map(
+  ACHIEVEMENT_DEFINITIONS.map((definition, index) => [definition.id, index])
+)
+
+function localDayStart(ms: number): number {
+  const date = new Date(ms)
+  date.setHours(0, 0, 0, 0)
+  return date.getTime()
+}
+
 function earliestQualifyingDate(
   activities: readonly PublicActivityMeta[],
   definition: AchievementDefinition
@@ -37,7 +47,10 @@ export function computeEarnedAchievements(
   })
 }
 
-/** Returns a newest-first copy, keeping undated legacy achievements last. */
+/**
+ * Returns a newest-first copy, keeping undated legacy achievements last.
+ * Achievements earned on the same local calendar day are ordered by difficulty.
+ */
 export function sortEarnedAchievementsNewestFirst(
   achievements: readonly EarnedAchievement[]
 ): EarnedAchievement[] {
@@ -45,6 +58,14 @@ export function sortEarnedAchievementsNewestFirst(
     if (a.earnedAtMs === null && b.earnedAtMs === null) return 0
     if (a.earnedAtMs === null) return 1
     if (b.earnedAtMs === null) return -1
-    return b.earnedAtMs - a.earnedAtMs
+
+    const dayDifference =
+      localDayStart(b.earnedAtMs) - localDayStart(a.earnedAtMs)
+    if (dayDifference !== 0) return dayDifference
+
+    return (
+      (ACHIEVEMENT_DIFFICULTY.get(b.definition.id) ?? -1) -
+      (ACHIEVEMENT_DIFFICULTY.get(a.definition.id) ?? -1)
+    )
   })
 }
