@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from "react"
-import { createRoot, type Root } from "react-dom/client"
 import maplibregl from "maplibre-gl"
 import type { StyleSpecification } from "maplibre-gl"
 import { Protocol } from "pmtiles"
@@ -31,7 +30,7 @@ import type {
 import type { PhotoEntry, PhotoGroup } from "~/types/photos"
 import { SAVED_POINT_COLORS, type SavedPoint } from "~shared/saved-points"
 import { MapCompass } from "~/components/MapCompass"
-import { SavedPointPopup } from "~/components/SavedPointPopup"
+import { SavedPointTooltip } from "~/components/SavedPointTooltip"
 
 const CLUSTER_PIXEL_RADIUS = 50
 
@@ -336,6 +335,11 @@ interface MapViewProps {
   }) => void
 }
 
+interface SavedPointTooltipState {
+  name: string
+  point: { x: number; y: number }
+}
+
 export function MapView({
   onMapReady,
   onProcessingUpdate,
@@ -402,6 +406,8 @@ export function MapView({
   const cachedActivitiesKey = useRef<string | null>(null)
   const [bearing, setBearing] = useState(0)
   const [pitch, setPitch] = useState(0)
+  const [savedPointTooltip, setSavedPointTooltip] =
+    useState<SavedPointTooltipState | null>(null)
 
   const rebuildPhotoMarkers = useCallback(() => {
     const map = mapStore.map
@@ -494,14 +500,6 @@ export function MapView({
       saveMapPosition([c.lng, c.lat], map.getZoom())
     })
 
-    let savedPointPopup: maplibregl.Popup | null = null
-    let savedPointPopupRoot: Root | null = null
-    const hideSavedPointPopup = () => {
-      savedPointPopupRoot?.unmount()
-      savedPointPopupRoot = null
-      savedPointPopup?.remove()
-      savedPointPopup = null
-    }
     const isSavedPointGesture = (point: maplibregl.Point) =>
       showSavedPointsRef.current &&
       map.queryRenderedFeatures(point, { layers: ["saved-points-hit-layer"] })
@@ -529,34 +527,15 @@ export function MapView({
       map.getCanvas().style.cursor = "pointer"
       const savedPoint = event.features?.[0]
       const name = savedPoint?.properties?.name
-      const coordinates =
-        savedPoint?.geometry.type === "Point"
-          ? savedPoint.geometry.coordinates
-          : null
       if (typeof name !== "string" || !name) return
-      if (
-        !coordinates ||
-        typeof coordinates[0] !== "number" ||
-        typeof coordinates[1] !== "number"
-      )
-        return
-      hideSavedPointPopup()
-      const content = document.createElement("div")
-      savedPointPopupRoot = createRoot(content)
-      savedPointPopupRoot.render(<SavedPointPopup name={name} />)
-      savedPointPopup = new maplibregl.Popup({
-        closeButton: false,
-        closeOnClick: false,
-        className:
-          "[&_.maplibregl-popup-content]:bg-transparent [&_.maplibregl-popup-content]:p-0 [&_.maplibregl-popup-content]:shadow-none",
+      setSavedPointTooltip({
+        name,
+        point: { x: event.point.x, y: event.point.y },
       })
-        .setLngLat([coordinates[0], coordinates[1]])
-        .setDOMContent(content)
-        .addTo(map)
     })
     map.on("mouseleave", "saved-points-hit-layer", () => {
       map.getCanvas().style.cursor = ""
-      hideSavedPointPopup()
+      setSavedPointTooltip(null)
     })
 
     // A normal click remains dedicated to map navigation and selection. Desktop
@@ -704,7 +683,6 @@ export function MapView({
 
     return () => {
       cancelLongPress()
-      hideSavedPointPopup()
       canvas.removeEventListener("pointerdown", onPointerDown)
       canvas.removeEventListener("pointermove", onPointerMove)
       canvas.removeEventListener("pointerup", onPointerEnd)
@@ -720,6 +698,10 @@ export function MapView({
       map.remove()
     }
   }, [])
+
+  useEffect(() => {
+    if (!showSavedPoints) setSavedPointTooltip(null)
+  }, [showSavedPoints])
 
   useEffect(() => {
     const map = mapStore.map
@@ -1064,6 +1046,7 @@ export function MapView({
   return (
     <>
       <div ref={containerRef} className="absolute inset-0 h-screen" />
+      {savedPointTooltip && <SavedPointTooltip {...savedPointTooltip} />}
       <MapCompass
         bearing={bearing}
         pitch={pitch}
