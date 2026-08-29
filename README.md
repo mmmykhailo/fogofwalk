@@ -92,4 +92,4 @@ API.
 - [Tailwind CSS v4](https://tailwindcss.com/) + [shadcn/ui](https://ui.shadcn.com/) + [Base UI](https://base-ui.com/)
 - [Recharts](https://recharts.org/) for the elevation and weekly charts
 - [Vite](https://vitejs.dev/) + [Bun](https://bun.sh/)
-- Optional server: [Hono](https://hono.dev/), [Arctic](https://arcticjs.dev/), [Zod](https://zod.dev/) on Bun
+- Optional server: [Hono](https://hono.dev/) and [Zod](https://zod.dev/) on Bun

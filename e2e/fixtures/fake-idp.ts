@@ -1,9 +1,9 @@
 /**
  * A stand-in for GitHub's OAuth token endpoint and user API.
  *
- * The server under test talks to this instead of github.com — not because the
- * URLs were reconfigured (arctic hardcodes them) but because `stub-github.ts`
- * rewrites the two outbound calls. Nothing in `server/src` knows this exists.
+ * The server under test talks to this instead of github.com because
+ * `stub-github.ts` rewrites its two outbound calls. Nothing in `server/src`
+ * knows this exists.
  *
  * The identity is carried in the OAuth `code`, which Playwright's route stub
  * mints as `user:<login>`; the access token then carries it forward as
