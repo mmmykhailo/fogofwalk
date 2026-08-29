@@ -40,6 +40,10 @@ export function DraggableSavedPointDialog({
   const [isOpen, setIsOpen] = useState(true)
   const isDismissingRef = useRef(false)
   const title = point ? "Edit saved point" : "Save point"
+  // SavedPointForm owns the uncontrolled field defaults and form-specific state.
+  // Remount it when switching targets so an open editor never retains values
+  // from the previously selected point (or from an edit when creating one).
+  const formKey = point?.id ?? coordinate?.join(",") ?? "new"
 
   function handleDismiss() {
     if (isDismissingRef.current) return
@@ -54,6 +58,7 @@ export function DraggableSavedPointDialog({
 
   const form = (
     <SavedPointForm
+      key={formKey}
       point={point}
       coordinate={coordinate}
       onCancel={handleDismiss}
