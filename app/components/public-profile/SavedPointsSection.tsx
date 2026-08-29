@@ -3,7 +3,7 @@ import { Grid } from "~/components/Grid"
 import { TransitionLink } from "~/components/TransitionLink"
 import { buttonVariants } from "~/components/ui/button"
 import { cn } from "~/lib/utils"
-import { PublicSavedPointCard } from "./PublicSavedPointCard"
+import { SavedPointCard } from "./SavedPointCard"
 
 interface SavedPointsSectionProps {
   points: PublicSavedPoint[]
@@ -42,11 +42,7 @@ export function SavedPointsSection({
       )}
       <Grid columns={{ base: 1, sm: 2 }}>
         {visiblePoints.map((point) => (
-          <PublicSavedPointCard
-            key={point.id}
-            point={point}
-            isOwner={isOwner}
-          />
+          <SavedPointCard key={point.id} point={point} isOwner={isOwner} />
         ))}
       </Grid>
       {hasHiddenPoints && viewAllTo && (

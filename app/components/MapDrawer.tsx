@@ -357,6 +357,23 @@ export function MapDrawer({
                 <CaretRightIcon className="size-4 shrink-0 text-muted-foreground" />
               </Item>
               <div className="border-t border-foreground/10" />
+              <Item
+                variant="muted"
+                render={<TransitionLink to="/saved-points" />}
+                onClick={close}
+              >
+                <ItemMedia variant="icon">
+                  <MapPinIcon
+                    weight="duotone"
+                    className="size-5 text-muted-foreground"
+                  />
+                </ItemMedia>
+                <ItemContent>
+                  <ItemTitle>My saved points</ItemTitle>
+                </ItemContent>
+                <CaretRightIcon className="size-4 shrink-0 text-muted-foreground" />
+              </Item>
+              <div className="border-t border-foreground/10" />
               {auth.status === "signedIn" && auth.user.handle && (
                 <>
                   <Item

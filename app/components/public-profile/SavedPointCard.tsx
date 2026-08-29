@@ -1,15 +1,15 @@
 import { MapPinIcon } from "@phosphor-icons/react"
 import { AppLink } from "~/components/AppLink"
 import { SAVED_POINT_COLORS, type SavedPointColor } from "~shared/saved-points"
-import type { PublicSavedPoint } from "~shared/api"
+import type { SavedPoint } from "~shared/saved-points"
 
-interface PublicSavedPointCardProps {
-  point: PublicSavedPoint
+interface SavedPointCardProps {
+  point: SavedPoint
   /** Only an owner may open their point in the editable map view. */
   isOwner?: boolean
 }
 
-function formatCoordinates(point: PublicSavedPoint): string {
+function formatCoordinates(point: SavedPoint): string {
   return `${point.lat.toFixed(5)}, ${point.lng.toFixed(5)}`
 }
 
@@ -17,10 +17,10 @@ function formatColorName(color: SavedPointColor): string {
   return color[0].toUpperCase() + color.slice(1)
 }
 
-export function PublicSavedPointCard({
+export function SavedPointCard({
   point,
   isOwner = false,
-}: PublicSavedPointCardProps) {
+}: SavedPointCardProps) {
   const color = SAVED_POINT_COLORS[point.color as SavedPointColor]
   const colorName = formatColorName(point.color as SavedPointColor)
   const content = (
