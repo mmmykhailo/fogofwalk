@@ -48,7 +48,7 @@ export function AchievementsSection({
       aria-label={showHeading ? undefined : "Achievements"}
     >
       {showHeading && (
-        <div className="mb-3">
+        <div className="mt-6 mb-3">
           <h2
             id="achievements-heading"
             className="font-heading text-lg font-semibold"

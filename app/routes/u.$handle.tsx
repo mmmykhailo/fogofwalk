@@ -129,7 +129,7 @@ export default function PublicProfilePage() {
             groupByFamily={false}
           />
           <section>
-            <h2 className="mb-3 font-heading text-lg font-semibold">
+            <h2 className="mt-6 mb-3 font-heading text-lg font-semibold">
               Public activities
             </h2>
             <Grid columns={{ base: 1, sm: 2 }}>
