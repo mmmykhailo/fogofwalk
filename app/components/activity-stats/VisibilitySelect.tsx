@@ -5,6 +5,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "~/components/ui/select"
+import { cn } from "~/lib/utils"
 
 const PRIVATE = "Private"
 const PUBLIC = "Public"
@@ -13,6 +14,10 @@ interface VisibilitySelectProps {
   isPublic: boolean
   onChange: (isPublic: boolean) => void
   disabled?: boolean
+  ariaLabel?: string
+  className?: string
+  size?: "sm" | "default"
+  id?: string
 }
 
 /**
@@ -24,6 +29,10 @@ export function VisibilitySelect({
   isPublic,
   onChange,
   disabled,
+  ariaLabel = "Activity visibility",
+  className,
+  size = "sm",
+  id,
 }: VisibilitySelectProps) {
   return (
     <Select
@@ -33,9 +42,10 @@ export function VisibilitySelect({
       disabled={disabled}
     >
       <SelectTrigger
-        size="sm"
-        aria-label="Activity visibility"
-        className="bg-muted"
+        id={id}
+        size={size}
+        aria-label={ariaLabel}
+        className={cn("bg-muted", className)}
       >
         <SelectValue />
       </SelectTrigger>

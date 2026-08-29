@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react"
 import { useFetcher } from "react-router"
 import { Button } from "~/components/ui/button"
+import { VisibilitySelect } from "~/components/activity-stats/VisibilitySelect"
 import { Input } from "~/components/ui/input"
 import {
   Select,
@@ -16,9 +17,6 @@ import {
   type SavedPointColor,
 } from "~shared/saved-points"
 import type { clientAction } from "~/routes/home"
-
-const PRIVATE = "private"
-const PUBLIC = "public"
 
 export function SavedPointForm({
   point,
@@ -131,51 +129,60 @@ export function SavedPointForm({
           defaultValue={point?.description ?? ""}
         />
       </label>
-      <fieldset className="grid gap-1.5">
-        <legend className="text-sm font-medium">Colour</legend>
+      <div className="grid gap-1.5">
+        <label htmlFor="saved-point-color" className="text-sm">
+          Colour
+        </label>
         <Select
           value={color}
           onValueChange={(value) => setColor(value as SavedPointColor)}
           modal={false}
         >
           <SelectTrigger
+            id="saved-point-color"
             aria-label="Saved point colour"
             className="w-full bg-white"
           >
-            <SelectValue />
+            <SelectValue>
+              {(key: keyof typeof SAVED_POINT_COLORS) => (
+                <span className="flex items-center gap-2">
+                  <span
+                    className="size-3 rounded-full"
+                    style={{ backgroundColor: SAVED_POINT_COLORS[key] }}
+                  />
+                  {key[0].toUpperCase() + key.slice(1)}
+                </span>
+              )}
+            </SelectValue>
           </SelectTrigger>
           <SelectContent alignItemWithTrigger={false}>
             {Object.entries(SAVED_POINT_COLORS).map(([key, value]) => (
               <SelectItem key={key} value={key}>
-                <span
-                  className="size-3 rounded-full"
-                  style={{ backgroundColor: value }}
-                />
-                {key[0].toUpperCase() + key.slice(1)}
+                <span className="flex items-center gap-2">
+                  <span
+                    className="size-3 rounded-full"
+                    style={{ backgroundColor: value }}
+                  />
+                  {key[0].toUpperCase() + key.slice(1)}
+                </span>
               </SelectItem>
             ))}
           </SelectContent>
         </Select>
-      </fieldset>
-      <fieldset className="grid gap-1.5">
-        <legend className="text-sm font-medium">Visibility</legend>
-        <Select
-          value={isPublic ? PUBLIC : PRIVATE}
-          onValueChange={(value) => setIsPublic(value === PUBLIC)}
-          modal={false}
-        >
-          <SelectTrigger
-            aria-label="Saved point visibility"
-            className="w-full bg-white"
-          >
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent alignItemWithTrigger={false}>
-            <SelectItem value={PRIVATE}>Private</SelectItem>
-            <SelectItem value={PUBLIC}>Public</SelectItem>
-          </SelectContent>
-        </Select>
-      </fieldset>
+      </div>
+      <div className="grid gap-1.5">
+        <label htmlFor="saved-point-visibility" className="text-sm">
+          Visibility
+        </label>
+        <VisibilitySelect
+          isPublic={isPublic}
+          onChange={setIsPublic}
+          ariaLabel="Saved point visibility"
+          className="w-full bg-white"
+          size="default"
+          id="saved-point-visibility"
+        />
+      </div>
       {errors?.form && (
         <p
           id="saved-point-error"
@@ -185,23 +192,7 @@ export function SavedPointForm({
           {errors.form}
         </p>
       )}
-      <div className="flex flex-wrap gap-2">
-        <Button
-          type="button"
-          variant="outline"
-          onClick={onCancel}
-          disabled={isSubmitting}
-        >
-          Cancel
-        </Button>
-        <Button
-          type="submit"
-          name="intent"
-          value="save-saved-point"
-          disabled={isSubmitting}
-        >
-          {point ? "Save changes" : "Create"}
-        </Button>
+      <div className="flex flex-wrap justify-between gap-2">
         {point && onDelete && (
           <Button
             type="submit"
@@ -217,6 +208,24 @@ export function SavedPointForm({
             Delete saved point
           </Button>
         )}
+        <div className="flex flex-wrap gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={onCancel}
+            disabled={isSubmitting}
+          >
+            Cancel
+          </Button>
+          <Button
+            type="submit"
+            name="intent"
+            value="save-saved-point"
+            disabled={isSubmitting}
+          >
+            {point ? "Save changes" : "Create"}
+          </Button>
+        </div>
       </div>
     </fetcher.Form>
   )
