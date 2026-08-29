@@ -37,6 +37,8 @@ const nextVersion =
       ? `${major}.${minor + 1}.0`
       : `${major}.${minor}.${patch + 1}`
 
+const changelog = readFileSync(changelogPath, "utf8")
+
 let lastTag
 try {
   lastTag = execFileSync("git", ["describe", "--tags", "--abbrev=0"], {
@@ -47,7 +49,21 @@ try {
   lastTag = undefined
 }
 
-const commitRange = lastTag ? `${lastTag}..HEAD` : "HEAD"
+let commitRange = lastTag ? `${lastTag}..HEAD` : "HEAD"
+if (!lastTag) {
+  // A release made before Actions has pushed the first version tag still
+  // needs notes only for changes since the existing changelog baseline.
+  try {
+    const changelogCommit = execFileSync(
+      "git",
+      ["log", "-1", "--format=%H", "--", "CHANGELOG.md"],
+      { cwd: rootDir, encoding: "utf8" }
+    ).trim()
+    if (changelogCommit) commitRange = `${changelogCommit}..HEAD`
+  } catch {
+    // No changelog history: include the complete project history.
+  }
+}
 const commits = execFileSync("git", ["log", commitRange, "--format=%s"], {
   cwd: rootDir,
   encoding: "utf8",
@@ -61,7 +77,6 @@ const changes = commits.length
   ? commits.map((commit) => `- ${commit}`).join("\n")
   : "- Initial release"
 const entry = `## [${nextVersion}] - ${today}\n\n### Changed\n\n${changes}\n\n`
-const changelog = readFileSync(changelogPath, "utf8")
 const firstRelease = changelog.search(/^## \[/m)
 const updatedChangelog =
   firstRelease === -1

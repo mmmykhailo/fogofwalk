@@ -3,11 +3,10 @@ name: Deploy server
 on:
   push:
     branches: [master]
+    # Deployments are releases: the release script bumps this file together
+    # with the client package version.
     paths:
-      - "server/**"
-      - "shared/**"
-      - ".github/workflows/deploy-server.yml"
-  workflow_dispatch:
+      - "server/package.json"
 
 permissions:
   contents: read

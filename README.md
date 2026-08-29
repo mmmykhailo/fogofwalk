@@ -50,20 +50,23 @@ bun run release    # prepare the next patch release and changelog entry
 level and writes a `404.html` so client-side routing works on static hosts). Drop that directory on
 GitHub Pages, Cloudflare Pages, Vercel, S3 — anything that serves files. No server is required.
 
-`.github/workflows/deploy-client.yml` does exactly this on every push to `master` that touches the client,
-deploying to GitHub Pages with `VITE_API_URL` taken from the repository variable of the same name.
-Leave that variable unset and the build is server-less again: every account and sync surface is
-compiled out.
+Two independent workflows deploy the app from `master`. They run only for release commits:
+
+- [`deploy-client.yml`](.github/workflows/deploy-client.yml) runs only when the root
+  `package.json` changes. It verifies that the client and server versions match, builds the static
+  client, and deploys it to GitHub Pages with `VITE_API_URL` taken from the repository variable of
+  the same name. Leave that variable unset and the build is server-less again: every account and
+  sync surface is compiled out.
+- [`deploy-server.yml`](.github/workflows/deploy-server.yml) runs only when
+  `server/package.json` changes. It verifies the matching version, type-checks and tests the
+  server, then uploads it to the VPS (Bun + systemd behind Caddy). Setup, secrets, and rollback
+  details are in [`server/README.md`](server/README.md).
 
 To prepare a release, run `bun run release` (or `bun run release minor` / `major`), review the
-generated `CHANGELOG.md`, and commit it with both `package.json` files. Client and server use the
-same version, enforced by the release script and deployment workflows. After the client deployment
-succeeds, GitHub Actions creates the corresponding `v…` tag. The in-app [changelog](CHANGELOG.md)
-is built from that same file.
-
-The API deploys separately — `.github/workflows/deploy-server.yml` ships `server/` to a Debian VPS
-(Bun + systemd behind Caddy) whenever `server/**` or `shared/**` changes. Setup, secrets and the
-rollback path are in [`server/README.md`](server/README.md).
+generated `CHANGELOG.md`, and commit it with both `package.json` files. The script updates both
+versions together, which starts both workflows; they then run independently. Once the client
+deployment succeeds and its version differs from the latest tag, the client workflow creates the
+corresponding `v…` tag. The in-app [changelog](CHANGELOG.md) is built from that same file.
 
 ## Architecture
 
