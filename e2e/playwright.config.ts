@@ -21,7 +21,7 @@ export default defineConfig({
    * worker count the dev server becomes the bottleneck and tests fail on page
    * load rather than on anything they are actually asserting.
    */
-  workers: process.env.CI ? 2 : 8,
+  workers: process.env.CI ? 2 : Number(process.env.E2E_WORKERS ?? 4),
   forbidOnly: !!process.env.CI,
   retries: 0,
   reporter: [["list"], ["html", { open: "never" }]],

@@ -140,6 +140,7 @@ export const test = base.extend<Fixtures>({
 
   app: async ({ page, context, login, request }, use) => {
     await stubMapTiles(context)
+    await page.emulateMedia({ reducedMotion: "reduce" })
     await use(
       new AppPage(page, login, (name) => approveLocalAccess(request, name))
     )
@@ -151,7 +152,9 @@ export const test = base.extend<Fixtures>({
       const context = await browser.newContext({ baseURL: WEB_URL })
       opened.push(context)
       await stubMapTiles(context)
-      return new AppPage(await context.newPage(), login)
+      const page = await context.newPage()
+      await page.emulateMedia({ reducedMotion: "reduce" })
+      return new AppPage(page, login)
     })
     for (const context of opened) await context.close()
   },

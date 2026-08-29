@@ -6,6 +6,7 @@ import type {
 } from "~/types/activities"
 import { sortActivities, populateUniqueDistances } from "~/lib/statsAggregator"
 import { saveActivities, clearFogCache } from "~/lib/storage"
+import { worldFogFeature } from "~/lib/fogGeometry"
 
 // ─── Map position persistence (localStorage — synchronous, survives page unload) ──
 
@@ -94,6 +95,10 @@ interface MapStore {
    * — has already been and gone.
    */
   isFogRunInFlight: boolean
+  /** Number of PROCESS_ACTIVITIES messages in the current run awaiting DONE. */
+  pendingFogJobs: number
+  /** Activity ids contained in, or already queued for, the current worker run. */
+  fogWorkerActivityIds: Set<string>
   /** True once MapView is ready to receive fog-worker replies. */
   isFogWorkerListenerReady: boolean
   /**
@@ -122,6 +127,8 @@ export const mapStore: MapStore = {
   isRestoreReprocess: false,
   runId: 0,
   isFogRunInFlight: false,
+  pendingFogJobs: 0,
+  fogWorkerActivityIds: new Set(),
   isFogWorkerListenerReady: false,
   shareCardCache: null,
 }
@@ -137,9 +144,9 @@ type DistributiveOmit<T, K extends keyof T> = T extends unknown
  * learns the new id and stops the old loop. Without it the worker keeps running
  * and every reply is dropped, leaving the progress bar stuck.
  *
- * Only call this where the app genuinely discards prior work. `add-files` posts
- * just the new activities and relies on the worker's accumulated state, so it must
- * join the current run rather than start one.
+ * Only call this where the app genuinely discards prior work. Additions normally
+ * join the current run; the cache-cold exception deliberately starts over because
+ * there is no worker state to preserve.
  */
 export function startFogRun(): number {
   mapStore.runId++
@@ -151,9 +158,56 @@ export function startFogRun(): number {
 export function postToFogWorker(
   msg: DistributiveOmit<WorkerInboundMessage, "runId">
 ): void {
-  if (msg.type === "PROCESS_ACTIVITIES") mapStore.isFogRunInFlight = true
-  if (msg.type === "RESET") mapStore.isFogRunInFlight = false
+  if (msg.type === "PROCESS_ACTIVITIES") {
+    mapStore.pendingFogJobs++
+    mapStore.isFogRunInFlight = true
+    for (const activity of msg.activities) {
+      mapStore.fogWorkerActivityIds.add(activity.id)
+    }
+  }
+  if (msg.type === "RESET") {
+    mapStore.pendingFogJobs = 0
+    mapStore.isFogRunInFlight = false
+    mapStore.fogWorkerActivityIds.clear()
+  }
   mapStore.worker?.postMessage({ ...msg, runId: mapStore.runId })
+}
+
+/** Records one batch completion. Returns true only when the whole run is idle. */
+export function finishFogJob(): boolean {
+  mapStore.pendingFogJobs = Math.max(0, mapStore.pendingFogJobs - 1)
+  mapStore.isFogRunInFlight = mapStore.pendingFogJobs > 0
+  return !mapStore.isFogRunInFlight
+}
+
+/**
+ * Queue an additive fog update. A worker behind a restored render cache has no
+ * internal geometry, so its first addition must reset and replay the library.
+ */
+export function queueAddedActivitiesForFog(
+  added: ParsedActivity[],
+  mode: FogMode
+): void {
+  const addedIds = new Set(added.map((activity) => activity.id))
+  const missing = mapStore.activities.filter(
+    (activity) => !mapStore.fogWorkerActivityIds.has(activity.id)
+  )
+  if (missing.length === 0) return
+
+  // The worker already contains the previous library and lacks only this
+  // addition, so it is safe to extend the current run incrementally.
+  if (missing.every((activity) => addedIds.has(activity.id))) {
+    postToFogWorker({ type: "PROCESS_ACTIVITIES", activities: missing, mode })
+    return
+  }
+
+  startFogRun()
+  postToFogWorker({ type: "RESET" })
+  postToFogWorker({
+    type: "PROCESS_ACTIVITIES",
+    activities: mapStore.activities,
+    mode,
+  })
 }
 
 /**
@@ -164,13 +218,12 @@ export function postToFogWorker(
  * the sync engine's downloads — so a downloaded activity is indistinguishable from
  * an imported one.
  *
- * Note it **joins** the current fog run rather than calling `startFogRun()`:
- * only the new activities are posted, and the worker's accumulated fog polygon has
- * to survive for that to be correct.
+ * Normally it **joins** the current fog run and posts only the additions. The
+ * exception is a worker that has only a restored render cache: because that
+ * cache cannot hydrate its accumulators, the first addition replays the library.
  */
 export async function ingestActivities(
-  newActivities: ParsedActivity[],
-  mode: FogMode = mapStore.fogMode
+  newActivities: ParsedActivity[]
 ): Promise<ParsedActivity[]> {
   // Drop anything already held under the same content hash. Re-importing a
   // file, or importing one the server had just restored, must not produce two
@@ -194,27 +247,16 @@ export async function ingestActivities(
 
   mapStore.activities = sortActivities([...mapStore.activities, ...added])
   populateUniqueDistances(mapStore.activities)
-  postToFogWorker({ type: "PROCESS_ACTIVITIES", activities: added, mode })
   await saveActivities(added)
   await clearFogCache()
+  // Start processing only after invalidation finishes. A small worker batch can
+  // otherwise save its fresh cache first and have this call erase it afterward.
+  // Read the mode at queue time. Parsing and IDB writes are asynchronous, and
+  // the user may have changed the control since the import was submitted.
+  queueAddedActivitiesForFog(added, mapStore.fogMode)
   return added
 }
 
 export function worldFogGeoJSON(): GeoJSON.Feature<GeoJSON.Polygon> {
-  return {
-    type: "Feature",
-    geometry: {
-      type: "Polygon",
-      coordinates: [
-        [
-          [-180, -90],
-          [180, -90],
-          [180, 90],
-          [-180, 90],
-          [-180, -90],
-        ],
-      ],
-    },
-    properties: {},
-  }
+  return worldFogFeature()
 }

@@ -4,7 +4,7 @@ This is the detailed companion to [AGENTS.md](../AGENTS.md). It documents invari
 
 ## Processing pipeline
 
-Files are parsed into `ParsedActivity[]` on the main thread, then posted to `workers/fogWorker.ts`. The worker simplifies each activity at `ACTIVITY_SIMPLIFY_TOLERANCE`, buffers it, and emits an updated fog polygon every 300 ms. `MapView` writes that GeoJSON directly to the fog source.
+Files are parsed into `ParsedActivity[]` on the main thread, then posted to `workers/fogWorker.ts`. The worker simplifies each activity at `ACTIVITY_SIMPLIFY_TOLERANCE`, buffers it, reports lightweight progress every five activities, and emits an updated fog polygon every 300 ms. `MapView` writes that GeoJSON directly to the fog source.
 
 There are two distinct simplification tolerances. `ACTIVITY_SIMPLIFY_TOLERANCE` (0.0005, about 55 m) applies before buffering; `SIMPLIFY_TOLERANCE` (0.0001, about 11 m) applies to emitted fog. Swapping them visibly degrades the fog boundary or wastes a large vertex budget.
 
@@ -17,6 +17,8 @@ Every worker message carries a `runId`. Only call `startFogRun()` when discardin
 IndexedDB stores activities, photos, and preferences. Preferences include fog mode/cache, session, and sync state. `clearAll()` preserves the session. `loadActivities()` performs read-time migrations for missing `startedAtMs` and `uniqueDistanceKm`; do not re-save old records merely to migrate them.
 
 Map position deliberately uses synchronous localStorage (`fogofwalk:mapPosition`) on each `moveend`; IndexedDB writes can be lost during navigation. A stale fog cache sets `mapStore.isRestoreReprocess`, which reprocesses without fitting bounds and preserves the saved position.
+
+A restored fog cache is render-only: it cannot reconstruct the worker's internal corridor or fill accumulators. The first later import or sync addition therefore resets the worker and replays the full library. Once that replay is queued, later additions can join the run incrementally again.
 
 Use `mapStore.sourcesReady`, not `map.loaded()`, before operating on map sources. A style change destroys custom sources and layers, so `setupMapLayers` must re-add fog, activities, laps, and photos.
 

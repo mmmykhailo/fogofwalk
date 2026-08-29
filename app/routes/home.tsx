@@ -105,6 +105,7 @@ export async function clientLoader(): Promise<{
   restoredActivityCount: number
   restoredFogMode: FogMode
 }> {
+  let didCreateWorker = false
   if (!mapStore.worker) {
     console.debug("[clientLoader] creating worker")
     mapStore.worker = new Worker(
@@ -112,6 +113,7 @@ export async function clientLoader(): Promise<{
       { type: "module" }
     )
     mapStore.worker.onerror = (e) => console.error("[worker] uncaught error", e)
+    didCreateWorker = true
     console.debug("[clientLoader] worker created", mapStore.worker)
   }
 
@@ -154,6 +156,13 @@ export async function clientLoader(): Promise<{
         "activities"
       )
     }
+  }
+
+  if (didCreateWorker) {
+    // A rendered cache can paint the map but cannot reconstruct the worker's
+    // corridor/fill accumulators. The first later addition will replay all
+    // activities before returning to incremental processing.
+    mapStore.fogWorkerActivityIds.clear()
   }
 
   // initialCenter/initialZoom are already loaded from localStorage at mapStore module init time.
@@ -222,7 +231,7 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
     // Shared with the sync engine's downloads — merge, recompute, post to the
     // worker (joining the current run), persist, invalidate the fog cache.
     // Returns only the activities that were genuinely new.
-    const added = await ingestActivities(allActivities, mode)
+    const added = await ingestActivities(allActivities)
     if (added.length > 0) void requestSync("add-files")
 
     return {
@@ -302,7 +311,12 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
       setLapHighlightData(map, null)
     }
 
-    // Replay remaining activities
+    // Persist and invalidate fog cache
+    await deleteActivity(activityId)
+    await clearFogCache()
+
+    // Replay only after invalidation finishes. Otherwise a fast worker can save
+    // the rebuilt cache and have clearFogCache erase that fresh result.
     if (mapStore.activities.length > 0) {
       postToFogWorker({
         type: "PROCESS_ACTIVITIES",
@@ -310,10 +324,6 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
         mode: mapStore.fogMode,
       })
     }
-
-    // Persist and invalidate fog cache
-    await deleteActivity(activityId)
-    await clearFogCache()
 
     if (deletedActivity) {
       if (formData.get("alsoOnServer") === "0") {
@@ -741,7 +751,9 @@ export default function Home() {
     setFogMode(newMode)
     mapStore.fogMode = newMode
     saveFogMode(newMode) // fire-and-forget
-    clearFogCache() // will be rebuilt after reprocessing
+    // The old cache carries its mode and is rejected on reload. Do not delete it
+    // asynchronously here: that deletion can otherwise race and erase the fresh
+    // cache written by a very fast reprocess.
     // Abandon whatever the worker is still chewing on: a rapid corridor↔fill
     // toggle must start the new mode immediately rather than queue behind the
     // old one. Replies from the abandoned run are dropped by their stale runId.

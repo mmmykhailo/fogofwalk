@@ -52,6 +52,80 @@ test.describe("server-less build", () => {
     expect(apiCalls).toEqual([])
   })
 
+  test("keeps restored clearings when another activity is imported", async ({
+    app,
+  }) => {
+    await app.goto()
+    await app.importActivities(1)
+    await app.waitForImportToSettle()
+    await expect
+      .poll(() => app.fogCacheSummary())
+      .toMatchObject({
+        activityIds: [expect.any(String)],
+        fogMode: "corridor",
+        ringCount: 2,
+      })
+
+    // The map can render this cache immediately, but a new worker starts with
+    // no internal geometry after reload. The next addition must replay the old
+    // activity as well as process the new one.
+    await app.reload()
+    await app.importActivities(1, 10)
+    await app.waitForImportToSettle()
+
+    await expect
+      .poll(async () => (await app.fogCacheSummary())?.activityIds)
+      .toHaveLength(2)
+    await expect
+      .poll(async () => (await app.fogCacheSummary())?.ringCount)
+      .toBe(3)
+  })
+
+  test("keeps the final fog update during a map-style change", async ({
+    app,
+  }) => {
+    await app.goto()
+    await app.importActivities(2)
+    await app.waitForImportToSettle()
+
+    // Move to the inline terrain style first. Switching back requests the
+    // standard style, which the test holds so the fog worker is guaranteed to
+    // finish while MapLibre has temporarily destroyed the custom sources.
+    await app.openDrawer()
+    await app.drawer.getByTitle("Terrain").click()
+    await app.page.waitForTimeout(250)
+
+    let releaseStyle!: () => void
+    const styleGate = new Promise<void>((resolve) => {
+      releaseStyle = resolve
+    })
+    let sawStyleRequest!: () => void
+    const styleRequested = new Promise<void>((resolve) => {
+      sawStyleRequest = resolve
+    })
+    await app.page.route(
+      "https://tiles.openfreemap.org/styles/liberty",
+      async (route) => {
+        sawStyleRequest()
+        await styleGate
+        await route.fallback()
+      }
+    )
+
+    await app.drawer.getByTitle("Standard").click()
+    await styleRequested
+    await app.drawer.getByRole("switch", { name: "Fill loops" }).click()
+    await app.waitForImportToSettle()
+    releaseStyle()
+
+    await expect
+      .poll(() => app.fogCacheSummary())
+      .toMatchObject({
+        fogMode: "fill",
+        ringCount: 3,
+      })
+  })
+
   test("clear all simply clears, with no server caveat", async ({ app }) => {
     await app.goto()
     await app.importActivities(2)

@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process"
+import { spawn, type ChildProcess } from "node:child_process"
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -25,6 +25,10 @@ const repoRoot = join(here, "..")
  * dedicated local administrator approves it through the real admin route.
  */
 export default async function globalSetup() {
+  // A killed Playwright parent can leave its sync-server child behind. Do not
+  // mistake that stale process (and its old database) for the server below:
+  // tests would then sign in and download data from an earlier run.
+  await assertServerIsNotAlreadyRunning(`${API_URL}/health`, "sync server")
   const dataDir = mkdtempSync(join(tmpdir(), "fogofwalk-e2e-"))
 
   const server = spawn("bun", ["src/index.ts"], {
@@ -44,7 +48,13 @@ export default async function globalSetup() {
     },
   })
 
-  await waitForHealth(`${API_URL}/health`, "sync server")
+  try {
+    await waitForHealth(`${API_URL}/health`, "sync server", server)
+  } catch (error) {
+    server.kill()
+    rmSync(dataDir, { recursive: true, force: true })
+    throw error
+  }
 
   return () => {
     server.kill()
@@ -52,16 +62,50 @@ export default async function globalSetup() {
   }
 }
 
-async function waitForHealth(url: string, label: string) {
-  const deadline = Date.now() + 20_000
-  while (Date.now() < deadline) {
-    try {
-      const res = await fetch(url)
-      if (res.ok) return
-    } catch {
-      // not up yet
+async function assertServerIsNotAlreadyRunning(url: string, label: string) {
+  try {
+    const res = await fetch(url)
+    if (res.ok) {
+      throw new Error(
+        `${label} is already running at ${url}; stop the stale E2E process and retry`
+      )
     }
-    await new Promise((resolve) => setTimeout(resolve, 150))
+  } catch (error) {
+    if (error instanceof Error && error.message.includes("already running")) {
+      throw error
+    }
+    // A refused connection is the expected clean-start state.
   }
-  throw new Error(`${label} did not become healthy at ${url}`)
+}
+
+async function waitForHealth(url: string, label: string, server: ChildProcess) {
+  const deadline = Date.now() + 20_000
+  let exitFailure: Error | null = null
+  const onExit = (code: number | null, signal: NodeJS.Signals | null) => {
+    exitFailure = new Error(
+      `${label} exited before becoming healthy (${signal ?? `code ${code}`})`
+    )
+  }
+  server.once("exit", onExit)
+
+  try {
+    while (Date.now() < deadline) {
+      if (exitFailure) throw exitFailure
+      try {
+        const res = await fetch(url)
+        if (res.ok) {
+          // Give a competing bind a moment to surface before accepting health.
+          await new Promise((resolve) => setTimeout(resolve, 100))
+          if (exitFailure) throw exitFailure
+          return
+        }
+      } catch {
+        // not up yet
+      }
+      await new Promise((resolve) => setTimeout(resolve, 150))
+    }
+    throw new Error(`${label} did not become healthy at ${url}`)
+  } finally {
+    server.off("exit", onExit)
+  }
 }

@@ -5,7 +5,7 @@ import { Protocol } from "pmtiles"
 import bbox from "@turf/bbox"
 import { featureCollection, lineString } from "@turf/helpers"
 import "maplibre-gl/dist/maplibre-gl.css"
-import { mapStore, worldFogGeoJSON } from "~/lib/mapStore"
+import { finishFogJob, mapStore, worldFogGeoJSON } from "~/lib/mapStore"
 import { saveFogCache } from "~/lib/storage"
 import { saveMapPosition } from "~/lib/mapStore"
 import {
@@ -331,6 +331,7 @@ export function MapView({
   // (refit) from "a different activity just got selected" (leave the camera).
   const prevFocusKeyRef = useRef<string | null>(null)
   const pendingStyleLoadRef = useRef<(() => void) | null>(null)
+  const isInitialStyleLoadedRef = useRef(false)
   const photoMarkersRef = useRef<Map<string, maplibregl.Marker>>(new Map())
   const myLocationMarkerRef = useRef<maplibregl.Marker | null>(null)
   const photosRef = useRef<PhotoEntry[]>(photos)
@@ -339,12 +340,13 @@ export function MapView({
   showPhotosRef.current = showPhotos
 
   const clusterCacheRef = useRef<Map<number, PhotoGroup[]>>(new Map())
-  // Cache for the activities FeatureCollection — only rebuilt when mapStore.activities.length changes.
-  // Prevents redundant GeoJSON reconstruction + GPU re-upload on every 300ms FOG_UPDATE.
+  // Cache for the activities FeatureCollection. The id key catches delete+add
+  // interactions whose total length stays unchanged, while avoiding redundant
+  // GeoJSON reconstruction + GPU re-upload on every 300ms FOG_UPDATE.
   const cachedActivitiesGeoJSON = useRef<ReturnType<
     typeof featureCollection
   > | null>(null)
-  const cachedActivitiesLength = useRef(-1)
+  const cachedActivitiesKey = useRef<string | null>(null)
   const [bearing, setBearing] = useState(0)
   const [pitch, setPitch] = useState(0)
 
@@ -463,6 +465,7 @@ export function MapView({
       map.resize()
       setupMapLayers(map, "flat")
       mapStore.sourcesReady = true
+      isInitialStyleLoadedRef.current = true
       onMapReady?.()
     })
 
@@ -471,6 +474,10 @@ export function MapView({
     return () => {
       mapStore.sourcesReady = false
       mapStore.map = null
+      if (pendingStyleLoadRef.current) {
+        map.off("style.load", pendingStyleLoadRef.current)
+        pendingStyleLoadRef.current = null
+      }
       photoMarkersRef.current.forEach((m) => m.remove())
       photoMarkersRef.current.clear()
       map.remove()
@@ -491,21 +498,32 @@ export function MapView({
       // after the worker has bailed out.
       if (msg.runId !== mapStore.runId) return
 
+      if (msg.type === "ERROR") {
+        // Do not trust incremental state after an unrecoverable mask failure;
+        // the next addition gets a full replay and another chance to recover.
+        mapStore.fogWorkerActivityIds.clear()
+        console.warn(`[worker] fog failed for ${msg.file}: ${msg.message}`)
+        return
+      }
+
+      if (msg.type === "PROGRESS") {
+        mapStore.processedCount = msg.processedCount
+        onProcessingUpdateRef.current?.(msg.processedCount, false)
+        return
+      }
+
       // DONE: always notify the UI so the spinner and activity count are updated
       // even if map sources are temporarily unavailable (e.g. during a style switch).
       // fitBounds is handled in handleProcessingUpdate (home.tsx) — it only needs the
       // map object, not sourcesReady.
       if (msg.type === "DONE") {
-        mapStore.isFogRunInFlight = false
-        onProcessingUpdateRef.current?.(msg.processedCount, true)
+        mapStore.processedCount = msg.processedCount
+        const isRunDone = finishFogJob()
+        onProcessingUpdateRef.current?.(msg.processedCount, isRunDone)
 
-        // Persist the computed fog cache (requires live sources)
-        if (
-          map &&
-          mapStore.sourcesReady &&
-          mapStore.activities.length > 0 &&
-          mapStore.fogData
-        ) {
+        // Persist only after every same-run batch is complete. The geometry is
+        // held in mapStore even while a style change has no live fog source.
+        if (isRunDone && mapStore.activities.length > 0 && mapStore.fogData) {
           saveFogCache({
             activityIds: mapStore.activities.map((t) => t.id).sort(),
             fogMode: mapStore.fogMode,
@@ -518,11 +536,16 @@ export function MapView({
         return
       }
 
-      // FOG_UPDATE: needs live sources to push data into the map
-      if (!map || !mapStore.sourcesReady) return
-
       if (msg.type === "FOG_UPDATE") {
+        // Always retain a valid update. setStyle temporarily destroys the source;
+        // setupMapLayers reads this state once the replacement style is ready.
         mapStore.fogData = msg.fogData
+        mapStore.processedCount = msg.processedCount
+        onProcessingUpdateRef.current?.(msg.processedCount, false)
+
+        // The state above is authoritative; a live source is only a rendering sink.
+        if (!map || !mapStore.sourcesReady) return
+
         const fogSource = map.getSource(
           "fog-source"
         ) as maplibregl.GeoJSONSource
@@ -531,22 +554,23 @@ export function MapView({
         // Only rebuild and re-push activities when the list has changed.
         // mapStore.activities is frozen during a processing run, so this fires at most
         // once per add/delete — not on every 300ms FOG_UPDATE.
+        const activitiesKey = mapStore.activities
+          .map((activity) => activity.id)
+          .join("\0")
         if (
-          mapStore.activities.length !== cachedActivitiesLength.current ||
+          activitiesKey !== cachedActivitiesKey.current ||
           !cachedActivitiesGeoJSON.current
         ) {
           const activityFeatures = mapStore.activities.map((t) =>
             lineString(t.coordinates, { name: t.name, id: t.id })
           )
           cachedActivitiesGeoJSON.current = featureCollection(activityFeatures)
-          cachedActivitiesLength.current = mapStore.activities.length
+          cachedActivitiesKey.current = activitiesKey
           const activitiesSource = map.getSource(
             "activities-source"
           ) as maplibregl.GeoJSONSource
           activitiesSource?.setData(cachedActivitiesGeoJSON.current)
         }
-
-        onProcessingUpdateRef.current?.(msg.processedCount, false)
       }
     }
 
@@ -557,25 +581,29 @@ export function MapView({
 
   useEffect(() => {
     const map = mapStore.map
-    if (!map || !mapStore.sourcesReady) return
+    // The first style is installed by the map constructor. Controls are not
+    // mounted until its load callback runs, so this only skips the initial effect.
+    if (!map || !isInitialStyleLoadedRef.current) return
 
     if (pendingStyleLoadRef.current) {
-      map.off("styledata", pendingStyleLoadRef.current)
+      map.off("style.load", pendingStyleLoadRef.current)
       pendingStyleLoadRef.current = null
     }
 
     mapStore.sourcesReady = false
-    map.setStyle(mapMode === "relief" ? SATELLITE_STYLE : MAP_STYLE_URL)
 
-    const onStyleData = () => {
-      map.off("styledata", onStyleData)
+    const onStyleLoad = () => {
+      // A rapid second toggle removes this listener, but keep the identity
+      // check as a guard against an already queued callback.
+      if (pendingStyleLoadRef.current !== onStyleLoad) return
+      map.off("style.load", onStyleLoad)
       pendingStyleLoadRef.current = null
 
       setupMapLayers(map, mapMode)
 
       // Invalidate activities cache so FOG_UPDATE re-pushes to the new source.
       cachedActivitiesGeoJSON.current = null
-      cachedActivitiesLength.current = -1
+      cachedActivitiesKey.current = null
 
       map.setLayoutProperty(
         "activities-layer",
@@ -616,8 +644,9 @@ export function MapView({
       rebuildPhotoMarkers()
     }
 
-    pendingStyleLoadRef.current = onStyleData
-    map.on("styledata", onStyleData)
+    pendingStyleLoadRef.current = onStyleLoad
+    map.on("style.load", onStyleLoad)
+    map.setStyle(mapMode === "relief" ? SATELLITE_STYLE : MAP_STYLE_URL)
   }, [mapMode])
 
   useEffect(() => {
