@@ -54,7 +54,7 @@ export function PublicSavedPointCard({
       {isOwner ? (
         <AppLink
           to={`/?savedPoint=${encodeURIComponent(point.id)}`}
-          className="flex h-full flex-col gap-3 rounded-none p-4 transition-colors outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring"
+          className="flex h-full flex-col gap-3 rounded-none p-4 transition-colors outline-none hover:bg-muted hover:decoration-0 focus-visible:ring-2 focus-visible:ring-ring"
           aria-label={`Open ${point.name} on the map to edit`}
         >
           {content}
