@@ -51,6 +51,7 @@ import {
   loadFogCache,
   clearFogCache,
   clearAll,
+  loadSavedPoints,
   deleteActivity,
   isFogCacheValid,
 } from "~/lib/storage"
@@ -70,6 +71,7 @@ import { useActivityVisibility } from "~/lib/useActivityVisibility"
 import { socialMeta } from "~/lib/socialMeta"
 import type { FogMode, MapMode, ParsedActivity } from "~/types/activities"
 import type { PhotoEntry, PhotoGroup } from "~/types/photos"
+import type { SavedPoint } from "~shared/saved-points"
 
 export function meta({}: Route.MetaArgs) {
   return socialMeta({
@@ -83,6 +85,7 @@ export function meta({}: Route.MetaArgs) {
 // Module-level cache for restored photos — avoids passing File objects through
 // React Router's serialized loader return type (which strips Blob/File methods).
 let _restoredPhotos: PhotoEntry[] = []
+let _restoredSavedPoints: SavedPoint[] = []
 
 export async function clientLoader(): Promise<{
   initialized: boolean
@@ -107,9 +110,10 @@ export async function clientLoader(): Promise<{
   void initAuth()
 
   // Restore persisted data in parallel
-  const [activities, photos, fogMode, fogCache] = await Promise.all([
+  const [activities, photos, savedPoints, fogMode, fogCache] = await Promise.all([
     loadActivities(),
     loadPhotos(),
+    loadSavedPoints(),
     loadFogMode(),
     loadFogCache(),
   ])
@@ -117,6 +121,7 @@ export async function clientLoader(): Promise<{
   const restoredFogMode: FogMode = fogMode ?? "corridor"
   mapStore.fogMode = restoredFogMode
   _restoredPhotos = photos
+  _restoredSavedPoints = savedPoints
 
   if (activities.length > 0) {
     mapStore.activities = sortActivities(activities)
@@ -372,6 +377,8 @@ export default function Home() {
   const [showShareDialog, setShowShareDialog] = useState(false)
   const [photos, setPhotos] = useState<PhotoEntry[]>(_restoredPhotos)
   const [showPhotos, setShowPhotos] = useState(true)
+  const [savedPoints, setSavedPoints] = useState<SavedPoint[]>(_restoredSavedPoints)
+  const [showSavedPoints, setShowSavedPoints] = useState(true)
   const {
     showMyLocation,
     permissionDenied: locationPermissionDenied,
@@ -883,6 +890,12 @@ export default function Home() {
               highlightCoordinates={highlightCoordinates}
               focusCoordinates={focusCoordinates}
               focusKey={focusKey}
+              savedPoints={savedPoints}
+              showSavedPoints={showSavedPoints}
+              onSavedPointSelect={(id) => {
+                const point = savedPoints.find((candidate) => candidate.id === id)
+                if (point) window.alert(`${point.name}\n${point.description ?? ""}`)
+              }}
             />
           </ErrorBoundary>
           {mapReady && isMapRoute && (

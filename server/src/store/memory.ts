@@ -15,8 +15,11 @@ import type {
   PublicActivityMeta,
   ActivityMeta,
   ActivityTombstone,
+  SavedPointManifestPage,
+  SavedPointTombstone,
   UserStatus,
 } from "~shared/api"
+import type { SavedPoint } from "~shared/saved-points"
 import { SYNC_PAGE_SIZE } from "~shared/constants"
 
 import { combineCursors, comparePageable, pageStream } from "./manifestPaging"
@@ -48,6 +51,8 @@ export class MemoryStore implements ServerStore {
   private readonly activities = new Map<string, Map<string, StoredActivity>>()
   /** userId → contentHash → deletedAt */
   private readonly tombstones = new Map<string, Map<string, number>>()
+  private readonly savedPoints = new Map<string, Map<string, SavedPoint>>()
+  private readonly savedPointTombstones = new Map<string, Map<string, number>>()
   private readonly accessRequests = new Map<string, StoredAccessRequest>()
   private readonly settings = new Map<string, string>()
 
@@ -191,6 +196,8 @@ export class MemoryStore implements ServerStore {
     }
     this.activities.delete(userId)
     this.tombstones.delete(userId)
+    this.savedPoints.delete(userId)
+    this.savedPointTombstones.delete(userId)
     this.accessRequests.delete(userId)
   }
 
@@ -526,6 +533,52 @@ export class MemoryStore implements ServerStore {
     )
   }
 
+  async listSavedPointsManifest(userId: string, sinceCursor: number): Promise<SavedPointManifestPage> {
+    const since = Number.isFinite(sinceCursor) ? Math.max(0, sinceCursor) : 0
+    const points = [...(this.savedPoints.get(userId)?.values() ?? [])]
+      .filter((point) => point.updatedAt >= since)
+      .sort((a, b) => a.updatedAt - b.updatedAt || a.id.localeCompare(b.id))
+      .slice(0, SYNC_PAGE_SIZE)
+    const deletions = [...(this.savedPointTombstones.get(userId)?.entries() ?? [])]
+      .filter(([, deletedAt]) => deletedAt >= since)
+      .sort(([aId, a], [bId, b]) => a - b || aId.localeCompare(bId))
+      .slice(0, SYNC_PAGE_SIZE)
+      .map(([id, deletedAt]): SavedPointTombstone => ({ id, deletedAt }))
+    const latest = Math.max(since, ...points.map((point) => point.updatedAt), ...deletions.map((tombstone) => tombstone.deletedAt))
+    return { savedPoints: points, deletions, cursor: latest, hasMore: points.length === SYNC_PAGE_SIZE || deletions.length === SYNC_PAGE_SIZE }
+  }
+
+  async listSavedPoints(userId: string): Promise<SavedPoint[]> {
+    return [...(this.savedPoints.get(userId)?.values() ?? [])].sort((a, b) => b.updatedAt - a.updatedAt || a.id.localeCompare(b.id))
+  }
+
+  async upsertSavedPoint(userId: string, point: SavedPoint): Promise<SavedPoint> {
+    let points = this.savedPoints.get(userId)
+    if (!points) { points = new Map(); this.savedPoints.set(userId, points) }
+    const previous = points.get(point.id)
+    const saved = { ...point, createdAt: previous?.createdAt ?? point.createdAt, updatedAt: Date.now() }
+    points.set(point.id, saved)
+    this.savedPointTombstones.get(userId)?.delete(point.id)
+    return saved
+  }
+
+  async deleteSavedPoint(userId: string, id: string): Promise<number> {
+    this.savedPoints.get(userId)?.delete(id)
+    let tombstones = this.savedPointTombstones.get(userId)
+    if (!tombstones) { tombstones = new Map(); this.savedPointTombstones.set(userId, tombstones) }
+    const deletedAt = Date.now()
+    tombstones.set(id, deletedAt)
+    return deletedAt
+  }
+
+  async listAllSavedPointsForUser(userId: string): Promise<SavedPoint[]> {
+    return this.listSavedPoints(userId)
+  }
+
+  async listPublicSavedPoints(userId: string): Promise<SavedPoint[]> {
+    return (await this.listSavedPoints(userId)).filter((point) => point.isPublic)
+  }
+
   async findUserByHandle(handle: string): Promise<User | null> {
     const lower = handle.toLowerCase()
     for (const user of this.users.values()) {
@@ -544,6 +597,7 @@ export class MemoryStore implements ServerStore {
           avatarUrl: user?.avatarUrl ?? null,
         },
         activities: [],
+        savedPoints: [],
       }
     }
 
@@ -568,6 +622,7 @@ export class MemoryStore implements ServerStore {
         avatarUrl: user.avatarUrl,
       },
       activities,
+      savedPoints: await this.listPublicSavedPoints(userId),
     }
   }
 
@@ -577,6 +632,8 @@ export class MemoryStore implements ServerStore {
     this.sessions.clear()
     this.activities.clear()
     this.tombstones.clear()
+    this.savedPoints.clear()
+    this.savedPointTombstones.clear()
     this.accessRequests.clear()
     this.settings.clear()
   }

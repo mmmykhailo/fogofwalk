@@ -3,6 +3,7 @@ import { useLoaderData } from "react-router"
 import { FootprintsIcon } from "@phosphor-icons/react"
 import { PageShell } from "~/components/PageShell"
 import { AchievementsSection } from "~/components/public-profile/AchievementsSection"
+import { SavedPointsSection } from "~/components/public-profile/SavedPointsSection"
 import { ActivityCard } from "~/components/public-profile/ActivityCard"
 import { PublicProfileHeader } from "~/components/public-profile/PublicProfileHeader"
 import { PublicActivityGrid } from "~/components/public-profile/PublicActivityGrid"
@@ -74,12 +75,12 @@ export default function PublicProfilePage() {
 
   const isOwner =
     auth.status === "signedIn" &&
-    auth.canSync &&
     auth.user.handle?.toLowerCase() === profile?.user.handle.toLowerCase()
   const stats = computePublicProfileStats(activities)
   const achievements = sortEarnedAchievementsNewestFirst(
     computeEarnedAchievements(activities)
   )
+  const savedPoints = profile?.savedPoints ?? []
 
   function handleActivityHidden(contentHash: string) {
     setActivities((current) =>
@@ -103,50 +104,65 @@ export default function PublicProfilePage() {
         </div>
       )}
 
-      {!error && profile && activities.length === 0 && (
-        <div className="flex flex-col items-center justify-center gap-3 rounded-none border border-dashed border-border py-24 text-center">
-          <FootprintsIcon
-            size={40}
-            className="text-muted-foreground"
-            weight="duotone"
-          />
-          <p className="text-sm text-muted-foreground">
-            This user has no public activities yet
-          </p>
-        </div>
-      )}
+      {!error &&
+        profile &&
+        activities.length === 0 &&
+        savedPoints.length === 0 && (
+          <div className="flex flex-col items-center justify-center gap-3 rounded-none border border-dashed border-border py-24 text-center">
+            <FootprintsIcon
+              size={40}
+              className="text-muted-foreground"
+              weight="duotone"
+            />
+            <p className="text-sm text-muted-foreground">
+              This user has no public activities yet
+            </p>
+          </div>
+        )}
 
-      {!error && profile && activities.length > 0 && (
-        <div className="space-y-3">
-          <StatCards totals={stats.totals} />
-          <WeeklyChart weekly={stats.weekly} />
-          <Grid columns={{ base: 1, sm: 2 }}>
-            <PublicActivityGrid recentDays={stats.recentDays} />
-            <PublicProfileSummary stats={stats} />
-          </Grid>
-          <AchievementsSection
-            achievements={achievements}
-            maxAchievements={4}
-            viewAllTo={`/u/${encodeURIComponent(profile.user.handle)}/achievements`}
-            groupByFamily={false}
-          />
-          <section>
-            <h2 className="mt-6 mb-3 font-heading text-lg font-semibold">
-              Public activities
-            </h2>
-            <Grid columns={{ base: 1, sm: 2 }}>
-              {activities.map((activity) => (
-                <ActivityCard
-                  key={activity.contentHash}
-                  activity={activity}
-                  isOwner={isOwner}
-                  onHidden={handleActivityHidden}
+      {!error &&
+        profile &&
+        (activities.length > 0 || savedPoints.length > 0) && (
+          <div className="space-y-3">
+            {activities.length > 0 && (
+              <>
+                <StatCards totals={stats.totals} />
+                <WeeklyChart weekly={stats.weekly} />
+                <Grid columns={{ base: 1, sm: 2 }}>
+                  <PublicActivityGrid recentDays={stats.recentDays} />
+                  <PublicProfileSummary stats={stats} />
+                </Grid>
+                <AchievementsSection
+                  achievements={achievements}
+                  maxAchievements={4}
+                  viewAllTo={`/u/${encodeURIComponent(profile.user.handle)}/achievements`}
+                  groupByFamily={false}
                 />
-              ))}
-            </Grid>
-          </section>
-        </div>
-      )}
+                <section>
+                  <h2 className="mt-6 mb-3 font-heading text-lg font-semibold">
+                    Public activities
+                  </h2>
+                  <Grid columns={{ base: 1, sm: 2 }}>
+                    {activities.map((activity) => (
+                      <ActivityCard
+                        key={activity.contentHash}
+                        activity={activity}
+                        isOwner={isOwner}
+                        onHidden={handleActivityHidden}
+                      />
+                    ))}
+                  </Grid>
+                </section>
+              </>
+            )}
+            <SavedPointsSection
+              points={savedPoints}
+              isOwner={isOwner}
+              maxPoints={4}
+              viewAllTo={`/u/${encodeURIComponent(profile.user.handle)}/points`}
+            />
+          </div>
+        )}
     </PageShell>
   )
 }

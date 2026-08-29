@@ -1,0 +1,67 @@
+import { MapPinIcon } from "@phosphor-icons/react"
+import { AppLink } from "~/components/AppLink"
+import { SAVED_POINT_COLORS, type SavedPointColor } from "~shared/saved-points"
+import type { PublicSavedPoint } from "~shared/api"
+
+interface PublicSavedPointCardProps {
+  point: PublicSavedPoint
+  /** Only an owner may open their point in the editable map view. */
+  isOwner?: boolean
+}
+
+function formatCoordinates(point: PublicSavedPoint): string {
+  return `${point.lat.toFixed(5)}, ${point.lng.toFixed(5)}`
+}
+
+function formatColorName(color: SavedPointColor): string {
+  return color[0].toUpperCase() + color.slice(1)
+}
+
+export function PublicSavedPointCard({
+  point,
+  isOwner = false,
+}: PublicSavedPointCardProps) {
+  const color = SAVED_POINT_COLORS[point.color as SavedPointColor]
+  const colorName = formatColorName(point.color as SavedPointColor)
+  const content = (
+    <>
+      <div className="flex min-w-0 items-start gap-3">
+        <span
+          aria-label={`${colorName} saved point`}
+          className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-full text-white"
+          style={{ backgroundColor: color }}
+        >
+          <MapPinIcon aria-hidden="true" size={20} weight="fill" />
+        </span>
+        <div className="min-w-0">
+          <h3 className="font-heading text-sm font-medium">{point.name}</h3>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            {formatCoordinates(point)}
+          </p>
+        </div>
+      </div>
+      {point.description && (
+        <p className="text-xs/relaxed text-muted-foreground">
+          {point.description}
+        </p>
+      )}
+      <p className="sr-only">Colour: {colorName}</p>
+    </>
+  )
+
+  return (
+    <article className="flex min-w-0 flex-col gap-3 rounded-none bg-card p-4 text-card-foreground ring-1 ring-foreground/10">
+      {isOwner ? (
+        <AppLink
+          to={`/?savedPoint=${encodeURIComponent(point.id)}`}
+          className="-m-1 flex flex-col gap-3 rounded-sm p-1 transition-colors outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring"
+          aria-label={`Open ${point.name} on the map to edit`}
+        >
+          {content}
+        </AppLink>
+      ) : (
+        content
+      )}
+    </article>
+  )
+}

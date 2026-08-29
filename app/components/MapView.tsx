@@ -28,6 +28,7 @@ import type {
   WorkerOutboundMessage,
 } from "~/types/activities"
 import type { PhotoEntry, PhotoGroup } from "~/types/photos"
+import type { SavedPoint } from "~shared/saved-points"
 import { MapCompass } from "~/components/MapCompass"
 
 const CLUSTER_PIXEL_RADIUS = 50
@@ -150,6 +151,11 @@ function setupMapLayers(map: maplibregl.Map, mode: MapMode): void {
       "line-opacity": ACTIVITY_OPACITY_DEFAULT,
     },
   })
+
+  map.addSource("saved-points-source", { type: "geojson", data: featureCollection([]) })
+  map.addLayer({ id: "saved-points-outer-layer", type: "circle", source: "saved-points-source", paint: { "circle-radius": 10, "circle-color": ["get", "color"], "circle-stroke-width": 1, "circle-stroke-color": "#fff" } })
+  map.addLayer({ id: "saved-points-centre-layer", type: "circle", source: "saved-points-source", paint: { "circle-radius": 3.5, "circle-color": "#fff" } })
+  map.addLayer({ id: "saved-points-hit-layer", type: "circle", source: "saved-points-source", paint: { "circle-radius": 22, "circle-color": "#000", "circle-opacity": 0 } })
   // Invisible wide line for hit-testing only — the visible line stays thin
   // but taps/clicks within ACTIVITY_HIT_WIDTH px of it still register.
   map.addLayer({
@@ -293,6 +299,9 @@ interface MapViewProps {
    * `slice()` returns a fresh array every render and would refit continuously.
    */
   focusKey: string | null
+  savedPoints: SavedPoint[]
+  showSavedPoints: boolean
+  onSavedPointSelect: (id: string) => void
 }
 
 export function MapView({
@@ -311,6 +320,9 @@ export function MapView({
   highlightCoordinates,
   focusCoordinates,
   focusKey,
+  savedPoints,
+  showSavedPoints,
+  onSavedPointSelect,
 }: MapViewProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const onProcessingUpdateRef = useRef(onProcessingUpdate)
@@ -338,6 +350,8 @@ export function MapView({
   photosRef.current = photos
   const showPhotosRef = useRef(showPhotos)
   showPhotosRef.current = showPhotos
+  const onSavedPointSelectRef = useRef(onSavedPointSelect)
+  onSavedPointSelectRef.current = onSavedPointSelect
 
   const clusterCacheRef = useRef<Map<number, PhotoGroup[]>>(new Map())
   // Cache for the activities FeatureCollection. The id key catches delete+add
@@ -442,6 +456,13 @@ export function MapView({
     })
 
     map.on("click", (e) => {
+      const savedPointFeatures = map.queryRenderedFeatures(e.point, { layers: ["saved-points-hit-layer"] })
+      if (savedPointFeatures.length > 0) {
+        const id = savedPointFeatures[0].properties?.id
+        if (id) onSavedPointSelectRef.current(id)
+        map.easeTo({ center: e.lngLat, zoom: Math.max(map.getZoom(), 16) })
+        return
+      }
       const activityFeatures = map.queryRenderedFeatures(e.point, {
         layers: ["activities-hit-layer"],
       })
@@ -483,6 +504,14 @@ export function MapView({
       map.remove()
     }
   }, [])
+
+  useEffect(() => {
+    const map = mapStore.map
+    if (!map || !mapStore.sourcesReady) return
+    const source = map.getSource("saved-points-source") as maplibregl.GeoJSONSource | undefined
+    source?.setData(featureCollection(savedPoints.map((point) => ({ type: "Feature" as const, properties: { id: point.id, name: point.name, color: point.color }, geometry: { type: "Point" as const, coordinates: [point.lng, point.lat] } }))))
+    for (const layer of ["saved-points-outer-layer", "saved-points-centre-layer", "saved-points-hit-layer"]) map.setLayoutProperty(layer, "visibility", showSavedPoints ? "visible" : "none")
+  }, [savedPoints, showSavedPoints, mapMode])
 
   useEffect(() => {
     if (!mapStore.worker) return

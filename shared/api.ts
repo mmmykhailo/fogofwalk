@@ -12,6 +12,7 @@ import type {
   ParsedActivity,
   StartSunPhase,
 } from "./activities"
+import type { SavedPoint, SavedPointColor } from "./saved-points"
 
 // ─── Auth ──────────────────────────────────────────────────────────────────────
 
@@ -153,7 +154,44 @@ export type PublicActivityMeta = ActivityMeta
 export interface PublicProfileResponse {
   user: PublicProfileUser
   activities: PublicActivityMeta[]
+  savedPoints: PublicSavedPoint[]
 }
+
+// ─── Saved points ─────────────────────────────────────────────────────────────
+
+/** Client-writable fields for an idempotent saved-point create or edit. */
+export interface SavedPointUpsertInput {
+  id: string
+  lng: number
+  lat: number
+  name: string
+  description: string | null
+  color: SavedPointColor
+  isPublic: boolean
+}
+
+export interface SavedPointUpsertResponse {
+  savedPoint: SavedPoint
+}
+
+export interface SavedPointDeleteResponse {
+  deletedAt: number
+}
+
+export interface SavedPointTombstone {
+  id: string
+  deletedAt: number
+}
+
+export interface SavedPointManifestPage {
+  savedPoints: SavedPoint[]
+  deletions: SavedPointTombstone[]
+  cursor: number
+  hasMore: boolean
+}
+
+/** A saved point that may safely be displayed on an anonymous profile. */
+export type PublicSavedPoint = SavedPoint
 
 export interface ActivityTombstone {
   contentHash: string
@@ -219,6 +257,7 @@ export interface DataExportResponse {
   identities: ExportedIdentity[]
   sessions: ExportedSession[]
   activities: ParsedActivity[]
+  savedPoints: SavedPoint[]
 }
 
 // ─── Errors ────────────────────────────────────────────────────────────────────

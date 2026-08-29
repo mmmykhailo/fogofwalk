@@ -75,6 +75,36 @@ CREATE TABLE IF NOT EXISTS activity_tombstones (
 CREATE INDEX IF NOT EXISTS tombstones_sync
   ON activity_tombstones(user_id, deleted_at, content_hash);
 
+CREATE TABLE IF NOT EXISTS saved_points (
+  user_id TEXT NOT NULL,
+  id TEXT NOT NULL,
+  longitude REAL NOT NULL,
+  latitude REAL NOT NULL,
+  name TEXT NOT NULL,
+  description TEXT,
+  colour TEXT NOT NULL,
+  is_public INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (user_id, id)
+);
+
+CREATE INDEX IF NOT EXISTS saved_points_sync
+  ON saved_points(user_id, updated_at, id);
+
+CREATE INDEX IF NOT EXISTS saved_points_public
+  ON saved_points(user_id, is_public, updated_at, id);
+
+CREATE TABLE IF NOT EXISTS saved_point_tombstones (
+  user_id TEXT NOT NULL,
+  id TEXT NOT NULL,
+  deleted_at INTEGER NOT NULL,
+  PRIMARY KEY (user_id, id)
+);
+
+CREATE INDEX IF NOT EXISTS saved_point_tombstones_sync
+  ON saved_point_tombstones(user_id, deleted_at, id);
+
 CREATE TABLE IF NOT EXISTS access_requests (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL UNIQUE,
