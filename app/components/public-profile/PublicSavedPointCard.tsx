@@ -50,18 +50,18 @@ export function PublicSavedPointCard({
   )
 
   return (
-    <article className="flex min-w-0 flex-col gap-3 rounded-none bg-card p-4 text-card-foreground ring-1 ring-foreground/10">
+    <div className="min-w-0 rounded-none bg-card text-card-foreground ring-1 ring-foreground/10">
       {isOwner ? (
         <AppLink
           to={`/?savedPoint=${encodeURIComponent(point.id)}`}
-          className="-m-1 flex flex-col gap-3 rounded-sm p-1 transition-colors outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring"
+          className="flex h-full flex-col gap-3 rounded-none p-4 transition-colors outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring"
           aria-label={`Open ${point.name} on the map to edit`}
         >
           {content}
         </AppLink>
       ) : (
-        content
+        <div className="flex flex-col gap-3 p-4">{content}</div>
       )}
-    </article>
+    </div>
   )
 }

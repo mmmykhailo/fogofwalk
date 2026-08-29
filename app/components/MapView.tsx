@@ -522,8 +522,19 @@ export function MapView({
     map.on("mouseenter", "saved-points-hit-layer", (event) => {
       if (!showSavedPointsRef.current) return
       map.getCanvas().style.cursor = "pointer"
-      const name = event.features?.[0]?.properties?.name
+      const savedPoint = event.features?.[0]
+      const name = savedPoint?.properties?.name
+      const coordinates =
+        savedPoint?.geometry.type === "Point"
+          ? savedPoint.geometry.coordinates
+          : null
       if (typeof name !== "string" || !name) return
+      if (
+        !coordinates ||
+        typeof coordinates[0] !== "number" ||
+        typeof coordinates[1] !== "number"
+      )
+        return
       hideSavedPointPopup()
       const content = document.createElement("span")
       content.textContent = name
@@ -531,7 +542,7 @@ export function MapView({
         closeButton: false,
         closeOnClick: false,
       })
-        .setLngLat(event.lngLat)
+        .setLngLat([coordinates[0], coordinates[1]])
         .setDOMContent(content)
         .addTo(map)
     })

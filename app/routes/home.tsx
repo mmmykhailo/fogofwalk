@@ -18,19 +18,19 @@ import { PhotoErrorDialog } from "~/components/PhotoErrorDialog"
 import { ParseErrorDialog } from "~/components/ParseErrorDialog"
 import { DuplicateActivitiesDialog } from "~/components/DuplicateActivitiesDialog"
 import { MissingActivityTypeDialog } from "~/components/MissingActivityTypeDialog"
-import { ActivityStatsPanel } from "~/components/activity-stats/ActivityStatsPanel"
+import { DraggableActivityDialog } from "~/components/activity-stats/DraggableActivityDialog"
 import { ShareDialog } from "~/components/ShareDialog"
-import { PhotoCard } from "~/components/PhotoCard"
-import { SavedPointForm } from "~/components/SavedPointForm"
+import { DraggablePhotoDialog } from "~/components/DraggablePhotoDialog"
+import { DraggableSavedPointDialog } from "~/components/DraggableSavedPointDialog"
 import { ErrorBoundary } from "~/components/ErrorBoundary"
 import { ErrorCard } from "~/components/ErrorCard"
 import {
   Dialog,
   DialogContent,
-  DialogHeader,
-  DialogTitle,
   DialogDescription,
   DialogFooter,
+  DialogHeader,
+  DialogTitle,
 } from "~/components/ui/dialog"
 import { Button } from "~/components/ui/button"
 import {
@@ -67,6 +67,8 @@ import {
   setSyncChangeHandler,
   startSyncScheduler,
   suspendAutoSync,
+  pushSavedPointDeletion,
+  pushSavedPointUpdate,
 } from "~/lib/server/syncEngine"
 import { sortActivities, populateUniqueDistances } from "~/lib/statsAggregator"
 import { useMyLocation } from "~/lib/useMyLocation"
@@ -74,7 +76,11 @@ import { useActivityVisibility } from "~/lib/useActivityVisibility"
 import { socialMeta } from "~/lib/socialMeta"
 import type { FogMode, MapMode, ParsedActivity } from "~/types/activities"
 import type { PhotoEntry, PhotoGroup } from "~/types/photos"
-import type { SavedPoint } from "~shared/saved-points"
+import {
+  isSavedPointColor,
+  isValidSavedPointInput,
+  type SavedPoint,
+} from "~shared/saved-points"
 
 export function meta({}: Route.MetaArgs) {
   return socialMeta({
@@ -113,13 +119,14 @@ export async function clientLoader(): Promise<{
   void initAuth()
 
   // Restore persisted data in parallel
-  const [activities, photos, savedPoints, fogMode, fogCache] = await Promise.all([
-    loadActivities(),
-    loadPhotos(),
-    loadSavedPoints(),
-    loadFogMode(),
-    loadFogCache(),
-  ])
+  const [activities, photos, savedPoints, fogMode, fogCache] =
+    await Promise.all([
+      loadActivities(),
+      loadPhotos(),
+      loadSavedPoints(),
+      loadFogMode(),
+      loadFogCache(),
+    ])
 
   const restoredFogMode: FogMode = fogMode ?? "corridor"
   mapStore.fogMode = restoredFogMode
@@ -335,6 +342,81 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
     }
   }
 
+  if (intent === "save-saved-point") {
+    const id = formData.get("id")
+    const name = formData.get("name")
+    const description = formData.get("description")
+    const color = formData.get("color")
+    const isPublic = formData.get("isPublic")
+    const lng = Number(formData.get("lng"))
+    const lat = Number(formData.get("lat"))
+    const errors: Record<string, string> = {}
+
+    if (typeof name !== "string" || name.trim().length === 0) {
+      errors.name = "Enter a name."
+    }
+    if (!Number.isFinite(lng) || lng < -180 || lng > 180) {
+      errors.lng = "Enter a longitude between -180 and 180."
+    }
+    if (!Number.isFinite(lat) || lat < -90 || lat > 90) {
+      errors.lat = "Enter a latitude between -90 and 90."
+    }
+    if (
+      typeof id !== "string" ||
+      typeof name !== "string" ||
+      typeof description !== "string" ||
+      !isSavedPointColor(color) ||
+      (isPublic !== "true" && isPublic !== "false")
+    ) {
+      errors.form = "Enter valid saved point details."
+    }
+    if (Object.keys(errors).length > 0) {
+      return { intent: "save-saved-point" as const, errors }
+    }
+
+    const input = {
+      id: id as string,
+      lng,
+      lat,
+      name: name as string,
+      description: description as string,
+      color: color as SavedPoint["color"],
+      isPublic: isPublic === "true",
+    }
+    if (!isValidSavedPointInput(input)) {
+      return {
+        intent: "save-saved-point" as const,
+        errors: { form: "Enter valid saved point details." },
+      }
+    }
+
+    const existing = (await loadSavedPoints()).find((point) => point.id === id)
+    const now = Date.now()
+    const localPoint: SavedPoint = {
+      ...input,
+      description: input.description.trim() || null,
+      name: input.name.trim(),
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now,
+    }
+    await saveSavedPoint(localPoint)
+    const point = await pushSavedPointUpdate(localPoint)
+    return { intent: "save-saved-point" as const, point }
+  }
+
+  if (intent === "delete-saved-point") {
+    const id = formData.get("id")
+    if (typeof id !== "string" || !id) {
+      return {
+        intent: "delete-saved-point" as const,
+        errors: { form: "Saved point could not be deleted." },
+      }
+    }
+    await deleteStoredSavedPoint(id)
+    await pushSavedPointDeletion(id)
+    return { intent: "delete-saved-point" as const, id }
+  }
+
   return null
 }
 
@@ -380,10 +462,15 @@ export default function Home() {
   const [showShareDialog, setShowShareDialog] = useState(false)
   const [photos, setPhotos] = useState<PhotoEntry[]>(_restoredPhotos)
   const [showPhotos, setShowPhotos] = useState(true)
-  const [savedPoints, setSavedPoints] = useState<SavedPoint[]>(_restoredSavedPoints)
+  const [savedPoints, setSavedPoints] =
+    useState<SavedPoint[]>(_restoredSavedPoints)
   const [showSavedPoints, setShowSavedPoints] = useState(true)
-  const [editingSavedPointId, setEditingSavedPointId] = useState<string | null>(null)
-  const [newSavedPointCoordinate, setNewSavedPointCoordinate] = useState<[number, number] | null>(null)
+  const [editingSavedPointId, setEditingSavedPointId] = useState<string | null>(
+    null
+  )
+  const [newSavedPointCoordinate, setNewSavedPointCoordinate] = useState<
+    [number, number] | null
+  >(null)
   const {
     showMyLocation,
     permissionDenied: locationPermissionDenied,
@@ -481,7 +568,10 @@ export default function Home() {
     const id = searchParams.get("savedPoint")
     const point = savedPoints.find((savedPoint) => savedPoint.id === id)
     if (!point || !mapStore.map) return
-    mapStore.map.easeTo({ center: [point.lng, point.lat], zoom: Math.max(mapStore.map.getZoom(), 16) })
+    mapStore.map.easeTo({
+      center: [point.lng, point.lat],
+      zoom: Math.max(mapStore.map.getZoom(), 16),
+    })
     setEditingSavedPointId(point.id)
   }, [mapReady, savedPoints, searchParams])
 
@@ -943,18 +1033,37 @@ export default function Home() {
                 onShowSavedPointsChange={setShowSavedPoints}
               />
               {(editingSavedPointId || newSavedPointCoordinate) && (
-                <Dialog open onOpenChange={(open) => { if (!open) { setEditingSavedPointId(null); setNewSavedPointCoordinate(null) } }}>
-                  <DialogContent>
-                    <DialogHeader><DialogTitle>{editingSavedPointId ? "Edit saved point" : "Save point"}</DialogTitle></DialogHeader>
-                    <SavedPointForm
-                      point={savedPoints.find((point) => point.id === editingSavedPointId) ?? null}
-                      coordinate={newSavedPointCoordinate}
-                      onCancel={() => { setEditingSavedPointId(null); setNewSavedPointCoordinate(null) }}
-                      onSave={(input) => { const now = Date.now(); const point = { ...input, createdAt: savedPoints.find((saved) => saved.id === input.id)?.createdAt ?? now, updatedAt: now }; setSavedPoints((points) => [...points.filter((saved) => saved.id !== point.id), point]); void saveSavedPoint(point); setEditingSavedPointId(null); setNewSavedPointCoordinate(null) }}
-                      onDelete={editingSavedPointId ? () => { if (window.confirm("Delete this saved point?")) { setSavedPoints((points) => points.filter((point) => point.id !== editingSavedPointId)); void deleteStoredSavedPoint(editingSavedPointId); setEditingSavedPointId(null) } } : undefined}
-                    />
-                  </DialogContent>
-                </Dialog>
+                <DraggableSavedPointDialog
+                  point={
+                    savedPoints.find(
+                      (point) => point.id === editingSavedPointId
+                    ) ?? null
+                  }
+                  coordinate={newSavedPointCoordinate}
+                  onClose={() => {
+                    setEditingSavedPointId(null)
+                    setNewSavedPointCoordinate(null)
+                  }}
+                  onSave={(point) => {
+                    setSavedPoints((points) => [
+                      ...points.filter((saved) => saved.id !== point.id),
+                      point,
+                    ])
+                    setEditingSavedPointId(null)
+                    setNewSavedPointCoordinate(null)
+                  }}
+                  onDelete={
+                    editingSavedPointId
+                      ? (id) => {
+                          setSavedPoints((points) =>
+                            points.filter((point) => point.id !== id)
+                          )
+                          setEditingSavedPointId(null)
+                          setNewSavedPointCoordinate(null)
+                        }
+                      : undefined
+                  }
+                />
               )}
               <FileUploadDialog
                 open={showUploadDialog}
@@ -989,7 +1098,7 @@ export default function Home() {
                 onOpenChange={setIsDuplicateOpen}
                 duplicateCount={duplicateCount}
               />
-              <PhotoCard
+              <DraggablePhotoDialog
                 group={selectedGroup}
                 onClose={() => setSelectedGroup(null)}
               />
@@ -1001,7 +1110,7 @@ export default function Home() {
                     </div>
                   )}
                 >
-                  <ActivityStatsPanel
+                  <DraggableActivityDialog
                     activities={selectedActivities}
                     onRemoveActivity={(id) =>
                       setSelectedActivityIds((prev) =>
