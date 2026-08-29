@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react"
+import { createRoot, type Root } from "react-dom/client"
 import maplibregl from "maplibre-gl"
 import type { StyleSpecification } from "maplibre-gl"
 import { Protocol } from "pmtiles"
@@ -30,6 +31,7 @@ import type {
 import type { PhotoEntry, PhotoGroup } from "~/types/photos"
 import { SAVED_POINT_COLORS, type SavedPoint } from "~shared/saved-points"
 import { MapCompass } from "~/components/MapCompass"
+import { SavedPointPopup } from "~/components/SavedPointPopup"
 
 const CLUSTER_PIXEL_RADIUS = 50
 
@@ -493,7 +495,10 @@ export function MapView({
     })
 
     let savedPointPopup: maplibregl.Popup | null = null
+    let savedPointPopupRoot: Root | null = null
     const hideSavedPointPopup = () => {
+      savedPointPopupRoot?.unmount()
+      savedPointPopupRoot = null
       savedPointPopup?.remove()
       savedPointPopup = null
     }
@@ -536,11 +541,14 @@ export function MapView({
       )
         return
       hideSavedPointPopup()
-      const content = document.createElement("span")
-      content.textContent = name
+      const content = document.createElement("div")
+      savedPointPopupRoot = createRoot(content)
+      savedPointPopupRoot.render(<SavedPointPopup name={name} />)
       savedPointPopup = new maplibregl.Popup({
         closeButton: false,
         closeOnClick: false,
+        className:
+          "[&_.maplibregl-popup-content]:bg-transparent [&_.maplibregl-popup-content]:p-0 [&_.maplibregl-popup-content]:shadow-none",
       })
         .setLngLat([coordinates[0], coordinates[1]])
         .setDOMContent(content)
