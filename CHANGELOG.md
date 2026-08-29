@@ -2,6 +2,12 @@
 
 All notable changes to Fog of Walk are documented here.
 
+## [0.1.1] - 2026-08-29
+
+### Changed
+
+- Document release process & improve deploy workflows
+
 ## [0.1.0] - 2026-08-29
 
 ### Added
@@ -14,4 +20,3 @@ All notable changes to Fog of Walk are documented here.
 ### Improved
 
 - More reliable fog processing and a responsive map drawer experience.
-
