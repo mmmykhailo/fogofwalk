@@ -36,6 +36,15 @@ jobs:
           # lockfile is resolved by the same version that will run it.
           bun-version: 1.3.4
 
+      - name: Check release version
+        run: |
+          CLIENT_VERSION=$(bun -p "require('./package.json').version")
+          SERVER_VERSION=$(bun -p "require('./server/package.json').version")
+          if [ "$CLIENT_VERSION" != "$SERVER_VERSION" ]; then
+            echo "Client and server versions must match ($CLIENT_VERSION != $SERVER_VERSION)." >&2
+            exit 1
+          fi
+
       - name: Install dependencies
         working-directory: server
         run: bun install --frozen-lockfile

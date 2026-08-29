@@ -41,6 +41,7 @@ bun run build      # production build
 bun run typecheck  # type-check (react-router typegen + tsc)
 bun run format     # prettier over ts/tsx
 bun run test:e2e   # Playwright end-to-end suite (see e2e/README.md)
+bun run release    # prepare the next patch release and changelog entry
 ```
 
 ## Deploy
@@ -49,10 +50,16 @@ bun run test:e2e   # Playwright end-to-end suite (see e2e/README.md)
 level and writes a `404.html` so client-side routing works on static hosts). Drop that directory on
 GitHub Pages, Cloudflare Pages, Vercel, S3 — anything that serves files. No server is required.
 
-`.github/workflows/deploy.yml` does exactly this on every push to `master` that touches the client,
+`.github/workflows/deploy-client.yml` does exactly this on every push to `master` that touches the client,
 deploying to GitHub Pages with `VITE_API_URL` taken from the repository variable of the same name.
 Leave that variable unset and the build is server-less again: every account and sync surface is
 compiled out.
+
+To prepare a release, run `bun run release` (or `bun run release minor` / `major`), review the
+generated `CHANGELOG.md`, and commit it with both `package.json` files. Client and server use the
+same version, enforced by the release script and deployment workflows. After the client deployment
+succeeds, GitHub Actions creates the corresponding `v…` tag. The in-app [changelog](CHANGELOG.md)
+is built from that same file.
 
 The API deploys separately — `.github/workflows/deploy-server.yml` ships `server/` to a Debian VPS
 (Bun + systemd behind Caddy) whenever `server/**` or `shared/**` changes. Setup, secrets and the

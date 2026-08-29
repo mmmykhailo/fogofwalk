@@ -4,6 +4,7 @@ export default [
   route("/", "routes/home.tsx", [
     index("routes/map-index.tsx"),
     route("help", "routes/help.tsx"),
+    route("changelog", "routes/changelog.tsx"),
     route("stats", "routes/stats.tsx"),
     route("activities", "routes/activities.tsx"),
     route("privacy", "routes/privacy.tsx"),
