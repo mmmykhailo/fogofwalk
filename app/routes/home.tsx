@@ -780,49 +780,74 @@ export default function Home() {
 
   // Sync mutates mapStore directly; reconcile the React state it can't reach.
   useEffect(() => {
-    setSyncChangeHandler(({ downloadedCount, updatedCount, deletedIds }) => {
-      setActivityCount(mapStore.activities.length)
+    setSyncChangeHandler(
+      ({
+        downloadedCount,
+        updatedCount,
+        deletedIds,
+        savedPoints: syncedSavedPoints = [],
+        deletedSavedPointIds = [],
+      }) => {
+        setActivityCount(mapStore.activities.length)
 
-      if (deletedIds.length > 0) {
-        // A removal invalidates the accumulated fog, so the run is abandoned
-        // and the survivors replayed — the same dance as `delete-activity`.
-        setSelectedActivityIds((prev) =>
-          prev.filter((id) => !deletedIds.includes(id))
-        )
-        setPendingActivityId(null)
-        mapStore.processedCount = 0
-        startFogRun()
-        postToFogWorker({ type: "RESET" })
-        const map = mapStore.map
-        if (map && mapStore.sourcesReady) {
-          ;(map.getSource("fog-source") as maplibregl.GeoJSONSource)?.setData(
-            worldFogGeoJSON()
+        if (syncedSavedPoints.length > 0 || deletedSavedPointIds.length > 0) {
+          setSavedPoints((current) => [
+            ...current.filter(
+              (point) =>
+                !deletedSavedPointIds.includes(point.id) &&
+                !syncedSavedPoints.some((saved) => saved.id === point.id)
+            ),
+            ...syncedSavedPoints,
+          ])
+        }
+
+        if (deletedIds.length > 0) {
+          // A removal invalidates the accumulated fog, so the run is abandoned
+          // and the survivors replayed — the same dance as `delete-activity`.
+          setSelectedActivityIds((prev) =>
+            prev.filter((id) => !deletedIds.includes(id))
           )
-          ;(
-            map.getSource("activities-source") as maplibregl.GeoJSONSource
-          )?.setData(featureCollection([]))
-          setLapHighlightData(map, null)
+          setPendingActivityId(null)
+          mapStore.processedCount = 0
+          startFogRun()
+          postToFogWorker({ type: "RESET" })
+          const map = mapStore.map
+          if (map && mapStore.sourcesReady) {
+            ;(map.getSource("fog-source") as maplibregl.GeoJSONSource)?.setData(
+              worldFogGeoJSON()
+            )
+            ;(
+              map.getSource("activities-source") as maplibregl.GeoJSONSource
+            )?.setData(featureCollection([]))
+            setLapHighlightData(map, null)
+          }
+          if (mapStore.activities.length > 0) {
+            postToFogWorker({
+              type: "PROCESS_ACTIVITIES",
+              activities: mapStore.activities,
+              mode: mapStore.fogMode,
+            })
+          }
         }
-        if (mapStore.activities.length > 0) {
-          postToFogWorker({
-            type: "PROCESS_ACTIVITIES",
-            activities: mapStore.activities,
-            mode: mapStore.fogMode,
-          })
+
+        if (downloadedCount > 0 || deletedIds.length > 0) {
+          setProcessedCount(0)
+          setIsProcessing(
+            mapStore.activities.length > 0 && mapStore.isFogRunInFlight
+          )
+        }
+
+        if (
+          downloadedCount > 0 ||
+          updatedCount > 0 ||
+          deletedIds.length > 0 ||
+          syncedSavedPoints.length > 0 ||
+          deletedSavedPointIds.length > 0
+        ) {
+          void revalidator.revalidate()
         }
       }
-
-      if (downloadedCount > 0 || deletedIds.length > 0) {
-        setProcessedCount(0)
-        setIsProcessing(
-          mapStore.activities.length > 0 && mapStore.isFogRunInFlight
-        )
-      }
-
-      if (downloadedCount > 0 || updatedCount > 0 || deletedIds.length > 0) {
-        void revalidator.revalidate()
-      }
-    })
+    )
     return () => setSyncChangeHandler(null)
   }, [revalidator])
 
