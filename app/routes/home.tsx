@@ -92,19 +92,18 @@ export function meta({}: Route.MetaArgs) {
   })
 }
 
-function savedPointFromSearchParams(
-  searchParams: URLSearchParams
+function savedPointFromLocationState(
+  state: unknown,
+  id: string | null
 ): SavedPoint | null {
-  const serializedPoint = searchParams.get("savedPointData")
-  const id = searchParams.get("savedPoint")
-  if (!serializedPoint || !id) return null
-
-  try {
-    const point = JSON.parse(serializedPoint) as SavedPoint
-    return point.id === id && isValidSavedPointInput(point) ? point : null
-  } catch {
+  if (!id || !state || typeof state !== "object" || !("savedPoint" in state)) {
     return null
   }
+
+  const point = (state as { savedPoint?: SavedPoint }).savedPoint
+  return point && isValidSavedPointInput(point) && point.id === id
+    ? point
+    : null
 }
 
 // Module-level cache for restored photos — avoids passing File objects through
@@ -596,7 +595,7 @@ export default function Home() {
     if (!mapReady) return
     const id = searchParams.get("savedPoint")
     const ownedPoint = savedPoints.find((savedPoint) => savedPoint.id === id)
-    const point = ownedPoint ?? savedPointFromSearchParams(searchParams)
+    const point = ownedPoint ?? savedPointFromLocationState(location.state, id)
     if (!point || !mapStore.map) return
     mapStore.map.easeTo({
       center: [point.lng, point.lat],
@@ -604,7 +603,7 @@ export default function Home() {
     })
     setEditingSavedPointId(ownedPoint?.id ?? null)
     setViewingSavedPoint(ownedPoint ? null : point)
-  }, [mapReady, savedPoints, searchParams])
+  }, [location.state, mapReady, savedPoints, searchParams])
 
   // Handle files shared via the Web Share Target API (PWA installed).
   // The service worker intercepts the POST to /?share-target, buffers the files

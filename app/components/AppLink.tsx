@@ -1,4 +1,5 @@
 import { ArrowLeftIcon } from "@phosphor-icons/react"
+import type { LinkProps } from "react-router"
 import { cn } from "~/lib/utils"
 import { TransitionLink } from "~/components/TransitionLink"
 
@@ -12,6 +13,7 @@ interface AppLinkProps {
   variant?: keyof typeof variants
   className?: string
   title?: string
+  state?: LinkProps["state"]
   children: React.ReactNode
 }
 
@@ -20,11 +22,13 @@ export function AppLink({
   variant = "subtle",
   className,
   title,
+  state,
   children,
 }: AppLinkProps) {
   return (
     <TransitionLink
       to={to}
+      state={state}
       className={cn(variants[variant], className)}
       title={title}
     >

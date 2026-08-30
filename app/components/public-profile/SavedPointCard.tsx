@@ -47,7 +47,8 @@ export function SavedPointCard({ point }: SavedPointCardProps) {
   return (
     <div className="min-w-0 rounded-none bg-card text-card-foreground ring-1 ring-foreground/10">
       <AppLink
-        to={`/?${new URLSearchParams({ savedPoint: point.id, savedPointData: JSON.stringify(point) })}`}
+        to={`/?savedPoint=${encodeURIComponent(point.id)}`}
+        state={{ savedPoint: point }}
         className="flex h-full flex-col gap-3 rounded-none p-4 transition-colors outline-none hover:bg-muted hover:decoration-0 focus-visible:ring-2 focus-visible:ring-ring"
         aria-label={`Open ${point.name} on the map`}
       >
