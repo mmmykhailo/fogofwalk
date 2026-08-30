@@ -17,6 +17,7 @@ import {
   type SavedPointColor,
 } from "~shared/saved-points"
 import type { clientAction } from "~/routes/home"
+import { createUuid } from "~/lib/uuid"
 
 export function SavedPointForm({
   point,
@@ -32,7 +33,7 @@ export function SavedPointForm({
   onDelete?: (id: string) => void
 }) {
   const fetcher = useFetcher<typeof clientAction>()
-  const [id] = useState(() => point?.id ?? crypto.randomUUID())
+  const [id] = useState(() => point?.id ?? createUuid())
   const [color, setColor] = useState<SavedPointColor>(point?.color ?? "blue")
   const [isPublic, setIsPublic] = useState(point?.isPublic ?? false)
   const errors =

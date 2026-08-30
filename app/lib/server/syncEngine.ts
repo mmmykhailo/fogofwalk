@@ -37,6 +37,7 @@ import {
 } from "~/lib/storage"
 import { ingestActivities, mapStore } from "~/lib/mapStore"
 import { backfillContentHashes } from "~/lib/activityHash"
+import { createUuid } from "~/lib/uuid"
 import { populateUniqueDistances } from "~/lib/statsAggregator"
 import { apiRaw, apiSend, ApiRequestError, friendlyMessage } from "./apiClient"
 import { canSync } from "./authStore"
@@ -855,7 +856,7 @@ async function downloadActivity(
   return {
     ...payload,
     // Ids are per-device; the content hash is the shared identity.
-    id: localId ?? crypto.randomUUID(),
+    id: localId ?? createUuid(),
     contentHash: meta.contentHash,
     name: meta.name,
     isPublic: meta.isPublic,

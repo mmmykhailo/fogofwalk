@@ -1,6 +1,7 @@
 import exifr from "exifr"
 import type { ParsedActivity } from "~/types/activities"
 import type { PhotoEntry } from "~/types/photos"
+import { createUuid } from "~/lib/uuid"
 
 const MATCH_TOLERANCE_MS = 5 * 60 * 1000
 
@@ -89,7 +90,7 @@ export async function processPhotoFiles(
     if (isDuplicate) continue
 
     newEntries.push({
-      id: crypto.randomUUID(),
+      id: createUuid(),
       file,
       takenAtMs,
       lng: match.lng,
