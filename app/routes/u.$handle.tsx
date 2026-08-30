@@ -158,7 +158,7 @@ export default function PublicProfilePage() {
             <SavedPointsSection
               points={savedPoints}
               maxPoints={4}
-              viewAllTo={`/u/${encodeURIComponent(profile.user.handle)}/points`}
+              viewAllTo={`/u/${encodeURIComponent(profile.user.handle)}/saved-points`}
             />
           </div>
         )}

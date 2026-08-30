@@ -15,6 +15,6 @@ export default [
     route("admin", "routes/admin.tsx"),
     route("u/:handle", "routes/u.$handle.tsx"),
     route("u/:handle/achievements", "routes/u.$handle.achievements.tsx"),
-    route("u/:handle/points", "routes/u.$handle.points.tsx"),
+    route("u/:handle/saved-points", "routes/u.$handle.saved-points.tsx"),
   ]),
 ] satisfies RouteConfig

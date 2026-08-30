@@ -7,7 +7,7 @@ import { TransitionLink } from "~/components/TransitionLink"
 import { apiUrl } from "~/lib/server/config"
 import { socialMeta } from "~/lib/socialMeta"
 import type { PublicProfileResponse } from "~shared/api"
-import type { Route } from "./+types/u.$handle.points"
+import type { Route } from "./+types/u.$handle.saved-points"
 
 interface SavedPointsLoaderData {
   profile: PublicProfileResponse | null
@@ -43,7 +43,7 @@ export function meta({ data, params }: Route.MetaArgs) {
   return socialMeta({
     title: `${displayName}'s saved points — Fog of Walk`,
     description: `Public saved points by ${displayName} on Fog of Walk.`,
-    path: `/u/${encodeURIComponent(handle)}/points`,
+    path: `/u/${encodeURIComponent(handle)}/saved-points`,
     type: "profile",
     profileHandle: handle,
   })
