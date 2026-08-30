@@ -3,11 +3,10 @@ name: Deploy server
 on:
   push:
     branches: [master]
+    # Deployments are releases: the release script bumps this file together
+    # with the client package version.
     paths:
-      - "server/**"
-      - "shared/**"
-      - ".github/workflows/deploy-server.yml"
-  workflow_dispatch:
+      - "server/package.json"
 
 permissions:
   contents: read
@@ -35,6 +34,15 @@ jobs:
           # Keep in step with BUN_VERSION in server/deploy/provision.sh, so the
           # lockfile is resolved by the same version that will run it.
           bun-version: 1.3.4
+
+      - name: Check release version
+        run: |
+          CLIENT_VERSION=$(bun -p "require('./package.json').version")
+          SERVER_VERSION=$(bun -p "require('./server/package.json').version")
+          if [ "$CLIENT_VERSION" != "$SERVER_VERSION" ]; then
+            echo "Client and server versions must match ($CLIENT_VERSION != $SERVER_VERSION)." >&2
+            exit 1
+          fi
 
       - name: Install dependencies
         working-directory: server

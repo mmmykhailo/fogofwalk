@@ -5,7 +5,7 @@ import { Protocol } from "pmtiles"
 import bbox from "@turf/bbox"
 import { featureCollection, lineString } from "@turf/helpers"
 import "maplibre-gl/dist/maplibre-gl.css"
-import { mapStore, worldFogGeoJSON } from "~/lib/mapStore"
+import { finishFogJob, mapStore, worldFogGeoJSON } from "~/lib/mapStore"
 import { saveFogCache } from "~/lib/storage"
 import { saveMapPosition } from "~/lib/mapStore"
 import {
@@ -28,7 +28,9 @@ import type {
   WorkerOutboundMessage,
 } from "~/types/activities"
 import type { PhotoEntry, PhotoGroup } from "~/types/photos"
+import { SAVED_POINT_COLORS, type SavedPoint } from "~shared/saved-points"
 import { MapCompass } from "~/components/MapCompass"
+import { SavedPointTooltip } from "~/components/SavedPointTooltip"
 
 const CLUSTER_PIXEL_RADIUS = 50
 
@@ -149,6 +151,36 @@ function setupMapLayers(map: maplibregl.Map, mode: MapMode): void {
       "line-width": ACTIVITY_WIDTH_DEFAULT,
       "line-opacity": ACTIVITY_OPACITY_DEFAULT,
     },
+  })
+
+  map.addSource("saved-points-source", {
+    type: "geojson",
+    data: featureCollection([]),
+  })
+  map.addLayer({
+    id: "saved-points-outer-layer",
+    type: "circle",
+    source: "saved-points-source",
+    paint: {
+      "circle-radius": 10,
+      "circle-color": ["get", "color"],
+      "circle-stroke-width": 1,
+      "circle-stroke-color": "#fff",
+    },
+  })
+  map.addLayer({
+    id: "saved-points-centre-layer",
+    type: "circle",
+    source: "saved-points-source",
+    paint: { "circle-radius": 3.5, "circle-color": "#fff" },
+  })
+  // Kept as a source layer (rather than a DOM marker) so taps have a forgiving
+  // target without making the visible point itself oversized.
+  map.addLayer({
+    id: "saved-points-hit-layer",
+    type: "circle",
+    source: "saved-points-source",
+    paint: { "circle-radius": 22, "circle-color": "#000", "circle-opacity": 0 },
   })
   // Invisible wide line for hit-testing only — the visible line stays thin
   // but taps/clicks within ACTIVITY_HIT_WIDTH px of it still register.
@@ -293,6 +325,19 @@ interface MapViewProps {
    * `slice()` returns a fresh array every render and would refit continuously.
    */
   focusKey: string | null
+  savedPoints: SavedPoint[]
+  showSavedPoints: boolean
+  onSavedPointSelect: (id: string) => void
+  onSavedPointCreate?: (location: {
+    lng: number
+    lat: number
+    point: { x: number; y: number }
+  }) => void
+}
+
+interface SavedPointTooltipState {
+  name: string
+  point: { x: number; y: number }
 }
 
 export function MapView({
@@ -311,6 +356,10 @@ export function MapView({
   highlightCoordinates,
   focusCoordinates,
   focusKey,
+  savedPoints,
+  showSavedPoints,
+  onSavedPointSelect,
+  onSavedPointCreate,
 }: MapViewProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const onProcessingUpdateRef = useRef(onProcessingUpdate)
@@ -331,22 +380,34 @@ export function MapView({
   // (refit) from "a different activity just got selected" (leave the camera).
   const prevFocusKeyRef = useRef<string | null>(null)
   const pendingStyleLoadRef = useRef<(() => void) | null>(null)
+  const isInitialStyleLoadedRef = useRef(false)
   const photoMarkersRef = useRef<Map<string, maplibregl.Marker>>(new Map())
   const myLocationMarkerRef = useRef<maplibregl.Marker | null>(null)
   const photosRef = useRef<PhotoEntry[]>(photos)
   photosRef.current = photos
   const showPhotosRef = useRef(showPhotos)
   showPhotosRef.current = showPhotos
+  const onSavedPointSelectRef = useRef(onSavedPointSelect)
+  onSavedPointSelectRef.current = onSavedPointSelect
+  const onSavedPointCreateRef = useRef(onSavedPointCreate)
+  onSavedPointCreateRef.current = onSavedPointCreate
+  const savedPointsRef = useRef(savedPoints)
+  savedPointsRef.current = savedPoints
+  const showSavedPointsRef = useRef(showSavedPoints)
+  showSavedPointsRef.current = showSavedPoints
 
   const clusterCacheRef = useRef<Map<number, PhotoGroup[]>>(new Map())
-  // Cache for the activities FeatureCollection — only rebuilt when mapStore.activities.length changes.
-  // Prevents redundant GeoJSON reconstruction + GPU re-upload on every 300ms FOG_UPDATE.
+  // Cache for the activities FeatureCollection. The id key catches delete+add
+  // interactions whose total length stays unchanged, while avoiding redundant
+  // GeoJSON reconstruction + GPU re-upload on every 300ms FOG_UPDATE.
   const cachedActivitiesGeoJSON = useRef<ReturnType<
     typeof featureCollection
   > | null>(null)
-  const cachedActivitiesLength = useRef(-1)
+  const cachedActivitiesKey = useRef<string | null>(null)
   const [bearing, setBearing] = useState(0)
   const [pitch, setPitch] = useState(0)
+  const [savedPointTooltip, setSavedPointTooltip] =
+    useState<SavedPointTooltipState | null>(null)
 
   const rebuildPhotoMarkers = useCallback(() => {
     const map = mapStore.map
@@ -439,7 +500,137 @@ export function MapView({
       saveMapPosition([c.lng, c.lat], map.getZoom())
     })
 
+    const isSavedPointGesture = (point: maplibregl.Point) =>
+      showSavedPointsRef.current &&
+      map.queryRenderedFeatures(point, { layers: ["saved-points-hit-layer"] })
+        .length > 0
+    const isProtectedCreateGesture = (point: maplibregl.Point) => {
+      if (isSavedPointGesture(point)) return true
+      return (
+        map.queryRenderedFeatures(point, { layers: ["activities-hit-layer"] })
+          .length > 0
+      )
+    }
+    const createSavedPoint = (
+      lngLat: maplibregl.LngLat,
+      point: maplibregl.Point
+    ) => {
+      onSavedPointCreateRef.current?.({
+        lng: lngLat.lng,
+        lat: lngLat.lat,
+        point: { x: point.x, y: point.y },
+      })
+    }
+
+    map.on("mouseenter", "saved-points-hit-layer", (event) => {
+      if (!showSavedPointsRef.current) return
+      map.getCanvas().style.cursor = "pointer"
+      const savedPoint = event.features?.[0]
+      const name = savedPoint?.properties?.name
+      const coordinates =
+        savedPoint?.geometry.type === "Point"
+          ? savedPoint.geometry.coordinates
+          : null
+      if (
+        typeof name !== "string" ||
+        !name ||
+        !coordinates ||
+        typeof coordinates[0] !== "number" ||
+        typeof coordinates[1] !== "number"
+      )
+        return
+      const point = map.project([coordinates[0], coordinates[1]])
+      setSavedPointTooltip({ name, point: { x: point.x, y: point.y } })
+    })
+    map.on("mouseleave", "saved-points-hit-layer", () => {
+      map.getCanvas().style.cursor = ""
+      setSavedPointTooltip(null)
+    })
+
+    // A normal click remains dedicated to map navigation and selection. Desktop
+    // creation is deliberately only on the context menu.
+    map.on("contextmenu", (event) => {
+      event.preventDefault()
+      if (isProtectedCreateGesture(event.point)) return
+      createSavedPoint(event.lngLat, event.point)
+    })
+
+    const canvas = map.getCanvas()
+    let longPressTimer: ReturnType<typeof setTimeout> | null = null
+    let longPressPointerId: number | null = null
+    let longPressStart: maplibregl.Point | null = null
+    let longPressCancelled = false
+    const cancelLongPress = () => {
+      if (longPressTimer) clearTimeout(longPressTimer)
+      longPressTimer = null
+      longPressPointerId = null
+      longPressStart = null
+    }
+    const onPointerDown = (event: PointerEvent) => {
+      if (event.pointerType !== "touch") return
+      // A second finger means the user is beginning a map gesture, such as a
+      // pinch; it must cancel the first finger's pending long press.
+      if (!event.isPrimary) {
+        longPressCancelled = true
+        cancelLongPress()
+        return
+      }
+      if (longPressTimer) return
+      const bounds = canvas.getBoundingClientRect()
+      const point = new maplibregl.Point(
+        event.clientX - bounds.left,
+        event.clientY - bounds.top
+      )
+      // Markers are DOM elements above the canvas. Never turn a press on one
+      // into a create action, even when the map has not rendered a feature there.
+      if (
+        (event.target as Element | null)?.closest(".maplibregl-marker") ||
+        isProtectedCreateGesture(point)
+      )
+        return
+      longPressPointerId = event.pointerId
+      longPressStart = point
+      longPressCancelled = false
+      longPressTimer = setTimeout(() => {
+        longPressTimer = null
+        if (!longPressCancelled && longPressStart) {
+          createSavedPoint(map.unproject(longPressStart), longPressStart)
+        }
+      }, 500)
+    }
+    const onPointerMove = (event: PointerEvent) => {
+      if (event.pointerId !== longPressPointerId || !longPressStart) return
+      const bounds = canvas.getBoundingClientRect()
+      const dx = event.clientX - bounds.left - longPressStart.x
+      const dy = event.clientY - bounds.top - longPressStart.y
+      if (Math.hypot(dx, dy) > 8) {
+        longPressCancelled = true
+        cancelLongPress()
+      }
+    }
+    const onPointerEnd = (event: PointerEvent) => {
+      if (event.pointerId === longPressPointerId) {
+        longPressCancelled = true
+        cancelLongPress()
+      }
+    }
+    canvas.addEventListener("pointerdown", onPointerDown)
+    canvas.addEventListener("pointermove", onPointerMove)
+    canvas.addEventListener("pointerup", onPointerEnd)
+    canvas.addEventListener("pointercancel", onPointerEnd)
+
     map.on("click", (e) => {
+      const savedPointFeatures = showSavedPointsRef.current
+        ? map.queryRenderedFeatures(e.point, {
+            layers: ["saved-points-hit-layer"],
+          })
+        : []
+      if (savedPointFeatures.length > 0) {
+        const id = savedPointFeatures[0].properties?.id
+        if (id) onSavedPointSelectRef.current(id)
+        map.easeTo({ center: e.lngLat, zoom: Math.max(map.getZoom(), 16) })
+        return
+      }
       const activityFeatures = map.queryRenderedFeatures(e.point, {
         layers: ["activities-hit-layer"],
       })
@@ -462,20 +653,99 @@ export function MapView({
     map.once("load", () => {
       map.resize()
       setupMapLayers(map, "flat")
+      const savedPointsSource = map.getSource("saved-points-source") as
+        | maplibregl.GeoJSONSource
+        | undefined
+      savedPointsSource?.setData(
+        featureCollection(
+          savedPointsRef.current.map((point) => ({
+            type: "Feature" as const,
+            properties: {
+              id: point.id,
+              name: point.name,
+              color: SAVED_POINT_COLORS[point.color],
+            },
+            geometry: {
+              type: "Point" as const,
+              coordinates: [point.lng, point.lat],
+            },
+          }))
+        )
+      )
+      for (const layer of [
+        "saved-points-outer-layer",
+        "saved-points-centre-layer",
+        "saved-points-hit-layer",
+      ]) {
+        map.setLayoutProperty(
+          layer,
+          "visibility",
+          showSavedPointsRef.current ? "visible" : "none"
+        )
+      }
       mapStore.sourcesReady = true
+      isInitialStyleLoadedRef.current = true
       onMapReady?.()
     })
 
     map.on("zoomend", () => rebuildPhotoMarkers())
 
     return () => {
+      cancelLongPress()
+      canvas.removeEventListener("pointerdown", onPointerDown)
+      canvas.removeEventListener("pointermove", onPointerMove)
+      canvas.removeEventListener("pointerup", onPointerEnd)
+      canvas.removeEventListener("pointercancel", onPointerEnd)
       mapStore.sourcesReady = false
       mapStore.map = null
+      if (pendingStyleLoadRef.current) {
+        map.off("style.load", pendingStyleLoadRef.current)
+        pendingStyleLoadRef.current = null
+      }
       photoMarkersRef.current.forEach((m) => m.remove())
       photoMarkersRef.current.clear()
       map.remove()
     }
   }, [])
+
+  useEffect(() => {
+    if (!showSavedPoints) setSavedPointTooltip(null)
+  }, [showSavedPoints])
+
+  useEffect(() => {
+    const map = mapStore.map
+    if (!map || !mapStore.sourcesReady) return
+    const source = map.getSource("saved-points-source") as
+      | maplibregl.GeoJSONSource
+      | undefined
+    source?.setData(
+      featureCollection(
+        savedPoints.map((point) => ({
+          type: "Feature" as const,
+          properties: {
+            id: point.id,
+            name: point.name,
+            color: SAVED_POINT_COLORS[point.color],
+          },
+          geometry: {
+            type: "Point" as const,
+            coordinates: [point.lng, point.lat],
+          },
+        }))
+      )
+    )
+    for (const layer of [
+      "saved-points-outer-layer",
+      "saved-points-centre-layer",
+      "saved-points-hit-layer",
+    ]) {
+      map.setLayoutProperty(
+        layer,
+        "visibility",
+        showSavedPoints ? "visible" : "none"
+      )
+    }
+  }, [savedPoints, showSavedPoints, mapMode])
 
   useEffect(() => {
     if (!mapStore.worker) return
@@ -491,21 +761,32 @@ export function MapView({
       // after the worker has bailed out.
       if (msg.runId !== mapStore.runId) return
 
+      if (msg.type === "ERROR") {
+        // Do not trust incremental state after an unrecoverable mask failure;
+        // the next addition gets a full replay and another chance to recover.
+        mapStore.fogWorkerActivityIds.clear()
+        console.warn(`[worker] fog failed for ${msg.file}: ${msg.message}`)
+        return
+      }
+
+      if (msg.type === "PROGRESS") {
+        mapStore.processedCount = msg.processedCount
+        onProcessingUpdateRef.current?.(msg.processedCount, false)
+        return
+      }
+
       // DONE: always notify the UI so the spinner and activity count are updated
       // even if map sources are temporarily unavailable (e.g. during a style switch).
       // fitBounds is handled in handleProcessingUpdate (home.tsx) — it only needs the
       // map object, not sourcesReady.
       if (msg.type === "DONE") {
-        mapStore.isFogRunInFlight = false
-        onProcessingUpdateRef.current?.(msg.processedCount, true)
+        mapStore.processedCount = msg.processedCount
+        const isRunDone = finishFogJob()
+        onProcessingUpdateRef.current?.(msg.processedCount, isRunDone)
 
-        // Persist the computed fog cache (requires live sources)
-        if (
-          map &&
-          mapStore.sourcesReady &&
-          mapStore.activities.length > 0 &&
-          mapStore.fogData
-        ) {
+        // Persist only after every same-run batch is complete. The geometry is
+        // held in mapStore even while a style change has no live fog source.
+        if (isRunDone && mapStore.activities.length > 0 && mapStore.fogData) {
           saveFogCache({
             activityIds: mapStore.activities.map((t) => t.id).sort(),
             fogMode: mapStore.fogMode,
@@ -518,11 +799,16 @@ export function MapView({
         return
       }
 
-      // FOG_UPDATE: needs live sources to push data into the map
-      if (!map || !mapStore.sourcesReady) return
-
       if (msg.type === "FOG_UPDATE") {
+        // Always retain a valid update. setStyle temporarily destroys the source;
+        // setupMapLayers reads this state once the replacement style is ready.
         mapStore.fogData = msg.fogData
+        mapStore.processedCount = msg.processedCount
+        onProcessingUpdateRef.current?.(msg.processedCount, false)
+
+        // The state above is authoritative; a live source is only a rendering sink.
+        if (!map || !mapStore.sourcesReady) return
+
         const fogSource = map.getSource(
           "fog-source"
         ) as maplibregl.GeoJSONSource
@@ -531,22 +817,23 @@ export function MapView({
         // Only rebuild and re-push activities when the list has changed.
         // mapStore.activities is frozen during a processing run, so this fires at most
         // once per add/delete — not on every 300ms FOG_UPDATE.
+        const activitiesKey = mapStore.activities
+          .map((activity) => activity.id)
+          .join("\0")
         if (
-          mapStore.activities.length !== cachedActivitiesLength.current ||
+          activitiesKey !== cachedActivitiesKey.current ||
           !cachedActivitiesGeoJSON.current
         ) {
           const activityFeatures = mapStore.activities.map((t) =>
             lineString(t.coordinates, { name: t.name, id: t.id })
           )
           cachedActivitiesGeoJSON.current = featureCollection(activityFeatures)
-          cachedActivitiesLength.current = mapStore.activities.length
+          cachedActivitiesKey.current = activitiesKey
           const activitiesSource = map.getSource(
             "activities-source"
           ) as maplibregl.GeoJSONSource
           activitiesSource?.setData(cachedActivitiesGeoJSON.current)
         }
-
-        onProcessingUpdateRef.current?.(msg.processedCount, false)
       }
     }
 
@@ -557,25 +844,60 @@ export function MapView({
 
   useEffect(() => {
     const map = mapStore.map
-    if (!map || !mapStore.sourcesReady) return
+    // The first style is installed by the map constructor. Controls are not
+    // mounted until its load callback runs, so this only skips the initial effect.
+    if (!map || !isInitialStyleLoadedRef.current) return
 
     if (pendingStyleLoadRef.current) {
-      map.off("styledata", pendingStyleLoadRef.current)
+      map.off("style.load", pendingStyleLoadRef.current)
       pendingStyleLoadRef.current = null
     }
 
     mapStore.sourcesReady = false
-    map.setStyle(mapMode === "relief" ? SATELLITE_STYLE : MAP_STYLE_URL)
 
-    const onStyleData = () => {
-      map.off("styledata", onStyleData)
+    const onStyleLoad = () => {
+      // A rapid second toggle removes this listener, but keep the identity
+      // check as a guard against an already queued callback.
+      if (pendingStyleLoadRef.current !== onStyleLoad) return
+      map.off("style.load", onStyleLoad)
       pendingStyleLoadRef.current = null
 
       setupMapLayers(map, mapMode)
 
+      const savedPointsSource = map.getSource("saved-points-source") as
+        | maplibregl.GeoJSONSource
+        | undefined
+      savedPointsSource?.setData(
+        featureCollection(
+          savedPointsRef.current.map((point) => ({
+            type: "Feature" as const,
+            properties: {
+              id: point.id,
+              name: point.name,
+              color: SAVED_POINT_COLORS[point.color],
+            },
+            geometry: {
+              type: "Point" as const,
+              coordinates: [point.lng, point.lat],
+            },
+          }))
+        )
+      )
+      for (const layer of [
+        "saved-points-outer-layer",
+        "saved-points-centre-layer",
+        "saved-points-hit-layer",
+      ]) {
+        map.setLayoutProperty(
+          layer,
+          "visibility",
+          showSavedPointsRef.current ? "visible" : "none"
+        )
+      }
+
       // Invalidate activities cache so FOG_UPDATE re-pushes to the new source.
       cachedActivitiesGeoJSON.current = null
-      cachedActivitiesLength.current = -1
+      cachedActivitiesKey.current = null
 
       map.setLayoutProperty(
         "activities-layer",
@@ -616,8 +938,9 @@ export function MapView({
       rebuildPhotoMarkers()
     }
 
-    pendingStyleLoadRef.current = onStyleData
-    map.on("styledata", onStyleData)
+    pendingStyleLoadRef.current = onStyleLoad
+    map.on("style.load", onStyleLoad)
+    map.setStyle(mapMode === "relief" ? SATELLITE_STYLE : MAP_STYLE_URL)
   }, [mapMode])
 
   useEffect(() => {
@@ -732,6 +1055,7 @@ export function MapView({
   return (
     <>
       <div ref={containerRef} className="absolute inset-0 h-screen" />
+      {savedPointTooltip && <SavedPointTooltip {...savedPointTooltip} />}
       <MapCompass
         bearing={bearing}
         pitch={pitch}

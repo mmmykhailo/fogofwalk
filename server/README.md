@@ -13,7 +13,7 @@ Pages workflow is untouched. The only thing the two sides share is `../shared`.
 `MAX_ACTIVITY_BYTES` and `SYNC_CONCURRENCY` as runtime values, so those literals do
 reach the browser bundle. Keep it free of anything heavier than a constant.
 
-Runtime dependencies are `hono`, `arctic` and `zod` (all MIT). Everything else
+Runtime dependencies are `hono` and `zod` (both MIT). Everything else
 — HTTP, SQLite, gzip, hashing, tests, env loading — is the Bun runtime itself.
 
 ## Quick start
@@ -41,38 +41,38 @@ from the repository root.
 Bun loads `server/.env` automatically. Every variable is validated at boot;
 a missing or malformed one aborts startup with a message naming it.
 
-| Variable               | Required | Default     | Purpose                                                                                                                       |
-| ---------------------- | -------- | ----------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| `PORT`                 | no       | `8787`      | Port `Bun.serve` listens on.                                                                                                  |
-| `HOST`                 | no       | `0.0.0.0`   | Interface to bind. Right for a container; behind a reverse proxy use `127.0.0.1` so the port is unreachable from the network. |
-| `DATA_DIR`             | no       | `./data`    | SQLite file + blob tree (`sqlite-fs`).                                                                                        |
-| `STORE_DRIVER`         | no       | `sqlite-fs` | `sqlite-fs` or `memory`.                                                                                                      |
-| `ALLOWED_ORIGINS`      | **yes**  | —           | Comma-separated exact client origins. Drives CORS _and_ the OAuth redirect allowlist. Never `*`.                              |
-| `ADMIN_LOGINS`         | **yes**  | —           | Comma-separated deployment-owned `provider:login` administrators.                                                             |
-| `SESSION_SECRET`       | **yes**  | —           | ≥ 32 chars. Signs the OAuth state cookie.                                                                                     |
-| `PUBLIC_URL`           | **yes**  | —           | This server's externally reachable base URL. The OAuth callback URI is derived from it.                                       |
-| `GITHUB_CLIENT_ID`     | pair     | —           | Omit both to leave GitHub sign-in off.                                                                                        |
-| `GITHUB_CLIENT_SECRET` | pair     | —           | Must be set together with the id.                                                                                             |
+| Variable               | Required | Default     | Purpose                                                                                                                                        |
+| ---------------------- | -------- | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PORT`                 | no       | `8787`      | Port `Bun.serve` listens on.                                                                                                                   |
+| `HOST`                 | no       | `0.0.0.0`   | Interface to bind. Right for a container; behind a reverse proxy use `127.0.0.1` so the port is unreachable from the network.                  |
+| `DATA_DIR`             | no       | `./data`    | SQLite file + blob tree (`sqlite-fs`).                                                                                                         |
+| `STORE_DRIVER`         | no       | `sqlite-fs` | `sqlite-fs` or `memory`.                                                                                                                       |
+| `ALLOWED_ORIGINS`      | **yes**  | —           | Comma-separated exact client origins. Drives CORS _and_ the OAuth redirect allowlist. Never `*`.                                               |
+| `ADMIN_LOGINS`         | **yes**  | —           | Comma-separated deployment-owned `provider:login` administrators.                                                                              |
+| `SESSION_SECRET`       | **yes**  | —           | ≥ 32 chars. Signs the OAuth state cookie.                                                                                                      |
+| `PUBLIC_URL`           | **yes**  | —           | This server's externally reachable base URL. The OAuth callback URI is derived from it.                                                        |
+| `GITHUB_CLIENT_ID`     | pair     | —           | Omit both to leave GitHub sign-in off.                                                                                                         |
+| `GITHUB_CLIENT_SECRET` | pair     | —           | Must be set together with the id.                                                                                                              |
 | `DEV_FAKE_AUTH`        | no       | `false`     | Enables local test users following the normal access-approval flow. Rejected unless the API and every allowed client origin are loopback URLs. |
 
 ## API
 
-| Method | Path                                          | Auth    | Purpose                                                                                                   |
-| ------ | --------------------------------------------- | ------- | --------------------------------------------------------------------------------------------------------- |
-| GET    | `/health`                                     | —       | Liveness.                                                                                                 |
-| GET    | `/api/auth/providers`                         | —       | `{ providers: [{ id, label }] }` — drives the sign-in dialog.                                             |
-| GET    | `/api/auth/:provider/start?redirect=<origin>` | —       | 302 to the provider.                                                                                      |
-| GET    | `/api/auth/:provider/callback`                | —       | 302 back to `<origin>/auth/callback?code=<handoff>`.                                                      |
-| POST   | `/api/auth/exchange`                          | —       | Handoff code → bearer token.                                                                              |
-| POST   | `/api/auth/logout`                            | session | Revokes this session.                                                                                     |
-| GET    | `/api/me`                                     | session | User + capabilities.                                                                                      |
-| GET    | `/api/account/export`                         | session | Full JSON export of the requesting user's account data.                                                   |
-| DELETE | `/api/account`                                | session | Erases the account server-side.                                                                           |
-| GET    | `/api/activities/manifest?since=<cursor>`         | allowed | Metadata + tombstones page.                                                                               |
-| PUT    | `/api/activities/:contentHash`                    | allowed | Gzipped upload, idempotent.                                                                               |
-| GET    | `/api/activities/:contentHash`                    | allowed | The gzipped activity JSON.                                                                                   |
-| DELETE | `/api/activities`                                 | allowed | Purge every activity for this user. **No tombstones** — other devices keep their copies. Backs "Remove all". |
-| DELETE | `/api/activities/:contentHash`                    | allowed | Delete + tombstone. Returns the tombstone's `deletedAt`.                                                  |
+| Method | Path                                          | Auth    | Purpose                                                                                                      |
+| ------ | --------------------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------ |
+| GET    | `/health`                                     | —       | Liveness.                                                                                                    |
+| GET    | `/api/auth/providers`                         | —       | `{ providers: [{ id, label }] }` — drives the sign-in dialog.                                                |
+| GET    | `/api/auth/:provider/start?redirect=<origin>` | —       | 302 to the provider.                                                                                         |
+| GET    | `/api/auth/:provider/callback`                | —       | 302 back to `<origin>/auth/callback?code=<handoff>`.                                                         |
+| POST   | `/api/auth/exchange`                          | —       | Handoff code → bearer token.                                                                                 |
+| POST   | `/api/auth/logout`                            | session | Revokes this session.                                                                                        |
+| GET    | `/api/me`                                     | session | User + capabilities.                                                                                         |
+| GET    | `/api/account/export`                         | session | Full JSON export of the requesting user's account data.                                                      |
+| DELETE | `/api/account`                                | session | Erases the account server-side.                                                                              |
+| GET    | `/api/activities/manifest?since=<cursor>`     | allowed | Metadata + tombstones page.                                                                                  |
+| PUT    | `/api/activities/:contentHash`                | allowed | Gzipped upload, idempotent.                                                                                  |
+| GET    | `/api/activities/:contentHash`                | allowed | The gzipped activity JSON.                                                                                   |
+| DELETE | `/api/activities`                             | allowed | Purge every activity for this user. **No tombstones** — other devices keep their copies. Backs "Remove all". |
+| DELETE | `/api/activities/:contentHash`                | allowed | Delete + tombstone. Returns the tombstone's `deletedAt`.                                                     |
 
 Non-2xx bodies are always `{ error, message? }` with `error` drawn from
 `ApiErrorCode` in `shared/api.ts`.
@@ -135,8 +135,6 @@ accounts. This switch is rejected at startup unless `PUBLIC_URL` and all
 `ALLOWED_ORIGINS` entries are loopback URLs.
 
 ## Adding another OAuth provider
-
-`arctic` already ships Google, Apple, Discord, Strava and others.
 
 1. `src/auth/providers/<name>.ts` — export a factory returning an
    `OAuthProvider` (`src/auth/providers/types.ts`): `id`, `label`,

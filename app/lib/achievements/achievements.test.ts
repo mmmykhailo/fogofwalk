@@ -143,18 +143,37 @@ describe("computeEarnedAchievements", () => {
     ).toBe(10)
   })
 
-  test("sorts earned achievements newest first and leaves undated awards last", () => {
+  test("sorts achievements by newest day, then by difficulty, with undated awards last", () => {
     const earned = computeEarnedAchievements([
-      activity({ activityType: "running", distanceKm: 5, startedAtMs: 10 }),
-      activity({ activityType: "cycling", distanceKm: 50, startedAtMs: 20 }),
-      activity({ activityType: "walking", distanceKm: 10 }),
+      activity({
+        activityType: "running",
+        distanceKm: 5,
+        startedAtMs: new Date(2026, 0, 3, 9).getTime(),
+      }),
+      activity({
+        activityType: "walking",
+        distanceKm: 50,
+        startedAtMs: new Date(2026, 0, 2, 18).getTime(),
+      }),
+      activity({
+        activityType: "walking",
+        distanceKm: 25,
+        startedAtMs: new Date(2026, 0, 2, 8).getTime(),
+      }),
+      activity({ activityType: "cycling", distanceKm: 50 }),
     ])
 
     expect(
       sortEarnedAchievementsNewestFirst(earned).map(
         ({ definition }) => definition.id
       )
-    ).toEqual(["cycling-50k", "running-5k", "walking-10k"])
+    ).toEqual([
+      "running-5k",
+      "walking-50k",
+      "walking-25k",
+      "walking-10k",
+      "cycling-50k",
+    ])
   })
 
   test("keeps an achievement earned by an undated legacy activity, with no award date", () => {

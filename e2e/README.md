@@ -22,11 +22,11 @@ Six specs, one per area of sync behaviour:
 
 | Spec                    | Covers                                                                                                                      |
 | ----------------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| `auth.spec.ts`          | local-account sign-in, session persistence, pending-vs-allowed, log out, delete account                                      |
+| `auth.spec.ts`          | local-account sign-in, session persistence, pending-vs-allowed, log out, delete account                                     |
 | `activity-sync.spec.ts` | upload, download onto a second device, content-hash dedupe, the scheduler, manifest paging                                  |
 | `deletion.spec.ts`      | the three deletion semantics — per-activity with and without the server switch, purge-all, clear-all                        |
 | `suspension.spec.ts`    | auto-sync suspension after a local-only delete, and that only a manual sync clears it                                       |
-| `serverless.spec.ts`    | the `VITE_API_URL`-unset build: no account surfaces, no requests, everything else still works                               |
+| `serverless.spec.ts`    | the `VITE_API_URL`-unset build, fog-cache/worker convergence, and fog updates during map-style changes                      |
 | `rate-limit.spec.ts`    | a 429 upload is retried inside the same sync run, the retry is bounded, and both account surfaces count an upload hold down |
 
 ## How the rig fits together
@@ -68,13 +68,13 @@ Workers own disjoint slices of the pool.
 The suite exists because sync shipped several regressions in a row. Re-break one
 and check the matching spec fails — all six below were verified to do so:
 
-| Break                                                                 | Spec that must fail                                                 |
-| --------------------------------------------------------------------- | ------------------------------------------------------------------- |
-| dropping the 429 retry in `uploadActivity`                            | a 429 is retried within the same sync                               |
-| dropping `announceHold` from the pacing branch of `acquireUploadSlot` | self-paced holds are announced too                                  |
-| `useUploadHoldNotice` not rendered by the account surfaces            | the account surfaces explain the hold and count down                |
-| `newActivitiesCount: allActivities.length` in `add-files`             | re-importing the same files … does not hang                         |
-| `clear-all` propagating deletions to the server                       | clear all leaves the server untouched                               |
-| dropping `appliedTombstones` freshness check                          | a deleted activity can be re-imported                               |
+| Break                                                                 | Spec that must fail                                                  |
+| --------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| dropping the 429 retry in `uploadActivity`                            | a 429 is retried within the same sync                                |
+| dropping `announceHold` from the pacing branch of `acquireUploadSlot` | self-paced holds are announced too                                   |
+| `useUploadHoldNotice` not rendered by the account surfaces            | the account surfaces explain the hold and count down                 |
+| `newActivitiesCount: allActivities.length` in `add-files`             | re-importing the same files … does not hang                          |
+| `clear-all` propagating deletions to the server                       | clear all leaves the server untouched                                |
+| dropping `appliedTombstones` freshness check                          | a deleted activity can be re-imported                                |
 | `isFromScratch = false`                                               | an activity re-imported after a clear-all survives its old tombstone |
-| `setIsProcessing(activityCount > 0)` without `isFogRunInFlight`       | deleting with the server switch on                                  |
+| `setIsProcessing(activityCount > 0)` without `isFogRunInFlight`       | deleting with the server switch on                                   |

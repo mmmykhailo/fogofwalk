@@ -46,6 +46,45 @@ export function Layout({ children }: { children: React.ReactNode }) {
         <meta charSet="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <meta name="theme-color" content="#0a0a1e" />
+        {/* Kept in the static SPA shell because many social crawlers do not run JavaScript. */}
+        <title>Fog of Walk — Explore the unknown</title>
+        <meta
+          name="description"
+          content="Import your GPX and FIT activity files. Watch the fog of war lift over every trail you've run, every road you've cycled, every path you've ever walked."
+        />
+        <link rel="canonical" href="https://fog-of-walk.mykhailo.net/" />
+        <meta property="og:type" content="website" />
+        <meta property="og:title" content="Fog of Walk — Explore the unknown" />
+        <meta
+          property="og:description"
+          content="Import your GPX and FIT activity files. Watch the fog of war lift over every trail you've run, every road you've cycled, every path you've ever walked."
+        />
+        <meta property="og:url" content="https://fog-of-walk.mykhailo.net/" />
+        <meta property="og:site_name" content="Fog of Walk" />
+        <meta
+          property="og:image"
+          content="https://fog-of-walk.mykhailo.net/og-image.png"
+        />
+        <meta property="og:image:type" content="image/png" />
+        <meta property="og:image:width" content="1200" />
+        <meta property="og:image:height" content="630" />
+        <meta
+          property="og:image:alt"
+          content="Fog of Walk — Explore the unknown"
+        />
+        <meta name="twitter:card" content="summary_large_image" />
+        <meta
+          name="twitter:title"
+          content="Fog of Walk — Explore the unknown"
+        />
+        <meta
+          name="twitter:description"
+          content="Import your GPX and FIT activity files. Watch the fog of war lift over every trail you've run, every road you've cycled, every path you've ever walked."
+        />
+        <meta
+          name="twitter:image"
+          content="https://fog-of-walk.mykhailo.net/og-image.png"
+        />
         <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
         <link rel="alternate icon" href="/favicon.ico" />
         <link rel="manifest" href="/site.webmanifest" />

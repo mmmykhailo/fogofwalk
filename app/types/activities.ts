@@ -38,5 +38,6 @@ export type WorkerOutboundMessage =
       processedCount: number
       runId: number
     }
+  | { type: "PROGRESS"; processedCount: number; runId: number }
   | { type: "ERROR"; file: string; message: string; runId: number }
   | { type: "DONE"; processedCount: number; runId: number }

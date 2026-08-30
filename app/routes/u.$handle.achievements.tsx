@@ -9,6 +9,7 @@ import {
   sortEarnedAchievementsNewestFirst,
 } from "~/lib/achievements"
 import { apiUrl } from "~/lib/server/config"
+import { socialMeta } from "~/lib/socialMeta"
 import type { PublicProfileResponse } from "~shared/api"
 import type { Route } from "./+types/u.$handle.achievements"
 
@@ -40,14 +41,16 @@ export async function clientLoader({
   }
 }
 
-export function meta({ params }: Route.MetaArgs) {
-  return [
-    { title: `${params.handle}'s achievements — Fog of Walk` },
-    {
-      name: "description",
-      content: `Public achievements earned by ${params.handle} on Fog of Walk.`,
-    },
-  ]
+export function meta({ data, params }: Route.MetaArgs) {
+  const handle = data?.profile?.user.handle || params.handle || "Profile"
+  const displayName = data?.profile?.user.displayName || handle
+  return socialMeta({
+    title: `${displayName}'s achievements — Fog of Walk`,
+    description: `Public achievements earned by ${displayName} on Fog of Walk.`,
+    path: `/u/${encodeURIComponent(handle)}/achievements`,
+    type: "profile",
+    profileHandle: handle,
+  })
 }
 
 export default function PublicAchievementsPage() {

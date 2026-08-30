@@ -16,6 +16,7 @@ import { HttpError, errorBody, statusFor } from "./errors"
 import { createPublicRoutes } from "./public/routes"
 import type { ServerStore } from "./store/types"
 import { createActivityRoutes } from "./activities/routes"
+import { createSavedPointRoutes } from "./saved-points/routes"
 
 export function createApp(store: ServerStore) {
   const app = new Hono()
@@ -47,6 +48,7 @@ export function createApp(store: ServerStore) {
   app.use("/api/admin/*", createRequireAdmin(store))
   app.route("/api/admin", createAdminRoutes(store))
   app.route("/api/activities", createActivityRoutes(store))
+  app.route("/api/saved-points", createSavedPointRoutes(store))
   app.route("/api/public", createPublicRoutes(store))
 
   app.notFound((c) => c.json(errorBody("not_found"), 404))

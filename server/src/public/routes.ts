@@ -24,6 +24,12 @@ function isSafeHandle(value: string): boolean {
 export function createPublicRoutes(store: ServerStore) {
   const app = new Hono()
 
+  app.get("/saved-points/:id", async (c) => {
+    const point = await store.findPublicSavedPoint(c.req.param("id"))
+    if (!point) return jsonError(c, "not_found", "Saved point not found.")
+    return c.json(point)
+  })
+
   app.get("/users/:handle", async (c) => {
     const handle = c.req.param("handle")
     if (!isSafeHandle(handle)) {

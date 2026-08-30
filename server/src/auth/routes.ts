@@ -12,7 +12,6 @@
  * which `exchange` trades for the real token over POST.
  */
 
-import { generateCodeVerifier, generateState } from "arctic"
 import { Hono } from "hono"
 import { deleteCookie, getSignedCookie, setSignedCookie } from "hono/cookie"
 import { z } from "zod"
@@ -25,6 +24,7 @@ import type { ServerStore } from "../store/types"
 import { capabilitiesFor, isAdmin, toServerUser } from "../users"
 import { createRequireSession } from "./middleware"
 import type { AuthEnv } from "./middleware"
+import { generateCodeVerifier, generateOAuthState } from "./oauth"
 import { providers, listProviders } from "./providers"
 import {
   consumeHandoffCode,
@@ -154,7 +154,7 @@ export function createAuthRoutes(store: ServerStore) {
       )
     }
 
-    const state = generateState()
+    const state = generateOAuthState()
     const verifier = generateCodeVerifier()
 
     // First-party cookie on the API origin — no third-party-cookie problem,

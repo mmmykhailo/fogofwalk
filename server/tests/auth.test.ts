@@ -3,6 +3,8 @@ import { describe, expect, test } from "bun:test"
 import type { AuthExchangeResponse, AuthProvidersResponse } from "~shared/api"
 
 import { resolveRedirectOrigin } from "../src/auth/routes"
+import { generateCodeVerifier, generateOAuthState } from "../src/auth/oauth"
+import { createGitHubProvider } from "../src/auth/providers/github"
 import {
   consumeHandoffCode,
   createHandoffCode,
@@ -53,6 +55,38 @@ describe("open-redirect guard", () => {
 
   test("falls back to the first allowed origin when none is given", () => {
     expect(resolveRedirectOrigin(undefined)).toBe("http://localhost:5173")
+  })
+})
+
+describe("OAuth request entropy", () => {
+  test("generates distinct URL-safe state values", () => {
+    const state = generateOAuthState()
+    expect(state).toMatch(/^[A-Za-z0-9_-]{43}$/)
+    expect(generateOAuthState()).not.toBe(state)
+  })
+
+  test("generates an RFC 7636-sized code verifier", () => {
+    expect(generateCodeVerifier()).toMatch(/^[A-Za-z0-9_-]{43}$/)
+  })
+})
+
+describe("GitHub OAuth provider", () => {
+  test("builds GitHub's authorization URL directly", () => {
+    const provider = createGitHubProvider(
+      "client-id",
+      "client-secret",
+      "https://api.example/api/auth/github/callback"
+    )
+    const url = provider.createAuthUrl("csrf-state", "unused-verifier")
+
+    expect(url.origin).toBe("https://github.com")
+    expect(url.pathname).toBe("/login/oauth/authorize")
+    expect(Object.fromEntries(url.searchParams)).toEqual({
+      client_id: "client-id",
+      redirect_uri: "https://api.example/api/auth/github/callback",
+      scope: "read:user user:email",
+      state: "csrf-state",
+    })
   })
 })
 

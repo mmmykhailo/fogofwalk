@@ -1,17 +1,14 @@
 /**
- * GitHub OAuth, via `arctic` v3 (MIT).
- *
- * arctic v3's GitHub client is `new GitHub(clientId, clientSecret, redirectURI)`
- * with `createAuthorizationURL(state, scopes)` and
- * `validateAuthorizationCode(code)` — GitHub does not implement PKCE, so the
- * verifier this module receives is deliberately unused.
+ * GitHub OAuth using GitHub's OAuth 2.0 endpoints directly. GitHub OAuth Apps
+ * do not support PKCE, so the verifier this module receives is deliberately
+ * unused.
  */
-
-import { GitHub } from "arctic"
 
 import type { OAuthProfile, OAuthProvider } from "./types"
 
 const USER_AGENT = "fogofwalk-server"
+const AUTHORIZE_URL = "https://github.com/login/oauth/authorize"
+const TOKEN_URL = "https://github.com/login/oauth/access_token"
 
 interface GitHubUser {
   id: number
@@ -25,6 +22,10 @@ interface GitHubEmail {
   email: string
   primary: boolean
   verified: boolean
+}
+
+interface GitHubTokenResponse {
+  access_token?: string
 }
 
 async function githubApi<T>(path: string, accessToken: string): Promise<T> {
@@ -46,8 +47,6 @@ export function createGitHubProvider(
   clientSecret: string,
   redirectUri: string
 ): OAuthProvider {
-  const client = new GitHub(clientId, clientSecret, redirectUri)
-
   return {
     id: "github",
     label: "GitHub",
@@ -55,12 +54,39 @@ export function createGitHubProvider(
     createAuthUrl(state: string): URL {
       // `read:user` is enough for id/login/name/avatar; `user:email` only adds
       // the private primary address, and the flow tolerates it being absent.
-      return client.createAuthorizationURL(state, ["read:user", "user:email"])
+      const url = new URL(AUTHORIZE_URL)
+      url.search = new URLSearchParams({
+        client_id: clientId,
+        redirect_uri: redirectUri,
+        scope: "read:user user:email",
+        state,
+      }).toString()
+      return url
     },
 
     async exchange(code: string): Promise<OAuthProfile> {
-      const tokens = await client.validateAuthorizationCode(code)
-      const accessToken = tokens.accessToken()
+      const response = await fetch(TOKEN_URL, {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/x-www-form-urlencoded",
+          "User-Agent": USER_AGENT,
+        },
+        body: new URLSearchParams({
+          client_id: clientId,
+          client_secret: clientSecret,
+          code,
+          redirect_uri: redirectUri,
+        }),
+      })
+      if (!response.ok) {
+        throw new Error(`GitHub token exchange failed: ${response.status}`)
+      }
+
+      const { access_token: accessToken } =
+        (await response.json()) as GitHubTokenResponse
+      if (!accessToken)
+        throw new Error("GitHub token exchange returned no token.")
 
       const user = await githubApi<GitHubUser>("/user", accessToken)
 

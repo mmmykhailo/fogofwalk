@@ -8,6 +8,7 @@ import { computeActivityStats } from "~/lib/stats"
 import { normalizeActivityType } from "~/lib/activityType"
 import { deriveStartSunPhase } from "~/lib/sunPhase"
 import { smoothTrack } from "~/lib/trackSmoothing"
+import { createUuid } from "~/lib/uuid"
 
 function buildRawPoints(
   coords: [number, number, number?][],
@@ -45,7 +46,7 @@ export async function parseGpxFile(file: File): Promise<ParsedActivity[]> {
         ]) as ActivityCoords
         const startedAtMs = validTs.length > 0 ? validTs[0] : null
         activities.push({
-          id: crypto.randomUUID(),
+          id: createUuid(),
           name: file.name,
           startedAtMs,
           coordinates,
@@ -78,7 +79,7 @@ export async function parseGpxFile(file: File): Promise<ParsedActivity[]> {
           ]) as ActivityCoords
           const startedAtMs = validTs.length > 0 ? validTs[0] : null
           activities.push({
-            id: crypto.randomUUID(),
+            id: createUuid(),
             name: `${file.name}[${i}]`,
             startedAtMs,
             coordinates,

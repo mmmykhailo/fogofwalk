@@ -10,6 +10,7 @@ import { LAP_PROFILE_POINTS, MAX_LAPS } from "~/constants/fog"
 import { normalizeActivityType } from "~/lib/activityType"
 import { deriveStartSunPhase } from "~/lib/sunPhase"
 import { smoothTrack } from "~/lib/trackSmoothing"
+import { createUuid } from "~/lib/uuid"
 
 /**
  * `fit-file-parser` decodes every FIT `date_time` field into a `Date` object
@@ -202,7 +203,7 @@ export async function parseFitFile(file: File): Promise<ParsedActivity[]> {
   )
   return [
     {
-      id: crypto.randomUUID(),
+      id: createUuid(),
       name: file.name,
       startedAtMs: validTs.length > 0 ? validTs[0] : null,
       coordinates: coords,

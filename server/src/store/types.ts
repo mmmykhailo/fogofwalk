@@ -13,11 +13,13 @@ import type {
   AdminAccessRequest,
   AdminUser,
   ManifestPage,
+  SavedPointManifestPage,
   NotificationStatus,
   PublicProfileResponse,
   ActivityMeta,
   UserStatus,
 } from "~shared/api"
+import type { SavedPoint } from "~shared/saved-points"
 
 export interface User {
   id: string
@@ -171,6 +173,18 @@ export interface ServerStore {
    * re-upload them.
    */
   purgeActivities(userId: string): Promise<number>
+
+  // ── saved points ────────────────────────────────────────────────────────
+  listSavedPointsManifest(
+    userId: string,
+    sinceCursor: number
+  ): Promise<SavedPointManifestPage>
+  listSavedPoints(userId: string): Promise<SavedPoint[]>
+  upsertSavedPoint(userId: string, point: SavedPoint): Promise<SavedPoint>
+  deleteSavedPoint(userId: string, id: string): Promise<number>
+  listAllSavedPointsForUser(userId: string): Promise<SavedPoint[]>
+  listPublicSavedPoints(userId: string): Promise<SavedPoint[]>
+  findPublicSavedPoint(id: string): Promise<SavedPoint | null>
 
   // ── public profiles ─────────────────────────────────────────────────────
   /**
