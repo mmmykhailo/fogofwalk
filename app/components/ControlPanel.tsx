@@ -22,6 +22,9 @@ interface ControlPanelProps {
   onAddPhotos: (files: FileList) => void
   showPhotos: boolean
   onShowPhotosChange: (value: boolean) => void
+  savedPointCount: number
+  showSavedPoints: boolean
+  onShowSavedPointsChange: (value: boolean) => void
   showMyLocation: boolean
   onShowMyLocationChange: (value: boolean) => void
   locationPermissionDenied: boolean
@@ -45,6 +48,9 @@ export function ControlPanel({
   onAddPhotos,
   showPhotos,
   onShowPhotosChange,
+  savedPointCount,
+  showSavedPoints,
+  onShowSavedPointsChange,
   showMyLocation,
   onShowMyLocationChange,
   locationPermissionDenied,
@@ -140,6 +146,9 @@ export function ControlPanel({
         onMapModeChange={onMapModeChange}
         showPhotos={showPhotos}
         onShowPhotosChange={onShowPhotosChange}
+        savedPointCount={savedPointCount}
+        showSavedPoints={showSavedPoints}
+        onShowSavedPointsChange={onShowSavedPointsChange}
         showMyLocation={showMyLocation}
         onShowMyLocationChange={onShowMyLocationChange}
         locationPermissionDenied={locationPermissionDenied}

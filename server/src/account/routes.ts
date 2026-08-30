@@ -60,10 +60,11 @@ export function createAccountRoutes(store: ServerStore) {
 
     try {
       // Collect all user data
-      const [identities, sessions, activities] = await Promise.all([
+      const [identities, sessions, activities, savedPoints] = await Promise.all([
         store.findIdentitiesForUser(userId),
         store.findSessionsForUser(userId),
         store.listAllActivitiesForUser(userId),
+        store.listAllSavedPointsForUser(userId),
       ])
 
       const serverUser = await toServerUser(store, user)
@@ -87,6 +88,7 @@ export function createAccountRoutes(store: ServerStore) {
           lastUsedAt: session.lastUsedAt,
         })),
         activities,
+        savedPoints,
       }
 
       // Set response headers for download

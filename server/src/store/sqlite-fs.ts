@@ -20,8 +20,11 @@ import type {
   PublicActivityMeta,
   ActivityMeta,
   ActivityTombstone,
+  SavedPointManifestPage,
+  SavedPointTombstone,
   UserStatus,
 } from "~shared/api"
+import type { SavedPoint, SavedPointColor } from "~shared/saved-points"
 import { SYNC_PAGE_SIZE } from "~shared/constants"
 import type {
   ActivityFormat,
@@ -247,6 +250,23 @@ interface TombstoneRow {
   deleted_at: number
 }
 
+interface SavedPointRow {
+  id: string
+  longitude: number
+  latitude: number
+  name: string
+  description: string | null
+  colour: string
+  is_public: number
+  created_at: number
+  updated_at: number
+}
+
+interface SavedPointTombstoneRow {
+  id: string
+  deleted_at: number
+}
+
 interface AccessRequestRow {
   id: string
   user_id: string
@@ -322,6 +342,20 @@ function toMeta(row: ActivityRow): ActivityMeta {
     movingTimeMs: row.moving_time_ms,
     elevationGainM: row.elevation_gain_m,
     avgMovingSpeedKmh: row.avg_moving_speed_kmh,
+  }
+}
+
+function toSavedPoint(row: SavedPointRow): SavedPoint {
+  return {
+    id: row.id,
+    lng: row.longitude,
+    lat: row.latitude,
+    name: row.name,
+    description: row.description,
+    color: row.colour as SavedPointColor,
+    isPublic: Boolean(row.is_public),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
   }
 }
 
@@ -491,6 +525,10 @@ export class SqliteFsStore implements ServerStore {
       this.db
         .query(`DELETE FROM activity_tombstones WHERE user_id = ?`)
         .run(userId)
+      this.db
+        .query(`DELETE FROM saved_point_tombstones WHERE user_id = ?`)
+        .run(userId)
+      this.db.query(`DELETE FROM saved_points WHERE user_id = ?`).run(userId)
       this.db.query(`DELETE FROM activities WHERE user_id = ?`).run(userId)
       this.db.query(`DELETE FROM sessions WHERE user_id = ?`).run(userId)
       this.db.query(`DELETE FROM identities WHERE user_id = ?`).run(userId)
@@ -1002,6 +1040,136 @@ export class SqliteFsStore implements ServerStore {
     return activities
   }
 
+  async listSavedPointsManifest(
+    userId: string,
+    sinceCursor: number
+  ): Promise<SavedPointManifestPage> {
+    const since = Number.isFinite(sinceCursor) ? Math.max(0, sinceCursor) : 0
+    const pointPage = await pageStream(
+      (from, limit) => {
+        const rows = this.db
+          .query(
+            `SELECT id, longitude, latitude, name, description, colour, is_public, created_at, updated_at FROM saved_points WHERE user_id = ? AND updated_at >= ? ORDER BY updated_at ASC, id ASC LIMIT ?`
+          )
+          .all(userId, from, limit) as SavedPointRow[]
+        return rows.map((row) => ({
+          time: row.updated_at,
+          contentHash: row.id,
+          point: toSavedPoint(row),
+        }))
+      },
+      since,
+      SYNC_PAGE_SIZE
+    )
+    const tombstonePage = await pageStream(
+      (from, limit) => {
+        const rows = this.db
+          .query(
+            `SELECT id, deleted_at FROM saved_point_tombstones WHERE user_id = ? AND deleted_at >= ? ORDER BY deleted_at ASC, id ASC LIMIT ?`
+          )
+          .all(userId, from, limit) as SavedPointTombstoneRow[]
+        return rows.map((row) => ({
+          time: row.deleted_at,
+          contentHash: row.id,
+          tombstone: { id: row.id, deletedAt: row.deleted_at },
+        }))
+      },
+      since,
+      SYNC_PAGE_SIZE
+    )
+    const { cursor, hasMore } = combineCursors(since, [
+      pointPage,
+      tombstonePage,
+    ])
+    return {
+      savedPoints: pointPage.rows.map((row) => row.point),
+      deletions: tombstonePage.rows.map((row) => row.tombstone),
+      cursor,
+      hasMore,
+    }
+  }
+
+  async listSavedPoints(userId: string): Promise<SavedPoint[]> {
+    const rows = this.db
+      .query(
+        `SELECT id, longitude, latitude, name, description, colour, is_public, created_at, updated_at FROM saved_points WHERE user_id = ? ORDER BY updated_at DESC, id ASC`
+      )
+      .all(userId) as SavedPointRow[]
+    return rows.map(toSavedPoint)
+  }
+
+  async upsertSavedPoint(
+    userId: string,
+    point: SavedPoint
+  ): Promise<SavedPoint> {
+    const existing = this.db
+      .query(`SELECT created_at FROM saved_points WHERE user_id = ? AND id = ?`)
+      .get(userId, point.id) as { created_at: number } | null
+    const updatedAt = Date.now()
+    const createdAt = existing?.created_at ?? point.createdAt
+    this.db.transaction(() => {
+      this.db
+        .query(
+          `INSERT INTO saved_points (user_id, id, longitude, latitude, name, description, colour, is_public, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (user_id, id) DO UPDATE SET longitude = excluded.longitude, latitude = excluded.latitude, name = excluded.name, description = excluded.description, colour = excluded.colour, is_public = excluded.is_public, updated_at = excluded.updated_at`
+        )
+        .run(
+          userId,
+          point.id,
+          point.lng,
+          point.lat,
+          point.name,
+          point.description,
+          point.color,
+          point.isPublic ? 1 : 0,
+          createdAt,
+          updatedAt
+        )
+      this.db
+        .query(
+          `DELETE FROM saved_point_tombstones WHERE user_id = ? AND id = ?`
+        )
+        .run(userId, point.id)
+    })()
+    return { ...point, createdAt, updatedAt }
+  }
+
+  async deleteSavedPoint(userId: string, id: string): Promise<number> {
+    const deletedAt = Date.now()
+    this.db.transaction(() => {
+      this.db
+        .query(`DELETE FROM saved_points WHERE user_id = ? AND id = ?`)
+        .run(userId, id)
+      this.db
+        .query(
+          `INSERT INTO saved_point_tombstones (user_id, id, deleted_at) VALUES (?, ?, ?) ON CONFLICT (user_id, id) DO UPDATE SET deleted_at = excluded.deleted_at`
+        )
+        .run(userId, id, deletedAt)
+    })()
+    return deletedAt
+  }
+
+  async listAllSavedPointsForUser(userId: string): Promise<SavedPoint[]> {
+    return this.listSavedPoints(userId)
+  }
+
+  async listPublicSavedPoints(userId: string): Promise<SavedPoint[]> {
+    const rows = this.db
+      .query(
+        `SELECT id, longitude, latitude, name, description, colour, is_public, created_at, updated_at FROM saved_points WHERE user_id = ? AND is_public = 1 ORDER BY updated_at DESC, id ASC`
+      )
+      .all(userId) as SavedPointRow[]
+    return rows.map(toSavedPoint)
+  }
+
+  async findPublicSavedPoint(id: string): Promise<SavedPoint | null> {
+    const row = this.db
+      .query(
+        `SELECT id, longitude, latitude, name, description, colour, is_public, created_at, updated_at FROM saved_points WHERE id = ? AND is_public = 1 LIMIT 1`
+      )
+      .get(id) as SavedPointRow | null
+    return row ? toSavedPoint(row) : null
+  }
+
   async findUserByHandle(handle: string): Promise<User | null> {
     const row = this.db
       .query(`SELECT * FROM users WHERE handle = ? COLLATE NOCASE`)
@@ -1019,6 +1187,7 @@ export class SqliteFsStore implements ServerStore {
           avatarUrl: user?.avatarUrl ?? null,
         },
         activities: [],
+        savedPoints: [],
       }
     }
 
@@ -1046,6 +1215,7 @@ export class SqliteFsStore implements ServerStore {
         avatarUrl: user.avatarUrl,
       },
       activities,
+      savedPoints: await this.listPublicSavedPoints(userId),
     }
   }
 

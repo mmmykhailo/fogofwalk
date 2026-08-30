@@ -15,25 +15,23 @@ import {
   DrawerHeader,
   DrawerTitle,
 } from "~/components/ui/drawer"
-import { useDraggable } from "~/lib/useDraggable"
 import { useIsMobile } from "~/lib/useIsMobile"
+import { DraggableDialog } from "~/components/DraggableDialog"
 import type { PhotoGroup } from "~/types/photos"
 
-interface PhotoCardProps {
+interface DraggablePhotoDialogProps {
   group: PhotoGroup | null
   onClose: () => void
 }
 
-export function PhotoCard({ group, onClose }: PhotoCardProps) {
+export function DraggablePhotoDialog({
+  group,
+  onClose,
+}: DraggablePhotoDialogProps) {
   const [idx, setIdx] = useState(0)
   const [isOpen, setIsOpen] = useState(true)
   const isDismissingRef = useRef(false)
   const isMobile = useIsMobile()
-  const { style, ref, onMouseDown, onTouchStart } = useDraggable({
-    x: Infinity,
-    y: 0,
-    padding: 12,
-  })
 
   useEffect(() => {
     setIdx(0)
@@ -135,41 +133,43 @@ export function PhotoCard({ group, onClose }: PhotoCardProps) {
   }
 
   return (
-    <div ref={ref} className="absolute z-20 w-80" style={style}>
-      <Card className="overflow-hidden bg-background/80 backdrop-blur-md">
-        <CardHeader
-          onMouseDown={onMouseDown}
-          onTouchStart={onTouchStart}
-          className="cursor-grab select-none active:cursor-grabbing"
-        >
-          <CardTitle className="truncate text-xs">
-            {new Date(photo.takenAtMs).toLocaleString()}
-          </CardTitle>
-          <CardAction>
-            <Button
-              variant="ghost"
-              size="icon-xs"
-              onClick={onClose}
-              aria-label="Close"
-              className="hidden sm:inline-flex"
-            >
-              <XIcon weight="bold" />
-            </Button>
-          </CardAction>
-        </CardHeader>
-        <CardContent className="p-0">
-          <div className="aspect-[4/3] w-full">
-            {photo.objectUrl && (
-              <img
-                src={photo.objectUrl}
-                alt="Photo"
-                className="block size-full object-contain"
-              />
-            )}
-          </div>
-          {navControls}
-        </CardContent>
-      </Card>
-    </div>
+    <DraggableDialog className="z-20 w-80">
+      {({ onMouseDown, onTouchStart }) => (
+        <Card className="overflow-hidden bg-background/80 backdrop-blur-md">
+          <CardHeader
+            onMouseDown={onMouseDown}
+            onTouchStart={onTouchStart}
+            className="cursor-grab select-none active:cursor-grabbing"
+          >
+            <CardTitle className="truncate text-xs">
+              {new Date(photo.takenAtMs).toLocaleString()}
+            </CardTitle>
+            <CardAction>
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                onClick={onClose}
+                aria-label="Close"
+                className="hidden sm:inline-flex"
+              >
+                <XIcon weight="bold" />
+              </Button>
+            </CardAction>
+          </CardHeader>
+          <CardContent className="p-0">
+            <div className="aspect-[4/3] w-full">
+              {photo.objectUrl && (
+                <img
+                  src={photo.objectUrl}
+                  alt="Photo"
+                  className="block size-full object-contain"
+                />
+              )}
+            </div>
+            {navControls}
+          </CardContent>
+        </Card>
+      )}
+    </DraggableDialog>
   )
 }

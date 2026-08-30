@@ -7,6 +7,7 @@ export default [
     route("changelog", "routes/changelog.tsx"),
     route("stats", "routes/stats.tsx"),
     route("activities", "routes/activities.tsx"),
+    route("saved-points", "routes/saved-points.tsx"),
     route("privacy", "routes/privacy.tsx"),
     route("terms", "routes/terms.tsx"),
     route("auth/callback", "routes/auth-callback.tsx"),
@@ -14,5 +15,6 @@ export default [
     route("admin", "routes/admin.tsx"),
     route("u/:handle", "routes/u.$handle.tsx"),
     route("u/:handle/achievements", "routes/u.$handle.achievements.tsx"),
+    route("u/:handle/saved-points", "routes/u.$handle.saved-points.tsx"),
   ]),
 ] satisfies RouteConfig

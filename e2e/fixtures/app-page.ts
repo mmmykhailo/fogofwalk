@@ -352,4 +352,61 @@ export class AppPage {
     // making each suspension check idle for seconds.
     await this.page.waitForTimeout(300)
   }
+
+  /** Seeds a local saved point so UI tests can open its editor without a map gesture. */
+  async seedSavedPoint(point: {
+    id: string
+    lng: number
+    lat: number
+    name: string
+    description: string | null
+    color: string
+    isPublic: boolean
+    createdAt: number
+    updatedAt: number
+  }): Promise<void> {
+    await this.page.evaluate(async (savedPoint) => {
+      const db = await new Promise<IDBDatabase>((resolve, reject) => {
+        const request = indexedDB.open("fogofwalk")
+        request.onsuccess = () => resolve(request.result)
+        request.onerror = () => reject(request.error)
+      })
+      await new Promise<void>((resolve, reject) => {
+        const transaction = db.transaction("saved-points", "readwrite")
+        transaction.objectStore("saved-points").put(savedPoint)
+        transaction.oncomplete = () => resolve()
+        transaction.onerror = () => reject(transaction.error)
+        transaction.onabort = () => reject(transaction.error)
+      })
+      db.close()
+    }, point)
+  }
+
+  /** Reads the persisted saved points, including selections made by the editor. */
+  async localSavedPoints(): Promise<
+    {
+      id: string
+      name: string
+      color: string
+      isPublic: boolean
+    }[]
+  > {
+    return this.page.evaluate(async () => {
+      const db = await new Promise<IDBDatabase>((resolve, reject) => {
+        const request = indexedDB.open("fogofwalk")
+        request.onsuccess = () => resolve(request.result)
+        request.onerror = () => reject(request.error)
+      })
+      const points = await new Promise<
+        { id: string; name: string; color: string; isPublic: boolean }[]
+      >((resolve, reject) => {
+        const transaction = db.transaction("saved-points", "readonly")
+        const request = transaction.objectStore("saved-points").getAll()
+        request.onsuccess = () => resolve(request.result)
+        request.onerror = () => reject(request.error)
+      })
+      db.close()
+      return points
+    })
+  }
 }
