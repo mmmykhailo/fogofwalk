@@ -2,6 +2,14 @@
 
 All notable changes to Fog of Walk are documented here.
 
+## [0.2.1] - 2026-08-30
+
+### Changed
+
+- fix mobile issues in saved point edit dialog
+- release v0.2.0
+- add saved points (#29)
+
 ## [0.2.0] - 2026-08-30
 
 ### Changed
