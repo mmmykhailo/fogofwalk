@@ -1,7 +1,6 @@
 import { useRef, useState } from "react"
 import { XIcon } from "@phosphor-icons/react"
 import { DraggableDialog } from "~/components/DraggableDialog"
-import { SavedPointForm } from "~/components/SavedPointForm"
 import { Button } from "~/components/ui/button"
 import {
   Card,
@@ -20,30 +19,38 @@ import {
 import { useIsMobile } from "~/lib/useIsMobile"
 import type { SavedPoint } from "~shared/saved-points"
 
-interface DraggableSavedPointDialogProps {
-  point: SavedPoint | null
-  coordinate: [number, number] | null
+interface DraggableSavedPointViewDialogProps {
+  point: SavedPoint
   onClose: () => void
-  onSave: (point: SavedPoint) => void
-  onDelete?: (id: string) => void
 }
 
-/** Saved-point editor: a mobile drawer and a draggable desktop card. */
-export function DraggableSavedPointDialog({
+function SavedPointDetails({ point }: { point: SavedPoint }) {
+  return (
+    <dl className="space-y-4 text-sm">
+      <div>
+        <dt className="text-muted-foreground">Coordinates</dt>
+        <dd className="mt-1 font-medium tabular-nums">
+          {point.lat.toFixed(5)}, {point.lng.toFixed(5)}
+        </dd>
+      </div>
+      {point.description && (
+        <div>
+          <dt className="text-muted-foreground">Description</dt>
+          <dd className="mt-1 whitespace-pre-wrap">{point.description}</dd>
+        </div>
+      )}
+    </dl>
+  )
+}
+
+/** Read-only saved-point details: a mobile drawer and draggable desktop card. */
+export function DraggableSavedPointViewDialog({
   point,
-  coordinate,
   onClose,
-  onSave,
-  onDelete,
-}: DraggableSavedPointDialogProps) {
+}: DraggableSavedPointViewDialogProps) {
   const isMobile = useIsMobile()
   const [isOpen, setIsOpen] = useState(true)
   const isDismissingRef = useRef(false)
-  const title = point ? "Edit saved point" : "Save point"
-  // SavedPointForm owns the uncontrolled field defaults and form-specific state.
-  // Remount it when switching targets so an open editor never retains values
-  // from the previously selected point (or from an edit when creating one).
-  const formKey = point?.id ?? coordinate?.join(",") ?? "new"
 
   function handleDismiss() {
     if (isDismissingRef.current) return
@@ -56,17 +63,6 @@ export function DraggableSavedPointDialog({
     }
   }
 
-  const form = (
-    <SavedPointForm
-      key={formKey}
-      point={point}
-      coordinate={coordinate}
-      onCancel={handleDismiss}
-      onSave={onSave}
-      onDelete={onDelete}
-    />
-  )
-
   if (isMobile) {
     return (
       <Drawer
@@ -76,11 +72,15 @@ export function DraggableSavedPointDialog({
         }}
       >
         <DrawerContent>
-          <DrawerDescription className="sr-only">{title}</DrawerDescription>
+          <DrawerDescription className="sr-only">
+            Saved point details
+          </DrawerDescription>
           <DrawerHeader>
-            <DrawerTitle>{title}</DrawerTitle>
+            <DrawerTitle>{point.name}</DrawerTitle>
           </DrawerHeader>
-          <div className="px-4 pb-6">{form}</div>
+          <div className="px-4 pb-6">
+            <SavedPointDetails point={point} />
+          </div>
         </DrawerContent>
       </Drawer>
     )
@@ -95,7 +95,7 @@ export function DraggableSavedPointDialog({
             onTouchStart={onTouchStart}
             className="cursor-grab select-none active:cursor-grabbing"
           >
-            <CardTitle>{title}</CardTitle>
+            <CardTitle>{point.name}</CardTitle>
             <CardAction>
               <Button
                 variant="ghost"
@@ -107,7 +107,9 @@ export function DraggableSavedPointDialog({
               </Button>
             </CardAction>
           </CardHeader>
-          <CardContent>{form}</CardContent>
+          <CardContent>
+            <SavedPointDetails point={point} />
+          </CardContent>
         </Card>
       )}
     </DraggableDialog>

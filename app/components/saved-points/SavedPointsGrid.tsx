@@ -10,7 +10,7 @@ export function SavedPointsGrid({ points }: SavedPointsGridProps) {
   return (
     <Grid columns={{ base: 1, sm: 2 }}>
       {points.map((point) => (
-        <SavedPointCard key={point.id} point={point} isOwner />
+        <SavedPointCard key={point.id} point={point} />
       ))}
     </Grid>
   )

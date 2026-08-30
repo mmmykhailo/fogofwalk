@@ -5,8 +5,6 @@ import type { SavedPoint } from "~shared/saved-points"
 
 interface SavedPointCardProps {
   point: SavedPoint
-  /** Only an owner may open their point in the editable map view. */
-  isOwner?: boolean
 }
 
 function formatCoordinates(point: SavedPoint): string {
@@ -17,10 +15,7 @@ function formatColorName(color: SavedPointColor): string {
   return color[0].toUpperCase() + color.slice(1)
 }
 
-export function SavedPointCard({
-  point,
-  isOwner = false,
-}: SavedPointCardProps) {
+export function SavedPointCard({ point }: SavedPointCardProps) {
   const color = SAVED_POINT_COLORS[point.color as SavedPointColor]
   const colorName = formatColorName(point.color as SavedPointColor)
   const content = (
@@ -51,17 +46,13 @@ export function SavedPointCard({
 
   return (
     <div className="min-w-0 rounded-none bg-card text-card-foreground ring-1 ring-foreground/10">
-      {isOwner ? (
-        <AppLink
-          to={`/?savedPoint=${encodeURIComponent(point.id)}`}
-          className="flex h-full flex-col gap-3 rounded-none p-4 transition-colors outline-none hover:bg-muted hover:decoration-0 focus-visible:ring-2 focus-visible:ring-ring"
-          aria-label={`Open ${point.name} on the map to edit`}
-        >
-          {content}
-        </AppLink>
-      ) : (
-        <div className="flex flex-col gap-3 p-4">{content}</div>
-      )}
+      <AppLink
+        to={`/?${new URLSearchParams({ savedPoint: point.id, savedPointData: JSON.stringify(point) })}`}
+        className="flex h-full flex-col gap-3 rounded-none p-4 transition-colors outline-none hover:bg-muted hover:decoration-0 focus-visible:ring-2 focus-visible:ring-ring"
+        aria-label={`Open ${point.name} on the map`}
+      >
+        {content}
+      </AppLink>
     </div>
   )
 }

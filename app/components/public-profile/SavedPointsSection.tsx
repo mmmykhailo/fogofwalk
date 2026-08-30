@@ -7,7 +7,6 @@ import { SavedPointCard } from "./SavedPointCard"
 
 interface SavedPointsSectionProps {
   points: PublicSavedPoint[]
-  isOwner?: boolean
   maxPoints?: number
   viewAllTo?: string
   showHeading?: boolean
@@ -15,7 +14,6 @@ interface SavedPointsSectionProps {
 
 export function SavedPointsSection({
   points,
-  isOwner = false,
   maxPoints,
   viewAllTo,
   showHeading = true,
@@ -42,7 +40,7 @@ export function SavedPointsSection({
       )}
       <Grid columns={{ base: 1, sm: 2 }}>
         {visiblePoints.map((point) => (
-          <SavedPointCard key={point.id} point={point} isOwner={isOwner} />
+          <SavedPointCard key={point.id} point={point} />
         ))}
       </Grid>
       {hasHiddenPoints && viewAllTo && (

@@ -157,7 +157,6 @@ export default function PublicProfilePage() {
             )}
             <SavedPointsSection
               points={savedPoints}
-              isOwner={isOwner}
               maxPoints={4}
               viewAllTo={`/u/${encodeURIComponent(profile.user.handle)}/points`}
             />

@@ -21,7 +21,8 @@ import { MissingActivityTypeDialog } from "~/components/MissingActivityTypeDialo
 import { DraggableActivityDialog } from "~/components/activity-stats/DraggableActivityDialog"
 import { ShareDialog } from "~/components/ShareDialog"
 import { DraggablePhotoDialog } from "~/components/DraggablePhotoDialog"
-import { DraggableSavedPointDialog } from "~/components/DraggableSavedPointDialog"
+import { DraggableSavedPointEditDialog } from "~/components/DraggableSavedPointEditDialog"
+import { DraggableSavedPointViewDialog } from "~/components/DraggableSavedPointViewDialog"
 import { ErrorBoundary } from "~/components/ErrorBoundary"
 import { ErrorCard } from "~/components/ErrorCard"
 import {
@@ -89,6 +90,21 @@ export function meta({}: Route.MetaArgs) {
       "Import your GPX and FIT activity files. Watch the fog of war lift over every trail you've run, every road you've cycled, every path you've ever walked.",
     path: "/",
   })
+}
+
+function savedPointFromSearchParams(
+  searchParams: URLSearchParams
+): SavedPoint | null {
+  const serializedPoint = searchParams.get("savedPointData")
+  const id = searchParams.get("savedPoint")
+  if (!serializedPoint || !id) return null
+
+  try {
+    const point = JSON.parse(serializedPoint) as SavedPoint
+    return point.id === id && isValidSavedPointInput(point) ? point : null
+  } catch {
+    return null
+  }
 }
 
 // Module-level cache for restored photos — avoids passing File objects through
@@ -468,6 +484,9 @@ export default function Home() {
   const [editingSavedPointId, setEditingSavedPointId] = useState<string | null>(
     null
   )
+  const [viewingSavedPoint, setViewingSavedPoint] = useState<SavedPoint | null>(
+    null
+  )
   const [newSavedPointCoordinate, setNewSavedPointCoordinate] = useState<
     [number, number] | null
   >(null)
@@ -566,13 +585,15 @@ export default function Home() {
   useEffect(() => {
     if (!mapReady) return
     const id = searchParams.get("savedPoint")
-    const point = savedPoints.find((savedPoint) => savedPoint.id === id)
+    const ownedPoint = savedPoints.find((savedPoint) => savedPoint.id === id)
+    const point = ownedPoint ?? savedPointFromSearchParams(searchParams)
     if (!point || !mapStore.map) return
     mapStore.map.easeTo({
       center: [point.lng, point.lat],
       zoom: Math.max(mapStore.map.getZoom(), 16),
     })
-    setEditingSavedPointId(point.id)
+    setEditingSavedPointId(ownedPoint?.id ?? null)
+    setViewingSavedPoint(ownedPoint ? null : point)
   }, [mapReady, savedPoints, searchParams])
 
   // Handle files shared via the Web Share Target API (PWA installed).
@@ -997,9 +1018,11 @@ export default function Home() {
               savedPoints={savedPoints}
               showSavedPoints={showSavedPoints}
               onSavedPointSelect={(id) => {
+                setViewingSavedPoint(null)
                 setEditingSavedPointId(id)
               }}
               onSavedPointCreate={({ lng, lat }) => {
+                setViewingSavedPoint(null)
                 setEditingSavedPointId(null)
                 setNewSavedPointCoordinate([lng, lat])
               }}
@@ -1033,7 +1056,7 @@ export default function Home() {
                 onShowSavedPointsChange={setShowSavedPoints}
               />
               {(editingSavedPointId || newSavedPointCoordinate) && (
-                <DraggableSavedPointDialog
+                <DraggableSavedPointEditDialog
                   point={
                     savedPoints.find(
                       (point) => point.id === editingSavedPointId
@@ -1063,6 +1086,13 @@ export default function Home() {
                         }
                       : undefined
                   }
+                />
+              )}
+              {viewingSavedPoint && (
+                <DraggableSavedPointViewDialog
+                  key={viewingSavedPoint.id}
+                  point={viewingSavedPoint}
+                  onClose={() => setViewingSavedPoint(null)}
                 />
               )}
               <FileUploadDialog

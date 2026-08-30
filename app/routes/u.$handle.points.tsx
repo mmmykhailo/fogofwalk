@@ -5,7 +5,6 @@ import { PublicProfileHeader } from "~/components/public-profile/PublicProfileHe
 import { SavedPointsSection } from "~/components/public-profile/SavedPointsSection"
 import { TransitionLink } from "~/components/TransitionLink"
 import { apiUrl } from "~/lib/server/config"
-import { useAuth } from "~/lib/server/authStore"
 import { socialMeta } from "~/lib/socialMeta"
 import type { PublicProfileResponse } from "~shared/api"
 import type { Route } from "./+types/u.$handle.points"
@@ -52,10 +51,6 @@ export function meta({ data, params }: Route.MetaArgs) {
 
 export default function PublicSavedPointsPage() {
   const { profile, error } = useLoaderData<typeof clientLoader>()
-  const auth = useAuth()
-  const isOwner =
-    auth.status === "signedIn" &&
-    auth.user.handle?.toLowerCase() === profile?.user.handle.toLowerCase()
   const points = profile?.savedPoints ?? []
 
   return (
@@ -97,11 +92,7 @@ export default function PublicSavedPointsPage() {
       )}
 
       {!error && profile && points.length > 0 && (
-        <SavedPointsSection
-          points={points}
-          isOwner={isOwner}
-          showHeading={false}
-        />
+        <SavedPointsSection points={points} showHeading={false} />
       )}
     </PageShell>
   )
