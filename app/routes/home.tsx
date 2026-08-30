@@ -18,18 +18,20 @@ import { PhotoErrorDialog } from "~/components/PhotoErrorDialog"
 import { ParseErrorDialog } from "~/components/ParseErrorDialog"
 import { DuplicateActivitiesDialog } from "~/components/DuplicateActivitiesDialog"
 import { MissingActivityTypeDialog } from "~/components/MissingActivityTypeDialog"
-import { ActivityStatsPanel } from "~/components/activity-stats/ActivityStatsPanel"
+import { DraggableActivityDialog } from "~/components/activity-stats/DraggableActivityDialog"
 import { ShareDialog } from "~/components/ShareDialog"
-import { PhotoCard } from "~/components/PhotoCard"
+import { DraggablePhotoDialog } from "~/components/DraggablePhotoDialog"
+import { DraggableSavedPointEditDialog } from "~/components/DraggableSavedPointEditDialog"
+import { DraggableSavedPointViewDialog } from "~/components/DraggableSavedPointViewDialog"
 import { ErrorBoundary } from "~/components/ErrorBoundary"
 import { ErrorCard } from "~/components/ErrorCard"
 import {
   Dialog,
   DialogContent,
-  DialogHeader,
-  DialogTitle,
   DialogDescription,
   DialogFooter,
+  DialogHeader,
+  DialogTitle,
 } from "~/components/ui/dialog"
 import { Button } from "~/components/ui/button"
 import {
@@ -51,11 +53,15 @@ import {
   loadFogCache,
   clearFogCache,
   clearAll,
+  loadSavedPoints,
+  saveSavedPoint,
+  deleteSavedPoint as deleteStoredSavedPoint,
   deleteActivity,
   isFogCacheValid,
 } from "~/lib/storage"
 import { clearMapPosition } from "~/lib/mapStore"
 import { initAuth, useAuth } from "~/lib/server/authStore"
+import { apiUrl, isServerEnabled } from "~/lib/server/config"
 import {
   ignoreActivityLocally,
   pushActivityDeletion,
@@ -63,48 +69,59 @@ import {
   setSyncChangeHandler,
   startSyncScheduler,
   suspendAutoSync,
+  pushSavedPointDeletion,
+  pushSavedPointUpdate,
 } from "~/lib/server/syncEngine"
 import { sortActivities, populateUniqueDistances } from "~/lib/statsAggregator"
 import { useMyLocation } from "~/lib/useMyLocation"
 import { useActivityVisibility } from "~/lib/useActivityVisibility"
+import { socialMeta } from "~/lib/socialMeta"
 import type { FogMode, MapMode, ParsedActivity } from "~/types/activities"
 import type { PhotoEntry, PhotoGroup } from "~/types/photos"
+import {
+  isSavedPointColor,
+  isValidSavedPointInput,
+  type SavedPoint,
+} from "~shared/saved-points"
 
 export function meta({}: Route.MetaArgs) {
-  return [
-    { title: "Fog of Walk — Explore the unknown" },
-    {
-      name: "description",
-      content:
-        "Import your GPX and FIT activity files. Watch the fog of war lift over every trail you've run, every road you've cycled, every path you've ever walked.",
-    },
-    { property: "og:type", content: "website" },
-    { property: "og:title", content: "Fog of Walk" },
-    {
-      property: "og:description",
-      content:
-        "Import your GPX and FIT activity files. Watch the fog of war lift over every trail you've run, every road you've cycled, every path you've ever walked.",
-    },
-    { property: "og:site_name", content: "Fog of Walk" },
-    { name: "twitter:card", content: "summary" },
-    { name: "twitter:title", content: "Fog of Walk" },
-    {
-      name: "twitter:description",
-      content:
-        "Import your GPX and FIT activity files. Watch the fog of war lift over every trail you've run, every road you've cycled, every path you've ever walked.",
-    },
-  ]
+  return socialMeta({
+    title: "Fog of Walk — Explore the unknown",
+    description:
+      "Import your GPX and FIT activity files. Watch the fog of war lift over every trail you've run, every road you've cycled, every path you've ever walked.",
+    path: "/",
+  })
+}
+
+async function loadPublicSavedPoint(id: string): Promise<SavedPoint | null> {
+  if (!isServerEnabled) return null
+
+  try {
+    const response = await fetch(
+      apiUrl(`/api/public/saved-points/${encodeURIComponent(id)}`)
+    )
+    if (!response.ok) return null
+    const point = (await response.json()) as SavedPoint
+    return isValidSavedPointInput(point) && point.id === id ? point : null
+  } catch {
+    return null
+  }
 }
 
 // Module-level cache for restored photos — avoids passing File objects through
 // React Router's serialized loader return type (which strips Blob/File methods).
 let _restoredPhotos: PhotoEntry[] = []
+let _restoredSavedPoints: SavedPoint[] = []
 
-export async function clientLoader(): Promise<{
+export async function clientLoader({
+  request,
+}: Route.ClientLoaderArgs): Promise<{
   initialized: boolean
   restoredActivityCount: number
   restoredFogMode: FogMode
+  viewedSavedPoint: SavedPoint | null
 }> {
+  let didCreateWorker = false
   if (!mapStore.worker) {
     console.debug("[clientLoader] creating worker")
     mapStore.worker = new Worker(
@@ -112,6 +129,7 @@ export async function clientLoader(): Promise<{
       { type: "module" }
     )
     mapStore.worker.onerror = (e) => console.error("[worker] uncaught error", e)
+    didCreateWorker = true
     console.debug("[clientLoader] worker created", mapStore.worker)
   }
 
@@ -121,16 +139,24 @@ export async function clientLoader(): Promise<{
   void initAuth()
 
   // Restore persisted data in parallel
-  const [activities, photos, fogMode, fogCache] = await Promise.all([
-    loadActivities(),
-    loadPhotos(),
-    loadFogMode(),
-    loadFogCache(),
-  ])
+  const [activities, photos, savedPoints, fogMode, fogCache] =
+    await Promise.all([
+      loadActivities(),
+      loadPhotos(),
+      loadSavedPoints(),
+      loadFogMode(),
+      loadFogCache(),
+    ])
 
   const restoredFogMode: FogMode = fogMode ?? "corridor"
   mapStore.fogMode = restoredFogMode
   _restoredPhotos = photos
+  _restoredSavedPoints = savedPoints
+  const savedPointId = new URL(request.url).searchParams.get("savedPoint")
+  const viewedSavedPoint =
+    savedPointId && !savedPoints.some((point) => point.id === savedPointId)
+      ? await loadPublicSavedPoint(savedPointId)
+      : null
 
   if (activities.length > 0) {
     mapStore.activities = sortActivities(activities)
@@ -156,6 +182,13 @@ export async function clientLoader(): Promise<{
     }
   }
 
+  if (didCreateWorker) {
+    // A rendered cache can paint the map but cannot reconstruct the worker's
+    // corridor/fill accumulators. The first later addition will replay all
+    // activities before returning to incremental processing.
+    mapStore.fogWorkerActivityIds.clear()
+  }
+
   // initialCenter/initialZoom are already loaded from localStorage at mapStore module init time.
   // No async needed — they're ready before any useEffect runs.
 
@@ -170,6 +203,7 @@ export async function clientLoader(): Promise<{
     initialized: true,
     restoredActivityCount: activities.length,
     restoredFogMode,
+    viewedSavedPoint,
   }
 }
 clientLoader.hydrate = true as const
@@ -222,7 +256,7 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
     // Shared with the sync engine's downloads — merge, recompute, post to the
     // worker (joining the current run), persist, invalidate the fog cache.
     // Returns only the activities that were genuinely new.
-    const added = await ingestActivities(allActivities, mode)
+    const added = await ingestActivities(allActivities)
     if (added.length > 0) void requestSync("add-files")
 
     return {
@@ -302,7 +336,12 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
       setLapHighlightData(map, null)
     }
 
-    // Replay remaining activities
+    // Persist and invalidate fog cache
+    await deleteActivity(activityId)
+    await clearFogCache()
+
+    // Replay only after invalidation finishes. Otherwise a fast worker can save
+    // the rebuilt cache and have clearFogCache erase that fresh result.
     if (mapStore.activities.length > 0) {
       postToFogWorker({
         type: "PROCESS_ACTIVITIES",
@@ -310,10 +349,6 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
         mode: mapStore.fogMode,
       })
     }
-
-    // Persist and invalidate fog cache
-    await deleteActivity(activityId)
-    await clearFogCache()
 
     if (deletedActivity) {
       if (formData.get("alsoOnServer") === "0") {
@@ -331,6 +366,81 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
       intent: "delete-activity" as const,
       activityCount: mapStore.activities.length,
     }
+  }
+
+  if (intent === "save-saved-point") {
+    const id = formData.get("id")
+    const name = formData.get("name")
+    const description = formData.get("description")
+    const color = formData.get("color")
+    const isPublic = formData.get("isPublic")
+    const lng = Number(formData.get("lng"))
+    const lat = Number(formData.get("lat"))
+    const errors: Record<string, string> = {}
+
+    if (typeof name !== "string" || name.trim().length === 0) {
+      errors.name = "Enter a name."
+    }
+    if (!Number.isFinite(lng) || lng < -180 || lng > 180) {
+      errors.lng = "Enter a longitude between -180 and 180."
+    }
+    if (!Number.isFinite(lat) || lat < -90 || lat > 90) {
+      errors.lat = "Enter a latitude between -90 and 90."
+    }
+    if (
+      typeof id !== "string" ||
+      typeof name !== "string" ||
+      typeof description !== "string" ||
+      !isSavedPointColor(color) ||
+      (isPublic !== "true" && isPublic !== "false")
+    ) {
+      errors.form = "Enter valid saved point details."
+    }
+    if (Object.keys(errors).length > 0) {
+      return { intent: "save-saved-point" as const, errors }
+    }
+
+    const input = {
+      id: id as string,
+      lng,
+      lat,
+      name: name as string,
+      description: description as string,
+      color: color as SavedPoint["color"],
+      isPublic: isPublic === "true",
+    }
+    if (!isValidSavedPointInput(input)) {
+      return {
+        intent: "save-saved-point" as const,
+        errors: { form: "Enter valid saved point details." },
+      }
+    }
+
+    const existing = (await loadSavedPoints()).find((point) => point.id === id)
+    const now = Date.now()
+    const localPoint: SavedPoint = {
+      ...input,
+      description: input.description.trim() || null,
+      name: input.name.trim(),
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now,
+    }
+    await saveSavedPoint(localPoint)
+    const point = await pushSavedPointUpdate(localPoint)
+    return { intent: "save-saved-point" as const, point }
+  }
+
+  if (intent === "delete-saved-point") {
+    const id = formData.get("id")
+    if (typeof id !== "string" || !id) {
+      return {
+        intent: "delete-saved-point" as const,
+        errors: { form: "Saved point could not be deleted." },
+      }
+    }
+    await deleteStoredSavedPoint(id)
+    await pushSavedPointDeletion(id)
+    return { intent: "delete-saved-point" as const, id }
   }
 
   return null
@@ -378,6 +488,46 @@ export default function Home() {
   const [showShareDialog, setShowShareDialog] = useState(false)
   const [photos, setPhotos] = useState<PhotoEntry[]>(_restoredPhotos)
   const [showPhotos, setShowPhotos] = useState(true)
+  const [savedPoints, setSavedPoints] =
+    useState<SavedPoint[]>(_restoredSavedPoints)
+  const [showSavedPoints, setShowSavedPoints] = useState(true)
+  const [editingSavedPointId, setEditingSavedPointId] = useState<string | null>(
+    null
+  )
+  const [viewingSavedPoint, setViewingSavedPoint] = useState<SavedPoint | null>(
+    null
+  )
+  const displayedSavedPoints = useMemo(
+    () =>
+      viewingSavedPoint
+        ? [
+            ...savedPoints.filter((point) => point.id !== viewingSavedPoint.id),
+            viewingSavedPoint,
+          ]
+        : savedPoints,
+    [savedPoints, viewingSavedPoint]
+  )
+  const [newSavedPointCoordinate, setNewSavedPointCoordinate] = useState<
+    [number, number] | null
+  >(null)
+
+  function clearSearchParam(name: string) {
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev)
+        next.delete(name)
+        return next
+      },
+      { replace: true }
+    )
+  }
+
+  function closeSavedPointDialog() {
+    setEditingSavedPointId(null)
+    setNewSavedPointCoordinate(null)
+    setViewingSavedPoint(null)
+    clearSearchParam("savedPoint")
+  }
   const {
     showMyLocation,
     permissionDenied: locationPermissionDenied,
@@ -469,6 +619,28 @@ export default function Home() {
       )
     }
   }, [mapReady, searchParams])
+
+  useEffect(() => {
+    if (!mapReady) return
+    const id = searchParams.get("savedPoint")
+    if (!id) {
+      // Saving replaces the local point before the URL update commits. That
+      // intermediate render can briefly reselect the point from the stale
+      // query parameter, so an empty URL must actively clear the editor.
+      setEditingSavedPointId(null)
+      setViewingSavedPoint(null)
+      return
+    }
+    const ownedPoint = savedPoints.find((savedPoint) => savedPoint.id === id)
+    const point = ownedPoint ?? loaderData.viewedSavedPoint
+    if (!point || !mapStore.map) return
+    mapStore.map.easeTo({
+      center: [point.lng, point.lat],
+      zoom: Math.max(mapStore.map.getZoom(), 16),
+    })
+    setEditingSavedPointId(ownedPoint?.id ?? null)
+    setViewingSavedPoint(ownedPoint ? null : point)
+  }, [loaderData.viewedSavedPoint, mapReady, savedPoints, searchParams])
 
   // Handle files shared via the Web Share Target API (PWA installed).
   // The service worker intercepts the POST to /?share-target, buffers the files
@@ -616,49 +788,74 @@ export default function Home() {
 
   // Sync mutates mapStore directly; reconcile the React state it can't reach.
   useEffect(() => {
-    setSyncChangeHandler(({ downloadedCount, updatedCount, deletedIds }) => {
-      setActivityCount(mapStore.activities.length)
+    setSyncChangeHandler(
+      ({
+        downloadedCount,
+        updatedCount,
+        deletedIds,
+        savedPoints: syncedSavedPoints = [],
+        deletedSavedPointIds = [],
+      }) => {
+        setActivityCount(mapStore.activities.length)
 
-      if (deletedIds.length > 0) {
-        // A removal invalidates the accumulated fog, so the run is abandoned
-        // and the survivors replayed — the same dance as `delete-activity`.
-        setSelectedActivityIds((prev) =>
-          prev.filter((id) => !deletedIds.includes(id))
-        )
-        setPendingActivityId(null)
-        mapStore.processedCount = 0
-        startFogRun()
-        postToFogWorker({ type: "RESET" })
-        const map = mapStore.map
-        if (map && mapStore.sourcesReady) {
-          ;(map.getSource("fog-source") as maplibregl.GeoJSONSource)?.setData(
-            worldFogGeoJSON()
+        if (syncedSavedPoints.length > 0 || deletedSavedPointIds.length > 0) {
+          setSavedPoints((current) => [
+            ...current.filter(
+              (point) =>
+                !deletedSavedPointIds.includes(point.id) &&
+                !syncedSavedPoints.some((saved) => saved.id === point.id)
+            ),
+            ...syncedSavedPoints,
+          ])
+        }
+
+        if (deletedIds.length > 0) {
+          // A removal invalidates the accumulated fog, so the run is abandoned
+          // and the survivors replayed — the same dance as `delete-activity`.
+          setSelectedActivityIds((prev) =>
+            prev.filter((id) => !deletedIds.includes(id))
           )
-          ;(
-            map.getSource("activities-source") as maplibregl.GeoJSONSource
-          )?.setData(featureCollection([]))
-          setLapHighlightData(map, null)
+          setPendingActivityId(null)
+          mapStore.processedCount = 0
+          startFogRun()
+          postToFogWorker({ type: "RESET" })
+          const map = mapStore.map
+          if (map && mapStore.sourcesReady) {
+            ;(map.getSource("fog-source") as maplibregl.GeoJSONSource)?.setData(
+              worldFogGeoJSON()
+            )
+            ;(
+              map.getSource("activities-source") as maplibregl.GeoJSONSource
+            )?.setData(featureCollection([]))
+            setLapHighlightData(map, null)
+          }
+          if (mapStore.activities.length > 0) {
+            postToFogWorker({
+              type: "PROCESS_ACTIVITIES",
+              activities: mapStore.activities,
+              mode: mapStore.fogMode,
+            })
+          }
         }
-        if (mapStore.activities.length > 0) {
-          postToFogWorker({
-            type: "PROCESS_ACTIVITIES",
-            activities: mapStore.activities,
-            mode: mapStore.fogMode,
-          })
+
+        if (downloadedCount > 0 || deletedIds.length > 0) {
+          setProcessedCount(0)
+          setIsProcessing(
+            mapStore.activities.length > 0 && mapStore.isFogRunInFlight
+          )
+        }
+
+        if (
+          downloadedCount > 0 ||
+          updatedCount > 0 ||
+          deletedIds.length > 0 ||
+          syncedSavedPoints.length > 0 ||
+          deletedSavedPointIds.length > 0
+        ) {
+          void revalidator.revalidate()
         }
       }
-
-      if (downloadedCount > 0 || deletedIds.length > 0) {
-        setProcessedCount(0)
-        setIsProcessing(
-          mapStore.activities.length > 0 && mapStore.isFogRunInFlight
-        )
-      }
-
-      if (downloadedCount > 0 || updatedCount > 0 || deletedIds.length > 0) {
-        void revalidator.revalidate()
-      }
-    })
+    )
     return () => setSyncChangeHandler(null)
   }, [revalidator])
 
@@ -741,7 +938,9 @@ export default function Home() {
     setFogMode(newMode)
     mapStore.fogMode = newMode
     saveFogMode(newMode) // fire-and-forget
-    clearFogCache() // will be rebuilt after reprocessing
+    // The old cache carries its mode and is rejected on reload. Do not delete it
+    // asynchronously here: that deletion can otherwise race and erase the fresh
+    // cache written by a very fast reprocess.
     // Abandon whatever the worker is still chewing on: a rapid corridor↔fill
     // toggle must start the new mode immediately rather than queue behind the
     // old one. Replies from the abandoned run are dropped by their stale runId.
@@ -887,6 +1086,17 @@ export default function Home() {
               highlightCoordinates={highlightCoordinates}
               focusCoordinates={focusCoordinates}
               focusKey={focusKey}
+              savedPoints={displayedSavedPoints}
+              showSavedPoints={showSavedPoints || viewingSavedPoint !== null}
+              onSavedPointSelect={(id) => {
+                setViewingSavedPoint(null)
+                setEditingSavedPointId(id)
+              }}
+              onSavedPointCreate={({ lng, lat }) => {
+                setViewingSavedPoint(null)
+                setEditingSavedPointId(null)
+                setNewSavedPointCoordinate([lng, lat])
+              }}
             />
           </ErrorBoundary>
           {mapReady && isMapRoute && (
@@ -912,7 +1122,45 @@ export default function Home() {
                 showMyLocation={showMyLocation}
                 onShowMyLocationChange={handleShowMyLocationChange}
                 locationPermissionDenied={locationPermissionDenied}
+                savedPointCount={savedPoints.length}
+                showSavedPoints={showSavedPoints}
+                onShowSavedPointsChange={setShowSavedPoints}
               />
+              {(editingSavedPointId || newSavedPointCoordinate) && (
+                <DraggableSavedPointEditDialog
+                  point={
+                    savedPoints.find(
+                      (point) => point.id === editingSavedPointId
+                    ) ?? null
+                  }
+                  coordinate={newSavedPointCoordinate}
+                  onClose={closeSavedPointDialog}
+                  onSave={(point) => {
+                    setSavedPoints((points) => [
+                      ...points.filter((saved) => saved.id !== point.id),
+                      point,
+                    ])
+                    closeSavedPointDialog()
+                  }}
+                  onDelete={
+                    editingSavedPointId
+                      ? (id) => {
+                          setSavedPoints((points) =>
+                            points.filter((point) => point.id !== id)
+                          )
+                          closeSavedPointDialog()
+                        }
+                      : undefined
+                  }
+                />
+              )}
+              {viewingSavedPoint && (
+                <DraggableSavedPointViewDialog
+                  key={viewingSavedPoint.id}
+                  point={viewingSavedPoint}
+                  onClose={closeSavedPointDialog}
+                />
+              )}
               <FileUploadDialog
                 open={showUploadDialog}
                 onOpenChange={setShowUploadDialog}
@@ -946,7 +1194,7 @@ export default function Home() {
                 onOpenChange={setIsDuplicateOpen}
                 duplicateCount={duplicateCount}
               />
-              <PhotoCard
+              <DraggablePhotoDialog
                 group={selectedGroup}
                 onClose={() => setSelectedGroup(null)}
               />
@@ -958,7 +1206,7 @@ export default function Home() {
                     </div>
                   )}
                 >
-                  <ActivityStatsPanel
+                  <DraggableActivityDialog
                     activities={selectedActivities}
                     onRemoveActivity={(id) =>
                       setSelectedActivityIds((prev) =>
@@ -969,14 +1217,7 @@ export default function Home() {
                       setSelectedActivityIds([])
                       setSelectedLap(null)
                       setPendingActivityId(null)
-                      setSearchParams(
-                        (prev) => {
-                          const next = new URLSearchParams(prev)
-                          next.delete("activity")
-                          return next
-                        },
-                        { replace: true }
-                      )
+                      clearSearchParam("activity")
                     }}
                     onShare={() => setShowShareDialog(true)}
                     onDelete={

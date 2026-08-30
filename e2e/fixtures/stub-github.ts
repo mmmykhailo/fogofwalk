@@ -2,12 +2,11 @@
  * Bun `--preload` module: redirects the server's two outbound GitHub calls to
  * the local fake IdP.
  *
- * This exists because `arctic` hardcodes `https://github.com/login/oauth/...`
- * and `https://api.github.com/user` as module constants, and because that half
- * of the OAuth dance runs server-side, where Playwright's `page.route` cannot
- * reach. Patching `fetch` in the *test harness* keeps `server/src` free of any
- * test-only configuration — the callback handler, state-cookie validation,
- * administrator promotion, session minting and handoff code all run for real.
+ * The OAuth token exchange and user lookup run server-side, where Playwright's
+ * `page.route` cannot reach. Patching `fetch` in the *test harness* keeps
+ * `server/src` free of any test-only configuration — the callback handler,
+ * state-cookie validation, administrator promotion, session minting and
+ * handoff code all run for real.
  *
  * Loaded only by the E2E rig: `bun --preload <this> src/index.ts`.
  */
@@ -38,8 +37,8 @@ globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
   for (const [prefix, target] of REWRITES) {
     if (url.startsWith(prefix)) {
       const rewritten = target + url.slice(prefix.length)
-      // Requests carry headers and a body; rebuild rather than pass the URL,
-      // or the Basic auth arctic sets on the token request would be dropped.
+      // Requests carry headers and a body, so rebuild them with the rewritten
+      // URL rather than dropping either while forwarding to the fake IdP.
       if (input instanceof Request) {
         return realFetch(new Request(rewritten, input), init)
       }

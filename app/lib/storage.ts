@@ -1,6 +1,7 @@
 import type { ParsedActivity, FogMode } from "~/types/activities"
 import type { ServerUser, UserCapabilities } from "~shared/api"
 import type { PhotoEntry } from "~/types/photos"
+import type { SavedPoint } from "~shared/saved-points"
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -27,7 +28,7 @@ interface PrefEntry {
 // ─── DB singleton ──────────────────────────────────────────────────────────────
 
 const DB_NAME = "fogofwalk"
-const DB_VERSION = 2
+const DB_VERSION = 3
 
 let dbPromise: Promise<IDBDatabase | null> | null = null
 
@@ -67,6 +68,9 @@ function getDb(): Promise<IDBDatabase | null> {
         }
         if (!db.objectStoreNames.contains("photos")) {
           db.createObjectStore("photos", { keyPath: "id" })
+        }
+        if (!db.objectStoreNames.contains("saved-points")) {
+          db.createObjectStore("saved-points", { keyPath: "id" })
         }
         if (!db.objectStoreNames.contains("prefs")) {
           db.createObjectStore("prefs", { keyPath: "key" })
@@ -274,6 +278,78 @@ export async function clearPhotos(): Promise<void> {
   }
 }
 
+// ─── Saved points ─────────────────────────────────────────────────────────────
+
+/** Upsert a single saved point. */
+export async function saveSavedPoint(point: SavedPoint): Promise<void> {
+  return saveSavedPoints([point])
+}
+
+/** Upsert saved points into storage. */
+export async function saveSavedPoints(points: SavedPoint[]): Promise<void> {
+  if (points.length === 0) return
+  const db = await getDb()
+  if (!db) return
+  try {
+    const tx = db.transaction("saved-points", "readwrite")
+    const store = tx.objectStore("saved-points")
+    for (const point of points) store.put(point)
+    await new Promise<void>((resolve, reject) => {
+      tx.oncomplete = () => resolve()
+      tx.onerror = () => reject(tx.error)
+    })
+  } catch (err) {
+    console.warn("[storage] saveSavedPoints failed:", err)
+  }
+}
+
+/** Load all saved points. Returns [] on any error. */
+export async function loadSavedPoints(): Promise<SavedPoint[]> {
+  const db = await getDb()
+  if (!db) return []
+  try {
+    const tx = db.transaction("saved-points", "readonly")
+    return await promisifyRequest<SavedPoint[]>(
+      tx.objectStore("saved-points").getAll()
+    )
+  } catch (err) {
+    console.warn("[storage] loadSavedPoints failed:", err)
+    return []
+  }
+}
+
+/** Delete one saved point from local storage. */
+export async function deleteSavedPoint(id: string): Promise<void> {
+  const db = await getDb()
+  if (!db) return
+  try {
+    const tx = db.transaction("saved-points", "readwrite")
+    tx.objectStore("saved-points").delete(id)
+    await new Promise<void>((resolve, reject) => {
+      tx.oncomplete = () => resolve()
+      tx.onerror = () => reject(tx.error)
+    })
+  } catch (err) {
+    console.warn("[storage] deleteSavedPoint failed:", err)
+  }
+}
+
+/** Delete every locally persisted saved point. */
+export async function clearSavedPoints(): Promise<void> {
+  const db = await getDb()
+  if (!db) return
+  try {
+    const tx = db.transaction("saved-points", "readwrite")
+    tx.objectStore("saved-points").clear()
+    await new Promise<void>((resolve, reject) => {
+      tx.oncomplete = () => resolve()
+      tx.onerror = () => reject(tx.error)
+    })
+  } catch (err) {
+    console.warn("[storage] clearSavedPoints failed:", err)
+  }
+}
+
 // ─── Prefs helpers ─────────────────────────────────────────────────────────────
 
 async function prefSet(key: string, value: unknown): Promise<void> {
@@ -422,6 +498,16 @@ export interface SyncState {
    * twice, which silently re-deletes a file the user just re-imported.
    */
   appliedTombstones?: Record<string, number>
+  /** Independent incremental-manifest cursor for saved points. */
+  savedPointsCursor?: number
+  /** Known remote saved-point ids; retained across incremental windows. */
+  serverSavedPointIds?: string[]
+  /** Saved-point tombstones already applied on this device, id → deletedAt. */
+  appliedSavedPointTombstones?: Record<string, number>
+  /** Local creates/edits awaiting a successful saved-point upsert. */
+  outboundSavedPointIds?: string[]
+  /** Local deletions awaiting a successful saved-point tombstone. */
+  outboundSavedPointDeletionIds?: string[]
 }
 
 export async function saveSyncState(state: SyncState): Promise<void> {
@@ -449,6 +535,7 @@ export async function clearAll(): Promise<void> {
   await Promise.all([
     clearActivities(),
     clearPhotos(),
+    clearSavedPoints(),
     prefDelete("fogMode"),
     prefDelete("fogCache"),
     prefDelete("syncState"),

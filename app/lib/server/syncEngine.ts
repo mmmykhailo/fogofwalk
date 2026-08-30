@@ -16,17 +16,28 @@ import type {
   ActivityMeta,
   ActivityTombstone,
   ActivityUploadPayload,
+  SavedPointDeleteResponse,
+  SavedPointManifestPage,
+  SavedPointTombstone,
+  SavedPointUpsertInput,
+  SavedPointUpsertResponse,
 } from "~shared/api"
 import { MAX_ACTIVITY_BYTES, SYNC_CONCURRENCY } from "~shared/constants"
+import type { SavedPoint } from "~shared/saved-points"
 import type { ParsedActivity } from "~/types/activities"
 import {
   deleteActivity as deleteActivityFromIdb,
   loadSyncState,
   saveSyncState,
   saveActivities,
+  deleteSavedPoint as deleteSavedPointFromIdb,
+  loadSavedPoints,
+  saveSavedPoint,
+  saveSavedPoints,
 } from "~/lib/storage"
 import { ingestActivities, mapStore } from "~/lib/mapStore"
 import { backfillContentHashes } from "~/lib/activityHash"
+import { createUuid } from "~/lib/uuid"
 import { populateUniqueDistances } from "~/lib/statsAggregator"
 import { apiRaw, apiSend, ApiRequestError, friendlyMessage } from "./apiClient"
 import { canSync } from "./authStore"
@@ -120,6 +131,10 @@ export interface SyncChanges {
   updatedCount: number
   /** Local ids of activities a tombstone removed. */
   deletedIds: string[]
+  /** Saved points that arrived or changed on the server. */
+  savedPoints?: SavedPoint[]
+  /** Saved-point ids removed by a remote tombstone. */
+  deletedSavedPointIds?: string[]
 }
 
 let onChanged: ((changes: SyncChanges) => void) | null = null
@@ -239,6 +254,10 @@ async function syncOnce(reason: string): Promise<void> {
   console.debug("[sync] start", reason)
 
   try {
+    // Saved points have their own manifest cursor and are intentionally kept
+    // outside activity upload pacing. Reconcile them before activities.
+    await syncSavedPoints()
+
     // Activities imported before sync existed have no hash yet.
     const backfilled = await backfillContentHashes(mapStore.activities)
     if (backfilled.length > 0) await saveActivities(backfilled)
@@ -442,6 +461,111 @@ async function syncOnce(reason: string): Promise<void> {
   }
 }
 
+/** Reconcile remote point changes/deletions, then upload local outbound edits. */
+async function syncSavedPoints(): Promise<void> {
+  const state = await loadSyncState()
+  const since = state?.savedPointsCursor ?? 0
+  const isFromScratch = since === 0
+  const { serverPoints, deletions, cursor } =
+    await fetchSavedPointsManifest(since)
+  const localById = new Map(
+    (await loadSavedPoints()).map((point) => [point.id, point])
+  )
+  const serverIds = new Set(
+    isFromScratch ? [] : (state?.serverSavedPointIds ?? [])
+  )
+  for (const point of serverPoints) serverIds.add(point.id)
+  for (const tombstone of deletions) serverIds.delete(tombstone.id)
+
+  const applied = new Map<string, number>(
+    Object.entries(state?.appliedSavedPointTombstones ?? {})
+  )
+  const freshTombstones = deletions.filter(
+    (tombstone) => applied.get(tombstone.id) !== tombstone.deletedAt
+  )
+  const dirtyIds = new Set(state?.outboundSavedPointIds ?? [])
+  const outboundDeletionIds = new Set(
+    state?.outboundSavedPointDeletionIds ?? []
+  )
+  const deletedIds: string[] = []
+  if (!isFromScratch) {
+    for (const tombstone of freshTombstones) {
+      if (localById.has(tombstone.id)) {
+        await deleteSavedPointFromIdb(tombstone.id)
+        localById.delete(tombstone.id)
+        deletedIds.push(tombstone.id)
+      }
+      dirtyIds.delete(tombstone.id)
+      outboundDeletionIds.delete(tombstone.id)
+    }
+  }
+  for (const tombstone of deletions)
+    applied.set(tombstone.id, tombstone.deletedAt)
+
+  // Keep unsent local edits until their upsert wins a server timestamp. Other
+  // manifest records are the server's last write and replace local copies.
+  const remoteUpdates = serverPoints.filter(
+    (point) => !dirtyIds.has(point.id) && !outboundDeletionIds.has(point.id)
+  )
+  if (remoteUpdates.length > 0) {
+    await saveSavedPoints(remoteUpdates)
+    for (const point of remoteUpdates) localById.set(point.id, point)
+  }
+
+  const deletedThisWindow = new Set(freshTombstones.map((tomb) => tomb.id))
+  const deletionFailures = await pooled(
+    [...outboundDeletionIds],
+    async (id) => {
+      const deletedAt = await deleteSavedPointOnServer(id)
+      serverIds.delete(id)
+      dirtyIds.delete(id)
+      outboundDeletionIds.delete(id)
+      applied.set(id, deletedAt)
+    }
+  )
+  const toUpload = [...localById.values()].filter(
+    (point) =>
+      !outboundDeletionIds.has(point.id) &&
+      (dirtyIds.has(point.id) || !serverIds.has(point.id)) &&
+      (isFromScratch || !deletedThisWindow.has(point.id))
+  )
+  const failures = await pooled(toUpload, async (point) => {
+    const saved = await uploadSavedPoint(point)
+    localById.set(saved.id, saved)
+    serverIds.add(saved.id)
+    dirtyIds.delete(saved.id)
+  })
+
+  const cutoff = cursor - TOMBSTONE_MEMORY_MS
+  const appliedSavedPointTombstones: Record<string, number> = {}
+  for (const [id, deletedAt] of applied) {
+    if (deletedAt >= cutoff) appliedSavedPointTombstones[id] = deletedAt
+  }
+  await saveSyncState({
+    cursor: state?.cursor ?? 0,
+    lastSyncAt: state?.lastSyncAt ?? 0,
+    serverHashes: state?.serverHashes ?? [],
+    ...state,
+    savedPointsCursor: cursor,
+    serverSavedPointIds: [...serverIds],
+    appliedSavedPointTombstones,
+    outboundSavedPointIds: [...dirtyIds],
+    outboundSavedPointDeletionIds: [...outboundDeletionIds],
+  })
+  if (remoteUpdates.length > 0 || deletedIds.length > 0) {
+    onChanged?.({
+      downloadedCount: 0,
+      updatedCount: 0,
+      deletedIds: [],
+      savedPoints: remoteUpdates,
+      deletedSavedPointIds: deletedIds,
+    })
+  }
+  if (deletionFailures > 0 || failures > 0) {
+    throw new Error("Some saved point changes couldn't be synced")
+  }
+}
+
 /**
  * Tombstones older than this are dropped from the applied-set. Only the newest
  * are ever re-served (the cursor is an inclusive bound), so the memory needs to
@@ -455,6 +579,9 @@ async function finish(
   ignoredHashes: Set<string>,
   applied: Map<string, number>
 ): Promise<void> {
+  // Saved-point synchronisation maintains an independent cursor in the same
+  // preference record. Preserve it while activity sync advances its cursor.
+  const existing = await loadSyncState()
   const lastSyncAt = Date.now()
   const cutoff = cursor - TOMBSTONE_MEMORY_MS
   const appliedTombstones: Record<string, number> = {}
@@ -462,6 +589,11 @@ async function finish(
     if (deletedAt >= cutoff) appliedTombstones[hash] = deletedAt
   }
   await saveSyncState({
+    savedPointsCursor: existing?.savedPointsCursor,
+    serverSavedPointIds: existing?.serverSavedPointIds,
+    appliedSavedPointTombstones: existing?.appliedSavedPointTombstones,
+    outboundSavedPointIds: existing?.outboundSavedPointIds,
+    outboundSavedPointDeletionIds: existing?.outboundSavedPointDeletionIds,
     cursor,
     lastSyncAt,
     serverHashes: [...serverHashes],
@@ -530,6 +662,28 @@ async function fetchManifest(since: number): Promise<{
   return { serverActivities, deletions, cursor }
 }
 
+async function fetchSavedPointsManifest(since: number): Promise<{
+  serverPoints: SavedPoint[]
+  deletions: SavedPointTombstone[]
+  cursor: number
+}> {
+  const serverPoints: SavedPoint[] = []
+  const deletions: SavedPointTombstone[] = []
+  let cursor = since
+  for (;;) {
+    const res = await apiRaw(
+      "GET",
+      `/api/saved-points/manifest?since=${encodeURIComponent(String(cursor))}`
+    )
+    const page = (await res.json()) as SavedPointManifestPage
+    serverPoints.push(...page.savedPoints)
+    deletions.push(...page.deletions)
+    cursor = page.cursor
+    if (!page.hasMore) break
+  }
+  return { serverPoints, deletions, cursor }
+}
+
 // ─── Upload / download / delete ───────────────────────────────────────────────
 
 async function uploadActivity(activity: ParsedActivity): Promise<void> {
@@ -583,6 +737,103 @@ async function uploadActivity(activity: ParsedActivity): Promise<void> {
   }
 }
 
+async function uploadSavedPoint(point: SavedPoint): Promise<SavedPoint> {
+  const input: SavedPointUpsertInput = {
+    id: point.id,
+    lng: point.lng,
+    lat: point.lat,
+    name: point.name,
+    description: point.description,
+    color: point.color,
+    isPublic: point.isPublic,
+  }
+  const res = await apiRaw("PUT", `/api/saved-points/${point.id}`, {
+    body: input,
+  })
+  const { savedPoint } = (await res.json()) as SavedPointUpsertResponse
+  await saveSavedPoint(savedPoint)
+  return savedPoint
+}
+
+async function deleteSavedPointOnServer(id: string): Promise<number> {
+  const res = await apiRaw("DELETE", `/api/saved-points/${id}`)
+  const { deletedAt } = (await res.json()) as SavedPointDeleteResponse
+  return deletedAt
+}
+
+/**
+ * Queue a local point create/edit for sync and try it immediately. A failed
+ * request deliberately leaves its id outbound so ordinary sync triggers retry.
+ */
+export async function pushSavedPointUpdate(
+  point: SavedPoint
+): Promise<SavedPoint> {
+  const state = (await loadSyncState()) ?? {
+    cursor: 0,
+    lastSyncAt: 0,
+    serverHashes: [],
+  }
+  const outbound = new Set(state.outboundSavedPointIds ?? [])
+  outbound.add(point.id)
+  const outboundDeletions = new Set(state.outboundSavedPointDeletionIds ?? [])
+  outboundDeletions.delete(point.id)
+  await saveSyncState({
+    ...state,
+    outboundSavedPointIds: [...outbound],
+    outboundSavedPointDeletionIds: [...outboundDeletions],
+  })
+  if (!canSync()) return point
+  try {
+    const saved = await uploadSavedPoint(point)
+    outbound.delete(point.id)
+    await saveSyncState({
+      ...state,
+      outboundSavedPointIds: [...outbound],
+      outboundSavedPointDeletionIds: [...outboundDeletions],
+    })
+    requestSync("saved-point-update")
+    return saved
+  } catch (err) {
+    console.warn("[sync] failed to propagate saved-point update:", err)
+    return point
+  }
+}
+
+/** Queue a local deletion and try to propagate its tombstone immediately. */
+export async function pushSavedPointDeletion(id: string): Promise<void> {
+  const state = (await loadSyncState()) ?? {
+    cursor: 0,
+    lastSyncAt: 0,
+    serverHashes: [],
+  }
+  const outbound = new Set(state.outboundSavedPointIds ?? [])
+  const outboundDeletions = new Set(state.outboundSavedPointDeletionIds ?? [])
+  outbound.delete(id)
+  outboundDeletions.add(id)
+  await saveSyncState({
+    ...state,
+    outboundSavedPointIds: [...outbound],
+    outboundSavedPointDeletionIds: [...outboundDeletions],
+  })
+  if (!canSync()) return
+  try {
+    const deletedAt = await deleteSavedPointOnServer(id)
+    outboundDeletions.delete(id)
+    await saveSyncState({
+      ...state,
+      outboundSavedPointIds: [...outbound],
+      outboundSavedPointDeletionIds: [...outboundDeletions],
+      appliedSavedPointTombstones: {
+        ...(state.appliedSavedPointTombstones ?? {}),
+        [id]: deletedAt,
+      },
+    })
+    requestSync("saved-point-deletion")
+  } catch (err) {
+    console.warn("[sync] failed to propagate saved-point deletion:", err)
+  }
+}
+
 /** Push a same-geometry metadata edit without waiting for manifest diffing. */
 export async function pushActivityUpdate(
   activity: ParsedActivity
@@ -605,7 +856,7 @@ async function downloadActivity(
   return {
     ...payload,
     // Ids are per-device; the content hash is the shared identity.
-    id: localId ?? crypto.randomUUID(),
+    id: localId ?? createUuid(),
     contentHash: meta.contentHash,
     name: meta.name,
     isPublic: meta.isPublic,

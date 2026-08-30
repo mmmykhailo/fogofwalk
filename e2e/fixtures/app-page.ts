@@ -152,6 +152,7 @@ export class AppPage {
   async signIn() {
     await this.openDrawer()
     await this.signInRow.click()
+    await expect(this.drawer).toBeHidden()
     const dialog = this.page.getByRole("dialog", { name: "Sign in" })
     await expect(dialog).toBeVisible()
     await dialog.getByLabel("Local test-user name").fill(this.login)
@@ -177,6 +178,7 @@ export class AppPage {
   async openAccountDialog(): Promise<Locator> {
     await this.openDrawer()
     await this.accountRow.click()
+    await expect(this.drawer).toBeHidden()
     const dialog = this.page.getByRole("dialog", { name: "Account" })
     await expect(dialog).toBeVisible()
     return dialog
@@ -190,11 +192,17 @@ export class AppPage {
 
   async syncNow() {
     const dialog = await this.openAccountDialog()
-    await dialog.getByTestId("sync-now").click()
-    await expect(dialog.getByTestId("sync-now")).not.toContainText("Syncing", {
-      timeout: 30_000,
-    })
-    await this.page.keyboard.press("Escape")
+    const button = dialog.getByTestId("sync-now")
+    const manifestResponse = this.page.waitForResponse(
+      (response) =>
+        response.request().method() === "GET" &&
+        response.url().includes("/api/activities/manifest")
+    )
+    await button.click()
+    await manifestResponse
+    await expect(button).toBeEnabled({ timeout: 30_000 })
+    await expect(button).not.toContainText("Syncing", { timeout: 30_000 })
+    await dialog.getByRole("button", { name: "Close" }).click()
     await expect(dialog).toBeHidden()
   }
 
@@ -216,7 +224,7 @@ export class AppPage {
     await expect(dialog.getByText(/Removed \d+ activity/)).toBeVisible({
       timeout: 30_000,
     })
-    await this.page.keyboard.press("Escape")
+    await dialog.getByRole("button", { name: "Close" }).click()
     await expect(dialog).toBeHidden()
   }
 
@@ -249,6 +257,42 @@ export class AppPage {
           resolve(all.result.map((t: any) => ({ id: t.id, name: t.name })))
         all.onerror = () => resolve([])
       })
+    })
+  }
+
+  /** Summary of the persisted fog geometry, for cache/worker convergence tests. */
+  async fogCacheSummary(): Promise<{
+    activityIds: string[]
+    fogMode: "corridor" | "fill"
+    ringCount: number
+  } | null> {
+    return this.page.evaluate(async () => {
+      const db = await new Promise<IDBDatabase>((resolve, reject) => {
+        const req = indexedDB.open("fogofwalk")
+        req.onsuccess = () => resolve(req.result)
+        req.onerror = () => reject(req.error)
+      })
+      const entry = await new Promise<any>((resolve) => {
+        const tx = db.transaction("prefs", "readonly")
+        const request = tx.objectStore("prefs").get("fogCache")
+        request.onsuccess = () => resolve(request.result?.value ?? null)
+        request.onerror = () => resolve(null)
+      })
+      if (!entry) return null
+
+      const geometry = entry.fogData.geometry
+      const ringCount =
+        geometry.type === "Polygon"
+          ? geometry.coordinates.length
+          : geometry.coordinates.reduce(
+              (sum: number, polygon: unknown[]) => sum + polygon.length,
+              0
+            )
+      return {
+        activityIds: entry.activityIds,
+        fogMode: entry.fogMode,
+        ringCount,
+      }
     })
   }
 
@@ -307,5 +351,62 @@ export class AppPage {
     // gives a regression time to complete its local manifest request without
     // making each suspension check idle for seconds.
     await this.page.waitForTimeout(300)
+  }
+
+  /** Seeds a local saved point so UI tests can open its editor without a map gesture. */
+  async seedSavedPoint(point: {
+    id: string
+    lng: number
+    lat: number
+    name: string
+    description: string | null
+    color: string
+    isPublic: boolean
+    createdAt: number
+    updatedAt: number
+  }): Promise<void> {
+    await this.page.evaluate(async (savedPoint) => {
+      const db = await new Promise<IDBDatabase>((resolve, reject) => {
+        const request = indexedDB.open("fogofwalk")
+        request.onsuccess = () => resolve(request.result)
+        request.onerror = () => reject(request.error)
+      })
+      await new Promise<void>((resolve, reject) => {
+        const transaction = db.transaction("saved-points", "readwrite")
+        transaction.objectStore("saved-points").put(savedPoint)
+        transaction.oncomplete = () => resolve()
+        transaction.onerror = () => reject(transaction.error)
+        transaction.onabort = () => reject(transaction.error)
+      })
+      db.close()
+    }, point)
+  }
+
+  /** Reads the persisted saved points, including selections made by the editor. */
+  async localSavedPoints(): Promise<
+    {
+      id: string
+      name: string
+      color: string
+      isPublic: boolean
+    }[]
+  > {
+    return this.page.evaluate(async () => {
+      const db = await new Promise<IDBDatabase>((resolve, reject) => {
+        const request = indexedDB.open("fogofwalk")
+        request.onsuccess = () => resolve(request.result)
+        request.onerror = () => reject(request.error)
+      })
+      const points = await new Promise<
+        { id: string; name: string; color: string; isPublic: boolean }[]
+      >((resolve, reject) => {
+        const transaction = db.transaction("saved-points", "readonly")
+        const request = transaction.objectStore("saved-points").getAll()
+        request.onsuccess = () => resolve(request.result)
+        request.onerror = () => reject(request.error)
+      })
+      db.close()
+      return points
+    })
   }
 }

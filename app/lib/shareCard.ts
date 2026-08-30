@@ -556,7 +556,7 @@ export async function exportShareCard(opts: ShareCardOptions): Promise<void> {
   }
 }
 
-// ─── Composite stats (used by ActivityStatsPanel) ────────────────────────────────
+// ─── Composite stats (used by DraggableActivityDialog) ───────────────────────────
 
 export interface CompositeStats {
   totalDistanceKm: number
