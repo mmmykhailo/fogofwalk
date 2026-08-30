@@ -1,6 +1,6 @@
 {
-  "name": "fogofwalk-2",
-  "version": "0.1.2",
+  "name": "fogofwalk-client",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -8,7 +8,9 @@
     "dev": "react-router dev",
     "typecheck": "react-router typegen && tsc",
     "test": "bun test",
-    "release": "bun scripts/generate-release.js",
+    "release": "bun scripts/generate-release.js minor",
+    "release:patch": "bun scripts/generate-release.js patch",
+    "release:major": "bun scripts/generate-release.js major",
     "format": "prettier --write \"**/*.{ts,tsx}\"",
     "test:e2e": "cd e2e && bun run test"
   },

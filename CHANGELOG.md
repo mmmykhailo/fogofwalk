@@ -2,6 +2,12 @@
 
 All notable changes to Fog of Walk are documented here.
 
+## [0.2.0] - 2026-08-30
+
+### Changed
+
+- add saved points (#29)
+
 ## [0.1.2] - 2026-08-29
 
 ### Changed
