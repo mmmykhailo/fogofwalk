@@ -43,8 +43,11 @@ describe("saved-point routes", () => {
 
     const { token } = await signIn(store, { status: "pending" })
     expect(
-      (await app.request("/api/saved-points/manifest", { headers: authHeaders(token) }))
-        .status
+      (
+        await app.request("/api/saved-points/manifest", {
+          headers: authHeaders(token),
+        })
+      ).status
     ).toBe(403)
   })
 
@@ -77,7 +80,10 @@ describe("saved-point routes", () => {
     const created = await putSavedPoint(
       app,
       token,
-      savedPoint({ name: "  Charles Bridge  ", description: "  Morning walk  " })
+      savedPoint({
+        name: "  Charles Bridge  ",
+        description: "  Morning walk  ",
+      })
     )
     expect(created.status).toBe(200)
     const response = (await created.json()) as SavedPointUpsertResponse
@@ -87,7 +93,9 @@ describe("saved-point routes", () => {
       description: "Morning walk",
     })
 
-    const listed = await app.request("/api/saved-points", { headers: authHeaders(token) })
+    const listed = await app.request("/api/saved-points", {
+      headers: authHeaders(token),
+    })
     expect(await listed.json()).toHaveLength(1)
 
     const deleted = await app.request(`/api/saved-points/${pointId}`, {
@@ -98,7 +106,9 @@ describe("saved-point routes", () => {
     const { deletedAt } = (await deleted.json()) as { deletedAt: number }
 
     const manifest = (await (
-      await app.request("/api/saved-points/manifest", { headers: authHeaders(token) })
+      await app.request("/api/saved-points/manifest", {
+        headers: authHeaders(token),
+      })
     ).json()) as SavedPointManifestPage
     expect(manifest.savedPoints).toEqual([])
     expect(manifest.deletions).toContainEqual({ id: pointId, deletedAt })
@@ -106,10 +116,20 @@ describe("saved-point routes", () => {
 
   test("isolates points by owner and publicly exposes only public points", async () => {
     const { store, app } = setup()
-    const owner = await signIn(store, { login: "point-owner", providerUserId: "owner" })
-    const stranger = await signIn(store, { login: "point-stranger", providerUserId: "stranger" })
+    const owner = await signIn(store, {
+      login: "point-owner",
+      providerUserId: "owner",
+    })
+    const stranger = await signIn(store, {
+      login: "point-stranger",
+      providerUserId: "stranger",
+    })
 
-    await putSavedPoint(app, owner.token, savedPoint({ isPublic: true, name: "Public viewpoint" }))
+    await putSavedPoint(
+      app,
+      owner.token,
+      savedPoint({ isPublic: true, name: "Public viewpoint" })
+    )
     await putSavedPoint(
       app,
       owner.token,
@@ -121,10 +141,12 @@ describe("saved-point routes", () => {
     })
     expect(await strangerList.json()).toEqual([])
     expect(
-      (await app.request(`/api/saved-points/${pointId}`, {
-        method: "DELETE",
-        headers: authHeaders(stranger.token),
-      })).status
+      (
+        await app.request(`/api/saved-points/${pointId}`, {
+          method: "DELETE",
+          headers: authHeaders(stranger.token),
+        })
+      ).status
     ).toBe(200)
 
     const profile = (await (
@@ -138,5 +160,15 @@ describe("saved-point routes", () => {
       lng: 14.4378,
       lat: 50.0755,
     })
+
+    const publicPoint = await app.request(`/api/public/saved-points/${pointId}`)
+    expect(publicPoint.status).toBe(200)
+    expect(await publicPoint.json()).toMatchObject({
+      id: pointId,
+      name: "Public viewpoint",
+    })
+    expect(
+      (await app.request(`/api/public/saved-points/${otherPointId}`)).status
+    ).toBe(404)
   })
 })

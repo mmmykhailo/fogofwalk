@@ -533,30 +533,57 @@ export class MemoryStore implements ServerStore {
     )
   }
 
-  async listSavedPointsManifest(userId: string, sinceCursor: number): Promise<SavedPointManifestPage> {
+  async listSavedPointsManifest(
+    userId: string,
+    sinceCursor: number
+  ): Promise<SavedPointManifestPage> {
     const since = Number.isFinite(sinceCursor) ? Math.max(0, sinceCursor) : 0
     const points = [...(this.savedPoints.get(userId)?.values() ?? [])]
       .filter((point) => point.updatedAt >= since)
       .sort((a, b) => a.updatedAt - b.updatedAt || a.id.localeCompare(b.id))
       .slice(0, SYNC_PAGE_SIZE)
-    const deletions = [...(this.savedPointTombstones.get(userId)?.entries() ?? [])]
+    const deletions = [
+      ...(this.savedPointTombstones.get(userId)?.entries() ?? []),
+    ]
       .filter(([, deletedAt]) => deletedAt >= since)
       .sort(([aId, a], [bId, b]) => a - b || aId.localeCompare(bId))
       .slice(0, SYNC_PAGE_SIZE)
       .map(([id, deletedAt]): SavedPointTombstone => ({ id, deletedAt }))
-    const latest = Math.max(since, ...points.map((point) => point.updatedAt), ...deletions.map((tombstone) => tombstone.deletedAt))
-    return { savedPoints: points, deletions, cursor: latest, hasMore: points.length === SYNC_PAGE_SIZE || deletions.length === SYNC_PAGE_SIZE }
+    const latest = Math.max(
+      since,
+      ...points.map((point) => point.updatedAt),
+      ...deletions.map((tombstone) => tombstone.deletedAt)
+    )
+    return {
+      savedPoints: points,
+      deletions,
+      cursor: latest,
+      hasMore:
+        points.length === SYNC_PAGE_SIZE || deletions.length === SYNC_PAGE_SIZE,
+    }
   }
 
   async listSavedPoints(userId: string): Promise<SavedPoint[]> {
-    return [...(this.savedPoints.get(userId)?.values() ?? [])].sort((a, b) => b.updatedAt - a.updatedAt || a.id.localeCompare(b.id))
+    return [...(this.savedPoints.get(userId)?.values() ?? [])].sort(
+      (a, b) => b.updatedAt - a.updatedAt || a.id.localeCompare(b.id)
+    )
   }
 
-  async upsertSavedPoint(userId: string, point: SavedPoint): Promise<SavedPoint> {
+  async upsertSavedPoint(
+    userId: string,
+    point: SavedPoint
+  ): Promise<SavedPoint> {
     let points = this.savedPoints.get(userId)
-    if (!points) { points = new Map(); this.savedPoints.set(userId, points) }
+    if (!points) {
+      points = new Map()
+      this.savedPoints.set(userId, points)
+    }
     const previous = points.get(point.id)
-    const saved = { ...point, createdAt: previous?.createdAt ?? point.createdAt, updatedAt: Date.now() }
+    const saved = {
+      ...point,
+      createdAt: previous?.createdAt ?? point.createdAt,
+      updatedAt: Date.now(),
+    }
     points.set(point.id, saved)
     this.savedPointTombstones.get(userId)?.delete(point.id)
     return saved
@@ -565,7 +592,10 @@ export class MemoryStore implements ServerStore {
   async deleteSavedPoint(userId: string, id: string): Promise<number> {
     this.savedPoints.get(userId)?.delete(id)
     let tombstones = this.savedPointTombstones.get(userId)
-    if (!tombstones) { tombstones = new Map(); this.savedPointTombstones.set(userId, tombstones) }
+    if (!tombstones) {
+      tombstones = new Map()
+      this.savedPointTombstones.set(userId, tombstones)
+    }
     const deletedAt = Date.now()
     tombstones.set(id, deletedAt)
     return deletedAt
@@ -576,7 +606,17 @@ export class MemoryStore implements ServerStore {
   }
 
   async listPublicSavedPoints(userId: string): Promise<SavedPoint[]> {
-    return (await this.listSavedPoints(userId)).filter((point) => point.isPublic)
+    return (await this.listSavedPoints(userId)).filter(
+      (point) => point.isPublic
+    )
+  }
+
+  async findPublicSavedPoint(id: string): Promise<SavedPoint | null> {
+    for (const points of this.savedPoints.values()) {
+      const point = points.get(id)
+      if (point?.isPublic) return point
+    }
+    return null
   }
 
   async findUserByHandle(handle: string): Promise<User | null> {

@@ -184,6 +184,7 @@ export interface ServerStore {
   deleteSavedPoint(userId: string, id: string): Promise<number>
   listAllSavedPointsForUser(userId: string): Promise<SavedPoint[]>
   listPublicSavedPoints(userId: string): Promise<SavedPoint[]>
+  findPublicSavedPoint(id: string): Promise<SavedPoint | null>
 
   // ── public profiles ─────────────────────────────────────────────────────
   /**

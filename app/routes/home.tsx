@@ -61,6 +61,7 @@ import {
 } from "~/lib/storage"
 import { clearMapPosition } from "~/lib/mapStore"
 import { initAuth, useAuth } from "~/lib/server/authStore"
+import { apiUrl, isServerEnabled } from "~/lib/server/config"
 import {
   ignoreActivityLocally,
   pushActivityDeletion,
@@ -92,18 +93,19 @@ export function meta({}: Route.MetaArgs) {
   })
 }
 
-function savedPointFromLocationState(
-  state: unknown,
-  id: string | null
-): SavedPoint | null {
-  if (!id || !state || typeof state !== "object" || !("savedPoint" in state)) {
+async function loadPublicSavedPoint(id: string): Promise<SavedPoint | null> {
+  if (!isServerEnabled) return null
+
+  try {
+    const response = await fetch(
+      apiUrl(`/api/public/saved-points/${encodeURIComponent(id)}`)
+    )
+    if (!response.ok) return null
+    const point = (await response.json()) as SavedPoint
+    return isValidSavedPointInput(point) && point.id === id ? point : null
+  } catch {
     return null
   }
-
-  const point = (state as { savedPoint?: SavedPoint }).savedPoint
-  return point && isValidSavedPointInput(point) && point.id === id
-    ? point
-    : null
 }
 
 // Module-level cache for restored photos — avoids passing File objects through
@@ -111,10 +113,13 @@ function savedPointFromLocationState(
 let _restoredPhotos: PhotoEntry[] = []
 let _restoredSavedPoints: SavedPoint[] = []
 
-export async function clientLoader(): Promise<{
+export async function clientLoader({
+  request,
+}: Route.ClientLoaderArgs): Promise<{
   initialized: boolean
   restoredActivityCount: number
   restoredFogMode: FogMode
+  viewedSavedPoint: SavedPoint | null
 }> {
   let didCreateWorker = false
   if (!mapStore.worker) {
@@ -147,6 +152,11 @@ export async function clientLoader(): Promise<{
   mapStore.fogMode = restoredFogMode
   _restoredPhotos = photos
   _restoredSavedPoints = savedPoints
+  const savedPointId = new URL(request.url).searchParams.get("savedPoint")
+  const viewedSavedPoint =
+    savedPointId && !savedPoints.some((point) => point.id === savedPointId)
+      ? await loadPublicSavedPoint(savedPointId)
+      : null
 
   if (activities.length > 0) {
     mapStore.activities = sortActivities(activities)
@@ -193,6 +203,7 @@ export async function clientLoader(): Promise<{
     initialized: true,
     restoredActivityCount: activities.length,
     restoredFogMode,
+    viewedSavedPoint,
   }
 }
 clientLoader.hydrate = true as const
@@ -595,7 +606,7 @@ export default function Home() {
     if (!mapReady) return
     const id = searchParams.get("savedPoint")
     const ownedPoint = savedPoints.find((savedPoint) => savedPoint.id === id)
-    const point = ownedPoint ?? savedPointFromLocationState(location.state, id)
+    const point = ownedPoint ?? loaderData.viewedSavedPoint
     if (!point || !mapStore.map) return
     mapStore.map.easeTo({
       center: [point.lng, point.lat],
@@ -603,7 +614,7 @@ export default function Home() {
     })
     setEditingSavedPointId(ownedPoint?.id ?? null)
     setViewingSavedPoint(ownedPoint ? null : point)
-  }, [location.state, mapReady, savedPoints, searchParams])
+  }, [loaderData.viewedSavedPoint, mapReady, savedPoints, searchParams])
 
   // Handle files shared via the Web Share Target API (PWA installed).
   // The service worker intercepts the POST to /?share-target, buffers the files
