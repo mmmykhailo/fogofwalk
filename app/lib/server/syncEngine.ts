@@ -465,7 +465,8 @@ async function syncSavedPoints(): Promise<void> {
   const state = await loadSyncState()
   const since = state?.savedPointsCursor ?? 0
   const isFromScratch = since === 0
-  const { serverPoints, deletions, cursor } = await fetchSavedPointsManifest(since)
+  const { serverPoints, deletions, cursor } =
+    await fetchSavedPointsManifest(since)
   const localById = new Map(
     (await loadSavedPoints()).map((point) => [point.id, point])
   )
@@ -482,6 +483,9 @@ async function syncSavedPoints(): Promise<void> {
     (tombstone) => applied.get(tombstone.id) !== tombstone.deletedAt
   )
   const dirtyIds = new Set(state?.outboundSavedPointIds ?? [])
+  const outboundDeletionIds = new Set(
+    state?.outboundSavedPointDeletionIds ?? []
+  )
   const deletedIds: string[] = []
   if (!isFromScratch) {
     for (const tombstone of freshTombstones) {
@@ -491,21 +495,36 @@ async function syncSavedPoints(): Promise<void> {
         deletedIds.push(tombstone.id)
       }
       dirtyIds.delete(tombstone.id)
+      outboundDeletionIds.delete(tombstone.id)
     }
   }
-  for (const tombstone of deletions) applied.set(tombstone.id, tombstone.deletedAt)
+  for (const tombstone of deletions)
+    applied.set(tombstone.id, tombstone.deletedAt)
 
   // Keep unsent local edits until their upsert wins a server timestamp. Other
   // manifest records are the server's last write and replace local copies.
-  const remoteUpdates = serverPoints.filter((point) => !dirtyIds.has(point.id))
+  const remoteUpdates = serverPoints.filter(
+    (point) => !dirtyIds.has(point.id) && !outboundDeletionIds.has(point.id)
+  )
   if (remoteUpdates.length > 0) {
     await saveSavedPoints(remoteUpdates)
     for (const point of remoteUpdates) localById.set(point.id, point)
   }
 
   const deletedThisWindow = new Set(freshTombstones.map((tomb) => tomb.id))
+  const deletionFailures = await pooled(
+    [...outboundDeletionIds],
+    async (id) => {
+      const deletedAt = await deleteSavedPointOnServer(id)
+      serverIds.delete(id)
+      dirtyIds.delete(id)
+      outboundDeletionIds.delete(id)
+      applied.set(id, deletedAt)
+    }
+  )
   const toUpload = [...localById.values()].filter(
     (point) =>
+      !outboundDeletionIds.has(point.id) &&
       (dirtyIds.has(point.id) || !serverIds.has(point.id)) &&
       (isFromScratch || !deletedThisWindow.has(point.id))
   )
@@ -530,6 +549,7 @@ async function syncSavedPoints(): Promise<void> {
     serverSavedPointIds: [...serverIds],
     appliedSavedPointTombstones,
     outboundSavedPointIds: [...dirtyIds],
+    outboundSavedPointDeletionIds: [...outboundDeletionIds],
   })
   if (remoteUpdates.length > 0 || deletedIds.length > 0) {
     onChanged?.({
@@ -540,7 +560,9 @@ async function syncSavedPoints(): Promise<void> {
       deletedSavedPointIds: deletedIds,
     })
   }
-  if (failures > 0) throw new Error("Some saved points couldn't be uploaded")
+  if (deletionFailures > 0 || failures > 0) {
+    throw new Error("Some saved point changes couldn't be synced")
+  }
 }
 
 /**
@@ -570,6 +592,7 @@ async function finish(
     serverSavedPointIds: existing?.serverSavedPointIds,
     appliedSavedPointTombstones: existing?.appliedSavedPointTombstones,
     outboundSavedPointIds: existing?.outboundSavedPointIds,
+    outboundSavedPointDeletionIds: existing?.outboundSavedPointDeletionIds,
     cursor,
     lastSyncAt,
     serverHashes: [...serverHashes],
@@ -731,6 +754,12 @@ async function uploadSavedPoint(point: SavedPoint): Promise<SavedPoint> {
   return savedPoint
 }
 
+async function deleteSavedPointOnServer(id: string): Promise<number> {
+  const res = await apiRaw("DELETE", `/api/saved-points/${id}`)
+  const { deletedAt } = (await res.json()) as SavedPointDeleteResponse
+  return deletedAt
+}
+
 /**
  * Queue a local point create/edit for sync and try it immediately. A failed
  * request deliberately leaves its id outbound so ordinary sync triggers retry.
@@ -745,12 +774,22 @@ export async function pushSavedPointUpdate(
   }
   const outbound = new Set(state.outboundSavedPointIds ?? [])
   outbound.add(point.id)
-  await saveSyncState({ ...state, outboundSavedPointIds: [...outbound] })
+  const outboundDeletions = new Set(state.outboundSavedPointDeletionIds ?? [])
+  outboundDeletions.delete(point.id)
+  await saveSyncState({
+    ...state,
+    outboundSavedPointIds: [...outbound],
+    outboundSavedPointDeletionIds: [...outboundDeletions],
+  })
   if (!canSync()) return point
   try {
     const saved = await uploadSavedPoint(point)
     outbound.delete(point.id)
-    await saveSyncState({ ...state, outboundSavedPointIds: [...outbound] })
+    await saveSyncState({
+      ...state,
+      outboundSavedPointIds: [...outbound],
+      outboundSavedPointDeletionIds: [...outboundDeletions],
+    })
     requestSync("saved-point-update")
     return saved
   } catch (err) {
@@ -759,27 +798,36 @@ export async function pushSavedPointUpdate(
   }
 }
 
-/** Propagate a local deletion while retaining the point tombstone on failure. */
+/** Queue a local deletion and try to propagate its tombstone immediately. */
 export async function pushSavedPointDeletion(id: string): Promise<void> {
   const state = (await loadSyncState()) ?? {
     cursor: 0,
     lastSyncAt: 0,
     serverHashes: [],
   }
+  const outbound = new Set(state.outboundSavedPointIds ?? [])
+  const outboundDeletions = new Set(state.outboundSavedPointDeletionIds ?? [])
+  outbound.delete(id)
+  outboundDeletions.add(id)
+  await saveSyncState({
+    ...state,
+    outboundSavedPointIds: [...outbound],
+    outboundSavedPointDeletionIds: [...outboundDeletions],
+  })
   if (!canSync()) return
   try {
-    const res = await apiRaw("DELETE", `/api/saved-points/${id}`)
-    const { deletedAt } = (await res.json()) as SavedPointDeleteResponse
+    const deletedAt = await deleteSavedPointOnServer(id)
+    outboundDeletions.delete(id)
     await saveSyncState({
       ...state,
-      outboundSavedPointIds: (state.outboundSavedPointIds ?? []).filter(
-        (outboundId) => outboundId !== id
-      ),
+      outboundSavedPointIds: [...outbound],
+      outboundSavedPointDeletionIds: [...outboundDeletions],
       appliedSavedPointTombstones: {
         ...(state.appliedSavedPointTombstones ?? {}),
         [id]: deletedAt,
       },
     })
+    requestSync("saved-point-deletion")
   } catch (err) {
     console.warn("[sync] failed to propagate saved-point deletion:", err)
   }

@@ -506,6 +506,8 @@ export interface SyncState {
   appliedSavedPointTombstones?: Record<string, number>
   /** Local creates/edits awaiting a successful saved-point upsert. */
   outboundSavedPointIds?: string[]
+  /** Local deletions awaiting a successful saved-point tombstone. */
+  outboundSavedPointDeletionIds?: string[]
 }
 
 export async function saveSyncState(state: SyncState): Promise<void> {
