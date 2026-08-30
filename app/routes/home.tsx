@@ -487,6 +487,16 @@ export default function Home() {
   const [viewingSavedPoint, setViewingSavedPoint] = useState<SavedPoint | null>(
     null
   )
+  const displayedSavedPoints = useMemo(
+    () =>
+      viewingSavedPoint
+        ? [
+            ...savedPoints.filter((point) => point.id !== viewingSavedPoint.id),
+            viewingSavedPoint,
+          ]
+        : savedPoints,
+    [savedPoints, viewingSavedPoint]
+  )
   const [newSavedPointCoordinate, setNewSavedPointCoordinate] = useState<
     [number, number] | null
   >(null)
@@ -1015,8 +1025,8 @@ export default function Home() {
               highlightCoordinates={highlightCoordinates}
               focusCoordinates={focusCoordinates}
               focusKey={focusKey}
-              savedPoints={savedPoints}
-              showSavedPoints={showSavedPoints}
+              savedPoints={displayedSavedPoints}
+              showSavedPoints={showSavedPoints || viewingSavedPoint !== null}
               onSavedPointSelect={(id) => {
                 setViewingSavedPoint(null)
                 setEditingSavedPointId(id)
