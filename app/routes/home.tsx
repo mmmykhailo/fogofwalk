@@ -510,6 +510,24 @@ export default function Home() {
   const [newSavedPointCoordinate, setNewSavedPointCoordinate] = useState<
     [number, number] | null
   >(null)
+
+  function clearSearchParam(name: string) {
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev)
+        next.delete(name)
+        return next
+      },
+      { replace: true }
+    )
+  }
+
+  function closeSavedPointDialog() {
+    setEditingSavedPointId(null)
+    setNewSavedPointCoordinate(null)
+    setViewingSavedPoint(null)
+    clearSearchParam("savedPoint")
+  }
   const {
     showMyLocation,
     permissionDenied: locationPermissionDenied,
@@ -1083,17 +1101,13 @@ export default function Home() {
                     ) ?? null
                   }
                   coordinate={newSavedPointCoordinate}
-                  onClose={() => {
-                    setEditingSavedPointId(null)
-                    setNewSavedPointCoordinate(null)
-                  }}
+                  onClose={closeSavedPointDialog}
                   onSave={(point) => {
                     setSavedPoints((points) => [
                       ...points.filter((saved) => saved.id !== point.id),
                       point,
                     ])
-                    setEditingSavedPointId(null)
-                    setNewSavedPointCoordinate(null)
+                    closeSavedPointDialog()
                   }}
                   onDelete={
                     editingSavedPointId
@@ -1101,8 +1115,7 @@ export default function Home() {
                           setSavedPoints((points) =>
                             points.filter((point) => point.id !== id)
                           )
-                          setEditingSavedPointId(null)
-                          setNewSavedPointCoordinate(null)
+                          closeSavedPointDialog()
                         }
                       : undefined
                   }
@@ -1112,7 +1125,7 @@ export default function Home() {
                 <DraggableSavedPointViewDialog
                   key={viewingSavedPoint.id}
                   point={viewingSavedPoint}
-                  onClose={() => setViewingSavedPoint(null)}
+                  onClose={closeSavedPointDialog}
                 />
               )}
               <FileUploadDialog
@@ -1171,14 +1184,7 @@ export default function Home() {
                       setSelectedActivityIds([])
                       setSelectedLap(null)
                       setPendingActivityId(null)
-                      setSearchParams(
-                        (prev) => {
-                          const next = new URLSearchParams(prev)
-                          next.delete("activity")
-                          return next
-                        },
-                        { replace: true }
-                      )
+                      clearSearchParam("activity")
                     }}
                     onShare={() => setShowShareDialog(true)}
                     onDelete={
