@@ -1,4 +1,5 @@
 import type { EarnedAchievement } from "~/lib/achievements"
+import type { PublicAchievementPrevalence } from "~shared/api"
 import { AchievementCard } from "~/components/public-profile/AchievementCard"
 import { TransitionLink } from "~/components/TransitionLink"
 import { buttonVariants } from "~/components/ui/button"
@@ -11,6 +12,7 @@ interface AchievementsSectionProps {
   viewAllTo?: string
   groupByFamily?: boolean
   showHeading?: boolean
+  achievementPrevalence?: PublicAchievementPrevalence
 }
 
 const familyLabels = {
@@ -26,6 +28,7 @@ export function AchievementsSection({
   viewAllTo,
   groupByFamily = true,
   showHeading = true,
+  achievementPrevalence,
 }: AchievementsSectionProps) {
   if (achievements.length === 0) return null
 
@@ -77,6 +80,7 @@ export function AchievementsSection({
                       <AchievementCard
                         key={achievement.definition.id}
                         achievement={achievement}
+                        achievementPrevalence={achievementPrevalence}
                       />
                     ))}
                   </Grid>
@@ -90,6 +94,7 @@ export function AchievementsSection({
             <AchievementCard
               key={achievement.definition.id}
               achievement={achievement}
+              achievementPrevalence={achievementPrevalence}
             />
           ))}
         </Grid>

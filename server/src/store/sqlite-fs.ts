@@ -17,6 +17,7 @@ import type {
   AdminUser,
   ManifestPage,
   PublicProfileResponse,
+  PublicAchievementPrevalence,
   PublicActivityMeta,
   ActivityMeta,
   ActivityTombstone,
@@ -35,6 +36,7 @@ import type {
 import { combineCursors, pageStream } from "./manifestPaging"
 import type { Pageable } from "./manifestPaging"
 import { parseActivityUpload } from "../activities/payload"
+import { computePublicAchievementPrevalence } from "../public/achievementPrevalence"
 import type {
   Identity,
   IdentityInput,
@@ -1188,6 +1190,7 @@ export class SqliteFsStore implements ServerStore {
         },
         activities: [],
         savedPoints: [],
+        achievementPrevalence: await this.getPublicAchievementPrevalence(),
       }
     }
 
@@ -1216,7 +1219,25 @@ export class SqliteFsStore implements ServerStore {
       },
       activities,
       savedPoints: await this.listPublicSavedPoints(userId),
+      achievementPrevalence: await this.getPublicAchievementPrevalence(),
     }
+  }
+
+  async getPublicAchievementPrevalence(): Promise<PublicAchievementPrevalence> {
+    const rows = this.db
+      .query(
+        `SELECT t.user_id, t.content_hash, t.name, t.is_public, t.format, t.activity_type, t.start_sun_phase, t.started_at_ms,
+                t.distance_km, t.point_count, t.size_bytes, t.updated_at,
+                t.duration_ms, t.moving_time_ms, t.elevation_gain_m, t.avg_moving_speed_kmh
+           FROM activities t
+           JOIN users u ON u.id = t.user_id
+          WHERE t.is_public = 1 AND u.handle IS NOT NULL`
+      )
+      .all() as Array<ActivityRow & { user_id: string }>
+
+    return computePublicAchievementPrevalence(
+      rows.map((row) => ({ userId: row.user_id, activity: toMeta(row) }))
+    )
   }
 
   private async hydrateLegacyPublicMeta(

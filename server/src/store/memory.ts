@@ -12,6 +12,7 @@ import type {
   AdminUser,
   ManifestPage,
   PublicProfileResponse,
+  PublicAchievementPrevalence,
   PublicActivityMeta,
   ActivityMeta,
   ActivityTombstone,
@@ -20,6 +21,7 @@ import type {
   UserStatus,
 } from "~shared/api"
 import type { SavedPoint } from "~shared/saved-points"
+import { computePublicAchievementPrevalence } from "../public/achievementPrevalence"
 import { SYNC_PAGE_SIZE } from "~shared/constants"
 
 import { combineCursors, comparePageable, pageStream } from "./manifestPaging"
@@ -651,6 +653,7 @@ export class MemoryStore implements ServerStore {
         },
         activities: [],
         savedPoints: [],
+        achievementPrevalence: await this.getPublicAchievementPrevalence(),
       }
     }
 
@@ -676,7 +679,19 @@ export class MemoryStore implements ServerStore {
       },
       activities,
       savedPoints: await this.listPublicSavedPoints(userId),
+      achievementPrevalence: await this.getPublicAchievementPrevalence(),
     }
+  }
+
+  async getPublicAchievementPrevalence(): Promise<PublicAchievementPrevalence> {
+    return computePublicAchievementPrevalence(
+      [...this.users.values()].flatMap((user) => {
+        if (!user.handle) return []
+        return [...(this.activities.get(user.id)?.values() ?? [])]
+          .filter((stored) => stored.meta.isPublic)
+          .map((stored) => ({ userId: user.id, activity: stored.meta }))
+      })
+    )
   }
 
   close(): void {

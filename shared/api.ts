@@ -151,10 +151,17 @@ export interface ActivityMeta {
 /** Activity metadata displayed on a public profile; geometry stays private. */
 export type PublicActivityMeta = ActivityMeta
 
+/** Anonymous achievement counts across profiles with at least one public activity. */
+export interface PublicAchievementPrevalence {
+  eligibleUserCount: number
+  earnedUserCounts: Record<string, number>
+}
+
 export interface PublicProfileResponse {
   user: PublicProfileUser
   activities: PublicActivityMeta[]
   savedPoints: PublicSavedPoint[]
+  achievementPrevalence: PublicAchievementPrevalence
 }
 
 // ─── Saved points ─────────────────────────────────────────────────────────────

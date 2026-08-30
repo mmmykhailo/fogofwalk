@@ -107,6 +107,8 @@ describe("public profiles", () => {
     expect(body.activities[0]!.elevationGainM).toBe(12)
     expect(body.activities[0]!.avgMovingSpeedKmh).toBe(8.9)
     expect(body.activities[0]!.startSunPhase).toBe("before_sunrise")
+    expect(body.achievementPrevalence.eligibleUserCount).toBe(1)
+    expect(body.achievementPrevalence.earnedUserCounts["early-bird"]).toBe(1)
   })
 
   test("private activities are hidden from the public endpoint", async () => {
