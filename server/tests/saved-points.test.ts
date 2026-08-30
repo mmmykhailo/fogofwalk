@@ -5,6 +5,8 @@ import type {
   SavedPointManifestPage,
   SavedPointUpsertResponse,
 } from "~shared/api"
+import { SYNC_PAGE_SIZE } from "~shared/constants"
+import type { SavedPoint } from "~shared/saved-points"
 
 import { authHeaders, setup, signIn } from "./helpers"
 
@@ -112,6 +114,35 @@ describe("saved-point routes", () => {
     ).json()) as SavedPointManifestPage
     expect(manifest.savedPoints).toEqual([])
     expect(manifest.deletions).toContainEqual({ id: pointId, deletedAt })
+  })
+
+  test("pages points and tombstones without advancing past an unfinished stream", async () => {
+    const { store } = setup()
+    const { user } = await signIn(store)
+    const base = Date.now()
+
+    for (let index = 0; index <= SYNC_PAGE_SIZE; index++) {
+      const id = `00000000-0000-4000-8000-${index.toString().padStart(12, "0")}`
+      await store.upsertSavedPoint(user.id, {
+        ...savedPoint({ id, name: `Point ${index}` }),
+        createdAt: base,
+        updatedAt: base,
+      } as SavedPoint)
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1))
+    await store.deleteSavedPoint(user.id, otherPointId)
+
+    const ids = new Set<string>()
+    let cursor = 0
+    let hasMore = true
+    while (hasMore) {
+      const page = await store.listSavedPointsManifest(user.id, cursor)
+      page.savedPoints.forEach((point) => ids.add(point.id))
+      cursor = page.cursor
+      hasMore = page.hasMore
+    }
+
+    expect(ids).toHaveLength(SYNC_PAGE_SIZE + 1)
   })
 
   test("isolates points by owner and publicly exposes only public points", async () => {

@@ -539,27 +539,40 @@ export class MemoryStore implements ServerStore {
   ): Promise<SavedPointManifestPage> {
     const since = Number.isFinite(sinceCursor) ? Math.max(0, sinceCursor) : 0
     const points = [...(this.savedPoints.get(userId)?.values() ?? [])]
-      .filter((point) => point.updatedAt >= since)
-      .sort((a, b) => a.updatedAt - b.updatedAt || a.id.localeCompare(b.id))
-      .slice(0, SYNC_PAGE_SIZE)
-    const deletions = [
+      .map((point) => ({
+        time: point.updatedAt,
+        contentHash: point.id,
+        point,
+      }))
+      .sort(comparePageable)
+    const tombstones = [
       ...(this.savedPointTombstones.get(userId)?.entries() ?? []),
     ]
-      .filter(([, deletedAt]) => deletedAt >= since)
-      .sort(([aId, a], [bId, b]) => a - b || aId.localeCompare(bId))
-      .slice(0, SYNC_PAGE_SIZE)
-      .map(([id, deletedAt]): SavedPointTombstone => ({ id, deletedAt }))
-    const latest = Math.max(
+      .map(([id, deletedAt]) => ({
+        time: deletedAt,
+        contentHash: id,
+        tombstone: { id, deletedAt } satisfies SavedPointTombstone,
+      }))
+      .sort(comparePageable)
+    const slice =
+      <T extends Pageable>(rows: T[]) =>
+      (from: number, limit: number) =>
+        rows.filter((row) => row.time >= from).slice(0, limit)
+    const pointPage = await pageStream(slice(points), since, SYNC_PAGE_SIZE)
+    const tombstonePage = await pageStream(
+      slice(tombstones),
       since,
-      ...points.map((point) => point.updatedAt),
-      ...deletions.map((tombstone) => tombstone.deletedAt)
+      SYNC_PAGE_SIZE
     )
+    const { cursor, hasMore } = combineCursors(since, [
+      pointPage,
+      tombstonePage,
+    ])
     return {
-      savedPoints: points,
-      deletions,
-      cursor: latest,
-      hasMore:
-        points.length === SYNC_PAGE_SIZE || deletions.length === SYNC_PAGE_SIZE,
+      savedPoints: pointPage.rows.map((row) => row.point),
+      deletions: tombstonePage.rows.map((row) => row.tombstone),
+      cursor,
+      hasMore,
     }
   }
 

@@ -1045,32 +1045,47 @@ export class SqliteFsStore implements ServerStore {
     sinceCursor: number
   ): Promise<SavedPointManifestPage> {
     const since = Number.isFinite(sinceCursor) ? Math.max(0, sinceCursor) : 0
-    const pointRows = this.db
-      .query(
-        `SELECT id, longitude, latitude, name, description, colour, is_public, created_at, updated_at FROM saved_points WHERE user_id = ? AND updated_at >= ? ORDER BY updated_at ASC, id ASC LIMIT ?`
-      )
-      .all(userId, since, SYNC_PAGE_SIZE) as SavedPointRow[]
-    const deletionRows = this.db
-      .query(
-        `SELECT id, deleted_at FROM saved_point_tombstones WHERE user_id = ? AND deleted_at >= ? ORDER BY deleted_at ASC, id ASC LIMIT ?`
-      )
-      .all(userId, since, SYNC_PAGE_SIZE) as SavedPointTombstoneRow[]
-    const savedPoints = pointRows.map(toSavedPoint)
-    const deletions = deletionRows.map(
-      (row): SavedPointTombstone => ({ id: row.id, deletedAt: row.deleted_at })
-    )
-    const cursor = Math.max(
+    const pointPage = await pageStream(
+      (from, limit) => {
+        const rows = this.db
+          .query(
+            `SELECT id, longitude, latitude, name, description, colour, is_public, created_at, updated_at FROM saved_points WHERE user_id = ? AND updated_at >= ? ORDER BY updated_at ASC, id ASC LIMIT ?`
+          )
+          .all(userId, from, limit) as SavedPointRow[]
+        return rows.map((row) => ({
+          time: row.updated_at,
+          contentHash: row.id,
+          point: toSavedPoint(row),
+        }))
+      },
       since,
-      ...savedPoints.map((point) => point.updatedAt),
-      ...deletions.map((tombstone) => tombstone.deletedAt)
+      SYNC_PAGE_SIZE
     )
+    const tombstonePage = await pageStream(
+      (from, limit) => {
+        const rows = this.db
+          .query(
+            `SELECT id, deleted_at FROM saved_point_tombstones WHERE user_id = ? AND deleted_at >= ? ORDER BY deleted_at ASC, id ASC LIMIT ?`
+          )
+          .all(userId, from, limit) as SavedPointTombstoneRow[]
+        return rows.map((row) => ({
+          time: row.deleted_at,
+          contentHash: row.id,
+          tombstone: { id: row.id, deletedAt: row.deleted_at },
+        }))
+      },
+      since,
+      SYNC_PAGE_SIZE
+    )
+    const { cursor, hasMore } = combineCursors(since, [
+      pointPage,
+      tombstonePage,
+    ])
     return {
-      savedPoints,
-      deletions,
+      savedPoints: pointPage.rows.map((row) => row.point),
+      deletions: tombstonePage.rows.map((row) => row.tombstone),
       cursor,
-      hasMore:
-        savedPoints.length === SYNC_PAGE_SIZE ||
-        deletions.length === SYNC_PAGE_SIZE,
+      hasMore,
     }
   }
 
