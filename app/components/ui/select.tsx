@@ -76,7 +76,9 @@ function SelectContent({
         align={align}
         alignOffset={alignOffset}
         alignItemWithTrigger={alignItemWithTrigger}
-        className="isolate z-50"
+        // Popups are portalled to <body>. They must sit above a drawer (z-50)
+        // so pointer events reach their items instead of the page behind it.
+        className="pointer-events-auto isolate z-[60]"
       >
         <SelectPrimitive.Popup
           data-slot="select-content"

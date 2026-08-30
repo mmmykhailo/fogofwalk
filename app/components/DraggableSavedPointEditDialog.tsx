@@ -80,7 +80,14 @@ export function DraggableSavedPointEditDialog({
           <DrawerHeader>
             <DrawerTitle>{title}</DrawerTitle>
           </DrawerHeader>
-          <div className="px-4 pb-6">{form}</div>
+          {/*
+           * iOS Safari enlarges the visual viewport for focused controls with
+           * text smaller than 16px. Keep only the editable controls at that
+           * minimum on the mobile drawer; desktop retains the compact form.
+           */}
+          <div className="px-4 pb-6 [&_[data-slot=input]]:text-base [&_[data-slot=textarea]]:text-base">
+            {form}
+          </div>
         </DrawerContent>
       </Drawer>
     )
