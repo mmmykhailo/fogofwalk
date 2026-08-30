@@ -623,6 +623,14 @@ export default function Home() {
   useEffect(() => {
     if (!mapReady) return
     const id = searchParams.get("savedPoint")
+    if (!id) {
+      // Saving replaces the local point before the URL update commits. That
+      // intermediate render can briefly reselect the point from the stale
+      // query parameter, so an empty URL must actively clear the editor.
+      setEditingSavedPointId(null)
+      setViewingSavedPoint(null)
+      return
+    }
     const ownedPoint = savedPoints.find((savedPoint) => savedPoint.id === id)
     const point = ownedPoint ?? loaderData.viewedSavedPoint
     if (!point || !mapStore.map) return
