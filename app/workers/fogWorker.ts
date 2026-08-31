@@ -1,8 +1,8 @@
 /// <reference lib="webworker" />
 
 import type {
+  FogWorkerActivity,
   FogMode,
-  ParsedActivity,
   WorkerInboundMessage,
   WorkerOutboundMessage,
 } from "~/types/activities"
@@ -123,7 +123,7 @@ function postActivityError(file: string, error: unknown, runId: number): void {
 }
 
 async function processActivities(
-  activities: ParsedActivity[],
+  activities: FogWorkerActivity[],
   mode: FogMode,
   runId: number
 ): Promise<void> {

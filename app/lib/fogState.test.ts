@@ -133,7 +133,18 @@ describe("fog worker run state", () => {
       { type: "RESET", runId: 11 },
       {
         type: "PROCESS_ACTIVITIES",
-        activities: [first, second],
+        activities: [
+          {
+            id: first.id,
+            name: first.name,
+            coordinates: first.coordinates,
+          },
+          {
+            id: second.id,
+            name: second.name,
+            coordinates: second.coordinates,
+          },
+        ],
         mode: "corridor",
         runId: 11,
       },
@@ -161,7 +172,13 @@ describe("fog worker run state", () => {
     expect(messages).toEqual([
       {
         type: "PROCESS_ACTIVITIES",
-        activities: [second],
+        activities: [
+          {
+            id: second.id,
+            name: second.name,
+            coordinates: second.coordinates,
+          },
+        ],
         mode: "fill",
         runId: 4,
       },

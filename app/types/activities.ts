@@ -16,6 +16,12 @@ import type { ParsedActivity } from "~shared/activities"
 export type FogMode = "corridor" | "fill"
 export type MapMode = "flat" | "relief"
 
+/** The only activity fields the fog worker needs to build and report geometry. */
+export type FogWorkerActivity = Pick<
+  ParsedActivity,
+  "id" | "name" | "coordinates"
+>
+
 /**
  * Every worker message carries a `runId` generation token. Bumping it (via
  * `startFogRun`) abandons whatever the worker is mid-way through: the worker
@@ -25,7 +31,7 @@ export type MapMode = "flat" | "relief"
 export type WorkerInboundMessage =
   | {
       type: "PROCESS_ACTIVITIES"
-      activities: ParsedActivity[]
+      activities: FogWorkerActivity[]
       mode: FogMode
       runId: number
     }

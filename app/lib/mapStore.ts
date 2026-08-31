@@ -164,6 +164,20 @@ export function postToFogWorker(
     for (const activity of msg.activities) {
       mapStore.fogWorkerActivityIds.add(activity.id)
     }
+
+    // ParsedActivity contains timestamps, laps, statistics, and other metadata.
+    // Project at the worker boundary so structured cloning only copies what fog
+    // processing needs, including when the full library is replayed.
+    mapStore.worker?.postMessage({
+      ...msg,
+      activities: msg.activities.map(({ id, name, coordinates }) => ({
+        id,
+        name,
+        coordinates,
+      })),
+      runId: mapStore.runId,
+    } satisfies WorkerInboundMessage)
+    return
   }
   if (msg.type === "RESET") {
     mapStore.pendingFogJobs = 0
