@@ -6,7 +6,11 @@ import type {
   WorkerInboundMessage,
   WorkerOutboundMessage,
 } from "~/types/activities"
-import { FOG_EMIT_INTERVAL_MS, FOG_PROGRESS_BATCH_SIZE } from "~/constants/fog"
+import {
+  FOG_CORRIDOR_BATCH_SIZE,
+  FOG_EMIT_INTERVAL_MS,
+  FOG_PROGRESS_BATCH_SIZE,
+} from "~/constants/fog"
 import {
   createActivityFogBuffer,
   mergeFogMasks,
@@ -158,12 +162,7 @@ async function processActivities(
         "[worker] skipping activity with < 2 valid coords",
         activity.name
       )
-      processedCount++
-      emitProgress(runId)
-      continue
-    }
-
-    if (mode === "corridor") {
+    } else if (mode === "corridor") {
       pendingBuffers.push({ feature: activityBuffer, file: activity.name })
     } else {
       // Accumulate without stripping — inner rings are preserved so the full
@@ -175,15 +174,21 @@ async function processActivities(
     }
 
     processedCount++
-    emitProgress(runId)
-    if (performance.now() - lastEmitTime >= FOG_EMIT_INTERVAL_MS) {
+    const isEmitDue =
+      performance.now() - lastEmitTime >= FOG_EMIT_INTERVAL_MS ||
+      (mode === "corridor" && pendingBuffers.length >= FOG_CORRIDOR_BATCH_SIZE)
+    if (isEmitDue) {
       flushAndEmit(mode, runId)
     }
+    // A corridor flush can be the expensive part of processing. Report progress
+    // only after it completes so the bar never reaches the end while the visible
+    // mask is still waiting on a final clipping batch.
+    emitProgress(runId)
   }
 
   if (runId !== currentRunId) return
-  emitProgress(runId, true)
   flushAndEmit(mode, runId)
+  emitProgress(runId, true)
 }
 
 self.onmessage = (e: MessageEvent<WorkerInboundMessage>) => {

@@ -1,5 +1,9 @@
 export const FOG_CLEAR_RADIUS_METERS = 100
 export const FOG_EMIT_INTERVAL_MS = 300
+// Corridor buffering can finish hundreds of activities inside one emit interval,
+// leaving one long final clipping operation. Cap each pending clipping batch so
+// visible fog and reported progress advance together even on fast inputs.
+export const FOG_CORRIDOR_BATCH_SIZE = 5
 // Progress is much cheaper than emitting/clipping the fog geometry. Report it
 // in small batches so large imports do not appear to jump dozens of activities.
 export const FOG_PROGRESS_BATCH_SIZE = 5
