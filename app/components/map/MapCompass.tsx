@@ -3,16 +3,22 @@ import { PlusIcon, MinusIcon, NavigationArrowIcon } from "@phosphor-icons/react"
 import { Button } from "~/components/ui/button"
 import { ButtonGroup } from "~/components/ui/button-group"
 import { cn } from "~/lib/utils"
-import { mapStore } from "~/lib/mapStore"
 
 interface MapCompassProps {
   bearing: number
-  pitch: number
+  onZoomIn: () => void
+  onZoomOut: () => void
   onReset: () => void
   className?: string
 }
 
-export function MapCompass({ bearing, onReset, className }: MapCompassProps) {
+export function MapCompass({
+  bearing,
+  onZoomIn,
+  onZoomOut,
+  onReset,
+  className,
+}: MapCompassProps) {
   const iconRef = useRef<SVGSVGElement>(null)
   const accumulatedRef = useRef(45 - bearing)
 
@@ -35,7 +41,7 @@ export function MapCompass({ bearing, onReset, className }: MapCompassProps) {
       <Button
         variant="outline"
         size="icon"
-        onClick={() => mapStore.map?.zoomIn()}
+        onClick={onZoomIn}
         title="Zoom in"
         aria-label="Zoom in"
         className="border-none bg-transparent"
@@ -46,7 +52,7 @@ export function MapCompass({ bearing, onReset, className }: MapCompassProps) {
       <Button
         variant="outline"
         size="icon"
-        onClick={() => mapStore.map?.zoomOut()}
+        onClick={onZoomOut}
         title="Zoom out"
         aria-label="Zoom out"
         className="border-none bg-transparent"

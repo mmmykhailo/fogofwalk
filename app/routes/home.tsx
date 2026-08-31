@@ -7,11 +7,10 @@ import {
   useRevalidator,
   useSearchParams,
 } from "react-router"
-import type maplibregl from "maplibre-gl"
 import { featureCollection, lineString } from "@turf/helpers"
 import bbox from "@turf/bbox"
 import type { Route } from "./+types/home"
-import { MapView, setLapHighlightData } from "~/components/MapView"
+import { MapView } from "~/components/map/MapView"
 import { ControlPanel } from "~/components/ControlPanel"
 import { FileUploadDialog } from "~/components/FileUploadDialog"
 import { PhotoErrorDialog } from "~/components/PhotoErrorDialog"
@@ -36,16 +35,20 @@ import {
 import { Button } from "~/components/ui/button"
 import {
   mapStore,
-  worldFogGeoJSON,
   startFogRun,
   postToFogWorker,
   ingestActivities,
+  setFogProcessedCount,
 } from "~/lib/mapStore"
 import { parseFile } from "~/lib/parsers"
 import { buildLapActivity, lapSubtitle } from "~/lib/laps"
 import { processPhotoFiles } from "~/lib/photos"
 import {
   loadActivities,
+  loadUniqueDistanceState,
+  areUniqueDistancesCurrent,
+  saveUniqueDistances,
+  saveActivities,
   savePhotos,
   loadPhotos,
   saveFogMode,
@@ -56,10 +59,10 @@ import {
   loadSavedPoints,
   saveSavedPoint,
   deleteSavedPoint as deleteStoredSavedPoint,
-  deleteActivity,
   isFogCacheValid,
 } from "~/lib/storage"
 import { clearMapPosition } from "~/lib/mapStore"
+import { clearRenderedActivityState } from "~/lib/map/commands"
 import { initAuth, useAuth } from "~/lib/server/authStore"
 import { apiUrl, isServerEnabled } from "~/lib/server/config"
 import {
@@ -139,14 +142,21 @@ export async function clientLoader({
   void initAuth()
 
   // Restore persisted data in parallel
-  const [activities, photos, savedPoints, fogMode, fogCache] =
-    await Promise.all([
-      loadActivities(),
-      loadPhotos(),
-      loadSavedPoints(),
-      loadFogMode(),
-      loadFogCache(),
-    ])
+  const [
+    activities,
+    uniqueDistanceState,
+    photos,
+    savedPoints,
+    fogMode,
+    fogCache,
+  ] = await Promise.all([
+    loadActivities(),
+    loadUniqueDistanceState(),
+    loadPhotos(),
+    loadSavedPoints(),
+    loadFogMode(),
+    loadFogCache(),
+  ])
 
   const restoredFogMode: FogMode = fogMode ?? "corridor"
   mapStore.fogMode = restoredFogMode
@@ -160,7 +170,10 @@ export async function clientLoader({
 
   if (activities.length > 0) {
     mapStore.activities = sortActivities(activities)
-    populateUniqueDistances(mapStore.activities)
+    if (!areUniqueDistancesCurrent(mapStore.activities, uniqueDistanceState)) {
+      await populateUniqueDistances(mapStore.activities)
+      await saveUniqueDistances(mapStore.activities)
+    }
     const activityIds = activities.map((t) => t.id).sort()
     if (fogCache && isFogCacheValid(fogCache, activityIds, restoredFogMode)) {
       // Cache hit: restore fog directly — setupMapLayers will use mapStore.fogData
@@ -280,23 +293,13 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
     // explicit action — "Remove all" in the account dialog.
     mapStore.fogData = null
     mapStore.activities = []
-    mapStore.processedCount = 0
+    setFogProcessedCount(0)
     // Abandons the in-flight run so its FOG_UPDATEs cannot repaint the map
     // we just cleared, and its DONE cannot save a stale fog cache.
     startFogRun()
     postToFogWorker({ type: "RESET" })
-    const map = mapStore.map
-    if (map && mapStore.sourcesReady) {
-      ;(map.getSource("fog-source") as maplibregl.GeoJSONSource)?.setData(
-        worldFogGeoJSON()
-      )
-      ;(
-        map.getSource("activities-source") as maplibregl.GeoJSONSource
-      )?.setData(featureCollection([]))
-      // Blanked here too — these run synchronously, before the fetcher effect
-      // resets React state, so the old lap line would otherwise linger a frame.
-      setLapHighlightData(map, null)
-    }
+    // Runs synchronously before the fetcher effect resets React selection state.
+    clearRenderedActivityState()
     await clearAll()
     clearMapPosition()
     // Pause automatic syncing. `clearAll` dropped syncState, so the next sync
@@ -315,29 +318,18 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
 
     // Remove from in-memory store and recompute unique distances for remaining activities
     mapStore.activities = mapStore.activities.filter((t) => t.id !== activityId)
-    populateUniqueDistances(mapStore.activities)
-    mapStore.processedCount = 0
+    await populateUniqueDistances(mapStore.activities)
+    setFogProcessedCount(0)
 
     // Reset worker + update map sources immediately
     // Abandons the in-flight run so its FOG_UPDATEs cannot repaint the map
     // we just cleared, and its DONE cannot save a stale fog cache.
     startFogRun()
     postToFogWorker({ type: "RESET" })
-    const map = mapStore.map
-    if (map && mapStore.sourcesReady) {
-      ;(map.getSource("fog-source") as maplibregl.GeoJSONSource)?.setData(
-        worldFogGeoJSON()
-      )
-      ;(
-        map.getSource("activities-source") as maplibregl.GeoJSONSource
-      )?.setData(featureCollection([]))
-      // Blanked here too — these run synchronously, before the fetcher effect
-      // resets React state, so the old lap line would otherwise linger a frame.
-      setLapHighlightData(map, null)
-    }
+    clearRenderedActivityState()
 
     // Persist and invalidate fog cache
-    await deleteActivity(activityId)
+    await saveUniqueDistances(mapStore.activities, activityId)
     await clearFogCache()
 
     // Replay only after invalidation finishes. Otherwise a fast worker can save
@@ -466,7 +458,6 @@ export default function Home() {
   const [activityCount, setActivityCount] = useState(
     loaderData.restoredActivityCount
   )
-  const [processedCount, setProcessedCount] = useState(0)
   const [isProcessing, setIsProcessing] = useState(false)
   const [showActivities, setShowActivities] = useState(true)
   const [showFog, setShowFog] = useState(true)
@@ -677,7 +668,7 @@ export default function Home() {
     needsReprocessRef.current = false
     if (mapStore.activities.length === 0) return
     setIsProcessing(true)
-    setProcessedCount(0)
+    setFogProcessedCount(0)
     postToFogWorker({
       type: "PROCESS_ACTIVITIES",
       activities: mapStore.activities,
@@ -750,7 +741,7 @@ export default function Home() {
         setActivityCount(data.activityCount)
         // Only if the worker has not already finished — see isFogRunInFlight.
         setIsProcessing(mapStore.isFogRunInFlight)
-        setProcessedCount(0)
+        setFogProcessedCount(0)
       }
       if (data.failedFiles.length > 0) {
         setMissingActivityTypeCount(data.missingActivityTypeCount)
@@ -768,7 +759,7 @@ export default function Home() {
     }
     if (data.intent === "clear-all") {
       setActivityCount(0)
-      setProcessedCount(0)
+      setFogProcessedCount(0)
       setIsProcessing(false)
       setSelectedActivityIds([])
       setPendingActivityId(null)
@@ -781,7 +772,7 @@ export default function Home() {
       setPendingActivityId(null)
       setShowShareDialog(false)
       setActivityCount(data.activityCount)
-      setProcessedCount(0)
+      setFogProcessedCount(0)
       setIsProcessing(data.activityCount > 0 && mapStore.isFogRunInFlight)
     }
   }, [fetcher.data])
@@ -816,19 +807,10 @@ export default function Home() {
             prev.filter((id) => !deletedIds.includes(id))
           )
           setPendingActivityId(null)
-          mapStore.processedCount = 0
+          setFogProcessedCount(0)
           startFogRun()
           postToFogWorker({ type: "RESET" })
-          const map = mapStore.map
-          if (map && mapStore.sourcesReady) {
-            ;(map.getSource("fog-source") as maplibregl.GeoJSONSource)?.setData(
-              worldFogGeoJSON()
-            )
-            ;(
-              map.getSource("activities-source") as maplibregl.GeoJSONSource
-            )?.setData(featureCollection([]))
-            setLapHighlightData(map, null)
-          }
+          clearRenderedActivityState()
           if (mapStore.activities.length > 0) {
             postToFogWorker({
               type: "PROCESS_ACTIVITIES",
@@ -839,7 +821,7 @@ export default function Home() {
         }
 
         if (downloadedCount > 0 || deletedIds.length > 0) {
-          setProcessedCount(0)
+          setFogProcessedCount(0)
           setIsProcessing(
             mapStore.activities.length > 0 && mapStore.isFogRunInFlight
           )
@@ -950,11 +932,11 @@ export default function Home() {
       // Nothing to replay — clear the bar the abandoned run's DONE will no
       // longer clear.
       setIsProcessing(false)
-      setProcessedCount(0)
+      setFogProcessedCount(0)
       return
     }
     setIsProcessing(true)
-    setProcessedCount(0)
+    setFogProcessedCount(0)
     postToFogWorker({
       type: "PROCESS_ACTIVITIES",
       activities: mapStore.activities,
@@ -962,14 +944,11 @@ export default function Home() {
     })
   }
 
-  function handleProcessingUpdate(count: number, done: boolean) {
-    setProcessedCount(count)
-    if (done) {
-      setIsProcessing(false)
-      setActivityCount(mapStore.activities.length)
-      // fitBounds is handled by the useEffect([isProcessing]) above:
-      // it fires after React re-renders, when map state is fully settled.
-    }
+  function handleProcessingComplete() {
+    setIsProcessing(false)
+    setActivityCount(mapStore.activities.length)
+    // fitBounds is handled by the useEffect([isProcessing]) above:
+    // it fires after React re-renders, when map state is fully settled.
   }
 
   function handleActivitySelect(id: string | null) {
@@ -994,9 +973,13 @@ export default function Home() {
     }
   }
 
-  const selectedActivities = selectedActivityIds
-    .map((id) => mapStore.activities.find((t) => t.id === id))
-    .filter((t): t is ParsedActivity => t != null)
+  const selectedActivities = useMemo(
+    () =>
+      selectedActivityIds
+        .map((id) => mapStore.activities.find((t) => t.id === id))
+        .filter((t): t is ParsedActivity => t != null),
+    [selectedActivityIds, activityCount, loaderData]
+  )
 
   // Derived and re-validated every render rather than reset imperatively: a
   // stale selection, a multi-select, a deleted activity or a GPX activity all
@@ -1074,7 +1057,7 @@ export default function Home() {
               showActivities={showActivities}
               showFog={showFog}
               onMapReady={() => setMapReady(true)}
-              onProcessingUpdate={handleProcessingUpdate}
+              onProcessingComplete={handleProcessingComplete}
               selectedActivityIds={selectedActivityIds}
               onActivitySelect={handleActivitySelect}
               mapMode={mapMode}
@@ -1103,7 +1086,6 @@ export default function Home() {
             <>
               <ControlPanel
                 activityCount={activityCount}
-                processedCount={processedCount}
                 isProcessing={isProcessing}
                 showActivities={showActivities}
                 onShowActivitiesChange={setShowActivities}

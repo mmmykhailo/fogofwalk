@@ -5,7 +5,7 @@ import type {
   WorkerInboundMessage,
 } from "~/types/activities"
 import { sortActivities, populateUniqueDistances } from "~/lib/statsAggregator"
-import { saveActivities, clearFogCache } from "~/lib/storage"
+import { saveUniqueDistances, clearFogCache } from "~/lib/storage"
 import { worldFogFeature } from "~/lib/fogGeometry"
 
 // ─── Map position persistence (localStorage — synchronous, survives page unload) ──
@@ -133,6 +133,25 @@ export const mapStore: MapStore = {
   shareCardCache: null,
 }
 
+const fogProgressListeners = new Set<() => void>()
+
+/** Subscribe narrowly to worker progress without rerendering the home route. */
+export function subscribeFogProgress(listener: () => void): () => void {
+  fogProgressListeners.add(listener)
+  return () => fogProgressListeners.delete(listener)
+}
+
+export function getFogProcessedCount(): number {
+  return mapStore.processedCount
+}
+
+/** Update worker progress and notify only the UI that displays it. */
+export function setFogProcessedCount(processedCount: number): void {
+  if (mapStore.processedCount === processedCount) return
+  mapStore.processedCount = processedCount
+  for (const listener of fogProgressListeners) listener()
+}
+
 type DistributiveOmit<T, K extends keyof T> = T extends unknown
   ? Omit<T, K>
   : never
@@ -164,6 +183,20 @@ export function postToFogWorker(
     for (const activity of msg.activities) {
       mapStore.fogWorkerActivityIds.add(activity.id)
     }
+
+    // ParsedActivity contains timestamps, laps, statistics, and other metadata.
+    // Project at the worker boundary so structured cloning only copies what fog
+    // processing needs, including when the full library is replayed.
+    mapStore.worker?.postMessage({
+      ...msg,
+      activities: msg.activities.map(({ id, name, coordinates }) => ({
+        id,
+        name,
+        coordinates,
+      })),
+      runId: mapStore.runId,
+    } satisfies WorkerInboundMessage)
+    return
   }
   if (msg.type === "RESET") {
     mapStore.pendingFogJobs = 0
@@ -246,8 +279,9 @@ export async function ingestActivities(
   if (added.length === 0) return added
 
   mapStore.activities = sortActivities([...mapStore.activities, ...added])
-  populateUniqueDistances(mapStore.activities)
-  await saveActivities(added)
+  await populateUniqueDistances(mapStore.activities)
+  // A backdated addition can change every later activity's unique distance.
+  await saveUniqueDistances(mapStore.activities)
   await clearFogCache()
   // Start processing only after invalidation finishes. A small worker batch can
   // otherwise save its fresh cache first and have this call erase it afterward.

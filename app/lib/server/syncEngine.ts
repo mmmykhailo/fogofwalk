@@ -30,6 +30,7 @@ import {
   loadSyncState,
   saveSyncState,
   saveActivities,
+  saveUniqueDistances,
   deleteSavedPoint as deleteSavedPointFromIdb,
   loadSavedPoints,
   saveSavedPoint,
@@ -422,8 +423,8 @@ async function syncOnce(reason: string): Promise<void> {
       mapStore.activities = mapStore.activities.map(
         (activity) => byHash.get(activity.contentHash) ?? activity
       )
-      populateUniqueDistances(mapStore.activities)
-      await saveActivities(updated)
+      await populateUniqueDistances(mapStore.activities)
+      await saveUniqueDistances(mapStore.activities)
     }
 
     if (downloaded.length > 0 || updated.length > 0 || deletedIds.length > 0) {

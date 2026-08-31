@@ -3,7 +3,13 @@ import { EmptyActivitiesState } from "~/components/activities/EmptyActivitiesSta
 import { ActivitiesGrid } from "~/components/activities/ActivitiesGrid"
 import { PageShell } from "~/components/PageShell"
 import { mapStore } from "~/lib/mapStore"
-import { loadActivities, saveActivities } from "~/lib/storage"
+import {
+  areUniqueDistancesCurrent,
+  loadActivities,
+  loadUniqueDistanceState,
+  saveActivities,
+  saveUniqueDistances,
+} from "~/lib/storage"
 import {
   populateUniqueDistances,
   sortActivities,
@@ -16,8 +22,15 @@ import type { Route } from "./+types/activities"
 
 export async function clientLoader(): Promise<ParsedActivity[]> {
   if (mapStore.activities.length === 0) {
-    mapStore.activities = sortActivities(await loadActivities())
-    populateUniqueDistances(mapStore.activities)
+    const [activities, uniqueDistanceState] = await Promise.all([
+      loadActivities(),
+      loadUniqueDistanceState(),
+    ])
+    mapStore.activities = sortActivities(activities)
+    if (!areUniqueDistancesCurrent(mapStore.activities, uniqueDistanceState)) {
+      await populateUniqueDistances(mapStore.activities)
+      await saveUniqueDistances(mapStore.activities)
+    }
   }
   return sortActivitiesNewestFirst(mapStore.activities)
 }

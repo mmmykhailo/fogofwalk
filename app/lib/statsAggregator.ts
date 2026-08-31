@@ -1,8 +1,5 @@
 import type { ParsedActivity } from "~/types/activities"
-import { haversineKm } from "~/lib/stats"
-
-// Grid resolution: 0.001° ≈ 111 m per cell, matching FOG_CLEAR_RADIUS_METERS = 100 m
-const GRID_SCALE = 1000
+import { computeUniqueDistancesInWorker } from "~/lib/uniqueDistanceWorkerClient"
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -382,81 +379,20 @@ export function computePersonalRecords(
 }
 
 /**
- * Returns a Map from activity id → km of new ground covered by that activity.
- *
- * Uses a grid-based midpoint check (~100 m cells) for O(n_segments) performance —
- * no polygon math, safe for 1000+ activities.
- *
- * **Activities must be pre-sorted chronologically** (call `sortActivities` first) so that
- * "new ground" has a deterministic meaning — earlier activities claim ground first.
- *
- * Two passes per activity:
- *   1. Count all segments whose midpoint cell is NOT in explored (= previous activities' coverage).
- *   2. Mark this activity's 3×3 neighbourhood into explored.
- *
- * Splitting check and mark into separate passes is critical: marking immediately
- * after each segment (in a single pass) causes the very next GPS point (~5 m away)
- * to land in an already-marked neighbour cell and be silently dropped, collapsing
- * the entire activity's unique distance to nearly zero.
- */
-function computePerActivityUniqueDistances(
-  activities: ParsedActivity[]
-): Map<string, number> {
-  const explored = new Set<string>()
-  const result = new Map<string, number>()
-
-  for (const activity of activities) {
-    let activityUniqueKm = 0
-    const coords = activity.coordinates
-
-    // Pass 1: count segments on new ground (vs. all previously processed activities)
-    for (let i = 1; i < coords.length; i++) {
-      const [lng1, lat1] = coords[i - 1]
-      const [lng2, lat2] = coords[i]
-      const cx = Math.round(((lng1 + lng2) / 2) * GRID_SCALE)
-      const cy = Math.round(((lat1 + lat2) / 2) * GRID_SCALE)
-
-      if (!explored.has(`${cx},${cy}`)) {
-        activityUniqueKm += haversineKm(lng1, lat1, lng2, lat2)
-      }
-    }
-
-    // Pass 2: mark this activity's buffer as explored so later activities can check against it
-    for (let i = 1; i < coords.length; i++) {
-      const [lng1, lat1] = coords[i - 1]
-      const [lng2, lat2] = coords[i]
-      const cx = Math.round(((lng1 + lng2) / 2) * GRID_SCALE)
-      const cy = Math.round(((lat1 + lat2) / 2) * GRID_SCALE)
-
-      // 3×3 neighbourhood approximates the 100 m fog-clear buffer
-      for (let dx = -1; dx <= 1; dx++) {
-        for (let dy = -1; dy <= 1; dy++) {
-          explored.add(`${cx + dx},${cy + dy}`)
-        }
-      }
-    }
-
-    result.set(activity.id, activityUniqueKm)
-  }
-
-  return result
-}
-
-/**
- * Total km traveled on ground not previously covered by any earlier activity.
- * Thin wrapper around `computePerActivityUniqueDistances` — kept for the Stats page.
- * Activities must be pre-sorted (call `sortActivities` first).
+ * Total already-computed library-wide unique distance.
  */
 export function computeUniqueDistance(activities: ParsedActivity[]): number {
-  let total = 0
-  for (const km of computePerActivityUniqueDistances(activities).values())
-    total += km
-  return total
+  return activities.reduce(
+    (total, activity) => total + activity.stats.uniqueDistanceKm,
+    0
+  )
 }
 
-/** Compute unique distances and write them onto each activity in place. Mutates the array elements. */
-export function populateUniqueDistances(activities: ParsedActivity[]): void {
-  const result = computePerActivityUniqueDistances(activities)
+/** Compute unique distances off-thread and write them onto each activity in place. */
+export async function populateUniqueDistances(
+  activities: ParsedActivity[]
+): Promise<void> {
+  const result = await computeUniqueDistancesInWorker(activities)
   for (const activity of activities) {
     activity.stats.uniqueDistanceKm =
       result.get(activity.id) ?? activity.stats.distanceKm
