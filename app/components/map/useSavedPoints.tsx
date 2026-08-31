@@ -1,11 +1,5 @@
-import {
-  useEffect,
-  useRef,
-  useState,
-  type Dispatch,
-  type SetStateAction,
-} from "react"
-import { createRoot, type Root } from "react-dom/client"
+import { useEffect, useState, type Dispatch, type SetStateAction } from "react"
+import { createRoot } from "react-dom/client"
 import maplibregl from "maplibre-gl"
 import { SavedPointTooltip } from "~/components/SavedPointTooltip"
 import { setSavedPointsPresentation } from "~/lib/map/commands"
@@ -21,8 +15,6 @@ export function useSavedPoints(
   savedPoints: SavedPoint[],
   showSavedPoints: boolean
 ): Dispatch<SetStateAction<SavedPointTooltipState | null>> {
-  const markerRef = useRef<maplibregl.Marker | null>(null)
-  const rootRef = useRef<Root | null>(null)
   const [tooltip, setTooltip] = useState<SavedPointTooltipState | null>(null)
 
   useEffect(() => {
@@ -31,11 +23,6 @@ export function useSavedPoints(
 
   // A DOM marker keeps the React tooltip anchored while the map moves.
   useEffect(() => {
-    rootRef.current?.unmount()
-    rootRef.current = null
-    markerRef.current?.remove()
-    markerRef.current = null
-
     const map = mapStore.map
     if (!map || !tooltip) return
 
@@ -44,8 +31,7 @@ export function useSavedPoints(
     const root = createRoot(element)
     root.render(<SavedPointTooltip name={tooltip.name} />)
 
-    rootRef.current = root
-    markerRef.current = new maplibregl.Marker({
+    const marker = new maplibregl.Marker({
       element,
       anchor: "bottom",
       offset: [0, -20],
@@ -54,10 +40,10 @@ export function useSavedPoints(
       .addTo(map)
 
     return () => {
-      root.unmount()
-      markerRef.current?.remove()
-      rootRef.current = null
-      markerRef.current = null
+      marker.remove()
+      // This cleanup runs while the parent root is committing. Defer disposal
+      // of the nested root until React has finished that render.
+      queueMicrotask(() => root.unmount())
     }
   }, [tooltip])
 
