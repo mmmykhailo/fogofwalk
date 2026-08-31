@@ -55,7 +55,9 @@ export default function PublicSavedPointsPage() {
 
   return (
     <PageShell
-      backTo={profile ? `/u/${encodeURIComponent(profile.user.handle)}` : "/"}
+      backTo={
+        profile ? `/u/${encodeURIComponent(profile.user.handle)}` : "/map"
+      }
       backLabel={profile ? "Back to profile" : "Back to map"}
     >
       {profile && (
@@ -70,7 +72,7 @@ export default function PublicSavedPointsPage() {
         <div className="flex flex-col items-center justify-center gap-3 rounded-none border border-dashed border-border py-24 text-center">
           <p className="text-sm text-muted-foreground">{error}</p>
           <TransitionLink
-            to="/"
+            to="/map"
             className="text-sm font-medium underline underline-offset-4 transition-colors hover:text-muted-foreground"
           >
             Go to map →

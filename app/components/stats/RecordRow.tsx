@@ -29,7 +29,7 @@ export function RecordRow({
       <div className="min-w-0">
         <CardDescription>{label}</CardDescription>
         <AppLink
-          to={`/?activity=${activityId}`}
+          to={`/map?activity=${activityId}`}
           className="mt-0.5 block truncate"
           title={activityName}
         >

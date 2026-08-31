@@ -32,7 +32,7 @@ export default function HelpPage() {
       ))}
 
       <div className="pt-4 text-center">
-        <AppLink to="/" variant="nav">
+        <AppLink to="/map" variant="nav">
           Back to map
         </AppLink>
       </div>

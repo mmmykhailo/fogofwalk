@@ -21,7 +21,7 @@ export function ActivitiesGrid({ activities }: ActivitiesGridProps) {
             elevationGainM: activity.stats.elevationGainM,
             avgMovingSpeedKmh: activity.stats.avgMovingSpeedKmh,
           }}
-          activityHref={`/?activity=${activity.id}`}
+          activityHref={`/map?activity=${activity.id}`}
           activityTypeControl={
             <ActivityTypeSelect
               activityId={activity.id}

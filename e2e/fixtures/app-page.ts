@@ -23,7 +23,7 @@ export class AppPage {
   // ─── Lifecycle ──────────────────────────────────────────────────────────
 
   async goto() {
-    await this.page.goto("/")
+    await this.page.goto("/map")
     await this.waitUntilReady()
   }
 
@@ -314,7 +314,7 @@ export class AppPage {
     }
 
     await this.closeDrawer()
-    await this.page.goto(`/?activity=${encodeURIComponent(target.id)}`)
+    await this.page.goto(`/map?activity=${encodeURIComponent(target.id)}`)
     await this.waitUntilReady()
 
     const deleteButton = this.page.getByRole("button", {

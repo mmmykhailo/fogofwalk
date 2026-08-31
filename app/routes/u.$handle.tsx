@@ -96,7 +96,7 @@ export default function PublicProfilePage() {
         <div className="flex flex-col items-center justify-center gap-3 rounded-none border border-dashed border-border py-24 text-center">
           <p className="text-sm text-muted-foreground">{error}</p>
           <TransitionLink
-            to="/"
+            to="/map"
             className="text-sm font-medium underline underline-offset-4 transition-colors hover:text-muted-foreground"
           >
             Go to map →

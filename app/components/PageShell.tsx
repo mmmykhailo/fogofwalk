@@ -9,7 +9,7 @@ interface PageShellProps {
 
 export function PageShell({
   title,
-  backTo = "/",
+  backTo = "/map",
   backLabel = "Back to map",
   children,
 }: PageShellProps) {

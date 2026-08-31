@@ -22,7 +22,7 @@ test.describe("saved points", () => {
       updatedAt: NOW,
     })
 
-    await app.page.goto(`/?savedPoint=${POINT_ID}`)
+    await app.page.goto(`/map?savedPoint=${POINT_ID}`)
     await app.page.getByRole("button", { name: "Skip for now" }).click()
 
     const saveChanges = app.page.getByRole("button", {
@@ -84,7 +84,7 @@ test.describe("saved points", () => {
 
     const card = link.locator("..")
     expect(await card.evaluate((element) => element.tagName)).toBe("DIV")
-    await expect(link).toHaveAttribute("href", `/?savedPoint=${POINT_ID}`)
+    await expect(link).toHaveAttribute("href", `/map?savedPoint=${POINT_ID}`)
 
     const [linkBox, cardBox] = await Promise.all([
       link.boundingBox(),
