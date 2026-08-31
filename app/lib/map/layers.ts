@@ -150,11 +150,4 @@ export function setupMapLayers(map: maplibregl.Map, mode: MapMode): void {
       "line-opacity": 1,
     },
   })
-
-  map.on("mouseenter", MAP_LAYER_IDS.activityHit, () => {
-    map.getCanvas().style.cursor = "pointer"
-  })
-  map.on("mouseleave", MAP_LAYER_IDS.activityHit, () => {
-    map.getCanvas().style.cursor = ""
-  })
 }

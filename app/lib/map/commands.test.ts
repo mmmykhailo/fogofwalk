@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import {
   applyActivitySelectionPaint,
+  rehydrateMapPresentation,
   setLapHighlightData,
 } from "~/lib/map/commands"
 
@@ -36,5 +37,31 @@ describe("map rendering commands", () => {
     setLapHighlightData(map as never, null)
 
     expect(data).toEqual({ type: "FeatureCollection", features: [] })
+  })
+
+  test("rehydrates a relief style without requiring a fog layer", () => {
+    const layoutCalls: unknown[][] = []
+    const paintCalls: unknown[][] = []
+    const map = {
+      getLayer: (id: string) => (id === "fog-layer" ? undefined : { id }),
+      getSource: () => ({ setData: () => undefined }),
+      setLayoutProperty: (...args: unknown[]) => layoutCalls.push(args),
+      setPaintProperty: (...args: unknown[]) => paintCalls.push(args),
+    }
+
+    rehydrateMapPresentation(map as never, {
+      showActivities: false,
+      showFog: false,
+      selectedActivityIds: [],
+      highlightCoordinates: null,
+      savedPoints: [],
+      showSavedPoints: false,
+    })
+
+    expect(layoutCalls.some(([id]) => id === "fog-layer")).toBe(false)
+    expect(
+      layoutCalls.filter(([, property]) => property === "visibility")
+    ).toHaveLength(6)
+    expect(paintCalls).toHaveLength(3)
   })
 })

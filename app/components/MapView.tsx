@@ -10,13 +10,14 @@ import { saveMapPosition } from "~/lib/mapStore"
 import { MAP_STYLE_URL } from "~/constants/fog"
 import {
   applyActivitySelectionPaint,
+  rehydrateMapPresentation,
+  setActivitiesVisible,
+  setFogVisible,
   setLapHighlightData,
+  setSavedPointsPresentation,
 } from "~/lib/map/commands"
-import {
-  activitiesFeatureCollection,
-  savedPointsFeatureCollection,
-} from "~/lib/map/geojson"
-import { SAVED_POINT_LAYER_IDS, setupMapLayers } from "~/lib/map/layers"
+import { activitiesFeatureCollection } from "~/lib/map/geojson"
+import { MAP_LAYER_IDS, setupMapLayers } from "~/lib/map/layers"
 import { styleForMapMode } from "~/lib/map/styles"
 import type {
   MapMode,
@@ -437,19 +438,20 @@ export function MapView({
     map.once("load", () => {
       map.resize()
       setupMapLayers(map, "flat")
-      const savedPointsSource = map.getSource("saved-points-source") as
-        | maplibregl.GeoJSONSource
-        | undefined
-      savedPointsSource?.setData(
-        savedPointsFeatureCollection(savedPointsRef.current)
-      )
-      for (const layer of SAVED_POINT_LAYER_IDS) {
-        map.setLayoutProperty(
-          layer,
-          "visibility",
-          showSavedPointsRef.current ? "visible" : "none"
-        )
-      }
+      map.on("mouseenter", MAP_LAYER_IDS.activityHit, () => {
+        map.getCanvas().style.cursor = "pointer"
+      })
+      map.on("mouseleave", MAP_LAYER_IDS.activityHit, () => {
+        map.getCanvas().style.cursor = ""
+      })
+      rehydrateMapPresentation(map, {
+        showActivities: showActivitiesRef.current,
+        showFog: showFogRef.current,
+        selectedActivityIds: selectedActivityIdsRef.current,
+        highlightCoordinates: highlightCoordinatesRef.current,
+        savedPoints: savedPointsRef.current,
+        showSavedPoints: showSavedPointsRef.current,
+      })
       mapStore.sourcesReady = true
       isInitialStyleLoadedRef.current = true
       onMapReady?.()
@@ -515,17 +517,7 @@ export function MapView({
   useEffect(() => {
     const map = mapStore.map
     if (!map || !mapStore.sourcesReady) return
-    const source = map.getSource("saved-points-source") as
-      | maplibregl.GeoJSONSource
-      | undefined
-    source?.setData(savedPointsFeatureCollection(savedPoints))
-    for (const layer of SAVED_POINT_LAYER_IDS) {
-      map.setLayoutProperty(
-        layer,
-        "visibility",
-        showSavedPoints ? "visible" : "none"
-      )
-    }
+    setSavedPointsPresentation(map, savedPoints, showSavedPoints)
   }, [savedPoints, showSavedPoints, mapMode])
 
   useEffect(() => {
@@ -644,57 +636,17 @@ export function MapView({
 
       setupMapLayers(map, mapMode)
 
-      const savedPointsSource = map.getSource("saved-points-source") as
-        | maplibregl.GeoJSONSource
-        | undefined
-      savedPointsSource?.setData(
-        savedPointsFeatureCollection(savedPointsRef.current)
-      )
-      for (const layer of SAVED_POINT_LAYER_IDS) {
-        map.setLayoutProperty(
-          layer,
-          "visibility",
-          showSavedPointsRef.current ? "visible" : "none"
-        )
-      }
-
       // Invalidate activities cache so FOG_UPDATE re-pushes to the new source.
       cachedActivitiesGeoJSON.current = null
       cachedActivitiesKey.current = null
-
-      map.setLayoutProperty(
-        "activities-layer",
-        "visibility",
-        showActivitiesRef.current ? "visible" : "none"
-      )
-      map.setLayoutProperty(
-        "activities-hit-layer",
-        "visibility",
-        showActivitiesRef.current ? "visible" : "none"
-      )
-      map.setLayoutProperty(
-        "lap-layer",
-        "visibility",
-        showActivitiesRef.current ? "visible" : "none"
-      )
-
-      // setStyle destroyed lap-source along with everything else — re-push the
-      // highlight so it survives the flat/relief toggle.
-      setLapHighlightData(map, highlightCoordinatesRef.current)
-
-      if (mapMode !== "relief") {
-        map.setLayoutProperty(
-          "fog-layer",
-          "visibility",
-          showFogRef.current ? "visible" : "none"
-        )
-      }
-
-      applyActivitySelectionPaint(
-        map,
-        selectedActivityIdsRef.current,
-        highlightCoordinatesRef.current != null
-      )
+      rehydrateMapPresentation(map, {
+        showActivities: showActivitiesRef.current,
+        showFog: showFogRef.current,
+        selectedActivityIds: selectedActivityIdsRef.current,
+        highlightCoordinates: highlightCoordinatesRef.current,
+        savedPoints: savedPointsRef.current,
+        showSavedPoints: showSavedPointsRef.current,
+      })
 
       map.easeTo({ pitch: mapMode === "relief" ? 45 : 0, duration: 400 })
       mapStore.sourcesReady = true
@@ -708,22 +660,7 @@ export function MapView({
 
   useEffect(() => {
     if (!mapStore.sourcesReady) return
-    mapStore.map?.setLayoutProperty(
-      "activities-layer",
-      "visibility",
-      showActivities ? "visible" : "none"
-    )
-    mapStore.map?.setLayoutProperty(
-      "activities-hit-layer",
-      "visibility",
-      showActivities ? "visible" : "none"
-    )
-    // Without this, hiding activities would leave an orphan lap line on the map.
-    mapStore.map?.setLayoutProperty(
-      "lap-layer",
-      "visibility",
-      showActivities ? "visible" : "none"
-    )
+    if (mapStore.map) setActivitiesVisible(mapStore.map, showActivities)
   }, [showActivities])
 
   // Push the lap geometry, then frame the current focus.
@@ -759,11 +696,7 @@ export function MapView({
 
   useEffect(() => {
     if (!mapStore.sourcesReady) return
-    mapStore.map?.setLayoutProperty(
-      "fog-layer",
-      "visibility",
-      showFog ? "visible" : "none"
-    )
+    if (mapStore.map) setFogVisible(mapStore.map, showFog)
   }, [showFog])
 
   // isLapActive is derived rather than passed as its own prop — highlight
