@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react"
+import { createRoot, type Root } from "react-dom/client"
 import maplibregl from "maplibre-gl"
 import type { StyleSpecification } from "maplibre-gl"
 import { Protocol } from "pmtiles"
@@ -337,7 +338,7 @@ interface MapViewProps {
 
 interface SavedPointTooltipState {
   name: string
-  point: { x: number; y: number }
+  lngLat: [number, number]
 }
 
 export function MapView({
@@ -383,6 +384,8 @@ export function MapView({
   const isInitialStyleLoadedRef = useRef(false)
   const photoMarkersRef = useRef<Map<string, maplibregl.Marker>>(new Map())
   const myLocationMarkerRef = useRef<maplibregl.Marker | null>(null)
+  const savedPointTooltipMarkerRef = useRef<maplibregl.Marker | null>(null)
+  const savedPointTooltipRootRef = useRef<Root | null>(null)
   const photosRef = useRef<PhotoEntry[]>(photos)
   photosRef.current = photos
   const showPhotosRef = useRef(showPhotos)
@@ -539,8 +542,7 @@ export function MapView({
         typeof coordinates[1] !== "number"
       )
         return
-      const point = map.project([coordinates[0], coordinates[1]])
-      setSavedPointTooltip({ name, point: { x: point.x, y: point.y } })
+      setSavedPointTooltip({ name, lngLat: [coordinates[0], coordinates[1]] })
     })
     map.on("mouseleave", "saved-points-hit-layer", () => {
       map.getCanvas().style.cursor = ""
@@ -711,6 +713,39 @@ export function MapView({
   useEffect(() => {
     if (!showSavedPoints) setSavedPointTooltip(null)
   }, [showSavedPoints])
+
+  // Like photo markers, the tooltip is a MapLibre marker rather than an overlay
+  // in the page. That keeps it attached to the saved point while the map moves.
+  useEffect(() => {
+    savedPointTooltipRootRef.current?.unmount()
+    savedPointTooltipRootRef.current = null
+    savedPointTooltipMarkerRef.current?.remove()
+    savedPointTooltipMarkerRef.current = null
+
+    const map = mapStore.map
+    if (!map || !savedPointTooltip) return
+
+    const element = document.createElement("div")
+    element.style.pointerEvents = "none"
+    const root = createRoot(element)
+    root.render(<SavedPointTooltip name={savedPointTooltip.name} />)
+
+    savedPointTooltipRootRef.current = root
+    savedPointTooltipMarkerRef.current = new maplibregl.Marker({
+      element,
+      anchor: "bottom",
+      offset: [0, -20],
+    })
+      .setLngLat(savedPointTooltip.lngLat)
+      .addTo(map)
+
+    return () => {
+      root.unmount()
+      savedPointTooltipMarkerRef.current?.remove()
+      savedPointTooltipRootRef.current = null
+      savedPointTooltipMarkerRef.current = null
+    }
+  }, [savedPointTooltip])
 
   useEffect(() => {
     const map = mapStore.map
@@ -1055,7 +1090,6 @@ export function MapView({
   return (
     <>
       <div ref={containerRef} className="absolute inset-0 h-screen" />
-      {savedPointTooltip && <SavedPointTooltip {...savedPointTooltip} />}
       <MapCompass
         bearing={bearing}
         pitch={pitch}
