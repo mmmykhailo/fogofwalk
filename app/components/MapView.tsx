@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from "react"
-import { createRoot, type Root } from "react-dom/client"
 import maplibregl from "maplibre-gl"
 import bbox from "@turf/bbox"
 import { lineString } from "@turf/helpers"
@@ -13,7 +12,6 @@ import {
   setActivitiesVisible,
   setFogVisible,
   setLapHighlightData,
-  setSavedPointsPresentation,
 } from "~/lib/map/commands"
 import { MAP_LAYER_IDS, setupMapLayers } from "~/lib/map/layers"
 import { styleForMapMode } from "~/lib/map/styles"
@@ -21,10 +19,10 @@ import type { MapMode, ActivityCoords } from "~/types/activities"
 import type { PhotoEntry, PhotoGroup } from "~/types/photos"
 import type { SavedPoint } from "~shared/saved-points"
 import { MapCompass } from "~/components/MapCompass"
-import { SavedPointTooltip } from "~/components/SavedPointTooltip"
 import { useFogWorkerBridge } from "~/components/map/useFogWorkerBridge"
 import { useMyLocationMarker } from "~/components/map/useMyLocationMarker"
 import { usePhotoMarkers } from "~/components/map/usePhotoMarkers"
+import { useSavedPoints } from "~/components/map/useSavedPoints"
 
 export { setLapHighlightData } from "~/lib/map/commands"
 
@@ -60,11 +58,6 @@ interface MapViewProps {
     lat: number
     point: { x: number; y: number }
   }) => void
-}
-
-interface SavedPointTooltipState {
-  name: string
-  lngLat: [number, number]
 }
 
 export function MapView({
@@ -104,8 +97,6 @@ export function MapView({
   const prevFocusKeyRef = useRef<string | null>(null)
   const pendingStyleLoadRef = useRef<(() => void) | null>(null)
   const isInitialStyleLoadedRef = useRef(false)
-  const savedPointTooltipMarkerRef = useRef<maplibregl.Marker | null>(null)
-  const savedPointTooltipRootRef = useRef<Root | null>(null)
   const onSavedPointSelectRef = useRef(onSavedPointSelect)
   onSavedPointSelectRef.current = onSavedPointSelect
   const onSavedPointCreateRef = useRef(onSavedPointCreate)
@@ -117,8 +108,7 @@ export function MapView({
 
   const [bearing, setBearing] = useState(0)
   const [pitch, setPitch] = useState(0)
-  const [savedPointTooltip, setSavedPointTooltip] =
-    useState<SavedPointTooltipState | null>(null)
+  const setSavedPointTooltip = useSavedPoints(savedPoints, showSavedPoints)
   const { invalidateActivitiesCache } = useFogWorkerBridge(onProcessingUpdate)
   const { rebuildPhotoMarkers } = usePhotoMarkers(
     photos,
@@ -351,49 +341,6 @@ export function MapView({
 
   // Declared after map initialization so its first effect sees the live map.
   useMyLocationMarker(showMyLocation, myLocation)
-
-  useEffect(() => {
-    if (!showSavedPoints) setSavedPointTooltip(null)
-  }, [showSavedPoints])
-
-  // Like photo markers, the tooltip is a MapLibre marker rather than an overlay
-  // in the page. That keeps it attached to the saved point while the map moves.
-  useEffect(() => {
-    savedPointTooltipRootRef.current?.unmount()
-    savedPointTooltipRootRef.current = null
-    savedPointTooltipMarkerRef.current?.remove()
-    savedPointTooltipMarkerRef.current = null
-
-    const map = mapStore.map
-    if (!map || !savedPointTooltip) return
-
-    const element = document.createElement("div")
-    element.style.pointerEvents = "none"
-    const root = createRoot(element)
-    root.render(<SavedPointTooltip name={savedPointTooltip.name} />)
-
-    savedPointTooltipRootRef.current = root
-    savedPointTooltipMarkerRef.current = new maplibregl.Marker({
-      element,
-      anchor: "bottom",
-      offset: [0, -20],
-    })
-      .setLngLat(savedPointTooltip.lngLat)
-      .addTo(map)
-
-    return () => {
-      root.unmount()
-      savedPointTooltipMarkerRef.current?.remove()
-      savedPointTooltipRootRef.current = null
-      savedPointTooltipMarkerRef.current = null
-    }
-  }, [savedPointTooltip])
-
-  useEffect(() => {
-    const map = mapStore.map
-    if (!map || !mapStore.sourcesReady) return
-    setSavedPointsPresentation(map, savedPoints, showSavedPoints)
-  }, [savedPoints, showSavedPoints, mapMode])
 
   useEffect(() => {
     const map = mapStore.map
