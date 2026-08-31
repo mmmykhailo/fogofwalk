@@ -630,7 +630,15 @@ export function MapView({
       if (savedPointFeatures.length > 0) {
         const id = savedPointFeatures[0].properties?.id
         if (id) onSavedPointSelectRef.current(id)
-        map.easeTo({ center: e.lngLat, zoom: Math.max(map.getZoom(), 16) })
+        const savedPoint = savedPointsRef.current.find(
+          (point) => point.id === id
+        )
+        if (savedPoint) {
+          map.easeTo({
+            center: [savedPoint.lng, savedPoint.lat],
+            zoom: Math.max(map.getZoom(), 10),
+          })
+        }
         return
       }
       const activityFeatures = map.queryRenderedFeatures(e.point, {
