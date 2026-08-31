@@ -4,7 +4,7 @@ This is the detailed companion to [AGENTS.md](../AGENTS.md). It documents invari
 
 ## Processing pipeline
 
-Files are parsed into `ParsedActivity[]` on the main thread, then posted to `workers/fogWorker.ts`. The worker simplifies each activity at `ACTIVITY_SIMPLIFY_TOLERANCE`, buffers it, reports lightweight progress every five activities, and emits an updated fog polygon every 300 ms. `MapView` writes that GeoJSON directly to the fog source.
+Files are parsed into `ParsedActivity[]` on the main thread, then posted to `workers/fogWorker.ts`. The worker simplifies each activity at `ACTIVITY_SIMPLIFY_TOLERANCE`, buffers it, reports lightweight progress every five activities, and emits an updated fog polygon every 300 ms. Corridor mode also flushes after five pending buffers so a fast buffering pass cannot leave one long final clipping operation. `MapView` writes that GeoJSON directly to the fog source.
 
 There are two distinct simplification tolerances. `ACTIVITY_SIMPLIFY_TOLERANCE` (0.0005, about 55 m) applies before buffering; `SIMPLIFY_TOLERANCE` (0.0001, about 11 m) applies to emitted fog. Swapping them visibly degrades the fog boundary or wastes a large vertex budget.
 

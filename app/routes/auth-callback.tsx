@@ -58,7 +58,7 @@ export default function AuthCallbackPage() {
           { anonymous: true }
         )
         await completeSignIn(res)
-        navigate("/", { replace: true })
+        navigate("/map", { replace: true })
       } catch (err) {
         setSignedOut()
         setError(friendlyMessage(err))
@@ -76,7 +76,7 @@ export default function AuthCallbackPage() {
             ) : (
               <p className="text-sm text-destructive">{error}</p>
             )}
-            <AppLink to="/" variant="nav">
+            <AppLink to="/map" variant="nav">
               Back to map
             </AppLink>
           </>

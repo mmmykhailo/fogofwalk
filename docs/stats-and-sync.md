@@ -6,6 +6,8 @@ This reference expands on [AGENTS.md](../AGENTS.md). It covers two areas whose c
 
 `routes/stats.tsx` loads activities client-side and calls the pure aggregators in `lib/statsAggregator.ts`: lifetime totals, weekly bars, streaks, personal records, and library-wide unique distance. Unique distance is grid deduplication across the whole library, not a sum of activity values.
 
+Unique distance is computed in `workers/uniqueDistanceWorker.ts`, then persisted per activity together with an ordered-library cache marker. Restore and the Stats page reuse a current cache; library mutations recompute off the main thread and persist every affected value.
+
 Use `avgSpeedKmh` for elapsed-time speed and `avgMovingSpeedKmh` for moving-time speed. `fastestAvgSpeed` and `fastestPace` deliberately use different definitions. Streaks use local calendar dates. New temporal consumers should use `ParsedActivity.startedAtMs`, not re-derive it from coordinate timestamps.
 
 Chart colors are `--chart-1` through `--chart-5` in `app/app.css`; activity dots and weekly bars both use `--chart-1`.

@@ -31,12 +31,12 @@ registerRoute(
 )
 
 // Web Share Target: intercept the POST from the system share sheet,
-// buffer the files into Cache Storage, then redirect to /?from-share
+// buffer the files into Cache Storage, then redirect to /map?from-share
 // so the main app can pick them up after it loads.
 self.addEventListener("fetch", (event) => {
   const url = new URL(event.request.url)
   if (
-    url.pathname === "/" &&
+    url.pathname === "/map" &&
     url.searchParams.has("share-target") &&
     event.request.method === "POST"
   ) {
@@ -56,7 +56,7 @@ self.addEventListener("fetch", (event) => {
             })
           )
         }
-        return Response.redirect("/?from-share", 303)
+        return Response.redirect("/map?from-share", 303)
       })()
     )
   }

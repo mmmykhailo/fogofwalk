@@ -39,40 +39,22 @@ const nextVersion =
 
 const changelog = readFileSync(changelogPath, "utf8")
 
-let releaseCommit
+let lastTag
 try {
-  // Tags are created after deployment and can lag behind a committed release.
-  // The release commit is the authoritative changelog boundary in that case.
-  releaseCommit = execFileSync(
+  lastTag = execFileSync(
     "git",
-    ["log", "-1", "--format=%H", "--grep", "^release v[0-9]"],
+    ["describe", "--tags", "--abbrev=0", "--match", "v[0-9]*"],
     {
       cwd: rootDir,
       encoding: "utf8",
     }
   ).trim()
 } catch {
-  releaseCommit = undefined
+  lastTag = undefined
 }
 
-let lastTag
-if (!releaseCommit) {
-  try {
-    lastTag = execFileSync("git", ["describe", "--tags", "--abbrev=0"], {
-      cwd: rootDir,
-      encoding: "utf8",
-    }).trim()
-  } catch {
-    lastTag = undefined
-  }
-}
-
-let commitRange = releaseCommit
-  ? `${releaseCommit}..HEAD`
-  : lastTag
-    ? `${lastTag}..HEAD`
-    : "HEAD"
-if (!releaseCommit && !lastTag) {
+let commitRange = lastTag ? `${lastTag}..HEAD` : "HEAD"
+if (!lastTag) {
   // A release made before Actions has pushed the first version tag still
   // needs notes only for changes since the existing changelog baseline.
   try {
