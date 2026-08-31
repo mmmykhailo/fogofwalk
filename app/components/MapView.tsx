@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { createRoot, type Root } from "react-dom/client"
 import maplibregl from "maplibre-gl"
 import bbox from "@turf/bbox"
@@ -23,54 +23,9 @@ import type { SavedPoint } from "~shared/saved-points"
 import { MapCompass } from "~/components/MapCompass"
 import { SavedPointTooltip } from "~/components/SavedPointTooltip"
 import { useFogWorkerBridge } from "~/components/map/useFogWorkerBridge"
+import { usePhotoMarkers } from "~/components/map/usePhotoMarkers"
 
 export { setLapHighlightData } from "~/lib/map/commands"
-
-const CLUSTER_PIXEL_RADIUS = 50
-
-function computeClusters(
-  photos: PhotoEntry[],
-  map: maplibregl.Map
-): PhotoGroup[] {
-  if (photos.length === 0) return []
-  const projected = photos.map((p) => ({
-    photo: p,
-    px: map.project([p.lng, p.lat]),
-  }))
-  const assigned = new Set<string>()
-  const clusters: PhotoGroup[] = []
-
-  for (const item of projected) {
-    if (assigned.has(item.photo.id)) continue
-    const members: PhotoEntry[] = [item.photo]
-    assigned.add(item.photo.id)
-
-    for (const other of projected) {
-      if (assigned.has(other.photo.id)) continue
-      const dx = item.px.x - other.px.x
-      const dy = item.px.y - other.px.y
-      if (Math.sqrt(dx * dx + dy * dy) < CLUSTER_PIXEL_RADIUS) {
-        members.push(other.photo)
-        assigned.add(other.photo.id)
-      }
-    }
-
-    members.sort((a, b) => a.takenAtMs - b.takenAtMs)
-    const lng = members.reduce((s, p) => s + p.lng, 0) / members.length
-    const lat = members.reduce((s, p) => s + p.lat, 0) / members.length
-    clusters.push({
-      id: members
-        .map((p) => p.id)
-        .sort()
-        .join("|"),
-      photos: members,
-      lng,
-      lat,
-    })
-  }
-
-  return clusters
-}
 
 interface MapViewProps {
   onMapReady?: () => void
@@ -135,8 +90,6 @@ export function MapView({
   const containerRef = useRef<HTMLDivElement>(null)
   const onActivitySelectRef = useRef(onActivitySelect)
   onActivitySelectRef.current = onActivitySelect
-  const onPhotoSelectRef = useRef(onPhotoSelect)
-  onPhotoSelectRef.current = onPhotoSelect
   const showActivitiesRef = useRef(showActivities)
   showActivitiesRef.current = showActivities
   const showFogRef = useRef(showFog)
@@ -150,14 +103,9 @@ export function MapView({
   const prevFocusKeyRef = useRef<string | null>(null)
   const pendingStyleLoadRef = useRef<(() => void) | null>(null)
   const isInitialStyleLoadedRef = useRef(false)
-  const photoMarkersRef = useRef<Map<string, maplibregl.Marker>>(new Map())
   const myLocationMarkerRef = useRef<maplibregl.Marker | null>(null)
   const savedPointTooltipMarkerRef = useRef<maplibregl.Marker | null>(null)
   const savedPointTooltipRootRef = useRef<Root | null>(null)
-  const photosRef = useRef<PhotoEntry[]>(photos)
-  photosRef.current = photos
-  const showPhotosRef = useRef(showPhotos)
-  showPhotosRef.current = showPhotos
   const onSavedPointSelectRef = useRef(onSavedPointSelect)
   onSavedPointSelectRef.current = onSavedPointSelect
   const onSavedPointCreateRef = useRef(onSavedPointCreate)
@@ -167,77 +115,16 @@ export function MapView({
   const showSavedPointsRef = useRef(showSavedPoints)
   showSavedPointsRef.current = showSavedPoints
 
-  const clusterCacheRef = useRef<Map<number, PhotoGroup[]>>(new Map())
   const [bearing, setBearing] = useState(0)
   const [pitch, setPitch] = useState(0)
   const [savedPointTooltip, setSavedPointTooltip] =
     useState<SavedPointTooltipState | null>(null)
   const { invalidateActivitiesCache } = useFogWorkerBridge(onProcessingUpdate)
-
-  const rebuildPhotoMarkers = useCallback(() => {
-    const map = mapStore.map
-    if (!map) return
-
-    photoMarkersRef.current.forEach((m) => m.remove())
-    photoMarkersRef.current.clear()
-
-    if (!showPhotosRef.current || photosRef.current.length === 0) return
-
-    const zoom = Math.round(map.getZoom())
-    let clusters = clusterCacheRef.current.get(zoom)
-    if (!clusters) {
-      clusters = computeClusters(photosRef.current, map)
-      clusterCacheRef.current.set(zoom, clusters)
-    }
-
-    const HALF = 18 // visual circle radius (36px / 2)
-
-    for (const cluster of clusters) {
-      for (const p of cluster.photos) {
-        if (!p.objectUrl) p.objectUrl = URL.createObjectURL(p.file)
-      }
-
-      // Zero-size anchor: el has 0×0 size so MapLibre places its top-left exactly
-      // at the coordinate regardless of anchor. The circle is then positioned so its
-      // center sits at that same point using negative left/top offsets.
-      const el = document.createElement("div")
-      el.style.cssText = "cursor:pointer;width:0;height:0;position:relative;"
-
-      const circle = document.createElement("div")
-      circle.style.cssText =
-        `position:absolute;left:${-HALF}px;top:${-HALF}px;` +
-        `width:${HALF * 2}px;height:${HALF * 2}px;` +
-        "border-radius:50%;border:2px solid white;box-sizing:border-box;" +
-        "overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,0.4);"
-      const img = document.createElement("img")
-      img.src = cluster.photos[0].objectUrl!
-      img.style.cssText =
-        "width:100%;height:100%;object-fit:cover;display:block;"
-      circle.appendChild(img)
-      el.appendChild(circle)
-
-      if (cluster.photos.length > 1) {
-        const badge = document.createElement("div")
-        badge.textContent = String(cluster.photos.length)
-        badge.style.cssText =
-          `position:absolute;left:${HALF - 6}px;top:${-HALF - 10}px;` +
-          "background:#ff6b35;color:white;border-radius:50%;" +
-          "width:16px;height:16px;font-size:9px;font-weight:bold;" +
-          "display:flex;align-items:center;justify-content:center;pointer-events:none;"
-        el.appendChild(badge)
-      }
-
-      el.addEventListener("click", (e) => {
-        e.stopPropagation()
-        onPhotoSelectRef.current(cluster)
-      })
-
-      const marker = new maplibregl.Marker({ element: el })
-        .setLngLat([cluster.lng, cluster.lat])
-        .addTo(map)
-      photoMarkersRef.current.set(cluster.id, marker)
-    }
-  }, [])
+  const { rebuildPhotoMarkers } = usePhotoMarkers(
+    photos,
+    showPhotos,
+    onPhotoSelect
+  )
 
   useEffect(() => {
     if (!containerRef.current || mapStore.map) return
@@ -458,8 +345,6 @@ export function MapView({
         map.off("style.load", pendingStyleLoadRef.current)
         pendingStyleLoadRef.current = null
       }
-      photoMarkersRef.current.forEach((m) => m.remove())
-      photoMarkersRef.current.clear()
       map.remove()
     }
   }, [])
@@ -598,11 +483,6 @@ export function MapView({
     if (!mapStore.sourcesReady || !mapStore.map) return
     applyActivitySelectionPaint(mapStore.map, selectedActivityIds, isLapActive)
   }, [selectedActivityIds, isLapActive])
-
-  useEffect(() => {
-    clusterCacheRef.current.clear()
-    rebuildPhotoMarkers()
-  }, [photos, showPhotos, rebuildPhotoMarkers])
 
   // Plain maplibregl.Marker rather than a source/layer: it's a single point,
   // and markers aren't destroyed by setStyle (unlike fog/activities/lap sources),
