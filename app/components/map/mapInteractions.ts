@@ -48,14 +48,17 @@ export function attachMapInteractions(
   const onActivityLeave = () => {
     map.getCanvas().style.cursor = ""
   }
-  const onSavedPointEnter = (event: maplibregl.MapLayerMouseEvent) => {
+  let hoveredSavedPointId: string | null = null
+  const updateSavedPointTooltip = (event: maplibregl.MapLayerMouseEvent) => {
     if (!options.isShowingSavedPoints()) return
-    map.getCanvas().style.cursor = "pointer"
     const feature = event.features?.[0]
+    const id = feature?.properties?.id
     const name = feature?.properties?.name
     const coordinates =
       feature?.geometry.type === "Point" ? feature.geometry.coordinates : null
     if (
+      typeof id !== "string" ||
+      !id ||
       typeof name !== "string" ||
       !name ||
       !coordinates ||
@@ -63,13 +66,20 @@ export function attachMapInteractions(
       typeof coordinates[1] !== "number"
     )
       return
+    if (id === hoveredSavedPointId) return
+    hoveredSavedPointId = id
     options.onSavedPointTooltipChange({
       name,
       lngLat: [coordinates[0], coordinates[1]],
     })
   }
+  const onSavedPointEnter = (event: maplibregl.MapLayerMouseEvent) => {
+    map.getCanvas().style.cursor = "pointer"
+    updateSavedPointTooltip(event)
+  }
   const onSavedPointLeave = () => {
     map.getCanvas().style.cursor = ""
+    hoveredSavedPointId = null
     options.onSavedPointTooltipChange(null)
   }
   const onContextMenu = (event: maplibregl.MapMouseEvent) => {
@@ -117,6 +127,7 @@ export function attachMapInteractions(
   map.on("mouseenter", MAP_LAYER_IDS.activityHit, onActivityEnter)
   map.on("mouseleave", MAP_LAYER_IDS.activityHit, onActivityLeave)
   map.on("mouseenter", MAP_LAYER_IDS.savedPointHit, onSavedPointEnter)
+  map.on("mousemove", MAP_LAYER_IDS.savedPointHit, updateSavedPointTooltip)
   map.on("mouseleave", MAP_LAYER_IDS.savedPointHit, onSavedPointLeave)
   map.on("contextmenu", onContextMenu)
   map.on("click", onClick)
@@ -190,6 +201,7 @@ export function attachMapInteractions(
     map.off("mouseenter", MAP_LAYER_IDS.activityHit, onActivityEnter)
     map.off("mouseleave", MAP_LAYER_IDS.activityHit, onActivityLeave)
     map.off("mouseenter", MAP_LAYER_IDS.savedPointHit, onSavedPointEnter)
+    map.off("mousemove", MAP_LAYER_IDS.savedPointHit, updateSavedPointTooltip)
     map.off("mouseleave", MAP_LAYER_IDS.savedPointHit, onSavedPointLeave)
     map.off("contextmenu", onContextMenu)
     map.off("click", onClick)
