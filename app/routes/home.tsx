@@ -44,6 +44,10 @@ import { buildLapActivity, lapSubtitle } from "~/lib/laps"
 import { processPhotoFiles } from "~/lib/photos"
 import {
   loadActivities,
+  loadUniqueDistanceState,
+  areUniqueDistancesCurrent,
+  saveUniqueDistances,
+  saveActivities,
   savePhotos,
   loadPhotos,
   saveFogMode,
@@ -54,7 +58,6 @@ import {
   loadSavedPoints,
   saveSavedPoint,
   deleteSavedPoint as deleteStoredSavedPoint,
-  deleteActivity,
   isFogCacheValid,
 } from "~/lib/storage"
 import { clearMapPosition } from "~/lib/mapStore"
@@ -138,14 +141,21 @@ export async function clientLoader({
   void initAuth()
 
   // Restore persisted data in parallel
-  const [activities, photos, savedPoints, fogMode, fogCache] =
-    await Promise.all([
-      loadActivities(),
-      loadPhotos(),
-      loadSavedPoints(),
-      loadFogMode(),
-      loadFogCache(),
-    ])
+  const [
+    activities,
+    uniqueDistanceState,
+    photos,
+    savedPoints,
+    fogMode,
+    fogCache,
+  ] = await Promise.all([
+    loadActivities(),
+    loadUniqueDistanceState(),
+    loadPhotos(),
+    loadSavedPoints(),
+    loadFogMode(),
+    loadFogCache(),
+  ])
 
   const restoredFogMode: FogMode = fogMode ?? "corridor"
   mapStore.fogMode = restoredFogMode
@@ -159,7 +169,10 @@ export async function clientLoader({
 
   if (activities.length > 0) {
     mapStore.activities = sortActivities(activities)
-    populateUniqueDistances(mapStore.activities)
+    if (!areUniqueDistancesCurrent(mapStore.activities, uniqueDistanceState)) {
+      await populateUniqueDistances(mapStore.activities)
+      await saveUniqueDistances(mapStore.activities)
+    }
     const activityIds = activities.map((t) => t.id).sort()
     if (fogCache && isFogCacheValid(fogCache, activityIds, restoredFogMode)) {
       // Cache hit: restore fog directly — setupMapLayers will use mapStore.fogData
@@ -304,7 +317,7 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
 
     // Remove from in-memory store and recompute unique distances for remaining activities
     mapStore.activities = mapStore.activities.filter((t) => t.id !== activityId)
-    populateUniqueDistances(mapStore.activities)
+    await populateUniqueDistances(mapStore.activities)
     mapStore.processedCount = 0
 
     // Reset worker + update map sources immediately
@@ -315,7 +328,7 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
     clearRenderedActivityState()
 
     // Persist and invalidate fog cache
-    await deleteActivity(activityId)
+    await saveUniqueDistances(mapStore.activities, activityId)
     await clearFogCache()
 
     // Replay only after invalidation finishes. Otherwise a fast worker can save

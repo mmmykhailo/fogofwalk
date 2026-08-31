@@ -25,6 +25,13 @@ interface PrefEntry {
   value: unknown
 }
 
+interface UniqueDistanceState {
+  version: number
+  activityIds: string[]
+}
+
+const UNIQUE_DISTANCE_VERSION = 1
+
 // ─── DB singleton ──────────────────────────────────────────────────────────────
 
 const DB_NAME = "fogofwalk"
@@ -159,6 +166,53 @@ export async function loadActivities(): Promise<ParsedActivity[]> {
   } catch (err) {
     console.warn("[storage] loadActivities failed:", err)
     return []
+  }
+}
+
+export async function loadUniqueDistanceState(): Promise<UniqueDistanceState | null> {
+  return prefGet<UniqueDistanceState>("uniqueDistanceState")
+}
+
+export function areUniqueDistancesCurrent(
+  activities: ParsedActivity[],
+  state: UniqueDistanceState | null
+): boolean {
+  if (
+    state?.version !== UNIQUE_DISTANCE_VERSION ||
+    state.activityIds.length !== activities.length
+  ) {
+    return false
+  }
+  return activities.every(
+    (activity, index) => activity.id === state.activityIds[index]
+  )
+}
+
+/** Atomically persists recalculated values, their library marker, and an optional deletion. */
+export async function saveUniqueDistances(
+  activities: ParsedActivity[],
+  deletedActivityId?: string
+): Promise<void> {
+  const db = await getDb()
+  if (!db) return
+  try {
+    const tx = db.transaction(["activities", "prefs"], "readwrite")
+    const activityStore = tx.objectStore("activities")
+    if (deletedActivityId) activityStore.delete(deletedActivityId)
+    for (const activity of activities) activityStore.put(activity)
+    tx.objectStore("prefs").put({
+      key: "uniqueDistanceState",
+      value: {
+        version: UNIQUE_DISTANCE_VERSION,
+        activityIds: activities.map((activity) => activity.id),
+      } satisfies UniqueDistanceState,
+    } satisfies PrefEntry)
+    await new Promise<void>((resolve, reject) => {
+      tx.oncomplete = () => resolve()
+      tx.onerror = () => reject(tx.error)
+    })
+  } catch (err) {
+    console.warn("[storage] saveUniqueDistances failed:", err)
   }
 }
 
@@ -539,5 +593,6 @@ export async function clearAll(): Promise<void> {
     prefDelete("fogMode"),
     prefDelete("fogCache"),
     prefDelete("syncState"),
+    prefDelete("uniqueDistanceState"),
   ])
 }

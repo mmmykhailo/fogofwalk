@@ -5,7 +5,7 @@ import type {
   WorkerInboundMessage,
 } from "~/types/activities"
 import { sortActivities, populateUniqueDistances } from "~/lib/statsAggregator"
-import { saveActivities, clearFogCache } from "~/lib/storage"
+import { saveUniqueDistances, clearFogCache } from "~/lib/storage"
 import { worldFogFeature } from "~/lib/fogGeometry"
 
 // ─── Map position persistence (localStorage — synchronous, survives page unload) ──
@@ -260,8 +260,9 @@ export async function ingestActivities(
   if (added.length === 0) return added
 
   mapStore.activities = sortActivities([...mapStore.activities, ...added])
-  populateUniqueDistances(mapStore.activities)
-  await saveActivities(added)
+  await populateUniqueDistances(mapStore.activities)
+  // A backdated addition can change every later activity's unique distance.
+  await saveUniqueDistances(mapStore.activities)
   await clearFogCache()
   // Start processing only after invalidation finishes. A small worker batch can
   // otherwise save its fresh cache first and have this call erase it afterward.
