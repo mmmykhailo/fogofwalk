@@ -9,6 +9,7 @@ import {
   ACTIVITY_WIDTH_SELECTED,
 } from "~/constants/fog"
 import {
+  activitiesFeatureCollection,
   lapFeatureCollection,
   savedPointsFeatureCollection,
 } from "~/lib/map/geojson"
@@ -19,6 +20,7 @@ import {
 } from "~/lib/map/layers"
 import type { ActivityCoords } from "~/types/activities"
 import type { SavedPoint } from "~shared/saved-points"
+import { mapStore, worldFogGeoJSON } from "~/lib/mapStore"
 
 export interface MapPresentationState {
   showActivities: boolean
@@ -135,4 +137,21 @@ export function rehydrateMapPresentation(
     state.selectedActivityIds,
     state.highlightCoordinates != null
   )
+}
+
+/** Clears activity-derived rendering without exposing source ids to route code. */
+export function clearRenderedActivityState(): void {
+  const map = mapStore.map
+  if (!map || !mapStore.sourcesReady) return
+
+  const fogSource = map.getSource(MAP_SOURCE_IDS.fog) as
+    | maplibregl.GeoJSONSource
+    | undefined
+  fogSource?.setData(worldFogGeoJSON())
+
+  const activitiesSource = map.getSource(MAP_SOURCE_IDS.activities) as
+    | maplibregl.GeoJSONSource
+    | undefined
+  activitiesSource?.setData(activitiesFeatureCollection([]))
+  setLapHighlightData(map, null)
 }

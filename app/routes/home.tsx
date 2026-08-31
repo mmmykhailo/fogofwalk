@@ -7,11 +7,10 @@ import {
   useRevalidator,
   useSearchParams,
 } from "react-router"
-import type maplibregl from "maplibre-gl"
 import { featureCollection, lineString } from "@turf/helpers"
 import bbox from "@turf/bbox"
 import type { Route } from "./+types/home"
-import { MapView, setLapHighlightData } from "~/components/MapView"
+import { MapView } from "~/components/MapView"
 import { ControlPanel } from "~/components/ControlPanel"
 import { FileUploadDialog } from "~/components/FileUploadDialog"
 import { PhotoErrorDialog } from "~/components/PhotoErrorDialog"
@@ -36,7 +35,6 @@ import {
 import { Button } from "~/components/ui/button"
 import {
   mapStore,
-  worldFogGeoJSON,
   startFogRun,
   postToFogWorker,
   ingestActivities,
@@ -60,6 +58,7 @@ import {
   isFogCacheValid,
 } from "~/lib/storage"
 import { clearMapPosition } from "~/lib/mapStore"
+import { clearRenderedActivityState } from "~/lib/map/commands"
 import { initAuth, useAuth } from "~/lib/server/authStore"
 import { apiUrl, isServerEnabled } from "~/lib/server/config"
 import {
@@ -285,18 +284,8 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
     // we just cleared, and its DONE cannot save a stale fog cache.
     startFogRun()
     postToFogWorker({ type: "RESET" })
-    const map = mapStore.map
-    if (map && mapStore.sourcesReady) {
-      ;(map.getSource("fog-source") as maplibregl.GeoJSONSource)?.setData(
-        worldFogGeoJSON()
-      )
-      ;(
-        map.getSource("activities-source") as maplibregl.GeoJSONSource
-      )?.setData(featureCollection([]))
-      // Blanked here too — these run synchronously, before the fetcher effect
-      // resets React state, so the old lap line would otherwise linger a frame.
-      setLapHighlightData(map, null)
-    }
+    // Runs synchronously before the fetcher effect resets React selection state.
+    clearRenderedActivityState()
     await clearAll()
     clearMapPosition()
     // Pause automatic syncing. `clearAll` dropped syncState, so the next sync
@@ -323,18 +312,7 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
     // we just cleared, and its DONE cannot save a stale fog cache.
     startFogRun()
     postToFogWorker({ type: "RESET" })
-    const map = mapStore.map
-    if (map && mapStore.sourcesReady) {
-      ;(map.getSource("fog-source") as maplibregl.GeoJSONSource)?.setData(
-        worldFogGeoJSON()
-      )
-      ;(
-        map.getSource("activities-source") as maplibregl.GeoJSONSource
-      )?.setData(featureCollection([]))
-      // Blanked here too — these run synchronously, before the fetcher effect
-      // resets React state, so the old lap line would otherwise linger a frame.
-      setLapHighlightData(map, null)
-    }
+    clearRenderedActivityState()
 
     // Persist and invalidate fog cache
     await deleteActivity(activityId)
@@ -819,16 +797,7 @@ export default function Home() {
           mapStore.processedCount = 0
           startFogRun()
           postToFogWorker({ type: "RESET" })
-          const map = mapStore.map
-          if (map && mapStore.sourcesReady) {
-            ;(map.getSource("fog-source") as maplibregl.GeoJSONSource)?.setData(
-              worldFogGeoJSON()
-            )
-            ;(
-              map.getSource("activities-source") as maplibregl.GeoJSONSource
-            )?.setData(featureCollection([]))
-            setLapHighlightData(map, null)
-          }
+          clearRenderedActivityState()
           if (mapStore.activities.length > 0) {
             postToFogWorker({
               type: "PROCESS_ACTIVITIES",

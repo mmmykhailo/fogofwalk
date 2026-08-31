@@ -1,9 +1,11 @@
 import { describe, expect, test } from "bun:test"
 import {
   applyActivitySelectionPaint,
+  clearRenderedActivityState,
   rehydrateMapPresentation,
   setLapHighlightData,
 } from "~/lib/map/commands"
+import { mapStore } from "~/lib/mapStore"
 
 describe("map rendering commands", () => {
   test("sets the default activity paint when nothing is selected", () => {
@@ -63,5 +65,34 @@ describe("map rendering commands", () => {
       layoutCalls.filter(([, property]) => property === "visibility")
     ).toHaveLength(6)
     expect(paintCalls).toHaveLength(3)
+  })
+
+  test("clears every activity-derived source behind one guarded command", () => {
+    const previousMap = mapStore.map
+    const previousSourcesReady = mapStore.sourcesReady
+    const sourceData = new Map<string, unknown>()
+    mapStore.map = {
+      getSource: (id: string) => ({
+        setData: (data: unknown) => sourceData.set(id, data),
+      }),
+    } as never
+    mapStore.sourcesReady = true
+
+    try {
+      clearRenderedActivityState()
+    } finally {
+      mapStore.map = previousMap
+      mapStore.sourcesReady = previousSourcesReady
+    }
+
+    expect(sourceData.get("activities-source")).toEqual({
+      type: "FeatureCollection",
+      features: [],
+    })
+    expect(sourceData.get("lap-source")).toEqual({
+      type: "FeatureCollection",
+      features: [],
+    })
+    expect(sourceData.has("fog-source")).toBe(true)
   })
 })
