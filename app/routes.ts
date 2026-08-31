@@ -8,6 +8,7 @@ export default [
     route("stats", "routes/stats.tsx"),
     route("activities", "routes/activities.tsx"),
     route("saved-points", "routes/saved-points.tsx"),
+    route("landing", "routes/landing.tsx"),
     route("privacy", "routes/privacy.tsx"),
     route("terms", "routes/terms.tsx"),
     route("auth/callback", "routes/auth-callback.tsx"),
