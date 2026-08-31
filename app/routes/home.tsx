@@ -38,6 +38,7 @@ import {
   startFogRun,
   postToFogWorker,
   ingestActivities,
+  setFogProcessedCount,
 } from "~/lib/mapStore"
 import { parseFile } from "~/lib/parsers"
 import { buildLapActivity, lapSubtitle } from "~/lib/laps"
@@ -292,7 +293,7 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
     // explicit action — "Remove all" in the account dialog.
     mapStore.fogData = null
     mapStore.activities = []
-    mapStore.processedCount = 0
+    setFogProcessedCount(0)
     // Abandons the in-flight run so its FOG_UPDATEs cannot repaint the map
     // we just cleared, and its DONE cannot save a stale fog cache.
     startFogRun()
@@ -318,7 +319,7 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
     // Remove from in-memory store and recompute unique distances for remaining activities
     mapStore.activities = mapStore.activities.filter((t) => t.id !== activityId)
     await populateUniqueDistances(mapStore.activities)
-    mapStore.processedCount = 0
+    setFogProcessedCount(0)
 
     // Reset worker + update map sources immediately
     // Abandons the in-flight run so its FOG_UPDATEs cannot repaint the map
@@ -457,7 +458,6 @@ export default function Home() {
   const [activityCount, setActivityCount] = useState(
     loaderData.restoredActivityCount
   )
-  const [processedCount, setProcessedCount] = useState(0)
   const [isProcessing, setIsProcessing] = useState(false)
   const [showActivities, setShowActivities] = useState(true)
   const [showFog, setShowFog] = useState(true)
@@ -668,7 +668,7 @@ export default function Home() {
     needsReprocessRef.current = false
     if (mapStore.activities.length === 0) return
     setIsProcessing(true)
-    setProcessedCount(0)
+    setFogProcessedCount(0)
     postToFogWorker({
       type: "PROCESS_ACTIVITIES",
       activities: mapStore.activities,
@@ -741,7 +741,7 @@ export default function Home() {
         setActivityCount(data.activityCount)
         // Only if the worker has not already finished — see isFogRunInFlight.
         setIsProcessing(mapStore.isFogRunInFlight)
-        setProcessedCount(0)
+        setFogProcessedCount(0)
       }
       if (data.failedFiles.length > 0) {
         setMissingActivityTypeCount(data.missingActivityTypeCount)
@@ -759,7 +759,7 @@ export default function Home() {
     }
     if (data.intent === "clear-all") {
       setActivityCount(0)
-      setProcessedCount(0)
+      setFogProcessedCount(0)
       setIsProcessing(false)
       setSelectedActivityIds([])
       setPendingActivityId(null)
@@ -772,7 +772,7 @@ export default function Home() {
       setPendingActivityId(null)
       setShowShareDialog(false)
       setActivityCount(data.activityCount)
-      setProcessedCount(0)
+      setFogProcessedCount(0)
       setIsProcessing(data.activityCount > 0 && mapStore.isFogRunInFlight)
     }
   }, [fetcher.data])
@@ -807,7 +807,7 @@ export default function Home() {
             prev.filter((id) => !deletedIds.includes(id))
           )
           setPendingActivityId(null)
-          mapStore.processedCount = 0
+          setFogProcessedCount(0)
           startFogRun()
           postToFogWorker({ type: "RESET" })
           clearRenderedActivityState()
@@ -821,7 +821,7 @@ export default function Home() {
         }
 
         if (downloadedCount > 0 || deletedIds.length > 0) {
-          setProcessedCount(0)
+          setFogProcessedCount(0)
           setIsProcessing(
             mapStore.activities.length > 0 && mapStore.isFogRunInFlight
           )
@@ -932,11 +932,11 @@ export default function Home() {
       // Nothing to replay — clear the bar the abandoned run's DONE will no
       // longer clear.
       setIsProcessing(false)
-      setProcessedCount(0)
+      setFogProcessedCount(0)
       return
     }
     setIsProcessing(true)
-    setProcessedCount(0)
+    setFogProcessedCount(0)
     postToFogWorker({
       type: "PROCESS_ACTIVITIES",
       activities: mapStore.activities,
@@ -944,14 +944,11 @@ export default function Home() {
     })
   }
 
-  function handleProcessingUpdate(count: number, done: boolean) {
-    setProcessedCount(count)
-    if (done) {
-      setIsProcessing(false)
-      setActivityCount(mapStore.activities.length)
-      // fitBounds is handled by the useEffect([isProcessing]) above:
-      // it fires after React re-renders, when map state is fully settled.
-    }
+  function handleProcessingComplete() {
+    setIsProcessing(false)
+    setActivityCount(mapStore.activities.length)
+    // fitBounds is handled by the useEffect([isProcessing]) above:
+    // it fires after React re-renders, when map state is fully settled.
   }
 
   function handleActivitySelect(id: string | null) {
@@ -976,9 +973,13 @@ export default function Home() {
     }
   }
 
-  const selectedActivities = selectedActivityIds
-    .map((id) => mapStore.activities.find((t) => t.id === id))
-    .filter((t): t is ParsedActivity => t != null)
+  const selectedActivities = useMemo(
+    () =>
+      selectedActivityIds
+        .map((id) => mapStore.activities.find((t) => t.id === id))
+        .filter((t): t is ParsedActivity => t != null),
+    [selectedActivityIds, activityCount, loaderData]
+  )
 
   // Derived and re-validated every render rather than reset imperatively: a
   // stale selection, a multi-select, a deleted activity or a GPX activity all
@@ -1056,7 +1057,7 @@ export default function Home() {
               showActivities={showActivities}
               showFog={showFog}
               onMapReady={() => setMapReady(true)}
-              onProcessingUpdate={handleProcessingUpdate}
+              onProcessingComplete={handleProcessingComplete}
               selectedActivityIds={selectedActivityIds}
               onActivitySelect={handleActivitySelect}
               mapMode={mapMode}
@@ -1085,7 +1086,6 @@ export default function Home() {
             <>
               <ControlPanel
                 activityCount={activityCount}
-                processedCount={processedCount}
                 isProcessing={isProcessing}
                 showActivities={showActivities}
                 onShowActivitiesChange={setShowActivities}

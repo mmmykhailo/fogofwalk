@@ -35,6 +35,7 @@ import { AccountDrawerItem } from "~/components/account/AccountDrawerItem"
 import { AccountDialog } from "~/components/account/AccountDialog"
 import { SignInDialog } from "~/components/account/SignInDialog"
 import { TransitionLink } from "~/components/TransitionLink"
+import { FogProgressText } from "~/components/FogProgress"
 import { useAuth } from "~/lib/server/authStore"
 import type { clientLoader as accessRequestLoader } from "~/routes/account.access-request"
 import type { FogMode, MapMode } from "~/types/activities"
@@ -45,7 +46,6 @@ interface MapDrawerProps {
   activityCount: number
   photoCount: number
   isProcessing: boolean
-  processedCount: number
   showAddPhotosOption: boolean
   onAddFiles: () => void
   onAddPhotos: () => void
@@ -74,7 +74,6 @@ export function MapDrawer({
   activityCount,
   photoCount,
   isProcessing,
-  processedCount,
   showAddPhotosOption,
   onAddFiles,
   onAddPhotos,
@@ -174,9 +173,11 @@ export function MapDrawer({
                 </ItemMedia>
                 <ItemContent>
                   <ItemTitle>
-                    {isProcessing
-                      ? `Processing ${processedCount} of ${activityCount}…`
-                      : "Add files"}
+                    {isProcessing ? (
+                      <FogProgressText activityCount={activityCount} />
+                    ) : (
+                      "Add files"
+                    )}
                   </ItemTitle>
                 </ItemContent>
               </Item>
@@ -496,16 +497,18 @@ export function MapDrawer({
                 data-testid="drawer-status"
                 className="py-1 text-center text-xs text-muted-foreground"
               >
-                {isProcessing
-                  ? `Processing ${processedCount} of ${activityCount}…`
-                  : [
-                      activityCount > 0 &&
-                        `${activityCount} activit${activityCount !== 1 ? "ies" : "y"}`,
-                      photoCount > 0 &&
-                        `${photoCount} photo${photoCount !== 1 ? "s" : ""}`,
-                    ]
-                      .filter(Boolean)
-                      .join(" · ")}
+                {isProcessing ? (
+                  <FogProgressText activityCount={activityCount} />
+                ) : (
+                  [
+                    activityCount > 0 &&
+                      `${activityCount} activit${activityCount !== 1 ? "ies" : "y"}`,
+                    photoCount > 0 &&
+                      `${photoCount} photo${photoCount !== 1 ? "s" : ""}`,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")
+                )}
               </p>
             )}
           </div>

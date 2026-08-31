@@ -133,6 +133,25 @@ export const mapStore: MapStore = {
   shareCardCache: null,
 }
 
+const fogProgressListeners = new Set<() => void>()
+
+/** Subscribe narrowly to worker progress without rerendering the home route. */
+export function subscribeFogProgress(listener: () => void): () => void {
+  fogProgressListeners.add(listener)
+  return () => fogProgressListeners.delete(listener)
+}
+
+export function getFogProcessedCount(): number {
+  return mapStore.processedCount
+}
+
+/** Update worker progress and notify only the UI that displays it. */
+export function setFogProcessedCount(processedCount: number): void {
+  if (mapStore.processedCount === processedCount) return
+  mapStore.processedCount = processedCount
+  for (const listener of fogProgressListeners) listener()
+}
+
 type DistributiveOmit<T, K extends keyof T> = T extends unknown
   ? Omit<T, K>
   : never

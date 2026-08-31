@@ -2,18 +2,18 @@ import { useCallback, useEffect, useRef } from "react"
 import type maplibregl from "maplibre-gl"
 import { activitiesFeatureCollection } from "~/lib/map/geojson"
 import { MAP_SOURCE_IDS } from "~/lib/map/layers"
-import { finishFogJob, mapStore } from "~/lib/mapStore"
+import { finishFogJob, mapStore, setFogProcessedCount } from "~/lib/mapStore"
 import { saveFogCache } from "~/lib/storage"
 import type { WorkerOutboundMessage } from "~/types/activities"
 
-type ProcessingUpdate = (count: number, done: boolean) => void
+type ProcessingComplete = () => void
 
 /** Bridges authoritative fog-worker state into the UI and live map sources. */
-export function useFogWorkerBridge(onProcessingUpdate?: ProcessingUpdate): {
+export function useFogWorkerBridge(onProcessingComplete?: ProcessingComplete): {
   invalidateActivitiesCache: () => void
 } {
-  const onProcessingUpdateRef = useRef(onProcessingUpdate)
-  onProcessingUpdateRef.current = onProcessingUpdate
+  const onProcessingCompleteRef = useRef(onProcessingComplete)
+  onProcessingCompleteRef.current = onProcessingComplete
 
   // Avoid rebuilding and re-uploading the same activity GeoJSON on every
   // 300 ms FOG_UPDATE. The id key also catches delete+add with equal counts.
@@ -47,15 +47,14 @@ export function useFogWorkerBridge(onProcessingUpdate?: ProcessingUpdate): {
       }
 
       if (message.type === "PROGRESS") {
-        mapStore.processedCount = message.processedCount
-        onProcessingUpdateRef.current?.(message.processedCount, false)
+        setFogProcessedCount(message.processedCount)
         return
       }
 
       if (message.type === "DONE") {
-        mapStore.processedCount = message.processedCount
+        setFogProcessedCount(message.processedCount)
         const isRunDone = finishFogJob()
-        onProcessingUpdateRef.current?.(message.processedCount, isRunDone)
+        if (isRunDone) onProcessingCompleteRef.current?.()
 
         if (isRunDone && mapStore.activities.length > 0 && mapStore.fogData) {
           saveFogCache({
@@ -74,8 +73,7 @@ export function useFogWorkerBridge(onProcessingUpdate?: ProcessingUpdate): {
 
       // FOG_UPDATE state remains authoritative while setStyle has no sources.
       mapStore.fogData = message.fogData
-      mapStore.processedCount = message.processedCount
-      onProcessingUpdateRef.current?.(message.processedCount, false)
+      setFogProcessedCount(message.processedCount)
 
       if (!map || !mapStore.sourcesReady) return
 

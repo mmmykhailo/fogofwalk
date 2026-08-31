@@ -13,7 +13,7 @@ import { type SavedPointCreateLocation } from "~/components/map/mapInteractions"
 
 interface MapViewProps {
   onMapReady?: () => void
-  onProcessingUpdate?: (count: number, done: boolean) => void
+  onProcessingComplete?: () => void
   showActivities: boolean
   showFog: boolean
   selectedActivityIds: string[]
@@ -43,7 +43,7 @@ interface MapViewProps {
 
 export function MapView({
   onMapReady,
-  onProcessingUpdate,
+  onProcessingComplete,
   showActivities,
   showFog,
   selectedActivityIds,
@@ -63,7 +63,7 @@ export function MapView({
   onSavedPointCreate,
 }: MapViewProps) {
   const setSavedPointTooltip = useSavedPoints(savedPoints, showSavedPoints)
-  const { invalidateActivitiesCache } = useFogWorkerBridge(onProcessingUpdate)
+  const { invalidateActivitiesCache } = useFogWorkerBridge(onProcessingComplete)
   const { rebuildPhotoMarkers } = usePhotoMarkers(
     photos,
     showPhotos,

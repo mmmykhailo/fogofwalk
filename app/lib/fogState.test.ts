@@ -1,9 +1,12 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import {
   finishFogJob,
+  getFogProcessedCount,
   mapStore,
   postToFogWorker,
   queueAddedActivitiesForFog,
+  setFogProcessedCount,
+  subscribeFogProgress,
   worldFogGeoJSON,
 } from "./mapStore"
 import { isFogCacheValid, type FogCache } from "./storage"
@@ -15,6 +18,7 @@ const originalPendingFogJobs = mapStore.pendingFogJobs
 const originalIsFogRunInFlight = mapStore.isFogRunInFlight
 const originalFogWorkerActivityIds = mapStore.fogWorkerActivityIds
 const originalActivities = mapStore.activities
+const originalProcessedCount = mapStore.processedCount
 
 afterEach(() => {
   mapStore.worker = originalWorker
@@ -23,6 +27,7 @@ afterEach(() => {
   mapStore.isFogRunInFlight = originalIsFogRunInFlight
   mapStore.fogWorkerActivityIds = originalFogWorkerActivityIds
   mapStore.activities = originalActivities
+  mapStore.processedCount = originalProcessedCount
 })
 
 function activity(id: string): ParsedActivity {
@@ -53,6 +58,21 @@ function activity(id: string): ParsedActivity {
 }
 
 describe("fog worker run state", () => {
+  test("notifies progress subscribers only when the count changes", () => {
+    mapStore.processedCount = 3
+    let notifications = 0
+    const unsubscribe = subscribeFogProgress(() => notifications++)
+
+    setFogProcessedCount(3)
+    setFogProcessedCount(8)
+    setFogProcessedCount(8)
+    unsubscribe()
+    setFogProcessedCount(13)
+
+    expect(notifications).toBe(1)
+    expect(getFogProcessedCount()).toBe(13)
+  })
+
   test("stays in flight until every overlapping batch is done", () => {
     const messages: unknown[] = []
     mapStore.worker = {

@@ -3,10 +3,10 @@ import { DotsThreeIcon } from "@phosphor-icons/react"
 import { Button } from "~/components/ui/button"
 import type { FogMode, MapMode } from "~/types/activities"
 import { MapDrawer } from "~/components/MapDrawer"
+import { FogProgressIndicator } from "~/components/FogProgress"
 
 interface ControlPanelProps {
   activityCount: number
-  processedCount: number
   isProcessing: boolean
   showActivities: boolean
   onShowActivitiesChange: (value: boolean) => void
@@ -32,7 +32,6 @@ interface ControlPanelProps {
 
 export function ControlPanel({
   activityCount,
-  processedCount,
   isProcessing,
   showActivities,
   onShowActivitiesChange,
@@ -98,21 +97,7 @@ export function ControlPanel({
 
       {/* FAB — grouped visually with the compass (top-right) */}
       <div className="absolute top-28 right-1.5 z-10 flex items-center gap-2 sm:right-3">
-        {isProcessing && (
-          <div className="flex h-8 items-center gap-2 border border-border bg-background/80 px-2.5 backdrop-blur-md">
-            <span className="text-xs text-muted-foreground tabular-nums">
-              {processedCount}/{activityCount}
-            </span>
-            <div className="relative h-1 w-20 overflow-hidden bg-muted">
-              <div
-                className="absolute inset-y-0 left-0 bg-primary transition-[width] duration-300"
-                style={{
-                  width: `${activityCount > 0 ? Math.round((processedCount / activityCount) * 100) : 0}%`,
-                }}
-              />
-            </div>
-          </div>
-        )}
+        {isProcessing && <FogProgressIndicator activityCount={activityCount} />}
         <Button
           variant="outline"
           size="icon"
@@ -131,7 +116,6 @@ export function ControlPanel({
         activityCount={activityCount}
         photoCount={photoCount}
         isProcessing={isProcessing}
-        processedCount={processedCount}
         showAddPhotosOption={showAddPhotosOption}
         onAddFiles={() => fileInputRef.current?.click()}
         onAddPhotos={() => photoInputRef.current?.click()}
