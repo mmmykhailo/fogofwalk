@@ -2,6 +2,12 @@
 
 All notable changes to Fog of Walk are documented here.
 
+## [0.4.0] - 2026-08-31
+
+### Changed
+
+- add landing page (#32)
+
 ## [0.3.0] - 2026-08-31
 
 ### Changed
