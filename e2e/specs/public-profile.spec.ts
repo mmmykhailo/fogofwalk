@@ -46,7 +46,7 @@ test.describe("public profile", () => {
     await app.syncNow()
 
     const [{ id }] = await app.localActivities()
-    await app.page.goto(`/?activity=${encodeURIComponent(id)}`)
+    await app.page.goto(`/map?activity=${encodeURIComponent(id)}`)
     await app.waitUntilReady()
 
     // Toggle visibility from Private to Public and wait for the debounced

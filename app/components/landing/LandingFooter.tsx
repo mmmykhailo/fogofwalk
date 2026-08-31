@@ -16,7 +16,7 @@ export function LandingFooter() {
           </h2>
         </div>
         <TransitionLink
-          to="/"
+          to="/map"
           className={cn(
             buttonVariants({ variant: "secondary", size: "lg" }),
             "bg-background text-foreground hover:bg-background/85"

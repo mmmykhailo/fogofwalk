@@ -13,7 +13,7 @@ export function EmptySavedPointsState() {
         Save some points on the map to see them here.
       </p>
       <Link
-        to="/"
+        to="/map"
         className="mt-1 text-sm font-medium underline underline-offset-4 transition-colors hover:text-muted-foreground"
       >
         Go to map →

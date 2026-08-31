@@ -96,7 +96,7 @@ export default function StatsPage() {
             Import some activities to see your stats.
           </p>
           <TransitionLink
-            to="/"
+            to="/map"
             className="mt-1 text-sm font-medium underline underline-offset-4 transition-colors hover:text-muted-foreground"
           >
             Go to map →

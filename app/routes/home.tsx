@@ -92,7 +92,7 @@ export function meta({}: Route.MetaArgs) {
     title: "Fog of Walk — Explore the unknown",
     description:
       "Import your GPX and FIT activity files. Watch the fog of war lift over every trail you've run, every road you've cycled, every path you've ever walked.",
-    path: "/",
+    path: "/map",
   })
 }
 
@@ -444,7 +444,7 @@ export default function Home() {
   const [searchParams, setSearchParams] = useSearchParams()
   const location = useLocation()
   const revalidator = useRevalidator()
-  const isMapRoute = location.pathname === "/"
+  const isMapRoute = location.pathname === "/map"
   // This parent route stays matched for every in-app page. Delay mounting the
   // expensive WebGL map for direct visits to another page, then keep it alive
   // for the rest of the document session after the first map visit.
@@ -634,8 +634,8 @@ export default function Home() {
   }, [loaderData.viewedSavedPoint, mapReady, savedPoints, searchParams])
 
   // Handle files shared via the Web Share Target API (PWA installed).
-  // The service worker intercepts the POST to /?share-target, buffers the files
-  // in Cache Storage, then redirects to /?from-share. We drain the queue here.
+  // The service worker intercepts the POST to /map?share-target, buffers the
+  // files in Cache Storage, then redirects to /map?from-share. We drain the queue here.
   useEffect(() => {
     if (!mapReady || !searchParams.has("from-share")) return
     ;(async () => {

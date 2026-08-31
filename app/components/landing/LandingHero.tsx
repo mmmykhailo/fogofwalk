@@ -26,7 +26,7 @@ export function LandingHero() {
           </p>
           <div className="mt-8 flex w-full flex-col gap-3 sm:w-auto sm:flex-row">
             <TransitionLink
-              to="/"
+              to="/map"
               className={cn(
                 buttonVariants({ variant: "default", size: "lg" }),
                 "w-full sm:w-auto"
