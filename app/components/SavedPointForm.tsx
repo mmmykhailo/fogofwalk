@@ -54,6 +54,7 @@ export function SavedPointForm({
   return (
     <fetcher.Form
       method="post"
+      action="/map"
       className="space-y-3"
       aria-describedby={errors?.form ? "saved-point-error" : undefined}
     >

@@ -863,7 +863,11 @@ export default function Home() {
     formData.append("intent", "add-files")
     formData.append("mode", mode)
     for (const file of files) formData.append("files", file)
-    fetcher.submit(formData, { method: "post", encType: "multipart/form-data" })
+    fetcher.submit(formData, {
+      method: "post",
+      action: "/map",
+      encType: "multipart/form-data",
+    })
   }
 
   function handleClearAll() {
@@ -877,7 +881,7 @@ export default function Home() {
     }
     const formData = new FormData()
     formData.append("intent", "clear-all")
-    fetcher.submit(formData, { method: "post" })
+    fetcher.submit(formData, { method: "post", action: "/map" })
   }
 
   function handleDeleteActivity(activityId: string, alsoOnServer = true) {
@@ -885,7 +889,7 @@ export default function Home() {
     fd.set("intent", "delete-activity")
     fd.set("activityId", activityId)
     fd.set("alsoOnServer", alsoOnServer ? "1" : "0")
-    fetcher.submit(fd, { method: "post" })
+    fetcher.submit(fd, { method: "post", action: "/map" })
   }
 
   async function handleAddPhotos(files: FileList) {
@@ -913,7 +917,11 @@ export default function Home() {
     formData.append("intent", "add-files")
     formData.append("mode", fogMode)
     formData.append("files", file)
-    fetcher.submit(formData, { method: "post", encType: "multipart/form-data" })
+    fetcher.submit(formData, {
+      method: "post",
+      action: "/map",
+      encType: "multipart/form-data",
+    })
   }
 
   function handleFogModeChange(newMode: FogMode) {

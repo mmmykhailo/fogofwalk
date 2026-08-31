@@ -166,7 +166,7 @@ test.describe("server-less build", () => {
     )
 
     await app.page.getByRole("link", { name: "Back to map" }).click()
-    await expect(app.page).toHaveURL(/\/$/)
+    await expect(app.page).toHaveURL(/\/map$/)
     await expect(app.page.getByTestId("cached-map-canvas")).toBeVisible()
   })
 })
