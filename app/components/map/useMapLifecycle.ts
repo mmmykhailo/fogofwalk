@@ -29,7 +29,8 @@ interface MapLifecycleOptions extends MapPresentationState {
 interface MapLifecycleResult {
   containerRef: RefObject<HTMLDivElement | null>
   bearing: number
-  pitch: number
+  zoomIn: () => void
+  zoomOut: () => void
   resetOrientation: () => void
 }
 
@@ -42,7 +43,6 @@ export function useMapLifecycle(
   const pendingStyleLoadRef = useRef<(() => void) | null>(null)
   const isInitialStyleLoadedRef = useRef(false)
   const [bearing, setBearing] = useState(0)
-  const [pitch, setPitch] = useState(0)
 
   const currentPresentation = (): MapPresentationState => ({
     showActivities: optionsRef.current.showActivities,
@@ -72,7 +72,6 @@ export function useMapLifecycle(
     mapStore.map = map
 
     map.on("rotate", () => setBearing(map.getBearing()))
-    map.on("pitch", () => setPitch(map.getPitch()))
     map.on("moveend", () => {
       const center = map.getCenter()
       saveMapPosition([center.lng, center.lat], map.getZoom())
@@ -147,7 +146,8 @@ export function useMapLifecycle(
   return {
     containerRef,
     bearing,
-    pitch,
+    zoomIn: () => mapStore.map?.zoomIn(),
+    zoomOut: () => mapStore.map?.zoomOut(),
     resetOrientation: () =>
       mapStore.map?.easeTo({ bearing: 0, pitch: 0, duration: 400 }),
   }

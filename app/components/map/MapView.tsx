@@ -2,7 +2,7 @@ import "maplibre-gl/dist/maplibre-gl.css"
 import type { MapMode, ActivityCoords } from "~/types/activities"
 import type { PhotoEntry, PhotoGroup } from "~/types/photos"
 import type { SavedPoint } from "~shared/saved-points"
-import { MapCompass } from "~/components/MapCompass"
+import { MapCompass } from "~/components/map/MapCompass"
 import { useFogWorkerBridge } from "~/components/map/useFogWorkerBridge"
 import { useMapLifecycle } from "~/components/map/useMapLifecycle"
 import { useMapPresentation } from "~/components/map/useMapPresentation"
@@ -10,8 +10,6 @@ import { useMyLocationMarker } from "~/components/map/useMyLocationMarker"
 import { usePhotoMarkers } from "~/components/map/usePhotoMarkers"
 import { useSavedPoints } from "~/components/map/useSavedPoints"
 import { type SavedPointCreateLocation } from "~/components/map/mapInteractions"
-
-export { setLapHighlightData } from "~/lib/map/commands"
 
 interface MapViewProps {
   onMapReady?: () => void
@@ -71,22 +69,23 @@ export function MapView({
     showPhotos,
     onPhotoSelect
   )
-  const { containerRef, bearing, pitch, resetOrientation } = useMapLifecycle({
-    mapMode,
-    showActivities,
-    showFog,
-    selectedActivityIds,
-    highlightCoordinates,
-    savedPoints,
-    showSavedPoints,
-    onMapReady,
-    onActivitySelect,
-    onSavedPointSelect,
-    onSavedPointCreate,
-    onSavedPointTooltipChange: setSavedPointTooltip,
-    invalidateActivitiesCache,
-    rebuildPhotoMarkers,
-  })
+  const { containerRef, bearing, zoomIn, zoomOut, resetOrientation } =
+    useMapLifecycle({
+      mapMode,
+      showActivities,
+      showFog,
+      selectedActivityIds,
+      highlightCoordinates,
+      savedPoints,
+      showSavedPoints,
+      onMapReady,
+      onActivitySelect,
+      onSavedPointSelect,
+      onSavedPointCreate,
+      onSavedPointTooltipChange: setSavedPointTooltip,
+      invalidateActivitiesCache,
+      rebuildPhotoMarkers,
+    })
 
   // Declared after map initialization so its first effect sees the live map.
   useMyLocationMarker(showMyLocation, myLocation)
@@ -104,7 +103,8 @@ export function MapView({
       <div ref={containerRef} className="absolute inset-0 h-screen" />
       <MapCompass
         bearing={bearing}
-        pitch={pitch}
+        onZoomIn={zoomIn}
+        onZoomOut={zoomOut}
         onReset={resetOrientation}
         className="absolute top-1.5 right-1.5 z-10 sm:top-3 sm:right-3"
       />
