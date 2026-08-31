@@ -23,6 +23,7 @@ import type { SavedPoint } from "~shared/saved-points"
 import { MapCompass } from "~/components/MapCompass"
 import { SavedPointTooltip } from "~/components/SavedPointTooltip"
 import { useFogWorkerBridge } from "~/components/map/useFogWorkerBridge"
+import { useMyLocationMarker } from "~/components/map/useMyLocationMarker"
 import { usePhotoMarkers } from "~/components/map/usePhotoMarkers"
 
 export { setLapHighlightData } from "~/lib/map/commands"
@@ -103,7 +104,6 @@ export function MapView({
   const prevFocusKeyRef = useRef<string | null>(null)
   const pendingStyleLoadRef = useRef<(() => void) | null>(null)
   const isInitialStyleLoadedRef = useRef(false)
-  const myLocationMarkerRef = useRef<maplibregl.Marker | null>(null)
   const savedPointTooltipMarkerRef = useRef<maplibregl.Marker | null>(null)
   const savedPointTooltipRootRef = useRef<Root | null>(null)
   const onSavedPointSelectRef = useRef(onSavedPointSelect)
@@ -349,6 +349,9 @@ export function MapView({
     }
   }, [])
 
+  // Declared after map initialization so its first effect sees the live map.
+  useMyLocationMarker(showMyLocation, myLocation)
+
   useEffect(() => {
     if (!showSavedPoints) setSavedPointTooltip(null)
   }, [showSavedPoints])
@@ -483,42 +486,6 @@ export function MapView({
     if (!mapStore.sourcesReady || !mapStore.map) return
     applyActivitySelectionPaint(mapStore.map, selectedActivityIds, isLapActive)
   }, [selectedActivityIds, isLapActive])
-
-  // Plain maplibregl.Marker rather than a source/layer: it's a single point,
-  // and markers aren't destroyed by setStyle (unlike fog/activities/lap sources),
-  // so it survives the flat/relief toggle with no re-add logic needed.
-  useEffect(() => {
-    const map = mapStore.map
-    if (!map) return
-
-    if (!showMyLocation || !myLocation) {
-      myLocationMarkerRef.current?.remove()
-      myLocationMarkerRef.current = null
-      return
-    }
-
-    if (myLocationMarkerRef.current) {
-      myLocationMarkerRef.current.setLngLat(myLocation)
-    } else {
-      const el = document.createElement("div")
-      el.style.cssText =
-        "width:14px;height:14px;border-radius:50%;background:#4285f4;" +
-        "border:2px solid white;box-shadow:0 0 0 4px rgba(66,133,244,0.35);"
-      myLocationMarkerRef.current = new maplibregl.Marker({ element: el })
-        .setLngLat(myLocation)
-        .addTo(map)
-    }
-  }, [showMyLocation, myLocation])
-
-  // Unmount-only cleanup — the effect above already handles removal when the
-  // toggle turns off, and re-running it as a cleanup on every position update
-  // would tear down and rebuild the marker element on each watchPosition tick.
-  useEffect(() => {
-    return () => {
-      myLocationMarkerRef.current?.remove()
-      myLocationMarkerRef.current = null
-    }
-  }, [])
 
   return (
     <>
