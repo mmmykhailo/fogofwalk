@@ -13,7 +13,7 @@ import {
   setFogVisible,
   setLapHighlightData,
 } from "~/lib/map/commands"
-import { MAP_LAYER_IDS, setupMapLayers } from "~/lib/map/layers"
+import { setupMapLayers } from "~/lib/map/layers"
 import { styleForMapMode } from "~/lib/map/styles"
 import type { MapMode, ActivityCoords } from "~/types/activities"
 import type { PhotoEntry, PhotoGroup } from "~/types/photos"
@@ -23,6 +23,10 @@ import { useFogWorkerBridge } from "~/components/map/useFogWorkerBridge"
 import { useMyLocationMarker } from "~/components/map/useMyLocationMarker"
 import { usePhotoMarkers } from "~/components/map/usePhotoMarkers"
 import { useSavedPoints } from "~/components/map/useSavedPoints"
+import {
+  attachMapInteractions,
+  type SavedPointCreateLocation,
+} from "~/components/map/mapInteractions"
 
 export { setLapHighlightData } from "~/lib/map/commands"
 
@@ -53,11 +57,7 @@ interface MapViewProps {
   savedPoints: SavedPoint[]
   showSavedPoints: boolean
   onSavedPointSelect: (id: string) => void
-  onSavedPointCreate?: (location: {
-    lng: number
-    lat: number
-    point: { x: number; y: number }
-  }) => void
+  onSavedPointCreate?: (location: SavedPointCreateLocation) => void
 }
 
 export function MapView({
@@ -142,172 +142,19 @@ export function MapView({
       saveMapPosition([c.lng, c.lat], map.getZoom())
     })
 
-    const isSavedPointGesture = (point: maplibregl.Point) =>
-      showSavedPointsRef.current &&
-      map.queryRenderedFeatures(point, { layers: ["saved-points-hit-layer"] })
-        .length > 0
-    const isProtectedCreateGesture = (point: maplibregl.Point) => {
-      if (isSavedPointGesture(point)) return true
-      return (
-        map.queryRenderedFeatures(point, { layers: ["activities-hit-layer"] })
-          .length > 0
-      )
-    }
-    const createSavedPoint = (
-      lngLat: maplibregl.LngLat,
-      point: maplibregl.Point
-    ) => {
-      onSavedPointCreateRef.current?.({
-        lng: lngLat.lng,
-        lat: lngLat.lat,
-        point: { x: point.x, y: point.y },
-      })
-    }
-
-    map.on("mouseenter", "saved-points-hit-layer", (event) => {
-      if (!showSavedPointsRef.current) return
-      map.getCanvas().style.cursor = "pointer"
-      const savedPoint = event.features?.[0]
-      const name = savedPoint?.properties?.name
-      const coordinates =
-        savedPoint?.geometry.type === "Point"
-          ? savedPoint.geometry.coordinates
-          : null
-      if (
-        typeof name !== "string" ||
-        !name ||
-        !coordinates ||
-        typeof coordinates[0] !== "number" ||
-        typeof coordinates[1] !== "number"
-      )
-        return
-      setSavedPointTooltip({ name, lngLat: [coordinates[0], coordinates[1]] })
-    })
-    map.on("mouseleave", "saved-points-hit-layer", () => {
-      map.getCanvas().style.cursor = ""
-      setSavedPointTooltip(null)
-    })
-
-    // A normal click remains dedicated to map navigation and selection. Desktop
-    // creation is deliberately only on the context menu.
-    map.on("contextmenu", (event) => {
-      event.preventDefault()
-      if (isProtectedCreateGesture(event.point)) return
-      createSavedPoint(event.lngLat, event.point)
-    })
-
-    const canvas = map.getCanvas()
-    let longPressTimer: ReturnType<typeof setTimeout> | null = null
-    let longPressPointerId: number | null = null
-    let longPressStart: maplibregl.Point | null = null
-    let longPressCancelled = false
-    const cancelLongPress = () => {
-      if (longPressTimer) clearTimeout(longPressTimer)
-      longPressTimer = null
-      longPressPointerId = null
-      longPressStart = null
-    }
-    const onPointerDown = (event: PointerEvent) => {
-      if (event.pointerType !== "touch") return
-      // A second finger means the user is beginning a map gesture, such as a
-      // pinch; it must cancel the first finger's pending long press.
-      if (!event.isPrimary) {
-        longPressCancelled = true
-        cancelLongPress()
-        return
-      }
-      if (longPressTimer) return
-      const bounds = canvas.getBoundingClientRect()
-      const point = new maplibregl.Point(
-        event.clientX - bounds.left,
-        event.clientY - bounds.top
-      )
-      // Markers are DOM elements above the canvas. Never turn a press on one
-      // into a create action, even when the map has not rendered a feature there.
-      if (
-        (event.target as Element | null)?.closest(".maplibregl-marker") ||
-        isProtectedCreateGesture(point)
-      )
-        return
-      longPressPointerId = event.pointerId
-      longPressStart = point
-      longPressCancelled = false
-      longPressTimer = setTimeout(() => {
-        longPressTimer = null
-        if (!longPressCancelled && longPressStart) {
-          createSavedPoint(map.unproject(longPressStart), longPressStart)
-        }
-      }, 500)
-    }
-    const onPointerMove = (event: PointerEvent) => {
-      if (event.pointerId !== longPressPointerId || !longPressStart) return
-      const bounds = canvas.getBoundingClientRect()
-      const dx = event.clientX - bounds.left - longPressStart.x
-      const dy = event.clientY - bounds.top - longPressStart.y
-      if (Math.hypot(dx, dy) > 8) {
-        longPressCancelled = true
-        cancelLongPress()
-      }
-    }
-    const onPointerEnd = (event: PointerEvent) => {
-      if (event.pointerId === longPressPointerId) {
-        longPressCancelled = true
-        cancelLongPress()
-      }
-    }
-    canvas.addEventListener("pointerdown", onPointerDown)
-    canvas.addEventListener("pointermove", onPointerMove)
-    canvas.addEventListener("pointerup", onPointerEnd)
-    canvas.addEventListener("pointercancel", onPointerEnd)
-
-    map.on("click", (e) => {
-      const savedPointFeatures = showSavedPointsRef.current
-        ? map.queryRenderedFeatures(e.point, {
-            layers: ["saved-points-hit-layer"],
-          })
-        : []
-      if (savedPointFeatures.length > 0) {
-        const id = savedPointFeatures[0].properties?.id
-        if (id) onSavedPointSelectRef.current(id)
-        const savedPoint = savedPointsRef.current.find(
-          (point) => point.id === id
-        )
-        if (savedPoint) {
-          map.easeTo({
-            center: [savedPoint.lng, savedPoint.lat],
-            zoom: Math.max(map.getZoom(), 10),
-          })
-        }
-        return
-      }
-      const activityFeatures = map.queryRenderedFeatures(e.point, {
-        layers: ["activities-hit-layer"],
-      })
-      if (activityFeatures.length > 0) {
-        onActivitySelectRef.current?.(
-          activityFeatures[0].properties?.id ?? null
-        )
-        return
-      }
-      if (map.getLayer("fog-layer")) {
-        const fogFeatures = map.queryRenderedFeatures(e.point, {
-          layers: ["fog-layer"],
-        })
-        if (fogFeatures.length > 0) {
-          onActivitySelectRef.current?.(null)
-        }
-      }
+    const detachMapInteractions = attachMapInteractions(map, {
+      isShowingSavedPoints: () => showSavedPointsRef.current,
+      getSavedPoints: () => savedPointsRef.current,
+      onActivitySelect: (id) => onActivitySelectRef.current(id),
+      onSavedPointSelect: (id) => onSavedPointSelectRef.current(id),
+      onSavedPointCreate: (location) =>
+        onSavedPointCreateRef.current?.(location),
+      onSavedPointTooltipChange: setSavedPointTooltip,
     })
 
     map.once("load", () => {
       map.resize()
       setupMapLayers(map, "flat")
-      map.on("mouseenter", MAP_LAYER_IDS.activityHit, () => {
-        map.getCanvas().style.cursor = "pointer"
-      })
-      map.on("mouseleave", MAP_LAYER_IDS.activityHit, () => {
-        map.getCanvas().style.cursor = ""
-      })
       rehydrateMapPresentation(map, {
         showActivities: showActivitiesRef.current,
         showFog: showFogRef.current,
@@ -324,11 +171,7 @@ export function MapView({
     map.on("zoomend", () => rebuildPhotoMarkers())
 
     return () => {
-      cancelLongPress()
-      canvas.removeEventListener("pointerdown", onPointerDown)
-      canvas.removeEventListener("pointermove", onPointerMove)
-      canvas.removeEventListener("pointerup", onPointerEnd)
-      canvas.removeEventListener("pointercancel", onPointerEnd)
+      detachMapInteractions()
       mapStore.sourcesReady = false
       mapStore.map = null
       if (pendingStyleLoadRef.current) {
