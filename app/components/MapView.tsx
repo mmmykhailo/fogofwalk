@@ -1,37 +1,34 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { createRoot, type Root } from "react-dom/client"
 import maplibregl from "maplibre-gl"
-import type { StyleSpecification } from "maplibre-gl"
-import { Protocol } from "pmtiles"
 import bbox from "@turf/bbox"
-import { featureCollection, lineString } from "@turf/helpers"
+import { lineString } from "@turf/helpers"
 import "maplibre-gl/dist/maplibre-gl.css"
-import { finishFogJob, mapStore, worldFogGeoJSON } from "~/lib/mapStore"
+import { finishFogJob, mapStore } from "~/lib/mapStore"
 import { saveFogCache } from "~/lib/storage"
 import { saveMapPosition } from "~/lib/mapStore"
+import { MAP_STYLE_URL } from "~/constants/fog"
 import {
-  MAP_STYLE_URL,
-  FOG_COLOR,
-  FOG_OPACITY,
-  ACTIVITY_COLOR,
-  ACTIVITY_WIDTH_DEFAULT,
-  ACTIVITY_WIDTH_SELECTED,
-  ACTIVITY_OPACITY_DEFAULT,
-  ACTIVITY_OPACITY_SELECTED,
-  ACTIVITY_OPACITY_DIM,
-  ACTIVITY_HIT_WIDTH,
-  ACTIVITY_COLOR_DIM,
-  LAP_HIGHLIGHT_WIDTH,
-} from "~/constants/fog"
+  applyActivitySelectionPaint,
+  setLapHighlightData,
+} from "~/lib/map/commands"
+import {
+  activitiesFeatureCollection,
+  savedPointsFeatureCollection,
+} from "~/lib/map/geojson"
+import { SAVED_POINT_LAYER_IDS, setupMapLayers } from "~/lib/map/layers"
+import { styleForMapMode } from "~/lib/map/styles"
 import type {
   MapMode,
   ActivityCoords,
   WorkerOutboundMessage,
 } from "~/types/activities"
 import type { PhotoEntry, PhotoGroup } from "~/types/photos"
-import { SAVED_POINT_COLORS, type SavedPoint } from "~shared/saved-points"
+import type { SavedPoint } from "~shared/saved-points"
 import { MapCompass } from "~/components/MapCompass"
 import { SavedPointTooltip } from "~/components/SavedPointTooltip"
+
+export { setLapHighlightData } from "~/lib/map/commands"
 
 const CLUSTER_PIXEL_RADIUS = 50
 
@@ -77,229 +74,6 @@ function computeClusters(
   }
 
   return clusters
-}
-
-const pmtilesProtocol = new Protocol()
-maplibregl.addProtocol("pmtiles", pmtilesProtocol.tile.bind(pmtilesProtocol))
-
-const SATELLITE_STYLE: StyleSpecification = {
-  version: 8,
-  sources: {
-    "esri-satellite": {
-      type: "raster",
-      tiles: [
-        "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-      ],
-      tileSize: 256,
-      maxzoom: 19,
-      attribution:
-        "Tiles &copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community",
-    },
-  },
-  layers: [
-    { id: "esri-satellite-layer", type: "raster", source: "esri-satellite" },
-  ],
-}
-
-function setupMapLayers(map: maplibregl.Map, mode: MapMode): void {
-  if (mode === "relief") {
-    map.addSource("terrain-source", {
-      type: "raster-dem",
-      tiles: [
-        "https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png",
-      ],
-      encoding: "terrarium",
-      tileSize: 256,
-      maxzoom: 14,
-    })
-    map.setTerrain({ source: "terrain-source", exaggeration: 2.5 })
-  }
-
-  if (mode !== "relief") {
-    map.addSource("fog-source", {
-      type: "geojson",
-      data: mapStore.fogData ?? worldFogGeoJSON(),
-    })
-    map.addLayer({
-      id: "fog-layer",
-      type: "fill",
-      source: "fog-source",
-      paint: {
-        "fill-color": FOG_COLOR,
-        "fill-opacity": FOG_OPACITY,
-      },
-    })
-  }
-
-  const activityFeatures = mapStore.activities.map((t) =>
-    lineString(t.coordinates, { name: t.name, id: t.id })
-  )
-  map.addSource("activities-source", {
-    type: "geojson",
-    data: featureCollection(activityFeatures),
-  })
-  map.addLayer({
-    id: "activities-layer",
-    type: "line",
-    source: "activities-source",
-    layout: {
-      "line-join": "round",
-      "line-cap": "round",
-      visibility: "visible",
-    },
-    paint: {
-      "line-color": ACTIVITY_COLOR,
-      "line-width": ACTIVITY_WIDTH_DEFAULT,
-      "line-opacity": ACTIVITY_OPACITY_DEFAULT,
-    },
-  })
-
-  map.addSource("saved-points-source", {
-    type: "geojson",
-    data: featureCollection([]),
-  })
-  map.addLayer({
-    id: "saved-points-outer-layer",
-    type: "circle",
-    source: "saved-points-source",
-    paint: {
-      "circle-radius": 10,
-      "circle-color": ["get", "color"],
-      "circle-stroke-width": 1,
-      "circle-stroke-color": "#fff",
-    },
-  })
-  map.addLayer({
-    id: "saved-points-centre-layer",
-    type: "circle",
-    source: "saved-points-source",
-    paint: { "circle-radius": 3.5, "circle-color": "#fff" },
-  })
-  // Kept as a source layer (rather than a DOM marker) so taps have a forgiving
-  // target without making the visible point itself oversized.
-  map.addLayer({
-    id: "saved-points-hit-layer",
-    type: "circle",
-    source: "saved-points-source",
-    paint: { "circle-radius": 22, "circle-color": "#000", "circle-opacity": 0 },
-  })
-  // Invisible wide line for hit-testing only — the visible line stays thin
-  // but taps/clicks within ACTIVITY_HIT_WIDTH px of it still register.
-  map.addLayer({
-    id: "activities-hit-layer",
-    type: "line",
-    source: "activities-source",
-    layout: {
-      "line-join": "round",
-      "line-cap": "round",
-      visibility: "visible",
-    },
-    paint: {
-      "line-color": ACTIVITY_COLOR,
-      "line-width": ACTIVITY_HIT_WIDTH,
-      "line-opacity": 0,
-    },
-  })
-
-  // Highlight for the selected lap. Its own source, so the activities-source
-  // FeatureCollection cache (keyed on activity count) can never swallow it and the
-  // 300ms FOG_UPDATE tick never touches it. Data is pushed by the highlight
-  // effect and re-pushed from a ref after setStyle wipes everything.
-  map.addSource("lap-source", { type: "geojson", data: featureCollection([]) })
-  map.addLayer({
-    id: "lap-layer",
-    type: "line",
-    source: "lap-source",
-    layout: {
-      "line-join": "round",
-      "line-cap": "round",
-      visibility: "visible",
-    },
-    paint: {
-      "line-color": ACTIVITY_COLOR,
-      "line-width": LAP_HIGHLIGHT_WIDTH,
-      "line-opacity": 1,
-    },
-  })
-
-  map.on("mouseenter", "activities-hit-layer", () => {
-    map.getCanvas().style.cursor = "pointer"
-  })
-  map.on("mouseleave", "activities-hit-layer", () => {
-    map.getCanvas().style.cursor = ""
-  })
-}
-
-/**
- * Paints selection state onto activities-layer: the selected activities keep the orange
- * ACTIVITY_COLOR and go thicker, everything else drops to a gray and fades back.
- *
- * When a lap is active, `activities-layer` goes gray *everywhere* — including the
- * selected activity — so the orange lap-layer segment is the only saturated line
- * on the map. The selected activity keeps its extra width and full opacity, so it
- * still reads as the one in focus, just without competing for colour.
- *
- * Shared by the selection effect and the `styledata` handler — `setStyle` wipes
- * every paint property, so the two must stay in lockstep.
- */
-function applyActivitySelectionPaint(
-  map: maplibregl.Map,
-  selectedActivityIds: string[],
-  isLapActive: boolean
-): void {
-  if (selectedActivityIds.length === 0) {
-    map.setPaintProperty(
-      "activities-layer",
-      "line-width",
-      ACTIVITY_WIDTH_DEFAULT
-    )
-    map.setPaintProperty(
-      "activities-layer",
-      "line-opacity",
-      ACTIVITY_OPACITY_DEFAULT
-    )
-    map.setPaintProperty("activities-layer", "line-color", ACTIVITY_COLOR)
-    return
-  }
-  const selectionExpr = ["in", ["get", "id"], ["literal", selectedActivityIds]]
-  map.setPaintProperty("activities-layer", "line-width", [
-    "case",
-    selectionExpr,
-    ACTIVITY_WIDTH_SELECTED,
-    ACTIVITY_WIDTH_DEFAULT,
-  ])
-  map.setPaintProperty("activities-layer", "line-opacity", [
-    "case",
-    selectionExpr,
-    ACTIVITY_OPACITY_SELECTED,
-    ACTIVITY_OPACITY_DIM,
-  ])
-  map.setPaintProperty(
-    "activities-layer",
-    "line-color",
-    isLapActive
-      ? ACTIVITY_COLOR_DIM
-      : ["case", selectionExpr, ACTIVITY_COLOR, ACTIVITY_COLOR_DIM]
-  )
-}
-
-/**
- * Sets (or blanks) the selected-lap highlight. Safe to call before the style
- * has finished loading — it no-ops until lap-source exists.
- */
-export function setLapHighlightData(
-  map: maplibregl.Map,
-  coordinates: ActivityCoords | null
-): void {
-  const source = map.getSource("lap-source") as
-    | maplibregl.GeoJSONSource
-    | undefined
-  if (!source) return
-  source.setData(
-    coordinates && coordinates.length >= 2
-      ? featureCollection([lineString(coordinates)])
-      : featureCollection([])
-  )
 }
 
 interface MapViewProps {
@@ -404,7 +178,7 @@ export function MapView({
   // interactions whose total length stays unchanged, while avoiding redundant
   // GeoJSON reconstruction + GPU re-upload on every 300ms FOG_UPDATE.
   const cachedActivitiesGeoJSON = useRef<ReturnType<
-    typeof featureCollection
+    typeof activitiesFeatureCollection
   > | null>(null)
   const cachedActivitiesKey = useRef<string | null>(null)
   const [bearing, setBearing] = useState(0)
@@ -667,26 +441,9 @@ export function MapView({
         | maplibregl.GeoJSONSource
         | undefined
       savedPointsSource?.setData(
-        featureCollection(
-          savedPointsRef.current.map((point) => ({
-            type: "Feature" as const,
-            properties: {
-              id: point.id,
-              name: point.name,
-              color: SAVED_POINT_COLORS[point.color],
-            },
-            geometry: {
-              type: "Point" as const,
-              coordinates: [point.lng, point.lat],
-            },
-          }))
-        )
+        savedPointsFeatureCollection(savedPointsRef.current)
       )
-      for (const layer of [
-        "saved-points-outer-layer",
-        "saved-points-centre-layer",
-        "saved-points-hit-layer",
-      ]) {
+      for (const layer of SAVED_POINT_LAYER_IDS) {
         map.setLayoutProperty(
           layer,
           "visibility",
@@ -761,27 +518,8 @@ export function MapView({
     const source = map.getSource("saved-points-source") as
       | maplibregl.GeoJSONSource
       | undefined
-    source?.setData(
-      featureCollection(
-        savedPoints.map((point) => ({
-          type: "Feature" as const,
-          properties: {
-            id: point.id,
-            name: point.name,
-            color: SAVED_POINT_COLORS[point.color],
-          },
-          geometry: {
-            type: "Point" as const,
-            coordinates: [point.lng, point.lat],
-          },
-        }))
-      )
-    )
-    for (const layer of [
-      "saved-points-outer-layer",
-      "saved-points-centre-layer",
-      "saved-points-hit-layer",
-    ]) {
+    source?.setData(savedPointsFeatureCollection(savedPoints))
+    for (const layer of SAVED_POINT_LAYER_IDS) {
       map.setLayoutProperty(
         layer,
         "visibility",
@@ -867,10 +605,9 @@ export function MapView({
           activitiesKey !== cachedActivitiesKey.current ||
           !cachedActivitiesGeoJSON.current
         ) {
-          const activityFeatures = mapStore.activities.map((t) =>
-            lineString(t.coordinates, { name: t.name, id: t.id })
+          cachedActivitiesGeoJSON.current = activitiesFeatureCollection(
+            mapStore.activities
           )
-          cachedActivitiesGeoJSON.current = featureCollection(activityFeatures)
           cachedActivitiesKey.current = activitiesKey
           const activitiesSource = map.getSource(
             "activities-source"
@@ -911,26 +648,9 @@ export function MapView({
         | maplibregl.GeoJSONSource
         | undefined
       savedPointsSource?.setData(
-        featureCollection(
-          savedPointsRef.current.map((point) => ({
-            type: "Feature" as const,
-            properties: {
-              id: point.id,
-              name: point.name,
-              color: SAVED_POINT_COLORS[point.color],
-            },
-            geometry: {
-              type: "Point" as const,
-              coordinates: [point.lng, point.lat],
-            },
-          }))
-        )
+        savedPointsFeatureCollection(savedPointsRef.current)
       )
-      for (const layer of [
-        "saved-points-outer-layer",
-        "saved-points-centre-layer",
-        "saved-points-hit-layer",
-      ]) {
+      for (const layer of SAVED_POINT_LAYER_IDS) {
         map.setLayoutProperty(
           layer,
           "visibility",
@@ -983,7 +703,7 @@ export function MapView({
 
     pendingStyleLoadRef.current = onStyleLoad
     map.on("style.load", onStyleLoad)
-    map.setStyle(mapMode === "relief" ? SATELLITE_STYLE : MAP_STYLE_URL)
+    map.setStyle(styleForMapMode(mapMode))
   }, [mapMode])
 
   useEffect(() => {
