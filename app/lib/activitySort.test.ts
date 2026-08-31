@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test"
 import type { ParsedActivity } from "~/types/activities"
-import { sortActivitiesNewestFirst } from "./statsAggregator"
+import {
+  isActivitySortOption,
+  sortActivitiesBy,
+  sortActivitiesNewestFirst,
+} from "./statsAggregator"
 
 function activity(id: string, startedAtMs: number | null): ParsedActivity {
   return {
@@ -42,5 +46,50 @@ describe("sortActivitiesNewestFirst", () => {
       "undated",
     ])
     expect(input.map((item) => item.id)).toEqual(["old", "undated", "new"])
+  })
+})
+
+describe("sortActivitiesBy", () => {
+  test("sorts numeric metrics descending and places missing values last", () => {
+    const short = activity("short", 100)
+    short.stats.distanceKm = 1
+    short.stats.durationMs = 1_000
+    short.stats.elevationGainM = 10
+    short.stats.avgMovingSpeedKmh = 3
+
+    const long = activity("long", 200)
+    long.stats.distanceKm = 2
+    long.stats.durationMs = 2_000
+    long.stats.elevationGainM = 20
+    long.stats.avgMovingSpeedKmh = 4
+
+    const unknown = activity("unknown", 300)
+
+    expect(
+      sortActivitiesBy([short, unknown, long], "distance").map(
+        (item) => item.id
+      )
+    ).toEqual(["long", "short", "unknown"])
+    expect(
+      sortActivitiesBy([short, unknown, long], "speed").map((item) => item.id)
+    ).toEqual(["long", "short", "unknown"])
+    expect(
+      sortActivitiesBy([short, unknown, long], "duration").map(
+        (item) => item.id
+      )
+    ).toEqual(["long", "short", "unknown"])
+    expect(
+      sortActivitiesBy([short, unknown, long], "elevationGain").map(
+        (item) => item.id
+      )
+    ).toEqual(["long", "short", "unknown"])
+  })
+})
+
+describe("isActivitySortOption", () => {
+  test("accepts only supported URL values", () => {
+    expect(isActivitySortOption("distance")).toBe(true)
+    expect(isActivitySortOption("unknown")).toBe(false)
+    expect(isActivitySortOption(null)).toBe(false)
   })
 })

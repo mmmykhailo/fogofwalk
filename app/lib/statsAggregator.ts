@@ -118,6 +118,50 @@ export function sortActivitiesNewestFirst(
   })
 }
 
+export const ACTIVITY_SORT_OPTIONS = [
+  "distance",
+  "speed",
+  "duration",
+  "elevationGain",
+  "date",
+] as const
+
+export type ActivitySortOption = (typeof ACTIVITY_SORT_OPTIONS)[number]
+
+export function isActivitySortOption(
+  value: string | null
+): value is ActivitySortOption {
+  return ACTIVITY_SORT_OPTIONS.some((option) => option === value)
+}
+
+/** Returns activities sorted descending by the selected library metric. */
+export function sortActivitiesBy(
+  activities: ParsedActivity[],
+  option: ActivitySortOption
+): ParsedActivity[] {
+  if (option === "date") return sortActivitiesNewestFirst(activities)
+
+  const values: Record<
+    Exclude<ActivitySortOption, "date">,
+    (activity: ParsedActivity) => number | null
+  > = {
+    distance: (activity) => activity.stats.distanceKm,
+    speed: (activity) => activity.stats.avgMovingSpeedKmh,
+    duration: (activity) => activity.stats.durationMs,
+    elevationGain: (activity) => activity.stats.elevationGainM,
+  }
+  const valueFor = values[option]
+
+  return [...activities].sort((a, b) => {
+    const aValue = valueFor(a)
+    const bValue = valueFor(b)
+    if (aValue == null && bValue == null) return 0
+    if (aValue == null) return 1
+    if (bValue == null) return -1
+    return bValue - aValue
+  })
+}
+
 // ─── Aggregators ──────────────────────────────────────────────────────────────
 
 export function computeLifetimeTotals(
