@@ -1,6 +1,9 @@
 import maplibregl, { type StyleSpecification } from "maplibre-gl"
 import { Protocol } from "pmtiles"
-import { MAP_STYLE_URL } from "~/constants/fog"
+import {
+  MAP_STYLE_URL,
+  MONOCHROME_BACKGROUND_COLOR,
+} from "~/constants/fog"
 import type { MapMode } from "~/types/activities"
 
 const pmtilesProtocol = new Protocol()
@@ -25,6 +28,23 @@ export const SATELLITE_STYLE: StyleSpecification = {
   ],
 }
 
+export const MONOCHROME_STYLE: StyleSpecification = {
+  version: 8,
+  name: "Monochrome dark",
+  sources: {},
+  layers: [
+    {
+      id: "monochrome-background",
+      type: "background",
+      paint: {
+        "background-color": MONOCHROME_BACKGROUND_COLOR,
+      },
+    },
+  ],
+}
+
 export function styleForMapMode(mode: MapMode): string | StyleSpecification {
-  return mode === "relief" ? SATELLITE_STYLE : MAP_STYLE_URL
+  if (mode === "relief") return SATELLITE_STYLE
+  if (mode === "monochrome") return MONOCHROME_STYLE
+  return MAP_STYLE_URL
 }

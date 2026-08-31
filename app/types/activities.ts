@@ -14,7 +14,7 @@ export { ACTIVITY_TYPES } from "~shared/activities"
 import type { ParsedActivity } from "~shared/activities"
 
 export type FogMode = "corridor" | "fill"
-export type MapMode = "flat" | "relief"
+export type MapMode = "flat" | "relief" | "monochrome"
 
 /** The only activity fields the fog worker needs to build and report geometry. */
 export type FogWorkerActivity = Pick<

@@ -331,6 +331,15 @@ export function MapDrawer({
                   >
                     <MountainsIcon size={13} />
                   </Button>
+                  <Button
+                    size="icon"
+                    variant={mapMode === "monochrome" ? "default" : "ghost"}
+                    className="h-6 w-6"
+                    onClick={() => onMapModeChange("monochrome")}
+                    title="Monochrome"
+                  >
+                    <ShieldCheckIcon size={13} />
+                  </Button>
                 </div>
               </div>
             </div>

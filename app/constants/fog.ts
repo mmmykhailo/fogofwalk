@@ -8,6 +8,7 @@ export const FOG_CORRIDOR_BATCH_SIZE = 25
 // in small batches so large imports do not appear to jump dozens of activities.
 export const FOG_PROGRESS_BATCH_SIZE = 25
 export const MAP_STYLE_URL = "https://tiles.openfreemap.org/styles/liberty"
+export const MONOCHROME_BACKGROUND_COLOR = "#eee"
 export const FOG_COLOR = "#0a0a1e"
 export const FOG_OPACITY = 0.8
 export const ACTIVITY_COLOR = "#ff6b35"
