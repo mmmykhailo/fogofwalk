@@ -66,8 +66,6 @@ export function useMapLifecycle(
       minZoom: 5,
       pitch: initialMode === "relief" ? 45 : 0,
       attributionControl: { compact: false },
-      // Required for map.getCanvas() capture in the share export.
-      canvasContextAttributes: { preserveDrawingBuffer: true },
     })
     mapStore.map = map
 
