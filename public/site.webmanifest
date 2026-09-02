@@ -2,7 +2,7 @@
   "name": "Fog of Walk",
   "short_name": "Fog of Walk",
   "description": "Import GPS routes and watch the fog of war lift over every path you've explored.",
-  "start_url": "/",
+  "start_url": "/map",
   "scope": "/",
   "display": "standalone",
   "orientation": "any",
