@@ -1,6 +1,11 @@
 import type { EarnedAchievement } from "~/lib/achievements"
 import type { PublicAchievementPrevalence } from "~shared/api"
 import { AchievementIcon } from "~/components/public-profile/AchievementIcon"
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "~/components/ui/tooltip"
 
 interface AchievementCardProps {
   achievement: EarnedAchievement
@@ -10,11 +15,10 @@ interface AchievementCardProps {
 function formatPrevalence(
   achievement: EarnedAchievement,
   prevalence: PublicAchievementPrevalence | undefined
-): string | null {
+): number | null {
   if (!prevalence || prevalence.eligibleUserCount === 0) return null
   const earned = prevalence.earnedUserCounts[achievement.definition.id] ?? 0
-  const percentage = Math.round((earned / prevalence.eligibleUserCount) * 100)
-  return `Only ${percentage}% have this`
+  return Math.round((earned / prevalence.eligibleUserCount) * 100)
 }
 
 function formatActivityTypes(
@@ -44,8 +48,26 @@ export function AchievementCard({
       >
         <AchievementIcon achievement={achievement} />
       </div>
-      <div className="min-w-0">
-        <h3 className="font-heading text-sm font-medium">{definition.title}</h3>
+      <div className="min-w-0 flex-1">
+        <div className="flex min-w-0 items-start gap-2">
+          <h3 className="min-w-0 flex-1 font-heading text-sm font-medium break-words">
+            {definition.title}
+          </h3>
+          {prevalence !== null && (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <span className="shrink-0 cursor-help text-xs font-medium text-primary underline decoration-dotted underline-offset-2" />
+                }
+              >
+                {prevalence}%
+              </TooltipTrigger>
+              <TooltipContent>
+                Only {prevalence}% of users have this achievement
+              </TooltipContent>
+            </Tooltip>
+          )}
+        </div>
         <p className="mt-0.5 text-xs text-muted-foreground">
           {definition.description}
         </p>
@@ -66,9 +88,6 @@ export function AchievementCard({
             </>
           )}
         </p>
-        {prevalence && (
-          <p className="mt-1 text-xs font-medium text-primary">{prevalence}</p>
-        )}
       </div>
     </article>
   )
