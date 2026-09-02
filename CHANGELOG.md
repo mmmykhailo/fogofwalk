@@ -2,6 +2,13 @@
 
 All notable changes to Fog of Walk are documented here.
 
+## [0.5.0] - 2026-09-02
+
+### Changed
+
+- replace Drawer with Dialog in saved point edit dialog
+- add sorting to my activities page (#33)
+
 ## [0.4.0] - 2026-08-31
 
 ### Changed
