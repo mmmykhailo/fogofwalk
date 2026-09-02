@@ -2,6 +2,7 @@ import { LandingFeatures } from "~/components/landing/LandingFeatures"
 import { LandingFooter } from "~/components/landing/LandingFooter"
 import { LandingHeader } from "~/components/landing/LandingHeader"
 import { LandingHero } from "~/components/landing/LandingHero"
+import { LandingRecordingGuide } from "~/components/landing/LandingRecordingGuide"
 import { LandingWorkflow } from "~/components/landing/LandingWorkflow"
 
 export function LandingPage() {
@@ -11,6 +12,7 @@ export function LandingPage() {
       <LandingHero />
       <LandingFeatures />
       <LandingWorkflow />
+      <LandingRecordingGuide />
       <LandingFooter />
     </main>
   )
