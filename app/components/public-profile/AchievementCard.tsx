@@ -54,6 +54,7 @@ export function AchievementCard({
           {prevalence !== null && (
             <Tooltip>
               <TooltipTrigger
+                nativeButton={false}
                 render={
                   <span className="shrink-0 cursor-help text-xs font-medium text-primary underline decoration-dotted underline-offset-2" />
                 }
