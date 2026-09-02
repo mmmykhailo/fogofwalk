@@ -11,12 +11,12 @@ import {
   CardTitle,
 } from "~/components/ui/card"
 import {
-  Drawer,
-  DrawerContent,
-  DrawerDescription,
-  DrawerHeader,
-  DrawerTitle,
-} from "~/components/ui/drawer"
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "~/components/ui/dialog"
 import { useIsMobile } from "~/lib/useIsMobile"
 import type { SavedPoint } from "~shared/saved-points"
 
@@ -28,7 +28,7 @@ interface DraggableSavedPointEditDialogProps {
   onDelete?: (id: string) => void
 }
 
-/** Saved-point editor: a mobile drawer and a draggable desktop card. */
+/** Saved-point editor: a mobile dialog and a draggable desktop card. */
 export function DraggableSavedPointEditDialog({
   point,
   coordinate,
@@ -69,27 +69,27 @@ export function DraggableSavedPointEditDialog({
 
   if (isMobile) {
     return (
-      <Drawer
+      <Dialog
         open={isOpen}
         onOpenChange={(open) => {
           if (!open) handleDismiss()
         }}
       >
-        <DrawerContent>
-          <DrawerDescription className="sr-only">{title}</DrawerDescription>
-          <DrawerHeader>
-            <DrawerTitle>{title}</DrawerTitle>
-          </DrawerHeader>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{title}</DialogTitle>
+            <DialogDescription className="sr-only">{title}</DialogDescription>
+          </DialogHeader>
           {/*
            * iOS Safari enlarges the visual viewport for focused controls with
            * text smaller than 16px. Keep only the editable controls at that
-           * minimum on the mobile drawer; desktop retains the compact form.
+           * minimum on the mobile dialog; desktop retains the compact form.
            */}
-          <div className="px-4 pb-6 [&_[data-slot=input]]:text-base [&_[data-slot=textarea]]:text-base">
+          <div className="pb-2 [&_[data-slot=input]]:text-base [&_[data-slot=textarea]]:text-base">
             {form}
           </div>
-        </DrawerContent>
-      </Drawer>
+        </DialogContent>
+      </Dialog>
     )
   }
 
