@@ -22,6 +22,7 @@ import type {
 } from "~shared/api"
 import type { SavedPoint } from "~shared/saved-points"
 import { computePublicAchievementPrevalence } from "../public/achievementPrevalence"
+import { PublicAchievementPrevalenceCache } from "../public/achievementPrevalenceCache"
 import { SYNC_PAGE_SIZE } from "~shared/constants"
 
 import { combineCursors, comparePageable, pageStream } from "./manifestPaging"
@@ -57,6 +58,8 @@ export class MemoryStore implements ServerStore {
   private readonly savedPointTombstones = new Map<string, Map<string, number>>()
   private readonly accessRequests = new Map<string, StoredAccessRequest>()
   private readonly settings = new Map<string, string>()
+  private readonly achievementPrevalenceCache =
+    new PublicAchievementPrevalenceCache()
 
   // ── users & identities ──────────────────────────────────────────────────
 
@@ -94,6 +97,7 @@ export class MemoryStore implements ServerStore {
         updatedAt: now,
       }
       this.users.set(user.id, updated)
+      this.achievementPrevalenceCache.invalidate()
       return updated
     }
 
@@ -116,6 +120,7 @@ export class MemoryStore implements ServerStore {
       email: input.email,
       createdAt: now,
     })
+    this.achievementPrevalenceCache.invalidate()
     return user
   }
 
@@ -201,6 +206,7 @@ export class MemoryStore implements ServerStore {
     this.savedPoints.delete(userId)
     this.savedPointTombstones.delete(userId)
     this.accessRequests.delete(userId)
+    this.achievementPrevalenceCache.invalidate()
   }
 
   async getAccessRequest(userId: string): Promise<StoredAccessRequest | null> {
@@ -458,6 +464,7 @@ export class MemoryStore implements ServerStore {
       createdAt: existing?.createdAt ?? Date.now(),
     })
     this.tombstones.get(userId)?.delete(meta.contentHash)
+    this.achievementPrevalenceCache.invalidate()
   }
 
   async getActivity(
@@ -482,6 +489,7 @@ export class MemoryStore implements ServerStore {
     const stored = this.activities.get(userId)?.get(contentHash)
     if (!stored) return null
     stored.meta = { ...stored.meta, isPublic }
+    this.achievementPrevalenceCache.invalidate()
     return stored.meta
   }
 
@@ -494,6 +502,7 @@ export class MemoryStore implements ServerStore {
     }
     const deletedAt = Date.now()
     byHash.set(contentHash, deletedAt)
+    this.achievementPrevalenceCache.invalidate()
     return deletedAt
   }
 
@@ -502,6 +511,7 @@ export class MemoryStore implements ServerStore {
     const count = activities?.size ?? 0
     // No tombstones — see the interface docs.
     activities?.clear()
+    this.achievementPrevalenceCache.invalidate()
     return count
   }
 
@@ -684,13 +694,15 @@ export class MemoryStore implements ServerStore {
   }
 
   async getPublicAchievementPrevalence(): Promise<PublicAchievementPrevalence> {
-    return computePublicAchievementPrevalence(
-      [...this.users.values()].flatMap((user) => {
-        if (!user.handle) return []
-        return [...(this.activities.get(user.id)?.values() ?? [])]
-          .filter((stored) => stored.meta.isPublic)
-          .map((stored) => ({ userId: user.id, activity: stored.meta }))
-      })
+    return this.achievementPrevalenceCache.get(() =>
+      computePublicAchievementPrevalence(
+        [...this.users.values()].flatMap((user) => {
+          if (!user.handle) return []
+          return [...(this.activities.get(user.id)?.values() ?? [])]
+            .filter((stored) => stored.meta.isPublic)
+            .map((stored) => ({ userId: user.id, activity: stored.meta }))
+        })
+      )
     )
   }
 
