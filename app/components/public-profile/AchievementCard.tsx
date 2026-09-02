@@ -30,6 +30,12 @@ function formatActivityTypes(
   return labels.length === 1 ? labels[0] : labels.join(" or ")
 }
 
+const formatLongPrevalenceLabel = (prevalence: number) => {
+  if (prevalence === 100) return "All users have this achievement"
+  if (prevalence === 0) return "No users have this achievement"
+  return `Only ${prevalence}% of users have this achievement`
+}
+
 export function AchievementCard({
   achievement,
   achievementPrevalence,
@@ -62,9 +68,7 @@ export function AchievementCard({
                 {prevalence}%
               </TooltipTrigger>
               <TooltipContent>
-                {prevalence === 100
-                  ? "All users have this achievement"
-                  : `Only ${prevalence}% of users have this achievement`}
+                {formatLongPrevalenceLabel(prevalence)}
               </TooltipContent>
             </Tooltip>
           )}
