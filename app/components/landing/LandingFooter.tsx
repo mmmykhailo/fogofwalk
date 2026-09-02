@@ -31,7 +31,7 @@ export function LandingFooter() {
           <span>Fog of Walk</span>
           <div className="flex flex-wrap gap-6">
             <TransitionLink to="/privacy" className="hover:text-background">
-              Privacy
+              Privacy Policy
             </TransitionLink>
             <TransitionLink to="/terms" className="hover:text-background">
               Terms of Service
