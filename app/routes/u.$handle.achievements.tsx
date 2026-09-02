@@ -102,7 +102,11 @@ export default function PublicAchievementsPage() {
       )}
 
       {!error && profile && achievements.length > 0 && (
-        <AchievementsSection achievements={achievements} showHeading={false} />
+        <AchievementsSection
+          achievements={achievements}
+          showHeading={false}
+          achievementPrevalence={profile.achievementPrevalence}
+        />
       )}
     </PageShell>
   )

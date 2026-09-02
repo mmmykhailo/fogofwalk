@@ -137,6 +137,7 @@ export default function PublicProfilePage() {
                   maxAchievements={4}
                   viewAllTo={`/u/${encodeURIComponent(profile.user.handle)}/achievements`}
                   groupByFamily={false}
+                  achievementPrevalence={profile.achievementPrevalence}
                 />
                 <section>
                   <h2 className="mt-6 mb-3 font-heading text-lg font-semibold">

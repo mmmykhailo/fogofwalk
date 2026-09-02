@@ -17,6 +17,7 @@ import type {
   AdminUser,
   ManifestPage,
   PublicProfileResponse,
+  PublicAchievementPrevalence,
   PublicActivityMeta,
   ActivityMeta,
   ActivityTombstone,
@@ -35,6 +36,8 @@ import type {
 import { combineCursors, pageStream } from "./manifestPaging"
 import type { Pageable } from "./manifestPaging"
 import { parseActivityUpload } from "../activities/payload"
+import { computePublicAchievementPrevalence } from "../public/achievementPrevalence"
+import { PublicAchievementPrevalenceCache } from "../public/achievementPrevalenceCache"
 import type {
   Identity,
   IdentityInput,
@@ -362,6 +365,8 @@ function toSavedPoint(row: SavedPointRow): SavedPoint {
 export class SqliteFsStore implements ServerStore {
   private readonly db: Database
   private readonly dataDir: string
+  private readonly achievementPrevalenceCache =
+    new PublicAchievementPrevalenceCache()
 
   constructor(db: Database, dataDir: string) {
     this.db = db
@@ -416,6 +421,7 @@ export class SqliteFsStore implements ServerStore {
         )
         .run(input.login, input.email, input.provider, input.providerUserId)
       const updated = await this.getUser(existing.id)
+      this.achievementPrevalenceCache.invalidate()
       return updated ?? existing
     }
 
@@ -448,6 +454,7 @@ export class SqliteFsStore implements ServerStore {
 
     const created = await this.getUser(id)
     if (!created) throw new Error("failed to create user")
+    this.achievementPrevalenceCache.invalidate()
     return created
   }
 
@@ -534,6 +541,7 @@ export class SqliteFsStore implements ServerStore {
       this.db.query(`DELETE FROM identities WHERE user_id = ?`).run(userId)
       this.db.query(`DELETE FROM users WHERE id = ?`).run(userId)
     })()
+    this.achievementPrevalenceCache.invalidate()
 
     if (!isSafeUserId(userId)) return
     const dir = userBlobDir(this.dataDir, userId)
@@ -907,6 +915,7 @@ export class SqliteFsStore implements ServerStore {
         )
         .run(userId, meta.contentHash)
     })()
+    this.achievementPrevalenceCache.invalidate()
   }
 
   async getActivity(
@@ -938,6 +947,7 @@ export class SqliteFsStore implements ServerStore {
           WHERE user_id = ? AND content_hash = ?`
       )
       .run(isPublic ? 1 : 0, now, userId, contentHash)
+    this.achievementPrevalenceCache.invalidate()
     return this.getActivity(userId, contentHash)
   }
 
@@ -972,6 +982,7 @@ export class SqliteFsStore implements ServerStore {
         )
         .run(userId, contentHash, now)
     })()
+    this.achievementPrevalenceCache.invalidate()
 
     await Bun.file(blobPath(this.dataDir, userId, contentHash))
       .delete()
@@ -987,6 +998,7 @@ export class SqliteFsStore implements ServerStore {
     // No tombstone writes — see the interface docs. This wipes the server's
     // copy only; other devices keep their activities and their cached view.
     this.db.query(`DELETE FROM activities WHERE user_id = ?`).run(userId)
+    this.achievementPrevalenceCache.invalidate()
 
     for (const row of rows) {
       if (!isSafeContentHash(row.content_hash)) continue
@@ -1188,6 +1200,7 @@ export class SqliteFsStore implements ServerStore {
         },
         activities: [],
         savedPoints: [],
+        achievementPrevalence: await this.getPublicAchievementPrevalence(),
       }
     }
 
@@ -1216,7 +1229,27 @@ export class SqliteFsStore implements ServerStore {
       },
       activities,
       savedPoints: await this.listPublicSavedPoints(userId),
+      achievementPrevalence: await this.getPublicAchievementPrevalence(),
     }
+  }
+
+  async getPublicAchievementPrevalence(): Promise<PublicAchievementPrevalence> {
+    return this.achievementPrevalenceCache.get(() => {
+      const rows = this.db
+        .query(
+          `SELECT t.user_id, t.content_hash, t.name, t.is_public, t.format, t.activity_type, t.start_sun_phase, t.started_at_ms,
+                  t.distance_km, t.point_count, t.size_bytes, t.updated_at,
+                  t.duration_ms, t.moving_time_ms, t.elevation_gain_m, t.avg_moving_speed_kmh
+             FROM activities t
+             JOIN users u ON u.id = t.user_id
+            WHERE t.is_public = 1 AND u.handle IS NOT NULL`
+        )
+        .all() as Array<ActivityRow & { user_id: string }>
+
+      return computePublicAchievementPrevalence(
+        rows.map((row) => ({ userId: row.user_id, activity: toMeta(row) }))
+      )
+    })
   }
 
   private async hydrateLegacyPublicMeta(

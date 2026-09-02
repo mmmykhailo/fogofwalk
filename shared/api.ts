@@ -151,10 +151,14 @@ export interface ActivityMeta {
 /** Activity metadata displayed on a public profile; geometry stays private. */
 export type PublicActivityMeta = ActivityMeta
 
+/** Achievement id to rounded percentage across eligible public profiles. */
+export type PublicAchievementPrevalence = Record<string, number>
+
 export interface PublicProfileResponse {
   user: PublicProfileUser
   activities: PublicActivityMeta[]
   savedPoints: PublicSavedPoint[]
+  achievementPrevalence: PublicAchievementPrevalence
 }
 
 // ─── Saved points ─────────────────────────────────────────────────────────────
