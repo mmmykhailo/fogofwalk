@@ -2,6 +2,15 @@
 
 All notable changes to Fog of Walk are documented here.
 
+## [0.6.0] - 2026-09-02
+
+### Changed
+
+- improve wording on landing page
+- add recording guide to landing page
+- set map as homepage for installed PWA
+- achievements rarity (#35)
+
 ## [0.5.0] - 2026-09-02
 
 ### Changed
