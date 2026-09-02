@@ -151,11 +151,8 @@ export interface ActivityMeta {
 /** Activity metadata displayed on a public profile; geometry stays private. */
 export type PublicActivityMeta = ActivityMeta
 
-/** Anonymous achievement counts across profiles with at least one public activity. */
-export interface PublicAchievementPrevalence {
-  eligibleUserCount: number
-  earnedUserCounts: Record<string, number>
-}
+/** Achievement id to rounded percentage across eligible public profiles. */
+export type PublicAchievementPrevalence = Record<string, number>
 
 export interface PublicProfileResponse {
   user: PublicProfileUser

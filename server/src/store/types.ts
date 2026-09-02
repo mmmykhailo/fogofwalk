@@ -199,7 +199,7 @@ export interface ServerStore {
    * `is_public = 1` and never exposes geometry.
    */
   listPublicActivities(userId: string): Promise<PublicProfileResponse>
-  /** Anonymous achievement totals for profiles with public activities. */
+  /** Achievement percentages across profiles with public activities. */
   getPublicAchievementPrevalence(): Promise<PublicAchievementPrevalence>
 
   /** Release file handles / connections. Tests call it; the server never does. */

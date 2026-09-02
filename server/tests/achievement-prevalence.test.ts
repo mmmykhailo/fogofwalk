@@ -41,9 +41,10 @@ describe("computePublicAchievementPrevalence", () => {
       },
     ])
 
-    expect(prevalence.eligibleUserCount).toBe(2)
-    expect(prevalence.earnedUserCounts["running-5k"]).toBe(2)
-    expect(prevalence.earnedUserCounts["running-10k"]).toBe(1)
+    expect(prevalence["running-5k"]).toBe(100)
+    expect(prevalence["running-10k"]).toBe(50)
+    expect(prevalence).not.toHaveProperty("eligibleUserCount")
+    expect(prevalence).not.toHaveProperty("earnedUserCounts")
   })
 })
 
@@ -68,18 +69,16 @@ describe("public achievement prevalence cache", () => {
     )
     const afterUpload = await store.getPublicAchievementPrevalence()
     expect(afterUpload).not.toBe(first)
-    expect(afterUpload.eligibleUserCount).toBe(1)
-    expect(afterUpload.earnedUserCounts["running-5k"]).toBe(1)
+    expect(afterUpload["running-5k"]).toBe(100)
     expect(await store.getPublicAchievementPrevalence()).toBe(afterUpload)
 
     await store.setActivityVisibility(user.id, "activity", false)
     const afterHide = await store.getPublicAchievementPrevalence()
-    expect(afterHide.eligibleUserCount).toBe(0)
-    expect(afterHide.earnedUserCounts["running-5k"]).toBeUndefined()
+    expect(afterHide["running-5k"]).toBeUndefined()
 
     await store.setActivityVisibility(user.id, "activity", true)
     await store.deleteActivity(user.id, "activity")
     const afterDelete = await store.getPublicAchievementPrevalence()
-    expect(afterDelete.eligibleUserCount).toBe(0)
+    expect(afterDelete["running-5k"]).toBeUndefined()
   })
 })

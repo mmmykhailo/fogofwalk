@@ -76,10 +76,12 @@ export function computePublicAchievementPrevalence(
     }
   }
 
-  return {
-    eligibleUserCount: eligibleUserIds.size,
-    earnedUserCounts: Object.fromEntries(
-      [...earnersByAchievement].map(([id, earners]) => [id, earners.size])
-    ),
-  }
+  return Object.fromEntries(
+    [...earnersByAchievement].map(([id, earners]) => [
+      id,
+      eligibleUserIds.size === 0
+        ? 0
+        : Math.round((earners.size / eligibleUserIds.size) * 100),
+    ])
+  )
 }

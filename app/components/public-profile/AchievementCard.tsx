@@ -16,9 +16,7 @@ function formatPrevalence(
   achievement: EarnedAchievement,
   prevalence: PublicAchievementPrevalence | undefined
 ): number | null {
-  if (!prevalence || prevalence.eligibleUserCount === 0) return null
-  const earned = prevalence.earnedUserCounts[achievement.definition.id] ?? 0
-  return Math.round((earned / prevalence.eligibleUserCount) * 100)
+  return prevalence?.[achievement.definition.id] ?? null
 }
 
 function formatActivityTypes(
@@ -63,7 +61,9 @@ export function AchievementCard({
                 {prevalence}%
               </TooltipTrigger>
               <TooltipContent>
-                Only {prevalence}% of users have this achievement
+                {prevalence === 100
+                  ? "All users have this achievement"
+                  : `Only ${prevalence}% of users have this achievement`}
               </TooltipContent>
             </Tooltip>
           )}
