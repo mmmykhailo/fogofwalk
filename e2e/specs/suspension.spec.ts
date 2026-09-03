@@ -53,6 +53,30 @@ test.describe("sync suspension", () => {
     await app.expectActivityCount(2)
   })
 
+  test("preserves Fill loops while importing and resuming sync after a clear", async ({
+    app,
+  }) => {
+    await app.goto()
+    await app.signIn()
+    await app.importActivities(1)
+    await app.waitForImportToSettle()
+    await app.syncNow()
+
+    await app.openDrawer()
+    await app.drawer.getByRole("switch", { name: "Fill loops" }).click()
+    await app.waitForImportToSettle()
+    await app.clearAll()
+
+    await app.importActivities(1, 10)
+    await app.waitForImportToSettle()
+    await app.syncNow()
+    await app.expectActivityCount(2)
+
+    await expect
+      .poll(() => app.fogCacheSummary())
+      .toMatchObject({ fogMode: "fill" })
+  })
+
   test("a reload lifts the suspension", async ({ app }) => {
     await app.goto()
     await app.signIn()

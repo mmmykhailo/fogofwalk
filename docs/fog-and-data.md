@@ -14,7 +14,7 @@ Every worker message carries a `runId`. Only call `startFogRun()` when discardin
 
 ## Storage and restore
 
-IndexedDB stores activities, photos, and preferences. Preferences include fog mode/cache, session, and sync state. `clearAll()` preserves the session. `loadActivities()` performs read-time migrations for missing `startedAtMs` and `uniqueDistanceKm`; do not re-save old records merely to migrate them.
+IndexedDB stores activities, photos, and preferences. Preferences include fog mode/cache, session, and sync state. `clearAll()` preserves the session and user controls such as fog mode, while clearing the derived fog cache and sync state. `loadActivities()` performs read-time migrations for missing `startedAtMs` and `uniqueDistanceKm`; do not re-save old records merely to migrate them.
 
 Map position deliberately uses synchronous localStorage (`fogofwalk:mapPosition`) on each `moveend`; IndexedDB writes can be lost during navigation. A stale fog cache sets `mapStore.isRestoreReprocess`, which reprocesses without fitting bounds and preserves the saved position.
 

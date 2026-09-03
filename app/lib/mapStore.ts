@@ -99,6 +99,8 @@ interface MapStore {
   pendingFogJobs: number
   /** Activity ids contained in, or already queued for, the current worker run. */
   fogWorkerActivityIds: Set<string>
+  /** Fog mode used to build the current worker run's internal accumulators. */
+  fogWorkerMode: FogMode | null
   /** True once MapView is ready to receive fog-worker replies. */
   isFogWorkerListenerReady: boolean
   /**
@@ -129,6 +131,7 @@ export const mapStore: MapStore = {
   isFogRunInFlight: false,
   pendingFogJobs: 0,
   fogWorkerActivityIds: new Set(),
+  fogWorkerMode: null,
   isFogWorkerListenerReady: false,
   shareCardCache: null,
 }
@@ -170,6 +173,7 @@ type DistributiveOmit<T, K extends keyof T> = T extends unknown
 export function startFogRun(): number {
   mapStore.runId++
   mapStore.isRestoreReprocess = false
+  mapStore.fogWorkerMode = null
   return mapStore.runId
 }
 
@@ -178,6 +182,7 @@ export function postToFogWorker(
   msg: DistributiveOmit<WorkerInboundMessage, "runId">
 ): void {
   if (msg.type === "PROCESS_ACTIVITIES") {
+    if (mapStore.fogWorkerMode === null) mapStore.fogWorkerMode = msg.mode
     mapStore.pendingFogJobs++
     mapStore.isFogRunInFlight = true
     for (const activity of msg.activities) {
@@ -202,6 +207,7 @@ export function postToFogWorker(
     mapStore.pendingFogJobs = 0
     mapStore.isFogRunInFlight = false
     mapStore.fogWorkerActivityIds.clear()
+    mapStore.fogWorkerMode = null
   }
   mapStore.worker?.postMessage({ ...msg, runId: mapStore.runId })
 }
@@ -228,8 +234,15 @@ export function queueAddedActivitiesForFog(
   if (missing.length === 0) return
 
   // The worker already contains the previous library and lacks only this
-  // addition, so it is safe to extend the current run incrementally.
-  if (missing.every((activity) => addedIds.has(activity.id))) {
+  // addition, so it is safe to extend the current run incrementally. Its
+  // accumulator is mode-specific, however: never append corridor work to a
+  // fill run (or vice versa).
+  const isModeCompatible =
+    mapStore.fogWorkerActivityIds.size === 0 || mapStore.fogWorkerMode === mode
+  if (
+    missing.every((activity) => addedIds.has(activity.id)) &&
+    isModeCompatible
+  ) {
     postToFogWorker({ type: "PROCESS_ACTIVITIES", activities: missing, mode })
     return
   }

@@ -17,6 +17,7 @@ const originalRunId = mapStore.runId
 const originalPendingFogJobs = mapStore.pendingFogJobs
 const originalIsFogRunInFlight = mapStore.isFogRunInFlight
 const originalFogWorkerActivityIds = mapStore.fogWorkerActivityIds
+const originalFogWorkerMode = mapStore.fogWorkerMode
 const originalActivities = mapStore.activities
 const originalProcessedCount = mapStore.processedCount
 
@@ -26,6 +27,7 @@ afterEach(() => {
   mapStore.pendingFogJobs = originalPendingFogJobs
   mapStore.isFogRunInFlight = originalIsFogRunInFlight
   mapStore.fogWorkerActivityIds = originalFogWorkerActivityIds
+  mapStore.fogWorkerMode = originalFogWorkerMode
   mapStore.activities = originalActivities
   mapStore.processedCount = originalProcessedCount
 })
@@ -83,6 +85,7 @@ describe("fog worker run state", () => {
     mapStore.runId = 7
     mapStore.pendingFogJobs = 0
     mapStore.isFogRunInFlight = false
+    mapStore.fogWorkerMode = null
 
     postToFogWorker({
       type: "PROCESS_ACTIVITIES",
@@ -124,12 +127,14 @@ describe("fog worker run state", () => {
     mapStore.pendingFogJobs = 2
     mapStore.isFogRunInFlight = true
     mapStore.fogWorkerActivityIds = new Set(["old"])
+    mapStore.fogWorkerMode = "fill"
 
     postToFogWorker({ type: "RESET" })
 
     expect(mapStore.pendingFogJobs).toBe(0)
     expect(mapStore.isFogRunInFlight).toBe(false)
     expect(mapStore.fogWorkerActivityIds.size).toBe(0)
+    expect(mapStore.fogWorkerMode).toBeNull()
   })
 
   test("replays the library before adding to a cache-cold worker", () => {
@@ -146,6 +151,7 @@ describe("fog worker run state", () => {
     mapStore.pendingFogJobs = 0
     mapStore.isFogRunInFlight = false
     mapStore.fogWorkerActivityIds = new Set()
+    mapStore.fogWorkerMode = null
 
     queueAddedActivitiesForFog([second], "corridor")
 
@@ -186,6 +192,7 @@ describe("fog worker run state", () => {
     mapStore.runId = 4
     mapStore.pendingFogJobs = 0
     mapStore.fogWorkerActivityIds = new Set([first.id])
+    mapStore.fogWorkerMode = "fill"
 
     queueAddedActivitiesForFog([second], "fill")
 
@@ -216,12 +223,52 @@ describe("fog worker run state", () => {
     } as unknown as Worker
     mapStore.activities = [first, second]
     mapStore.fogWorkerActivityIds = new Set([first.id, second.id])
+    mapStore.fogWorkerMode = "corridor"
     mapStore.pendingFogJobs = 1
 
     queueAddedActivitiesForFog([second], "corridor")
 
     expect(messages).toEqual([])
     expect(mapStore.pendingFogJobs).toBe(1)
+  })
+
+  test("rebuilds instead of mixing fill and corridor batches", () => {
+    const messages: unknown[] = []
+    const first = activity("first")
+    const second = activity("second")
+    mapStore.worker = {
+      postMessage(message: unknown) {
+        messages.push(message)
+      },
+    } as unknown as Worker
+    mapStore.activities = [first, second]
+    mapStore.runId = 4
+    mapStore.pendingFogJobs = 0
+    mapStore.fogWorkerActivityIds = new Set([first.id])
+    mapStore.fogWorkerMode = "fill"
+
+    queueAddedActivitiesForFog([second], "corridor")
+
+    expect(messages).toEqual([
+      { type: "RESET", runId: 5 },
+      {
+        type: "PROCESS_ACTIVITIES",
+        activities: [
+          {
+            id: first.id,
+            name: first.name,
+            coordinates: first.coordinates,
+          },
+          {
+            id: second.id,
+            name: second.name,
+            coordinates: second.coordinates,
+          },
+        ],
+        mode: "corridor",
+        runId: 5,
+      },
+    ])
   })
 })
 

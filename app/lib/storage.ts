@@ -579,18 +579,18 @@ export async function clearSyncState(): Promise<void> {
 // ─── Clear all ────────────────────────────────────────────────────────────────
 
 /**
- * Wipe all persisted data (activities, photos, IDB prefs). Used by "clear-all".
+ * Wipe persisted library data and its derived state. Used by "clear-all".
  *
- * The session is deliberately kept: clearing the map is not signing out. The
- * sync cursor *is* dropped, so the next sync re-walks the manifest from zero
- * rather than believing it is already up to date with activities that are gone.
+ * The session and user preferences are deliberately kept: clearing the map is
+ * neither signing out nor resetting controls such as Fill loops. The sync cursor
+ * *is* dropped, so the next sync re-walks the manifest from zero rather than
+ * believing it is already up to date with activities that are gone.
  */
 export async function clearAll(): Promise<void> {
   await Promise.all([
     clearActivities(),
     clearPhotos(),
     clearSavedPoints(),
-    prefDelete("fogMode"),
     prefDelete("fogCache"),
     prefDelete("syncState"),
     prefDelete("uniqueDistanceState"),
