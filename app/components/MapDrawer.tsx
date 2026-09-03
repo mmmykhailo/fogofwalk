@@ -117,13 +117,13 @@ export function MapDrawer({
   }
 
   /**
-   * Close the drawer before opening a dialog, then wait out the close
-   * animation. Base UI popups portal outside vaul's Radix focus scope, so
-   * overlapping the two fights over focus — see the drawer note in CLAUDE.md.
+   * Base UI popups portal outside Vaul's Radix focus scope, so they cannot
+   * overlap the drawer. Vaul's fixed 500 ms exit animation must complete
+   * before opening the popup.
    */
   const closeThenOpen = (open: (v: boolean) => void) => {
     close()
-    setTimeout(() => open(true), 300)
+    setTimeout(() => open(true), 500)
   }
 
   return (
