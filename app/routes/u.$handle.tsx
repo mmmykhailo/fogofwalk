@@ -23,6 +23,8 @@ import { useAuth } from "~/lib/server/authStore"
 import type { PublicProfileResponse } from "~shared/api"
 import type { Route } from "./+types/u.$handle"
 
+const MAX_WEEKLY_CHART_DAYS = 180
+
 interface ProfileLoaderData {
   profile: PublicProfileResponse | null
   error: string | null
@@ -77,6 +79,7 @@ export default function PublicProfilePage() {
     auth.status === "signedIn" &&
     auth.user.handle?.toLowerCase() === profile?.user.handle.toLowerCase()
   const stats = computePublicProfileStats(activities)
+  const weeklyChart = stats.weekly.slice(-Math.floor(MAX_WEEKLY_CHART_DAYS / 7))
   const achievements = sortEarnedAchievementsNewestFirst(
     computeEarnedAchievements(activities)
   )
@@ -127,7 +130,7 @@ export default function PublicProfilePage() {
             {activities.length > 0 && (
               <>
                 <StatCards totals={stats.totals} />
-                <WeeklyChart weekly={stats.weekly} />
+                <WeeklyChart weekly={weeklyChart} />
                 <Grid columns={{ base: 1, sm: 2 }}>
                   <PublicActivityGrid recentDays={stats.recentDays} />
                   <PublicProfileSummary stats={stats} />
