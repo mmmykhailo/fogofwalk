@@ -83,34 +83,6 @@ export function FileFormatsSection() {
               Wahoo, Hammerhead, Bryton, and others save activities as FIT files
             </li>
           </ul>
-          <p className="text-xs text-muted-foreground">
-            FIT files also carry <strong>laps</strong> — the splits your watch
-            recorded, whether you pressed the lap button or it auto-lapped.
-            Select an activity and you can switch the stats panel between the
-            whole activity and any single lap, and share that lap on its own. A
-            lap selector only appears when the file records at least two laps
-            (and, as a sanity limit, at most 200 — a file with more than that is
-            treated as having none), and only when a single activity is
-            selected.
-          </p>
-          <p className="text-xs text-muted-foreground">
-            If your app offers both GPX and FIT, either works for the fog map —
-            but only FIT gives you laps. GPX has no lap data at all: the segment
-            splits inside a GPX file are pause/resume boundaries, not laps.
-          </p>
-          <p className="text-xs text-muted-foreground">
-            <strong className="text-foreground">
-              Activities imported before laps were supported won't show them.
-            </strong>{" "}
-            Simply re-importing the file will not help — activities are matched
-            on their contents, so the re-import is recognised as a duplicate and
-            skipped. To get laps for an old activity,{" "}
-            <strong className="text-foreground">
-              delete the activity first
-            </strong>{" "}
-            (select it, then the trash button in the stats panel) and import the
-            FIT file again.
-          </p>
         </CardContent>
       </Card>
     </>
