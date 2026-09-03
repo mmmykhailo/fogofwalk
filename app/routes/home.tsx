@@ -136,10 +136,11 @@ export async function clientLoader({
     console.debug("[clientLoader] worker created", mapStore.worker)
   }
 
-  // Restore + revalidate the sync session. Deliberately not awaited: the map
-  // must never wait on the network, and it is a no-op when the build has no
-  // server. Signing in later re-renders the drawer through the auth store.
-  void initAuth()
+  // Sync is a map-only concern. The shared layout also wraps the library and
+  // informational pages, so avoid even revalidating a stored sync session
+  // while one of those pages is open. Deliberately do not await this: the map
+  // must never wait on the network, and it is a no-op when no server exists.
+  if (new URL(request.url).pathname === "/map") void initAuth()
 
   // Restore persisted data in parallel
   const [
@@ -778,7 +779,10 @@ export default function Home() {
   }, [fetcher.data])
 
   // Sync mutates mapStore directly; reconcile the React state it can't reach.
+  // Do this only while the map is visible: the parent layout stays mounted for
+  // every child page, but sync is intentionally inactive away from /map.
   useEffect(() => {
+    if (!isMapRoute) return
     setSyncChangeHandler(
       ({
         downloadedCount,
@@ -839,17 +843,18 @@ export default function Home() {
       }
     )
     return () => setSyncChangeHandler(null)
-  }, [revalidator])
+  }, [isMapRoute, revalidator])
 
   // Fires on a restored session and on a fresh sign-in alike, then keeps the
-  // tab current — otherwise another device's uploads only ever arrive on reload.
+  // map current. Navigation away from /map tears down the scheduler so other
+  // pages make no automatic sync requests.
   const auth = useAuth()
   const isSyncEnabled = auth.status === "signedIn" && auth.canSync
   useEffect(() => {
-    if (!isSyncEnabled) return
+    if (!isMapRoute || !isSyncEnabled) return
     requestSync("auth-ready")
     return startSyncScheduler()
-  }, [isSyncEnabled])
+  }, [isMapRoute, isSyncEnabled])
 
   const visibility = useActivityVisibility((activityId, isPublic) => {
     const index = mapStore.activities.findIndex((t) => t.id === activityId)
