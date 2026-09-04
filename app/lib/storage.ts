@@ -390,7 +390,7 @@ export function areUniqueDistancesCurrent(
   )
 }
 
-/** Atomically persists recalculated values, their library marker, and an optional deletion. */
+/** Atomically persists recalculated values, summaries, their marker, and an optional deletion. */
 export async function saveUniqueDistances(
   activities: ParsedActivity[],
   deletedActivityId?: string
@@ -398,10 +398,20 @@ export async function saveUniqueDistances(
   const db = await getDb()
   if (!db) return true
   try {
-    const tx = db.transaction(["activities", "prefs"], "readwrite")
+    const tx = db.transaction(
+      ["activities", "activity-summaries", "prefs"],
+      "readwrite"
+    )
     const activityStore = tx.objectStore("activities")
-    if (deletedActivityId) activityStore.delete(deletedActivityId)
-    for (const activity of activities) activityStore.put(activity)
+    const summaryStore = tx.objectStore("activity-summaries")
+    if (deletedActivityId) {
+      activityStore.delete(deletedActivityId)
+      summaryStore.delete(deletedActivityId)
+    }
+    for (const activity of activities) {
+      activityStore.put(activity)
+      summaryStore.put(activityToSummary(activity))
+    }
     tx.objectStore("prefs").put({
       key: "uniqueDistanceState",
       value: {
@@ -768,6 +778,8 @@ export interface SyncState {
   outboundSavedPointIds?: string[]
   /** Local deletions awaiting a successful saved-point tombstone. */
   outboundSavedPointDeletionIds?: string[]
+  /** Content hashes whose local metadata needs a background activity upload. */
+  outboundActivityUpdateHashes?: string[]
 }
 
 export async function saveSyncState(state: SyncState): Promise<void> {

@@ -16,7 +16,7 @@ import {
 import type { ActivitySummary } from "~/types/activitySummary"
 import { parseActivitySettingsUpdate } from "~/lib/activitySettings"
 import { canSync, initAuth } from "~/lib/server/authStore"
-import { pushActivityUpdate } from "~/lib/server/syncEngine"
+import { queueActivityMetadataUpdates } from "~/lib/server/syncEngine"
 import type { Route } from "./+types/activities"
 import { markPerformance, measurePerformance } from "~/lib/performance"
 import { ensureUniqueDistancesCurrent } from "~/lib/uniqueDistanceRepair"
@@ -130,10 +130,11 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
     }
   }
 
-  if (mapStore.activities.length > 0) {
-    const fullById = new Map(
-      mapStore.activities.map((activity) => [activity.id, activity])
-    )
+  const fullById =
+    mapStore.activities.length > 0
+      ? new Map(mapStore.activities.map((activity) => [activity.id, activity]))
+      : null
+  if (fullById) {
     for (const summary of changedSummaries) {
       const activity = fullById.get(summary.id)
       if (!activity) continue
@@ -144,17 +145,9 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
     updateActivitySummaries(changedSummaries)
   }
 
-  if (mapStore.activityHydration === "full") {
-    const fullById = new Map(
-      mapStore.activities.map((activity) => [activity.id, activity])
-    )
-    await Promise.all(
-      changedSummaries.flatMap((summary) => {
-        const activity = fullById.get(summary.id)
-        return activity ? [pushActivityUpdate(activity)] : []
-      })
-    )
-  }
+  await queueActivityMetadataUpdates(
+    changedSummaries.map((summary) => fullById?.get(summary.id) ?? summary)
+  )
 
   return {
     ok: true as const,

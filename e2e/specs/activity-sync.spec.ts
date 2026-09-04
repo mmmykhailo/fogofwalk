@@ -1,5 +1,46 @@
-import { test, expect } from "../fixtures/app"
+import { readSessionToken, test, expect } from "../fixtures/app"
 import { makeGpxSet } from "../fixtures/gpx"
+import { API_URL } from "../fixtures/ports"
+
+async function queuedActivityUpdates(page: import("@playwright/test").Page) {
+  return page.evaluate(async () => {
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open("fogofwalk")
+      request.onsuccess = () => resolve(request.result)
+      request.onerror = () => reject(request.error)
+    })
+    const queued = await new Promise<string[]>((resolve) => {
+      const transaction = db.transaction("prefs", "readonly")
+      const request = transaction.objectStore("prefs").get("syncState")
+      request.onsuccess = () =>
+        resolve(request.result?.value?.outboundActivityUpdateHashes ?? [])
+      request.onerror = () => resolve([])
+    })
+    db.close()
+    return queued
+  })
+}
+
+async function activityContentHash(
+  page: import("@playwright/test").Page,
+  id: string
+): Promise<string> {
+  return page.evaluate(async (activityId) => {
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open("fogofwalk")
+      request.onsuccess = () => resolve(request.result)
+      request.onerror = () => reject(request.error)
+    })
+    const hash = await new Promise<string>((resolve, reject) => {
+      const transaction = db.transaction("activities", "readonly")
+      const request = transaction.objectStore("activities").get(activityId)
+      request.onsuccess = () => resolve(request.result?.contentHash ?? "")
+      request.onerror = () => reject(request.error)
+    })
+    db.close()
+    return hash
+  }, id)
+}
 
 test.describe("activity sync", () => {
   test("imported activities are uploaded to the server", async ({
@@ -133,5 +174,116 @@ test.describe("activity sync", () => {
 
     // Two activities, not four — the content hash is the identity, not the row.
     expect((await serverState(app.page)).activities).toHaveLength(2)
+  })
+
+  test("commits metadata offline, queues it, and syncs it to another device", async ({
+    app,
+    secondDevice,
+  }) => {
+    await app.goto()
+    await app.signIn()
+    await app.importActivities(1)
+    await app.waitForImportToSettle()
+    await app.syncNow()
+
+    const local = await app.localActivities()
+    const activity = local[0]!
+    const contentHash = await activityContentHash(app.page, activity.id)
+    await app.page.goto("/activities")
+    await expect(
+      app.page.getByRole("heading", { name: "My activities" })
+    ).toBeVisible()
+
+    let releaseUpload!: () => void
+    const uploadGate = new Promise<void>((resolve) => {
+      releaseUpload = resolve
+    })
+    let uploadStarted!: () => void
+    const uploadRequest = new Promise<void>((resolve) => {
+      uploadStarted = resolve
+    })
+    let uploadFinished!: () => void
+    const uploadCompletion = new Promise<void>((resolve) => {
+      uploadFinished = resolve
+    })
+    const holdUpload = async (route: import("@playwright/test").Route) => {
+      if (route.request().method() !== "PUT") return route.fallback()
+      uploadStarted()
+      await uploadGate
+      try {
+        await route.abort()
+      } finally {
+        uploadFinished()
+      }
+    }
+    await app.page.route(`${API_URL}/api/activities/*`, holdUpload)
+
+    const typeSelect = app.page.getByRole("combobox", {
+      name: `Activity type for ${activity.name}`,
+    })
+    await typeSelect.click()
+    await app.page.getByRole("option", { name: "Cycling", exact: true }).click()
+
+    // The route action returns while the background upload is still held.
+    await Promise.all([
+      uploadRequest,
+      expect(typeSelect).toBeEnabled({ timeout: 5_000 }),
+    ])
+    await expect
+      .poll(() => queuedActivityUpdates(app.page))
+      .toContain(contentHash)
+
+    releaseUpload()
+    await uploadCompletion
+    await app.page.unroute(`${API_URL}/api/activities/*`, holdUpload)
+    await app.page.reload()
+    await expect(
+      app.page.getByRole("heading", { name: "My activities" })
+    ).toBeVisible()
+    await expect
+      .poll(() => queuedActivityUpdates(app.page))
+      .toContain(contentHash)
+
+    // Returning to the map is an ordinary later sync trigger; it drains the
+    // queued hash through the existing upload gate.
+    await app.goto()
+    await app.syncNow()
+    await expect.poll(() => queuedActivityUpdates(app.page)).toEqual([])
+    await expect
+      .poll(async () => {
+        const response = await app.page.request.get(
+          `${API_URL}/api/activities/manifest?since=0`,
+          {
+            headers: {
+              Authorization: `Bearer ${await readSessionToken(app.page)}`,
+            },
+          }
+        )
+        if (!response.ok()) return null
+        const profile = (await response.json()) as {
+          activities: { contentHash: string; activityType?: string }[]
+        }
+        return profile.activities.find(
+          (item) => item.contentHash === contentHash
+        )
+      })
+      .toMatchObject({ activityType: "cycling" })
+
+    const deviceB = await secondDevice(app.login)
+    await deviceB.goto()
+    await deviceB.signIn()
+    await deviceB.syncNow()
+    await deviceB.page.goto("/activities")
+    const deviceBActivity = (await deviceB.localActivities()).find(
+      (item) => item.name === activity.name
+    )!
+    await expect(
+      deviceB.page.getByTestId(`activity-card-${deviceBActivity.id}`)
+    ).toBeVisible()
+    await expect(
+      deviceB.page.getByRole("combobox", {
+        name: `Activity type for ${activity.name}`,
+      })
+    ).toContainText("Cycling")
   })
 })

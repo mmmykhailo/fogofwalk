@@ -36,7 +36,12 @@ import {
   saveSavedPoint,
   saveSavedPoints,
 } from "~/lib/storage"
-import { ingestActivities, mapStore, setFullActivities } from "~/lib/mapStore"
+import {
+  hydrateFullActivities,
+  ingestActivities,
+  mapStore,
+  setFullActivities,
+} from "~/lib/mapStore"
 import { backfillContentHashes } from "~/lib/activityHash"
 import { createUuid } from "~/lib/uuid"
 import { populateUniqueDistances } from "~/lib/statsAggregator"
@@ -264,12 +269,28 @@ async function syncOnce(reason: string): Promise<void> {
     if (backfilled.length > 0) await saveActivities(backfilled)
 
     const state = await loadSyncState()
+    const dirtyActivityHashes = new Set(
+      state?.outboundActivityUpdateHashes ?? []
+    )
+    const settledActivityUpdateHashes = new Set<string>()
+    if (dirtyActivityHashes.size > 0) {
+      // A library page can enqueue a metadata edit while retaining summaries
+      // only. The existing upload endpoint needs the full activity, so hydrate
+      // it here rather than making the route action wait for geometry.
+      await hydrateFullActivities()
+    }
     const since = state?.cursor ?? 0
     const { serverActivities, deletions, cursor } = await fetchManifest(since)
 
     const localByHash = new Map<string, ParsedActivity>()
     for (const activity of mapStore.activities) {
       if (activity.contentHash) localByHash.set(activity.contentHash, activity)
+    }
+    for (const hash of dirtyActivityHashes) {
+      if (!localByHash.has(hash)) {
+        dirtyActivityHashes.delete(hash)
+        settledActivityUpdateHashes.add(hash)
+      }
     }
 
     // Accumulated across syncs — this window only describes what changed since
@@ -346,7 +367,9 @@ async function syncOnce(reason: string): Promise<void> {
         metadataDiffers(t, server) &&
         (isFromScratch || shouldBackfillSunPhase(t, server))
       return (
-        (isMissing || shouldRestoreLocalMetadata) &&
+        (dirtyActivityHashes.has(t.contentHash) ||
+          isMissing ||
+          shouldRestoreLocalMetadata) &&
         // Suppressed only while the deletion is still being applied. Once it
         // has been, a local copy means a deliberate re-import — resurrect it.
         (isFromScratch || !freshDeletedHashes.has(t.contentHash)) &&
@@ -361,6 +384,7 @@ async function syncOnce(reason: string): Promise<void> {
       if (!local) return true
       return (
         !isFromScratch &&
+        !dirtyActivityHashes.has(server.contentHash) &&
         metadataDiffers(local, server) &&
         !shouldBackfillSunPhase(local, server)
       )
@@ -375,7 +399,14 @@ async function syncOnce(reason: string): Promise<void> {
 
     const total = toUpload.length + toDownload.length + toDelete.length
     if (total === 0) {
-      await finish(cursor, serverHashes, ignoredHashes, applied)
+      await finish(
+        cursor,
+        serverHashes,
+        ignoredHashes,
+        applied,
+        dirtyActivityHashes,
+        settledActivityUpdateHashes
+      )
       return
     }
 
@@ -391,13 +422,20 @@ async function syncOnce(reason: string): Promise<void> {
         await removeLocalActivity(activity)
         deletedIds.push(activity.id)
       }
+      dirtyActivityHashes.delete(hash)
+      settledActivityUpdateHashes.add(hash)
       step()
     }
 
     const uploadFailures = await pooled(toUpload, async (activity) => {
       await uploadActivity(activity)
       // Only on success: a failed upload must be retried next run.
-      if (activity.contentHash) serverHashes.add(activity.contentHash)
+      if (activity.contentHash) {
+        serverHashes.add(activity.contentHash)
+        if (dirtyActivityHashes.delete(activity.contentHash)) {
+          settledActivityUpdateHashes.add(activity.contentHash)
+        }
+      }
       step()
     })
 
@@ -441,7 +479,14 @@ async function syncOnce(reason: string): Promise<void> {
       // Hold the cursor where it was. Advancing past an activity we failed to
       // fetch would skip it forever — the window never covers it again.
       console.warn(`[sync] ${downloadFailures} download(s) failed; cursor held`)
-      await finish(since, serverHashes, ignoredHashes, applied)
+      await finish(
+        since,
+        serverHashes,
+        ignoredHashes,
+        applied,
+        dirtyActivityHashes,
+        settledActivityUpdateHashes
+      )
       setStatus({
         phase: "error",
         message: "Some activities couldn't be downloaded",
@@ -450,7 +495,14 @@ async function syncOnce(reason: string): Promise<void> {
       return
     }
 
-    await finish(cursor, serverHashes, ignoredHashes, applied)
+    await finish(
+      cursor,
+      serverHashes,
+      ignoredHashes,
+      applied,
+      dirtyActivityHashes,
+      settledActivityUpdateHashes
+    )
     if (uploadFailures > 0) {
       setStatus({
         phase: "error",
@@ -580,7 +632,9 @@ async function finish(
   cursor: number,
   serverHashes: Set<string>,
   ignoredHashes: Set<string>,
-  applied: Map<string, number>
+  applied: Map<string, number>,
+  dirtyActivityHashes: Set<string>,
+  settledActivityUpdateHashes: Set<string>
 ): Promise<void> {
   // Saved-point synchronisation maintains an independent cursor in the same
   // preference record. Preserve it while activity sync advances its cursor.
@@ -591,12 +645,22 @@ async function finish(
   for (const [hash, deletedAt] of applied) {
     if (deletedAt >= cutoff) appliedTombstones[hash] = deletedAt
   }
+  const outboundActivityUpdateHashes = new Set(
+    existing?.outboundActivityUpdateHashes ?? []
+  )
+  for (const hash of settledActivityUpdateHashes) {
+    outboundActivityUpdateHashes.delete(hash)
+  }
+  for (const hash of dirtyActivityHashes) {
+    outboundActivityUpdateHashes.add(hash)
+  }
   await saveSyncState({
     savedPointsCursor: existing?.savedPointsCursor,
     serverSavedPointIds: existing?.serverSavedPointIds,
     appliedSavedPointTombstones: existing?.appliedSavedPointTombstones,
     outboundSavedPointIds: existing?.outboundSavedPointIds,
     outboundSavedPointDeletionIds: existing?.outboundSavedPointDeletionIds,
+    outboundActivityUpdateHashes: [...outboundActivityUpdateHashes],
     cursor,
     lastSyncAt,
     serverHashes: [...serverHashes],
@@ -837,17 +901,28 @@ export async function pushSavedPointDeletion(id: string): Promise<void> {
   }
 }
 
-/** Push a same-geometry metadata edit without waiting for manifest diffing. */
-export async function pushActivityUpdate(
-  activity: ParsedActivity
+/** Persist metadata edits and let the existing sync loop upload them later. */
+export async function queueActivityMetadataUpdates(
+  activities: readonly { contentHash?: string }[]
 ): Promise<void> {
-  if (!canSync() || !activity.contentHash) return
-  try {
-    await uploadActivity(activity)
-    requestSync("activity-update")
-  } catch (err) {
-    console.warn("[sync] failed to propagate activity update:", err)
+  const hashes = activities
+    .map((activity) => activity.contentHash)
+    .filter((hash): hash is string => Boolean(hash))
+  if (hashes.length === 0) return
+
+  const state = (await loadSyncState()) ?? {
+    cursor: 0,
+    lastSyncAt: 0,
+    serverHashes: [],
   }
+  const outbound = new Set(state.outboundActivityUpdateHashes ?? [])
+  for (const hash of hashes) outbound.add(hash)
+  await saveSyncState({
+    ...state,
+    outboundActivityUpdateHashes: [...outbound],
+  })
+  if (isRunning) isRerunQueued = true
+  requestSync("activity-settings")
 }
 
 async function downloadActivity(
@@ -907,6 +982,9 @@ async function recordAppliedTombstone(
   }
   await saveSyncState({
     ...state,
+    outboundActivityUpdateHashes: (
+      state.outboundActivityUpdateHashes ?? []
+    ).filter((hash) => hash !== contentHash),
     appliedTombstones: {
       ...(state.appliedTombstones ?? {}),
       [contentHash]: deletedAt,
@@ -939,10 +1017,23 @@ async function addIgnoredHashes(hashes: string[]): Promise<void> {
     serverHashes: [],
   }
   const ignored = new Set(state.ignoredHashes ?? [])
+  const outboundActivityUpdates = new Set(
+    state.outboundActivityUpdateHashes ?? []
+  )
   const before = ignored.size
   for (const hash of hashes) ignored.add(hash)
-  if (ignored.size === before) return
-  await saveSyncState({ ...state, ignoredHashes: [...ignored] })
+  for (const hash of hashes) outboundActivityUpdates.delete(hash)
+  if (
+    ignored.size === before &&
+    outboundActivityUpdates.size ===
+      (state.outboundActivityUpdateHashes ?? []).length
+  )
+    return
+  await saveSyncState({
+    ...state,
+    ignoredHashes: [...ignored],
+    outboundActivityUpdateHashes: [...outboundActivityUpdates],
+  })
 }
 
 /**
