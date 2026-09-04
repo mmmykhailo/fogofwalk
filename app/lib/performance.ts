@@ -28,6 +28,7 @@ export function measurePerformance(
   const currentPerformance = getPerformance()
   if (!currentPerformance) return
   try {
+    currentPerformance.clearMeasures(name)
     currentPerformance.measure(name, startMark, endMark)
   } catch {
     // A missing mark should never affect the route itself.
@@ -49,6 +50,18 @@ export function performanceNow(): number | null {
   return getPerformance()?.now() ?? null
 }
 
+/** Reset the diagnostic buffer between benchmark samples. */
+export function clearPerformanceMeasurements(): void {
+  const currentPerformance = getPerformance()
+  if (!currentPerformance) return
+  try {
+    currentPerformance.clearMarks()
+    currentPerformance.clearMeasures()
+  } catch {
+    // A diagnostic API failure must never affect the route itself.
+  }
+}
+
 /** Record an already-computed duration without putting timing calls in render. */
 export function measurePerformanceDuration(
   name: string,
@@ -57,6 +70,7 @@ export function measurePerformanceDuration(
   const currentPerformance = getPerformance()
   if (!currentPerformance || !Number.isFinite(durationMs)) return
   try {
+    currentPerformance.clearMeasures(name)
     const end = currentPerformance.now()
     currentPerformance.measure(name, {
       start: Math.max(0, end - Math.max(0, durationMs)),

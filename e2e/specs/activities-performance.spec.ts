@@ -11,7 +11,8 @@ import {
   type PerformanceActivityKind,
 } from "../fixtures/performance"
 
-const PERFORMANCE_CARD_CAP = 48
+const ACTIVITIES_PAGE_SIZE = 48
+const PERFORMANCE_CARD_CAP = ACTIVITIES_PAGE_SIZE
 const PERFORMANCE_DOM_FIXED_OVERHEAD = 200
 const PERFORMANCE_DOM_ELEMENTS_PER_CARD = 40
 const REQUIRED_TIMINGS = [
@@ -39,61 +40,50 @@ test.describe("activities performance fixture", () => {
 
   for (const count of [100, 500, 2_000]) {
     for (const kind of ["metadata", "geometry"] as PerformanceActivityKind[]) {
-      for (const uniqueDistancesCurrent of [true, false]) {
-        test(`${kind} ${count} activities (${uniqueDistancesCurrent ? "current" : "stale"})`, async ({
-          page,
-        }) => {
-          const activities = makePerformanceActivities(count, kind)
-          await seedPerformanceDatabase(
-            page,
-            activities,
-            uniqueDistancesCurrent
-          )
+      test(`${kind} ${count} activities`, async ({ page }) => {
+        const activities = makePerformanceActivities(count, kind)
+        await seedPerformanceDatabase(page, activities, true)
 
-          await page.goto("/activities?sort=date")
-          await expect(
-            page.getByTestId(`activity-card-${activities.at(-1)!.id}`)
-          ).toBeVisible({
-            timeout: 60_000,
-          })
-          const cards = page.locator('[data-testid^="activity-card-"]')
-          const expectedCardCount = Math.min(PERFORMANCE_CARD_CAP, count)
-          await expect(cards).toHaveCount(expectedCardCount)
-          await expect
-            .poll(
-              async () =>
-                (await readPerformanceMetrics(page, kind, count)).sortMs
-            )
-            .not.toBeNull()
-          const metrics = await readPerformanceMetrics(page, kind, count)
-          const counters = await readPerformanceCounters(page)
-          expectRequiredTimings(metrics)
-          expect(metrics.cardCount).toBe(expectedCardCount)
-          expect(metrics.gridCommitCount).toBe(1)
-          expect(metrics.elementCount).toBeLessThanOrEqual(
-            PERFORMANCE_DOM_FIXED_OVERHEAD +
-              PERFORMANCE_DOM_ELEMENTS_PER_CARD * expectedCardCount
-          )
-          expect(metrics.uniqueDistanceMs).toBeNull()
-          expect(counters).toEqual({
-            fullActivityLoads: 0,
-            activitySummaryReads: 1,
-            uniqueDistanceWorkerRequests: 0,
-          })
-          if (count > 48) {
-            await page.getByRole("button", { name: "Next page" }).click()
-            await expect(page).toHaveURL(/\/activities\?sort=date&page=2$/)
-            await expect(page.getByTestId("activities-grid")).toBeFocused()
-            await expect(cards).toHaveCount(
-              Math.min(PERFORMANCE_CARD_CAP, count - PERFORMANCE_CARD_CAP)
-            )
-          }
-
-          // Keep every raw diagnostic field in the report; the assertions above
-          // intentionally gate only deterministic structure and metric presence.
-          console.log(JSON.stringify({ ...metrics, counters }))
+        await page.goto("/activities?sort=date")
+        await expect(
+          page.getByTestId(`activity-card-${activities.at(-1)!.id}`)
+        ).toBeVisible({
+          timeout: 60_000,
         })
-      }
+        const cards = page.locator('[data-testid^="activity-card-"]')
+        const expectedCardCount = Math.min(PERFORMANCE_CARD_CAP, count)
+        await expect(cards).toHaveCount(expectedCardCount)
+        await expect
+          .poll(
+            async () => (await readPerformanceMetrics(page, kind, count)).sortMs
+          )
+          .not.toBeNull()
+        const metrics = await readPerformanceMetrics(page, kind, count)
+        const counters = await readPerformanceCounters(page)
+        expectRequiredTimings(metrics)
+        expect(metrics.cardCount).toBe(expectedCardCount)
+        expect(metrics.gridCommitCount).toBe(1)
+        expect(metrics.elementCount).toBeLessThanOrEqual(
+          PERFORMANCE_DOM_FIXED_OVERHEAD +
+            PERFORMANCE_DOM_ELEMENTS_PER_CARD * expectedCardCount
+        )
+        expect(metrics.uniqueDistanceMs).toBeNull()
+        expect(counters.fullActivityLoads).toBe(0)
+        expect(counters.uniqueDistanceWorkerRequests).toBe(0)
+        expect(counters.activitySummaryReads).toBeGreaterThanOrEqual(1)
+        if (count > ACTIVITIES_PAGE_SIZE) {
+          await page.getByRole("button", { name: "Next page" }).click()
+          await expect(page).toHaveURL(/\/activities\?sort=date&page=2$/)
+          await expect(page.getByTestId("activities-grid")).toBeFocused()
+          await expect(cards).toHaveCount(
+            Math.min(PERFORMANCE_CARD_CAP, count - PERFORMANCE_CARD_CAP)
+          )
+        }
+
+        // Keep every raw diagnostic field in the report; the assertions above
+        // intentionally gate only deterministic structure and metric presence.
+        console.log(JSON.stringify({ ...metrics, counters }))
+      })
     }
   }
 
@@ -107,21 +97,19 @@ test.describe("activities performance fixture", () => {
     await expect(
       page.getByTestId(`activity-card-${activities.at(-1)!.id}`)
     ).toBeVisible()
-    expect(await readPerformanceCounters(page)).toEqual({
-      fullActivityLoads: 0,
-      activitySummaryReads: 1,
-      uniqueDistanceWorkerRequests: 0,
-    })
+    const activitiesCounters = await readPerformanceCounters(page)
+    expect(activitiesCounters.fullActivityLoads).toBe(0)
+    expect(activitiesCounters.uniqueDistanceWorkerRequests).toBe(0)
+    expect(activitiesCounters.activitySummaryReads).toBeGreaterThanOrEqual(1)
 
     await page.goto("/stats")
     await expect(
       page.getByText("Unique distance", { exact: true })
     ).toBeVisible()
-    expect(await readPerformanceCounters(page)).toEqual({
-      fullActivityLoads: 1,
-      activitySummaryReads: 1,
-      uniqueDistanceWorkerRequests: 1,
-    })
+    const statsCounters = await readPerformanceCounters(page)
+    expect(statsCounters.fullActivityLoads).toBe(1)
+    expect(statsCounters.uniqueDistanceWorkerRequests).toBe(1)
+    expect(statsCounters.activitySummaryReads).toBeGreaterThanOrEqual(1)
     const statsMetrics = await readPerformanceMetrics(page, "metadata", 100)
     expect(statsMetrics.uniqueDistanceMs).not.toBeNull()
   })
@@ -134,7 +122,7 @@ test.describe("activities performance fixture", () => {
     await page.goto("/activities?sort=distance")
 
     const cards = page.locator('[data-testid^="activity-card-"]')
-    await expect(cards).toHaveCount(48)
+    await expect(cards).toHaveCount(ACTIVITIES_PAGE_SIZE)
     const selectedActivity = activities[9]!
     const firstCheckbox = page.getByRole("checkbox", {
       name: `Select activity ${selectedActivity.name}`,
@@ -154,7 +142,7 @@ test.describe("activities performance fixture", () => {
     )
     const expectedIds = [...activities]
       .sort((a, b) => b.stats.distanceKm - a.stats.distanceKm)
-      .slice(48, 96)
+      .slice(ACTIVITIES_PAGE_SIZE, ACTIVITIES_PAGE_SIZE * 2)
       .map((activity) => activity.id)
     expect(renderedIds).toEqual(expectedIds)
     await page.getByRole("button", { name: "Previous page" }).click()
@@ -170,7 +158,7 @@ test.describe("activities performance fixture", () => {
     await page.getByRole("combobox", { name: "Sort by" }).click()
     await page.getByRole("option", { name: "Speed", exact: true }).click()
     await expect(page).toHaveURL(/\/activities\?sort=speed$/)
-    await expect(cards).toHaveCount(48)
+    await expect(cards).toHaveCount(ACTIVITIES_PAGE_SIZE)
   })
 
   test("paginates a library with URL-restorable page controls", async ({

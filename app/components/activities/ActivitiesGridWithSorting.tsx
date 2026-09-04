@@ -50,25 +50,23 @@ export function ActivitiesGridWithSorting({
   const auth = useAuth()
 
   const sortOption = getCanonicalActivitiesQuery(searchParams).sortOption
-  const sortedActivitiesResult = useMemo(() => {
-    const startedAt = performanceNow()
-    const sorted = sortActivitiesBy(activities, sortOption)
-    const finishedAt = performanceNow()
-    return {
-      activities: sorted,
-      durationMs:
-        startedAt != null && finishedAt != null
-          ? Math.max(0, finishedAt - startedAt)
-          : null,
-    }
-  }, [activities, sortOption])
-  const sortedActivities = sortedActivitiesResult.activities
+  const sortedActivities = useMemo(
+    () => sortActivitiesBy(activities, sortOption),
+    [activities, sortOption]
+  )
 
   useEffect(() => {
-    const { durationMs } = sortedActivitiesResult
-    if (durationMs == null) return
-    measurePerformanceDuration("activities:sort", durationMs)
-  }, [sortedActivitiesResult])
+    const startedAt = performanceNow()
+    if (startedAt == null) return
+    sortActivitiesBy(activities, sortOption)
+    const finishedAt = performanceNow()
+    if (finishedAt != null) {
+      measurePerformanceDuration(
+        "activities:sort",
+        Math.max(0, finishedAt - startedAt)
+      )
+    }
+  }, [activities, sortOption])
   const totalPages = getActivitiesTotalPages(sortedActivities.length)
   const canonicalQuery = getCanonicalActivitiesQuery(searchParams, totalPages)
   const currentPage = canonicalQuery.page

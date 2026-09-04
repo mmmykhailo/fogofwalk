@@ -360,9 +360,11 @@ async function loadFullActivities(): Promise<ParsedActivity[]> {
 }
 
 /** Load activities without touching the derived summary store. */
-async function loadActivitiesForSummaryRecovery(): Promise<ParsedActivity[]> {
+async function loadActivitiesForSummaryRecovery(): Promise<
+  ParsedActivity[] | null
+> {
   const db = await getDb()
-  if (!db) return []
+  if (!db) return null
   try {
     const tx = db.transaction("activities", "readonly")
     const activities = await promisifyRequest<StoredActivity[]>(
@@ -403,7 +405,7 @@ async function loadActivitiesForSummaryRecovery(): Promise<ParsedActivity[]> {
     return activities as ParsedActivity[]
   } catch (err) {
     console.warn("[storage] summary recovery activity load failed:", err)
-    return []
+    return null
   }
 }
 
@@ -444,6 +446,7 @@ async function loadStoredActivitySummaries(): Promise<ActivitySummary[]> {
   // an empty page. This fallback is intentionally full-sized and is only used
   // while recovering the summary store.
   const fullActivities = await loadActivitiesForSummaryRecovery()
+  if (fullActivities == null) return activitySummariesFallback ?? []
   const summaries = sortActivitySummaries(fullActivities.map(activityToSummary))
   const persisted = await replaceActivitySummaries(summaries)
   activitySummariesFallback = persisted ? null : summaries
@@ -501,8 +504,7 @@ export async function updateActivityMetadata(
         if (update.startedAtMs !== undefined)
           summary.startedAtMs = update.startedAtMs
         if (update.isPublic !== undefined) summary.isPublic = update.isPublic
-        if ("activityType" in update)
-          summary.activityType = update.activityType
+        if ("activityType" in update) summary.activityType = update.activityType
         if ("startSunPhase" in update)
           summary.startSunPhase = update.startSunPhase
         store.put(summary)

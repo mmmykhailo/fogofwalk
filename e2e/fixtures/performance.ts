@@ -229,6 +229,10 @@ export async function seedPerformanceDatabase(
     },
     { activities, uniqueDistancesCurrent }
   )
+  await page.evaluate(() => {
+    performance.clearMarks()
+    performance.clearMeasures()
+  })
 }
 
 /** Seed the pre-summary schema so the production upgrade path is exercised. */
@@ -271,6 +275,10 @@ export async function seedLegacyV3Database(
     })
     db.close()
   }, activity)
+  await page.evaluate(() => {
+    performance.clearMarks()
+    performance.clearMeasures()
+  })
 }
 
 /** Replace the summary store with a malformed record for recovery coverage. */
@@ -351,7 +359,8 @@ export async function readPerformanceMetrics(
         "activities:grid:commit",
         "mark"
       )
-      const navigation = performance.getEntriesByType("navigation")[0]
+      const navigationEntries = performance.getEntriesByType("navigation")
+      const navigation = navigationEntries[navigationEntries.length - 1]
       const memory = (
         performance as Performance & {
           memory?: { usedJSHeapSize: number }
