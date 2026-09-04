@@ -104,7 +104,7 @@ export const shouldRevalidate: ShouldRevalidateFunction = ({
   defaultShouldRevalidate,
 }) => {
   if (
-    formMethod == null &&
+    (formMethod == null || formMethod === "GET") &&
     isActivitiesSortOnlyNavigation(currentUrl, nextUrl)
   ) {
     return false

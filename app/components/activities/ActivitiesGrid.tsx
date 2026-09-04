@@ -1,14 +1,18 @@
-import { ActivityCard } from "~/components/public-profile/ActivityCard"
-import { ActivitySettingsControls } from "~/components/activities/ActivitySettingsControls"
-import { Checkbox } from "~/components/ui/checkbox"
+import { useEffect, useState } from "react"
+import { Button } from "~/components/ui/button"
+import { LocalActivityCard } from "~/components/activities/LocalActivityCard"
 import { Grid } from "~/components/Grid"
 import type { ParsedActivity } from "~/types/activities"
+
+export const ACTIVITIES_PAGE_SIZE = 48
 
 interface ActivitiesGridProps {
   activities: ParsedActivity[]
   selectedActivityIds: ReadonlySet<string>
   onSelectionChange: (activityId: string, isSelected: boolean) => void
   showActivitySettings: boolean
+  canEditPublicity: boolean
+  publicityDisabledDescription: string
 }
 
 export function ActivitiesGrid({
@@ -16,46 +20,55 @@ export function ActivitiesGrid({
   selectedActivityIds,
   onSelectionChange,
   showActivitySettings,
+  canEditPublicity,
+  publicityDisabledDescription,
 }: ActivitiesGridProps) {
+  const [visibleCount, setVisibleCount] = useState(ACTIVITIES_PAGE_SIZE)
+  useEffect(() => {
+    setVisibleCount(ACTIVITIES_PAGE_SIZE)
+  }, [activities])
+
+  const visibleActivities = activities.slice(0, visibleCount)
+  const remainingCount = activities.length - visibleActivities.length
+
   return (
-    <Grid>
-      {activities.map((activity) => {
-        const isSelected = selectedActivityIds.has(activity.id)
-        return (
-          <ActivityCard
+    <>
+      <Grid data-testid="activities-grid">
+        {visibleActivities.map((activity) => (
+          <LocalActivityCard
             key={activity.id}
-            activityId={activity.id}
-            activity={{
-              name: activity.name,
-              startedAtMs: activity.startedAtMs,
-              distanceKm: activity.stats.distanceKm,
-              durationMs: activity.stats.durationMs,
-              elevationGainM: activity.stats.elevationGainM,
-              avgMovingSpeedKmh: activity.stats.avgMovingSpeedKmh,
-            }}
-            activityHref={`/map?activity=${activity.id}`}
-            selectionControl={
-              <span
-                className="mt-0.5 flex size-7 shrink-0 items-center justify-center"
-                onClick={(event) => event.stopPropagation()}
-              >
-                <Checkbox
-                  checked={isSelected}
-                  onCheckedChange={(checked) =>
-                    onSelectionChange(activity.id, checked)
-                  }
-                  aria-label={`Select activity ${activity.name}`}
-                />
-              </span>
-            }
-            settingsControls={
-              showActivitySettings ? (
-                <ActivitySettingsControls activity={activity} />
-              ) : undefined
-            }
+            activity={activity}
+            isSelected={selectedActivityIds.has(activity.id)}
+            showActivitySettings={showActivitySettings}
+            canEditPublicity={canEditPublicity}
+            publicityDisabledDescription={publicityDisabledDescription}
+            onSelectionChange={onSelectionChange}
           />
-        )
-      })}
-    </Grid>
+        ))}
+      </Grid>
+      <div
+        className="mt-4 flex flex-wrap items-center justify-center gap-3 text-xs text-muted-foreground"
+        aria-live="polite"
+      >
+        <span>
+          Showing {visibleActivities.length} of {activities.length} activities.
+          {remainingCount > 0 ? ` ${remainingCount} remaining.` : ""}
+        </span>
+        {remainingCount > 0 && (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() =>
+              setVisibleCount((count) =>
+                Math.min(count + ACTIVITIES_PAGE_SIZE, activities.length)
+              )
+            }
+          >
+            Load more activities
+          </Button>
+        )}
+      </div>
+    </>
   )
 }

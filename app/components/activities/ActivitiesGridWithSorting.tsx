@@ -74,6 +74,11 @@ export function ActivitiesGridWithSorting({
     auth.status === "signedIn" &&
     auth.canSync &&
     selectedActivities.every((activity) => Boolean(activity.contentHash))
+  const canEditActivityPublicity = auth.status === "signedIn" && auth.canSync
+  const rowPublicityDisabledDescription =
+    auth.status === "signedIn" && !auth.canSync
+      ? "Publicity editing requires sync access."
+      : "Publicity editing requires a synced activity and sync access."
 
   useEffect(() => {
     const activityIds = new Set(activities.map((activity) => activity.id))
@@ -158,7 +163,7 @@ export function ActivitiesGridWithSorting({
   )
 
   const isSubmitting = isAwaitingResult || fetcher.state !== "idle"
-  const publicityDisabledDescription =
+  const selectedPublicityDisabledDescription =
     auth.status === "signedIn" && !auth.canSync
       ? "Publicity editing requires sync access."
       : "Every selected activity must be synced before publicity can change."
@@ -175,7 +180,7 @@ export function ActivitiesGridWithSorting({
         publicity={publicity}
         activityType={activityType}
         canEditPublicity={canEditPublicity}
-        publicityDisabledDescription={publicityDisabledDescription}
+        publicityDisabledDescription={selectedPublicityDisabledDescription}
         isSubmitting={isSubmitting}
         sortOption={sortOption}
         onSortChange={handleSortChange}
@@ -196,6 +201,8 @@ export function ActivitiesGridWithSorting({
         selectedActivityIds={selectedActivityIds}
         onSelectionChange={handleSelectionChange}
         showActivitySettings={!hasSelection}
+        canEditPublicity={canEditActivityPublicity}
+        publicityDisabledDescription={rowPublicityDisabledDescription}
       />
       <ConfirmBulkActivityUpdateDialog
         open={pendingProposal != null}

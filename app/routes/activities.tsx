@@ -5,10 +5,7 @@ import { ActivitiesGridWithSorting } from "~/components/activities/ActivitiesGri
 import { PageShell } from "~/components/PageShell"
 import { mapStore } from "~/lib/mapStore"
 import { loadActivities, saveActivities } from "~/lib/storage"
-import {
-  sortActivities,
-  sortActivitiesNewestFirst,
-} from "~/lib/statsAggregator"
+import { sortActivities } from "~/lib/statsAggregator"
 import { parseActivitySettingsUpdate } from "~/lib/activitySettings"
 import { canSync, initAuth } from "~/lib/server/authStore"
 import { pushActivityUpdate } from "~/lib/server/syncEngine"
@@ -39,7 +36,7 @@ export async function clientLoader(): Promise<ParsedActivity[]> {
     "activities:loader:start",
     "activities:loader:end"
   )
-  return sortActivitiesNewestFirst(mapStore.activities)
+  return mapStore.activities
 }
 
 export const shouldRevalidate: ShouldRevalidateFunction = ({
@@ -49,7 +46,7 @@ export const shouldRevalidate: ShouldRevalidateFunction = ({
   defaultShouldRevalidate,
 }) => {
   if (
-    formMethod == null &&
+    (formMethod == null || formMethod === "GET") &&
     isActivitiesSortOnlyNavigation(currentUrl, nextUrl)
   ) {
     return false

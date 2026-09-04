@@ -1,19 +1,23 @@
 import { useFetcher } from "react-router"
 import { VisibilitySelect } from "~/components/activity-stats/VisibilitySelect"
 import type { clientAction } from "~/routes/activities"
-import { canSync, useAuth } from "~/lib/server/authStore"
+import { canSync, getAuthState } from "~/lib/server/authStore"
 import type { ParsedActivity } from "~/types/activities"
 
 interface ActivityVisibilitySelectProps {
   activity: ParsedActivity
+  canEditPublicity?: boolean
+  publicityDisabledDescription?: string
 }
 
 export function ActivityVisibilitySelect({
   activity,
+  canEditPublicity,
+  publicityDisabledDescription,
 }: ActivityVisibilitySelectProps) {
   const fetcher = useFetcher<typeof clientAction>()
-  const auth = useAuth()
-  const isAvailable = canSync() && Boolean(activity.contentHash)
+  const isAvailable =
+    (canEditPublicity ?? canSync()) && Boolean(activity.contentHash)
   const pendingValue = fetcher.formData?.get("value")
   const isPublic =
     pendingValue === "true" || pendingValue === "false"
@@ -31,9 +35,10 @@ export function ActivityVisibilitySelect({
   }
 
   const unavailableDescription =
-    auth.status === "signedIn" && !auth.canSync
+    publicityDisabledDescription ??
+    (getAuthState().status === "signedIn" && !canSync()
       ? "Publicity editing requires sync access."
-      : "Publicity editing requires a synced activity and sync access."
+      : "Publicity editing requires a synced activity and sync access.")
 
   return (
     <VisibilitySelect
