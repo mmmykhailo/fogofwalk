@@ -39,7 +39,7 @@ export function ActivityTypeSelect({
       <SelectTrigger
         size="sm"
         aria-label={ariaLabel}
-        className={cn("w-32 bg-muted", className)}
+        className={cn("bg-muted", className)}
       >
         <SelectValue>
           {mixed
