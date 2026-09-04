@@ -25,7 +25,7 @@ interface PrefEntry {
   value: unknown
 }
 
-interface UniqueDistanceState {
+export interface UniqueDistanceState {
   version: number
   activityIds: string[]
 }
@@ -192,9 +192,9 @@ export function areUniqueDistancesCurrent(
 export async function saveUniqueDistances(
   activities: ParsedActivity[],
   deletedActivityId?: string
-): Promise<void> {
+): Promise<boolean> {
   const db = await getDb()
-  if (!db) return
+  if (!db) return true
   try {
     const tx = db.transaction(["activities", "prefs"], "readwrite")
     const activityStore = tx.objectStore("activities")
@@ -211,8 +211,10 @@ export async function saveUniqueDistances(
       tx.oncomplete = () => resolve()
       tx.onerror = () => reject(tx.error)
     })
+    return true
   } catch (err) {
     console.warn("[storage] saveUniqueDistances failed:", err)
+    return false
   }
 }
 

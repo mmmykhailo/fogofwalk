@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { mapStore } from "~/lib/mapStore"
-import { clientAction } from "~/routes/activities"
+import { clientAction, shouldRevalidate } from "~/routes/activities"
 import type { ParsedActivity } from "~/types/activities"
 
 function activity(
@@ -140,5 +140,43 @@ describe("activities settings action", () => {
     })
     expect(first.isPublic).toBe(false)
     expect(second.isPublic).toBe(true)
+  })
+})
+
+describe("activities route revalidation", () => {
+  const revalidate = (current: string, next: string, extra = {}) =>
+    shouldRevalidate({
+      currentUrl: new URL(`http://localhost${current}`),
+      currentParams: {},
+      nextUrl: new URL(`http://localhost${next}`),
+      nextParams: {},
+      defaultShouldRevalidate: true,
+      ...extra,
+    })
+
+  test("skips loader work for supported sort-only navigation", () => {
+    expect(revalidate("/activities", "/activities?sort=distance")).toBe(false)
+    expect(
+      revalidate("/activities?sort=distance", "/activities?sort=speed")
+    ).toBe(false)
+  })
+
+  test("keeps default revalidation for actions and unrelated changes", () => {
+    expect(
+      revalidate("/activities?sort=date", "/activities?sort=distance", {
+        formMethod: "POST",
+      })
+    ).toBe(true)
+    expect(revalidate("/activities", "/activities?filter=walking")).toBe(true)
+    expect(revalidate("/map", "/activities?sort=distance")).toBe(true)
+    expect(
+      shouldRevalidate({
+        currentUrl: new URL("http://localhost/activities"),
+        currentParams: {},
+        nextUrl: new URL("http://localhost/activities?sort=distance"),
+        nextParams: {},
+        defaultShouldRevalidate: false,
+      })
+    ).toBe(false)
   })
 })

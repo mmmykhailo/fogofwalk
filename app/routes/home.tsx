@@ -7,6 +7,7 @@ import {
   useRevalidator,
   useSearchParams,
 } from "react-router"
+import type { ShouldRevalidateFunction } from "react-router"
 import { featureCollection, lineString } from "@turf/helpers"
 import bbox from "@turf/bbox"
 import type { Route } from "./+types/home"
@@ -45,8 +46,6 @@ import { buildLapActivity, lapSubtitle } from "~/lib/laps"
 import { processPhotoFiles } from "~/lib/photos"
 import {
   loadActivities,
-  loadUniqueDistanceState,
-  areUniqueDistancesCurrent,
   saveUniqueDistances,
   saveActivities,
   savePhotos,
@@ -75,11 +74,12 @@ import {
   pushSavedPointDeletion,
   pushSavedPointUpdate,
 } from "~/lib/server/syncEngine"
-import { sortActivities, populateUniqueDistances } from "~/lib/statsAggregator"
+import { populateUniqueDistances, sortActivities } from "~/lib/statsAggregator"
 import { useMyLocation } from "~/lib/useMyLocation"
 import { useActivityVisibility } from "~/lib/useActivityVisibility"
 import { socialMeta } from "~/lib/socialMeta"
 import { markPerformance, measurePerformance } from "~/lib/performance"
+import { isActivitiesSortOnlyNavigation } from "~/lib/activitiesRoute"
 import type { FogMode, MapMode, ParsedActivity } from "~/types/activities"
 import type { PhotoEntry, PhotoGroup } from "~/types/photos"
 import {
@@ -95,6 +95,21 @@ export function meta({}: Route.MetaArgs) {
       "Import your GPX and FIT activity files. Watch the fog of war lift over every trail you've run, every road you've cycled, every path you've ever walked.",
     path: "/map",
   })
+}
+
+export const shouldRevalidate: ShouldRevalidateFunction = ({
+  currentUrl,
+  nextUrl,
+  formMethod,
+  defaultShouldRevalidate,
+}) => {
+  if (
+    formMethod == null &&
+    isActivitiesSortOnlyNavigation(currentUrl, nextUrl)
+  ) {
+    return false
+  }
+  return defaultShouldRevalidate
 }
 
 async function loadPublicSavedPoint(id: string): Promise<SavedPoint | null> {
@@ -146,21 +161,14 @@ export async function clientLoader({
 
   // Restore persisted data in parallel
   markPerformance("home:idb-load:start")
-  const [
-    activities,
-    uniqueDistanceState,
-    photos,
-    savedPoints,
-    fogMode,
-    fogCache,
-  ] = await Promise.all([
-    loadActivities(),
-    loadUniqueDistanceState(),
-    loadPhotos(),
-    loadSavedPoints(),
-    loadFogMode(),
-    loadFogCache(),
-  ])
+  const [activities, photos, savedPoints, fogMode, fogCache] =
+    await Promise.all([
+      loadActivities(),
+      loadPhotos(),
+      loadSavedPoints(),
+      loadFogMode(),
+      loadFogCache(),
+    ])
   markPerformance("home:idb-load:end")
   measurePerformance(
     "home:idb-load",
@@ -180,17 +188,6 @@ export async function clientLoader({
 
   if (activities.length > 0) {
     mapStore.activities = sortActivities(activities)
-    if (!areUniqueDistancesCurrent(mapStore.activities, uniqueDistanceState)) {
-      markPerformance("home:unique-distance:start")
-      await populateUniqueDistances(mapStore.activities)
-      await saveUniqueDistances(mapStore.activities)
-      markPerformance("home:unique-distance:end")
-      measurePerformance(
-        "home:unique-distance",
-        "home:unique-distance:start",
-        "home:unique-distance:end"
-      )
-    }
     const activityIds = activities.map((t) => t.id).sort()
     if (fogCache && isFogCacheValid(fogCache, activityIds, restoredFogMode)) {
       // Cache hit: restore fog directly — setupMapLayers will use mapStore.fogData

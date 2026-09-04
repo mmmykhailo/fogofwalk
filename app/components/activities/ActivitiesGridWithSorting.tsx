@@ -56,9 +56,16 @@ export function ActivitiesGridWithSorting({
     )
     return sorted
   }, [activities, sortOption])
+  const activityById = useMemo(
+    () => new Map(activities.map((activity) => [activity.id, activity])),
+    [activities]
+  )
   const selectedActivities = useMemo(
-    () => activities.filter((activity) => selectedActivityIds.has(activity.id)),
-    [activities, selectedActivityIds]
+    () =>
+      [...selectedActivityIds]
+        .map((activityId) => activityById.get(activityId))
+        .filter((activity): activity is ParsedActivity => activity != null),
+    [activityById, selectedActivityIds]
   )
   const publicity = commonPublicity(selectedActivities)
   const activityType = commonActivityType(selectedActivities)

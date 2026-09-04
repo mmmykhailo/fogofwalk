@@ -1,17 +1,11 @@
+import { useEffect } from "react"
 import { useLoaderData } from "react-router"
 import { EmptyActivitiesState } from "~/components/activities/EmptyActivitiesState"
 import { ActivitiesGridWithSorting } from "~/components/activities/ActivitiesGridWithSorting"
 import { PageShell } from "~/components/PageShell"
 import { mapStore } from "~/lib/mapStore"
+import { loadActivities, saveActivities } from "~/lib/storage"
 import {
-  areUniqueDistancesCurrent,
-  loadActivities,
-  loadUniqueDistanceState,
-  saveActivities,
-  saveUniqueDistances,
-} from "~/lib/storage"
-import {
-  populateUniqueDistances,
   sortActivities,
   sortActivitiesNewestFirst,
 } from "~/lib/statsAggregator"
@@ -21,16 +15,16 @@ import { pushActivityUpdate } from "~/lib/server/syncEngine"
 import type { ParsedActivity } from "~/types/activities"
 import type { Route } from "./+types/activities"
 import { markPerformance, measurePerformance } from "~/lib/performance"
+import { ensureUniqueDistancesCurrent } from "~/lib/uniqueDistanceRepair"
+import type { ShouldRevalidateFunction } from "react-router"
+import { isActivitiesSortOnlyNavigation } from "~/lib/activitiesRoute"
 
 export async function clientLoader(): Promise<ParsedActivity[]> {
   markPerformance("activities:loader:start")
   void initAuth()
   if (mapStore.activities.length === 0) {
     markPerformance("activities:idb-load:start")
-    const [activities, uniqueDistanceState] = await Promise.all([
-      loadActivities(),
-      loadUniqueDistanceState(),
-    ])
+    const activities = await loadActivities()
     markPerformance("activities:idb-load:end")
     measurePerformance(
       "activities:idb-load",
@@ -38,17 +32,6 @@ export async function clientLoader(): Promise<ParsedActivity[]> {
       "activities:idb-load:end"
     )
     mapStore.activities = sortActivities(activities)
-    if (!areUniqueDistancesCurrent(mapStore.activities, uniqueDistanceState)) {
-      markPerformance("activities:unique-distance:start")
-      await populateUniqueDistances(mapStore.activities)
-      await saveUniqueDistances(mapStore.activities)
-      markPerformance("activities:unique-distance:end")
-      measurePerformance(
-        "activities:unique-distance",
-        "activities:unique-distance:start",
-        "activities:unique-distance:end"
-      )
-    }
   }
   markPerformance("activities:loader:end")
   measurePerformance(
@@ -59,6 +42,21 @@ export async function clientLoader(): Promise<ParsedActivity[]> {
   return sortActivitiesNewestFirst(mapStore.activities)
 }
 
+export const shouldRevalidate: ShouldRevalidateFunction = ({
+  currentUrl,
+  nextUrl,
+  formMethod,
+  defaultShouldRevalidate,
+}) => {
+  if (
+    formMethod == null &&
+    isActivitiesSortOnlyNavigation(currentUrl, nextUrl)
+  ) {
+    return false
+  }
+  return defaultShouldRevalidate
+}
+
 export async function clientAction({ request }: Route.ClientActionArgs) {
   const formData = await request.formData()
   if (formData.get("intent") !== "update-activity-settings") return null
@@ -66,8 +64,11 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
   const update = parseActivitySettingsUpdate(formData)
   if (!update.ok) return update
 
+  const activityById = new Map(
+    mapStore.activities.map((activity) => [activity.id, activity])
+  )
   const activities = update.activityIds.map((activityId) =>
-    mapStore.activities.find((activity) => activity.id === activityId)
+    activityById.get(activityId)
   )
   if (activities.some((activity) => activity == null)) {
     return {
@@ -118,6 +119,13 @@ export function meta({}: Route.MetaArgs) {
 
 export default function MyActivitiesPage() {
   const activities = useLoaderData<typeof clientLoader>()
+
+  useEffect(() => {
+    markPerformance("activities:unique-distance:queued")
+    void ensureUniqueDistancesCurrent(activities).catch((error) => {
+      console.warn("[activities] unique-distance repair failed:", error)
+    })
+  }, [activities])
 
   return (
     <PageShell title="My activities">
