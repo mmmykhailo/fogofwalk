@@ -154,10 +154,19 @@ describe("activities route revalidation", () => {
       ...extra,
     })
 
-  test("skips loader work for supported sort-only navigation", () => {
+  test("skips loader work for supported view-only navigation", () => {
     expect(revalidate("/activities", "/activities?sort=distance")).toBe(false)
     expect(
       revalidate("/activities?sort=distance", "/activities?sort=speed")
+    ).toBe(false)
+    expect(
+      revalidate("/activities?sort=speed", "/activities?sort=speed&page=2")
+    ).toBe(false)
+    expect(
+      revalidate(
+        "/activities?sort=speed&page=2",
+        "/activities?sort=distance&page=3"
+      )
     ).toBe(false)
   })
 

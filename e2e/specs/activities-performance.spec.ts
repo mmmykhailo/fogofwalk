@@ -216,6 +216,15 @@ test.describe("activities performance fixture", () => {
         name: `Select activity ${activities[99]!.name}`,
       })
     ).toBeChecked()
+    await page
+      .getByRole("checkbox", {
+        name: `Select activity ${activities[99]!.name}`,
+      })
+      .click()
+    await expect(page.getByText("Selected 47 activities")).toBeVisible()
+    await expect(page.getByRole("button", { name: "Select all" })).toBeEnabled()
+    await page.getByRole("button", { name: "Select all" }).click()
+    await expect(page.getByText("Selected 48 activities")).toBeVisible()
 
     await page.getByRole("button", { name: "Next page" }).click()
     await expect(cards).toHaveCount(48)
@@ -251,6 +260,11 @@ test.describe("activities performance fixture", () => {
     await expect(page).toHaveURL(/\/activities\?sort=date&page=2$/)
     await page.getByRole("button", { name: "Previous page" }).click()
     await expect(page).toHaveURL(/\/activities\?sort=date$/)
+    await expect(
+      page.getByRole("checkbox", {
+        name: `Select activity ${activities[99]!.name}`,
+      })
+    ).not.toBeChecked()
     await page.getByRole("button", { name: "Select all" }).click()
     await expect(page.getByText("Selected 48 activities")).toBeVisible()
     await page.getByRole("button", { name: "Next page" }).click()
