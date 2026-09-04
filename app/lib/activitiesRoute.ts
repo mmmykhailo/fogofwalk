@@ -144,6 +144,3 @@ export function isActivitiesViewOnlyNavigation(
     (nextSort == null || isActivitySortOption(nextSort))
   )
 }
-
-/** @deprecated Use isActivitiesViewOnlyNavigation. */
-export const isActivitiesSortOnlyNavigation = isActivitiesViewOnlyNavigation
