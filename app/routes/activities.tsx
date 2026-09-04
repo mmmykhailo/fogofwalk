@@ -21,7 +21,7 @@ import type { Route } from "./+types/activities"
 import { markPerformance, measurePerformance } from "~/lib/performance"
 import { ensureUniqueDistancesCurrent } from "~/lib/uniqueDistanceRepair"
 import type { ShouldRevalidateFunction } from "react-router"
-import { isActivitiesSortOnlyNavigation } from "~/lib/activitiesRoute"
+import { isActivitiesViewOnlyNavigation } from "~/lib/activitiesRoute"
 
 export async function clientLoader(): Promise<ActivitySummary[]> {
   markPerformance("activities:loader:start")
@@ -59,7 +59,7 @@ export const shouldRevalidate: ShouldRevalidateFunction = ({
 }) => {
   if (
     (formMethod == null || formMethod === "GET") &&
-    isActivitiesSortOnlyNavigation(currentUrl, nextUrl)
+    isActivitiesViewOnlyNavigation(currentUrl, nextUrl)
   ) {
     return false
   }

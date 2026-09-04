@@ -83,7 +83,7 @@ import { useMyLocation } from "~/lib/useMyLocation"
 import { useActivityVisibility } from "~/lib/useActivityVisibility"
 import { socialMeta } from "~/lib/socialMeta"
 import { markPerformance, measurePerformance } from "~/lib/performance"
-import { isActivitiesSortOnlyNavigation } from "~/lib/activitiesRoute"
+import { isActivitiesViewOnlyNavigation } from "~/lib/activitiesRoute"
 import type { FogMode, MapMode, ParsedActivity } from "~/types/activities"
 import type { ActivitySummary } from "~/types/activitySummary"
 import type { PhotoEntry, PhotoGroup } from "~/types/photos"
@@ -110,7 +110,7 @@ export const shouldRevalidate: ShouldRevalidateFunction = ({
 }) => {
   if (
     (formMethod == null || formMethod === "GET") &&
-    isActivitiesSortOnlyNavigation(currentUrl, nextUrl)
+    isActivitiesViewOnlyNavigation(currentUrl, nextUrl)
   ) {
     return false
   }

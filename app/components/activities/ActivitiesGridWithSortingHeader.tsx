@@ -37,8 +37,11 @@ interface ActivitiesGridWithSortingHeaderProps {
   canEditPublicity: boolean
   publicityDisabledDescription: string
   isSubmitting: boolean
+  isCurrentPageFullySelected: boolean
+  isSelectionDisabled: boolean
   sortOption: ActivitySortOption
   onSortChange: (value: string | null) => void
+  onSelectAll: () => void
   onPublicityChange: (value: boolean) => void
   onActivityTypeChange: (value: ActivityType | null) => void
   onClearSelection: () => void
@@ -52,12 +55,27 @@ export function ActivitiesGridWithSortingHeader({
   canEditPublicity,
   publicityDisabledDescription,
   isSubmitting,
+  isCurrentPageFullySelected,
+  isSelectionDisabled,
   sortOption,
   onSortChange,
+  onSelectAll,
   onPublicityChange,
   onActivityTypeChange,
   onClearSelection,
 }: ActivitiesGridWithSortingHeaderProps) {
+  const selectAllButton = (
+    <Button
+      variant="outline"
+      size="sm"
+      disabled={isCurrentPageFullySelected || isSelectionDisabled}
+      onClick={onSelectAll}
+      title="Select all activities on this page"
+    >
+      Select all
+    </Button>
+  )
+
   return (
     <div className="sticky top-0 -mx-4 mb-px flex flex-wrap items-center justify-end gap-2 bg-background px-4 py-4">
       {hasSelection ? (
@@ -66,6 +84,7 @@ export function ActivitiesGridWithSortingHeader({
             Selected {selectedActivityCount}{" "}
             {selectedActivityCount === 1 ? "activity" : "activities"}
           </span>
+          {selectAllButton}
           <VisibilitySelect
             isPublic={publicity === true}
             mixed={publicity === MIXED_PUBLICITY}
@@ -117,6 +136,7 @@ export function ActivitiesGridWithSortingHeader({
               ))}
             </SelectContent>
           </Select>
+          {selectAllButton}
         </>
       )}
     </div>
