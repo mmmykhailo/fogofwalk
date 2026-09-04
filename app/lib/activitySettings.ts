@@ -1,9 +1,46 @@
 import { isActivityType } from "~/lib/activityType"
-import type { ActivityType } from "~/types/activities"
+import type { ActivityType, ParsedActivity } from "~/types/activities"
+
+export const NO_ACTIVITY_SELECTION = "no-activity-selection" as const
+export const MIXED_PUBLICITY = "mixed-publicity" as const
+export const UNSET_ACTIVITY_TYPE = "unset-activity-type" as const
+export const MIXED_ACTIVITY_TYPE = "mixed-activity-type" as const
 
 export type ActivitySetting = "publicity" | "activityType"
 
 export type ActivitySettingValue = boolean | ActivityType
+
+export type CommonPublicity =
+  | typeof NO_ACTIVITY_SELECTION
+  | typeof MIXED_PUBLICITY
+  | boolean
+
+export type CommonActivityType =
+  | typeof NO_ACTIVITY_SELECTION
+  | typeof UNSET_ACTIVITY_TYPE
+  | typeof MIXED_ACTIVITY_TYPE
+  | ActivityType
+
+export function commonPublicity(
+  activities: readonly ParsedActivity[]
+): CommonPublicity {
+  if (activities.length === 0) return NO_ACTIVITY_SELECTION
+  const first = activities[0]!.isPublic ?? false
+  return activities.every((activity) => (activity.isPublic ?? false) === first)
+    ? first
+    : MIXED_PUBLICITY
+}
+
+export function commonActivityType(
+  activities: readonly ParsedActivity[]
+): CommonActivityType {
+  if (activities.length === 0) return NO_ACTIVITY_SELECTION
+  const first = activities[0]!.activityType
+  if (activities.every((activity) => activity.activityType === first)) {
+    return first ?? UNSET_ACTIVITY_TYPE
+  }
+  return MIXED_ACTIVITY_TYPE
+}
 
 export type ParsedActivitySettingsUpdate =
   | {

@@ -13,7 +13,7 @@ export function ActivityVisibilitySelect({
 }: ActivityVisibilitySelectProps) {
   const fetcher = useFetcher<typeof clientAction>()
   const auth = useAuth()
-  const isAvailable = canSync() && activity.contentHash != null
+  const isAvailable = canSync() && Boolean(activity.contentHash)
   const pendingValue = fetcher.formData?.get("value")
   const isPublic =
     pendingValue === "true" || pendingValue === "false"

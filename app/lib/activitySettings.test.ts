@@ -1,5 +1,42 @@
 import { describe, expect, test } from "bun:test"
-import { parseActivitySettingsUpdate } from "~/lib/activitySettings"
+import {
+  commonActivityType,
+  commonPublicity,
+  MIXED_ACTIVITY_TYPE,
+  MIXED_PUBLICITY,
+  NO_ACTIVITY_SELECTION,
+  parseActivitySettingsUpdate,
+  UNSET_ACTIVITY_TYPE,
+} from "~/lib/activitySettings"
+import type { ParsedActivity } from "~/types/activities"
+
+function activity(overrides: Partial<ParsedActivity> = {}): ParsedActivity {
+  return {
+    id: crypto.randomUUID(),
+    name: "walk.gpx",
+    startedAtMs: null,
+    coordinates: [
+      [0, 0],
+      [1, 1],
+    ],
+    format: "gpx",
+    stats: {
+      distanceKm: 1,
+      uniqueDistanceKm: 1,
+      elevationGainM: 0,
+      elevationLossM: 0,
+      hasElevation: false,
+      durationMs: null,
+      movingTimeMs: null,
+      avgPaceMinPerKm: null,
+      avgMovingPaceMinPerKm: null,
+      avgSpeedKmh: null,
+      avgMovingSpeedKmh: null,
+      elevationProfile: [],
+    },
+    ...overrides,
+  }
+}
 
 function formData(entries: [string, string][]): FormData {
   const form = new FormData()
@@ -83,5 +120,51 @@ describe("parseActivitySettingsUpdate", () => {
         ])
       )
     ).toEqual({ ok: false, error: "Choose a valid activity setting." })
+  })
+})
+
+describe("common activity settings", () => {
+  test("uses explicit no-selection sentinels", () => {
+    expect(commonPublicity([])).toBe(NO_ACTIVITY_SELECTION)
+    expect(commonActivityType([])).toBe(NO_ACTIVITY_SELECTION)
+  })
+
+  test("returns one activity's values", () => {
+    const selected = [activity({ isPublic: true, activityType: "walking" })]
+    expect(commonPublicity(selected)).toBe(true)
+    expect(commonActivityType(selected)).toBe("walking")
+  })
+
+  test("returns common values when selected activities agree", () => {
+    const selected = [
+      activity({ isPublic: false, activityType: "cycling" }),
+      activity({ isPublic: false, activityType: "cycling" }),
+    ]
+    expect(commonPublicity(selected)).toBe(false)
+    expect(commonActivityType(selected)).toBe("cycling")
+  })
+
+  test("marks mixed publicity", () => {
+    expect(
+      commonPublicity([
+        activity({ isPublic: false }),
+        activity({ isPublic: true }),
+      ])
+    ).toBe(MIXED_PUBLICITY)
+  })
+
+  test("distinguishes unset, equal, and mixed activity types", () => {
+    expect(commonActivityType([activity(), activity()])).toBe(
+      UNSET_ACTIVITY_TYPE
+    )
+    expect(
+      commonActivityType([
+        activity({ activityType: "walking" }),
+        activity({ activityType: "running" }),
+      ])
+    ).toBe(MIXED_ACTIVITY_TYPE)
+    expect(
+      commonActivityType([activity(), activity({ activityType: "walking" })])
+    ).toBe(MIXED_ACTIVITY_TYPE)
   })
 })
