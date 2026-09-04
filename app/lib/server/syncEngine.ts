@@ -905,7 +905,7 @@ function chunk<T>(items: T[], size: number): T[][] {
 }
 
 export class ActivityUploadTooLargeError extends Error {
-  readonly contentHash: string | undefined
+  readonly contentHash: string
   readonly activityName: string
   readonly actualBytes: number
   readonly maxBytes: number
@@ -915,7 +915,7 @@ export class ActivityUploadTooLargeError extends Error {
       `Activity “${activity.name}” is too large to upload (${actualBytes} bytes; limit ${MAX_ACTIVITY_BYTES}).`
     )
     this.name = "ActivityUploadTooLargeError"
-    this.contentHash = activity.contentHash
+    this.contentHash = activity.contentHash ?? ""
     this.activityName = activity.name
     this.actualBytes = actualBytes
     this.maxBytes = MAX_ACTIVITY_BYTES
@@ -1081,6 +1081,8 @@ export async function queueActivityMetadataUpdates(
     lastSyncAt: 0,
     serverHashes: [],
   }
+  const { outboundActivityUpdateHashes: _legacy, ...stateWithoutLegacy } =
+    state
   const outbox = new Map(Object.entries(state.outboundActivityMetadata ?? {}))
   for (const update of updates) {
     const { contentHash, ...patch } = update
@@ -1091,9 +1093,8 @@ export async function queueActivityMetadataUpdates(
     })
   }
   await saveSyncState({
-    ...state,
+    ...stateWithoutLegacy,
     outboundActivityMetadata: Object.fromEntries(outbox),
-    outboundActivityUpdateHashes: undefined,
   })
   if (isRunning) isRerunQueued = true
   requestSync("activity-settings")
@@ -1162,14 +1163,15 @@ async function recordAppliedTombstone(
     lastSyncAt: 0,
     serverHashes: [],
   }
+  const { outboundActivityUpdateHashes: _legacy, ...stateWithoutLegacy } =
+    state
   await saveSyncState({
-    ...state,
+    ...stateWithoutLegacy,
     outboundActivityMetadata: Object.fromEntries(
       Object.entries(state.outboundActivityMetadata ?? {}).filter(
         ([hash]) => hash !== contentHash
       )
     ),
-    outboundActivityUpdateHashes: undefined,
     appliedTombstones: {
       ...(state.appliedTombstones ?? {}),
       [contentHash]: deletedAt,
@@ -1201,6 +1203,8 @@ async function addIgnoredHashes(hashes: string[]): Promise<void> {
     lastSyncAt: 0,
     serverHashes: [],
   }
+  const { outboundActivityUpdateHashes: _legacy, ...stateWithoutLegacy } =
+    state
   const ignored = new Set(state.ignoredHashes ?? [])
   const outboundActivityUpdates = new Map(
     Object.entries(state.outboundActivityMetadata ?? {})
@@ -1218,10 +1222,9 @@ async function addIgnoredHashes(hashes: string[]): Promise<void> {
   )
     return
   await saveSyncState({
-    ...state,
+    ...stateWithoutLegacy,
     ignoredHashes: [...ignored],
     outboundActivityMetadata: Object.fromEntries(outboundActivityUpdates),
-    outboundActivityUpdateHashes: undefined,
   })
 }
 
