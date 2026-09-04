@@ -170,6 +170,30 @@ describe("activities route revalidation", () => {
     ).toBe(false)
   })
 
+  test("skips loader work while replacing malformed view queries", () => {
+    expect(revalidate("/activities?sort=bogus&page=wat", "/activities")).toBe(
+      false
+    )
+    expect(revalidate("/activities", "/activities?sort=Distance&page=01")).toBe(
+      false
+    )
+    expect(
+      revalidate(
+        "/activities?sort=distance&sort=speed&page=002",
+        "/activities?sort=distance&page=2"
+      )
+    ).toBe(false)
+  })
+
+  test("keeps unrelated query changes on the loader path", () => {
+    expect(
+      revalidate(
+        "/activities?sort=bogus&page=wat&filter=walking",
+        "/activities?filter=cycling"
+      )
+    ).toBe(true)
+  })
+
   test("keeps default revalidation for actions and unrelated changes", () => {
     expect(
       revalidate("/activities?sort=date", "/activities?sort=distance", {

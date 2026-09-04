@@ -12,11 +12,7 @@ import { ActivitiesPagination } from "~/components/activities/ActivitiesPaginati
 import { ActivitiesGridWithSortingHeader } from "~/components/activities/ActivitiesGridWithSortingHeader"
 import { ConfirmBulkActivityUpdateDialog } from "~/components/activities/ConfirmBulkActivityUpdateDialog"
 import type { BulkActivityUpdateProposal } from "~/components/activities/ConfirmBulkActivityUpdateDialog"
-import {
-  isActivitySortOption,
-  sortActivitiesBy,
-  type ActivitySortOption,
-} from "~/lib/statsAggregator"
+import { isActivitySortOption, sortActivitiesBy } from "~/lib/statsAggregator"
 import { commonActivityType, commonPublicity } from "~/lib/activitySettings"
 import { useAuth } from "~/lib/server/authStore"
 import type { ActivitySummary } from "~/types/activitySummary"
@@ -24,12 +20,10 @@ import type { clientAction } from "~/routes/activities"
 import { markPerformance, measurePerformance } from "~/lib/performance"
 import {
   clampActivitiesPage,
+  getCanonicalActivitiesQuery,
   getActivitiesPageRange,
   getActivitiesTotalPages,
-  parseActivitiesPage,
 } from "~/lib/activitiesRoute"
-
-const DEFAULT_SORT_OPTION: ActivitySortOption = "date"
 
 interface ActivitiesGridWithSortingProps {
   activities: ActivitySummary[]
@@ -50,10 +44,7 @@ export function ActivitiesGridWithSorting({
   const fetcher = useFetcher<typeof clientAction>()
   const auth = useAuth()
 
-  const sortParam = searchParams.get("sort")
-  const sortOption: ActivitySortOption = isActivitySortOption(sortParam)
-    ? sortParam
-    : DEFAULT_SORT_OPTION
+  const sortOption = getCanonicalActivitiesQuery(searchParams).sortOption
   const sortedActivities = useMemo(() => {
     markPerformance("activities:sort:start")
     const sorted = sortActivitiesBy(activities, sortOption)
@@ -66,10 +57,10 @@ export function ActivitiesGridWithSorting({
     return sorted
   }, [activities, sortOption])
   const totalPages = getActivitiesTotalPages(sortedActivities.length)
-  const currentPage = clampActivitiesPage(
-    parseActivitiesPage(searchParams.get("page")),
-    totalPages
-  )
+  const canonicalQuery = getCanonicalActivitiesQuery(searchParams, totalPages)
+  const currentPage = canonicalQuery.page
+  const currentSearch = searchParams.toString()
+  const canonicalSearch = canonicalQuery.searchParams.toString()
   const pageRange = getActivitiesPageRange(sortedActivities.length, currentPage)
   const pageActivities = useMemo(
     () => sortedActivities.slice(pageRange.start, pageRange.end),
@@ -114,20 +105,10 @@ export function ActivitiesGridWithSorting({
   }, [activities])
 
   useEffect(() => {
-    const rawPage = searchParams.get("page")
-    const normalizedPage = currentPage === 1 ? null : String(currentPage)
-    if (rawPage === normalizedPage) return
+    if (canonicalSearch === currentSearch) return
 
-    setSearchParams(
-      (previousSearchParams) => {
-        const nextSearchParams = new URLSearchParams(previousSearchParams)
-        if (normalizedPage == null) nextSearchParams.delete("page")
-        else nextSearchParams.set("page", normalizedPage)
-        return nextSearchParams
-      },
-      { replace: true }
-    )
-  }, [currentPage, searchParams, setSearchParams])
+    setSearchParams(canonicalSearch, { replace: true })
+  }, [canonicalSearch, currentSearch, setSearchParams])
 
   useEffect(() => {
     if (!shouldFocusGridAfterPageChange.current) return
@@ -151,16 +132,22 @@ export function ActivitiesGridWithSorting({
 
   const handleSortChange = useCallback(
     (value: string | null) => {
-      if (!isActivitySortOption(value)) return
+      if (!isActivitySortOption(value) || value === sortOption) return
 
-      setSearchParams((previousSearchParams) => {
-        const nextSearchParams = new URLSearchParams(previousSearchParams)
-        nextSearchParams.set("sort", value)
-        nextSearchParams.delete("page")
-        return nextSearchParams
-      })
+      setSearchParams(
+        (previousSearchParams) => {
+          const nextSearchParams = getCanonicalActivitiesQuery(
+            previousSearchParams,
+            totalPages
+          ).searchParams
+          nextSearchParams.set("sort", value)
+          nextSearchParams.delete("page")
+          return nextSearchParams
+        },
+        { replace: false }
+      )
     },
-    [setSearchParams]
+    [setSearchParams, sortOption, totalPages]
   )
 
   const handlePageChange = useCallback(
@@ -168,12 +155,18 @@ export function ActivitiesGridWithSorting({
       const nextPage = clampActivitiesPage(page, totalPages)
       if (nextPage === currentPage) return
       shouldFocusGridAfterPageChange.current = true
-      setSearchParams((previousSearchParams) => {
-        const nextSearchParams = new URLSearchParams(previousSearchParams)
-        if (nextPage === 1) nextSearchParams.delete("page")
-        else nextSearchParams.set("page", String(nextPage))
-        return nextSearchParams
-      })
+      setSearchParams(
+        (previousSearchParams) => {
+          const nextSearchParams = getCanonicalActivitiesQuery(
+            previousSearchParams,
+            totalPages
+          ).searchParams
+          if (nextPage === 1) nextSearchParams.delete("page")
+          else nextSearchParams.set("page", String(nextPage))
+          return nextSearchParams
+        },
+        { replace: false }
+      )
     },
     [currentPage, setSearchParams, totalPages]
   )

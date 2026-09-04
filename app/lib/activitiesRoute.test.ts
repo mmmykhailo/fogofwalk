@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 import {
   ACTIVITIES_PAGE_SIZE,
   clampActivitiesPage,
+  getCanonicalActivitiesQuery,
   getActivitiesPageItems,
   getActivitiesPageRange,
   getActivitiesTotalPages,
@@ -60,6 +61,50 @@ describe("activities pagination helpers", () => {
   })
 })
 
+describe("canonical activities query", () => {
+  const query = (value: string, totalPages = 3) =>
+    getCanonicalActivitiesQuery(new URLSearchParams(value), totalPages)
+
+  test("uses the default sort when sort is missing, empty, invalid, or mixed-case", () => {
+    for (const value of ["", "sort=", "sort=unsupported", "sort=Distance"]) {
+      const result = query(value)
+      expect(result.sortOption).toBe("date")
+      expect(result.searchParams.has("sort")).toBe(false)
+    }
+  })
+
+  test("keeps valid sort values and collapses repeated values", () => {
+    const result = query("sort=distance&sort=speed")
+
+    expect(result.sortOption).toBe("distance")
+    expect(result.searchParams.getAll("sort")).toEqual(["distance"])
+  })
+
+  test("keeps an explicit valid default sort for stable URLs", () => {
+    const result = query("sort=date")
+
+    expect(result.sortOption).toBe("date")
+    expect(result.searchParams.get("sort")).toBe("date")
+  })
+
+  test("normalizes page together with sort while preserving unrelated params", () => {
+    const result = query("filter=walking&sort=bad&page=002&filter=recent")
+
+    expect(result.page).toBe(2)
+    expect([...result.searchParams.entries()]).toEqual([
+      ["filter", "walking"],
+      ["page", "2"],
+      ["filter", "recent"],
+    ])
+  })
+
+  test("removes invalid view parameters in one canonical result", () => {
+    const result = query("sort=DATE&page=bad&filter=walking")
+
+    expect(result.searchParams.toString()).toBe("filter=walking")
+  })
+})
+
 describe("activities view-only navigation", () => {
   const url = (path: string) => new URL(`http://localhost${path}`)
 
@@ -88,6 +133,12 @@ describe("activities view-only navigation", () => {
         url("/activities?page=2")
       )
     ).toBe(true)
+    expect(
+      isActivitiesViewOnlyNavigation(
+        url("/activities?sort=unsupported&page=bad"),
+        url("/activities")
+      )
+    ).toBe(true)
   })
 
   test("rejects actions, path changes, and unrelated parameters", () => {
@@ -102,15 +153,24 @@ describe("activities view-only navigation", () => {
     ).toBe(false)
     expect(
       isActivitiesViewOnlyNavigation(
-        url("/activities"),
-        url("/activities?sort=unsupported")
-      )
-    ).toBe(false)
-    expect(
-      isActivitiesViewOnlyNavigation(
         url("/activities?page=2"),
         url("/activities?page=2")
       )
     ).toBe(false)
+  })
+
+  test("treats back and forward between canonical view states as view-only", () => {
+    expect(
+      isActivitiesViewOnlyNavigation(
+        url("/activities?sort=distance&page=2"),
+        url("/activities")
+      )
+    ).toBe(true)
+    expect(
+      isActivitiesViewOnlyNavigation(
+        url("/activities"),
+        url("/activities?sort=distance&page=2")
+      )
+    ).toBe(true)
   })
 })
