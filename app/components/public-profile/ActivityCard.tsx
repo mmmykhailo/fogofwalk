@@ -32,7 +32,8 @@ interface ActivityCardProps {
   activity: PublicActivityMeta | ActivityCardData
   /** Local map destination. Public-profile activities intentionally have none. */
   activityHref?: string
-  activityTypeControl?: ReactNode
+  selectionControl?: ReactNode
+  settingsControls?: ReactNode
   isOwner?: boolean
   onHidden?: (contentHash: string) => void
 }
@@ -40,7 +41,8 @@ interface ActivityCardProps {
 export function ActivityCard({
   activity,
   activityHref,
-  activityTypeControl,
+  selectionControl,
+  settingsControls,
   isOwner = false,
   onHidden,
 }: ActivityCardProps) {
@@ -65,31 +67,34 @@ export function ActivityCard({
   return (
     <div className="@container flex flex-col gap-2 rounded-none bg-card p-4 text-card-foreground ring-1 ring-foreground/10">
       <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0 flex-1">
-          <h3 className="font-heading text-sm font-medium">
-            {activityHref ? (
-              <AppLink
-                to={activityHref}
-                className="block truncate"
-                title={activityName}
+        <div className="flex min-w-0 flex-1 items-start gap-2">
+          {selectionControl}
+          <div className="min-w-0 flex-1">
+            <h3 className="font-heading text-sm font-medium">
+              {activityHref ? (
+                <AppLink
+                  to={activityHref}
+                  className="block truncate"
+                  title={activityName}
+                >
+                  {activityName}
+                </AppLink>
+              ) : (
+                activityName
+              )}
+            </h3>
+            {activity.startedAtMs != null && (
+              <p
+                className="text-xs text-muted-foreground"
+                title={new Date(activity.startedAtMs).toLocaleString()}
               >
-                {activityName}
-              </AppLink>
-            ) : (
-              activityName
+                {formatRelativeTime(activity.startedAtMs)}
+              </p>
             )}
-          </h3>
-          {activity.startedAtMs != null && (
-            <p
-              className="text-xs text-muted-foreground"
-              title={new Date(activity.startedAtMs).toLocaleString()}
-            >
-              {formatRelativeTime(activity.startedAtMs)}
-            </p>
-          )}
+          </div>
         </div>
-        <div className="flex shrink-0 items-center gap-2">
-          {activityTypeControl}
+        <div className="flex max-w-full shrink-0 flex-wrap items-center justify-end gap-2">
+          {settingsControls}
           {isOwner && contentHash != null && (
             <Menu.Root>
               <Menu.Trigger

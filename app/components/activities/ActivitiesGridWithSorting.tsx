@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import { useSearchParams } from "react-router"
 import { ActivitiesGrid } from "~/components/activities/ActivitiesGrid"
 import {
@@ -33,6 +33,9 @@ interface ActivitiesGridWithSortingProps {
 export function ActivitiesGridWithSorting({
   activities,
 }: ActivitiesGridWithSortingProps) {
+  const [selectedActivityIds, setSelectedActivityIds] = useState<Set<string>>(
+    () => new Set()
+  )
   const [searchParams, setSearchParams] = useSearchParams()
   const sortParam = searchParams.get("sort")
   const sortOption: ActivitySortOption = isActivitySortOption(sortParam)
@@ -54,6 +57,27 @@ export function ActivitiesGridWithSorting({
     },
     [setSearchParams]
   )
+  const handleSelectionChange = useCallback(
+    (activityId: string, isSelected: boolean) => {
+      setSelectedActivityIds((previous) => {
+        const next = new Set(previous)
+        if (isSelected) next.add(activityId)
+        else next.delete(activityId)
+        return next
+      })
+    },
+    []
+  )
+
+  useEffect(() => {
+    const activityIds = new Set(activities.map((activity) => activity.id))
+    setSelectedActivityIds((previous) => {
+      const next = new Set(
+        [...previous].filter((activityId) => activityIds.has(activityId))
+      )
+      return next.size === previous.size ? previous : next
+    })
+  }, [activities])
 
   return (
     <div className="space-y-4">
@@ -79,7 +103,12 @@ export function ActivitiesGridWithSorting({
           </SelectContent>
         </Select>
       </div>
-      <ActivitiesGrid activities={sortedActivities} />
+      <ActivitiesGrid
+        activities={sortedActivities}
+        selectedActivityIds={selectedActivityIds}
+        onSelectionChange={handleSelectionChange}
+        showActivitySettings
+      />
     </div>
   )
 }
