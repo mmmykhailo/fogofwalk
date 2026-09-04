@@ -2,8 +2,6 @@ import { LocalActivityCard } from "~/components/activities/LocalActivityCard"
 import { Grid } from "~/components/Grid"
 import type { ActivitySummary } from "~/types/activitySummary"
 
-export const ACTIVITIES_PAGE_SIZE = 48
-
 interface ActivitiesGridProps {
   activities: ActivitySummary[]
   selectedActivityIds: ReadonlySet<string>
