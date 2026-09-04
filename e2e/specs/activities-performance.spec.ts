@@ -3,12 +3,36 @@ import { expect, test } from "@playwright/test"
 import {
   makePerformanceActivities,
   corruptPerformanceSummary,
+  readPerformanceCounters,
   readPerformanceMetrics,
   readActivityStorage,
   seedLegacyV3Database,
   seedPerformanceDatabase,
   type PerformanceActivityKind,
 } from "../fixtures/performance"
+
+const PERFORMANCE_CARD_CAP = 48
+const PERFORMANCE_DOM_FIXED_OVERHEAD = 200
+const PERFORMANCE_DOM_ELEMENTS_PER_CARD = 40
+const REQUIRED_TIMINGS = [
+  "homeLoaderMs",
+  "homeIdbLoadMs",
+  "loaderMs",
+  "idbLoadMs",
+  "sortMs",
+  "firstGridCommitMs",
+  "navigationMs",
+] as const
+
+function expectRequiredTimings(
+  metrics: Awaited<ReturnType<typeof readPerformanceMetrics>>
+) {
+  for (const name of REQUIRED_TIMINGS) {
+    const value = metrics[name]
+    expect(value).not.toBeNull()
+    expect(Number.isFinite(value)).toBe(true)
+  }
+}
 
 test.describe("activities performance fixture", () => {
   test.describe.configure({ mode: "serial" })
@@ -33,20 +57,74 @@ test.describe("activities performance fixture", () => {
             timeout: 60_000,
           })
           const cards = page.locator('[data-testid^="activity-card-"]')
-          await expect(cards).toHaveCount(Math.min(48, count))
+          const expectedCardCount = Math.min(PERFORMANCE_CARD_CAP, count)
+          await expect(cards).toHaveCount(expectedCardCount)
+          await expect
+            .poll(
+              async () =>
+                (await readPerformanceMetrics(page, kind, count)).sortMs
+            )
+            .not.toBeNull()
           const metrics = await readPerformanceMetrics(page, kind, count)
+          const counters = await readPerformanceCounters(page)
+          expectRequiredTimings(metrics)
+          expect(metrics.cardCount).toBe(expectedCardCount)
+          expect(metrics.gridCommitCount).toBe(1)
+          expect(metrics.elementCount).toBeLessThanOrEqual(
+            PERFORMANCE_DOM_FIXED_OVERHEAD +
+              PERFORMANCE_DOM_ELEMENTS_PER_CARD * expectedCardCount
+          )
+          expect(metrics.uniqueDistanceMs).toBeNull()
+          expect(counters).toEqual({
+            fullActivityLoads: 0,
+            activitySummaryReads: 1,
+            uniqueDistanceWorkerRequests: 0,
+          })
           if (count > 48) {
             await page.getByRole("button", { name: "Next page" }).click()
             await expect(page).toHaveURL(/\/activities\?sort=date&page=2$/)
             await expect(page.getByTestId("activities-grid")).toBeFocused()
-            await expect(cards).toHaveCount(Math.min(48, count - 48))
+            await expect(cards).toHaveCount(
+              Math.min(PERFORMANCE_CARD_CAP, count - PERFORMANCE_CARD_CAP)
+            )
           }
 
-          console.log(JSON.stringify(metrics))
+          // Keep every raw diagnostic field in the report; the assertions above
+          // intentionally gate only deterministic structure and metric presence.
+          console.log(JSON.stringify({ ...metrics, counters }))
         })
       }
     }
   }
+
+  test("repairs stale unique distances on stats, not activities", async ({
+    page,
+  }) => {
+    const activities = makePerformanceActivities(100, "metadata")
+    await seedPerformanceDatabase(page, activities, false)
+
+    await page.goto("/activities?sort=date")
+    await expect(
+      page.getByTestId(`activity-card-${activities.at(-1)!.id}`)
+    ).toBeVisible()
+    expect(await readPerformanceCounters(page)).toEqual({
+      fullActivityLoads: 0,
+      activitySummaryReads: 1,
+      uniqueDistanceWorkerRequests: 0,
+    })
+
+    await page.goto("/stats")
+    await expect(
+      page.getByText("Unique distance", { exact: true })
+    ).toBeVisible()
+    expect(await readPerformanceCounters(page)).toEqual({
+      fullActivityLoads: 1,
+      activitySummaryReads: 1,
+      uniqueDistanceWorkerRequests: 1,
+    })
+    const statsMetrics = await readPerformanceMetrics(page, "metadata", 100)
+    expect(statsMetrics.uniqueDistanceMs).not.toBeNull()
+  })
 
   test("keeps global sort order and selection across pages", async ({
     page,
@@ -168,6 +246,7 @@ test.describe("activities performance fixture", () => {
       activities: performance.getEntriesByName("activities:idb-load", "measure")
         .length,
     }))
+    const beforeCounters = await readPerformanceCounters(page)
     await page.getByRole("button", { name: "Next page" }).click()
     await expect(page).toHaveURL(/\/activities\?sort=date&page=2$/)
     const after = await page.evaluate(() => ({
@@ -176,6 +255,7 @@ test.describe("activities performance fixture", () => {
         .length,
     }))
     expect(after).toEqual(before)
+    expect(await readPerformanceCounters(page)).toEqual(beforeCounters)
   })
 
   test("normalizes malformed and stale page values", async ({ page }) => {
@@ -316,6 +396,7 @@ test.describe("activities performance fixture", () => {
       activities: performance.getEntriesByName("activities:idb-load", "measure")
         .length,
     }))
+    const beforeCounters = await readPerformanceCounters(page)
 
     await page.getByRole("combobox", { name: "Sort by" }).click()
     await page.getByRole("option", { name: "Distance", exact: true }).click()
@@ -329,6 +410,7 @@ test.describe("activities performance fixture", () => {
         .length,
     }))
     expect(after).toEqual(before)
+    expect(await readPerformanceCounters(page)).toEqual(beforeCounters)
   })
 
   test("upgrades a v3 database and derives summaries", async ({ page }) => {

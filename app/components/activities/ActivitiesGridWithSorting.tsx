@@ -17,7 +17,11 @@ import { commonActivityType, commonPublicity } from "~/lib/activitySettings"
 import { useAuth } from "~/lib/server/authStore"
 import type { ActivitySummary } from "~/types/activitySummary"
 import type { clientAction } from "~/routes/activities"
-import { markPerformance, measurePerformance } from "~/lib/performance"
+import {
+  markPerformance,
+  measurePerformanceDuration,
+  performanceNow,
+} from "~/lib/performance"
 import {
   clampActivitiesPage,
   getCanonicalActivitiesQuery,
@@ -41,21 +45,29 @@ export function ActivitiesGridWithSorting({
   const [isAwaitingResult, setIsAwaitingResult] = useState(false)
   const [searchParams, setSearchParams] = useSearchParams()
   const shouldFocusGridAfterPageChange = useRef(false)
+  const didMarkFirstGridCommit = useRef(false)
   const fetcher = useFetcher<typeof clientAction>()
   const auth = useAuth()
 
-  const sortOption = getCanonicalActivitiesQuery(searchParams).sortOption
-  const sortedActivities = useMemo(() => {
-    markPerformance("activities:sort:start")
+  const sortedActivitiesResult = useMemo(() => {
+    const startedAt = performanceNow()
     const sorted = sortActivitiesBy(activities, sortOption)
-    markPerformance("activities:sort:end")
-    measurePerformance(
-      "activities:sort",
-      "activities:sort:start",
-      "activities:sort:end"
-    )
-    return sorted
+    const finishedAt = performanceNow()
+    return {
+      activities: sorted,
+      durationMs:
+        startedAt != null && finishedAt != null
+          ? Math.max(0, finishedAt - startedAt)
+          : null,
+    }
   }, [activities, sortOption])
+  const sortedActivities = sortedActivitiesResult.activities
+
+  useEffect(() => {
+    const { durationMs } = sortedActivitiesResult
+    if (durationMs == null) return
+    measurePerformanceDuration("activities:sort", durationMs)
+  }, [sortedActivitiesResult])
   const totalPages = getActivitiesTotalPages(sortedActivities.length)
   const canonicalQuery = getCanonicalActivitiesQuery(searchParams, totalPages)
   const currentPage = canonicalQuery.page
@@ -238,8 +250,10 @@ export function ActivitiesGridWithSorting({
       : "Every selected activity must be synced before publicity can change."
 
   useLayoutEffect(() => {
+    if (didMarkFirstGridCommit.current) return
+    didMarkFirstGridCommit.current = true
     markPerformance("activities:grid:commit")
-  })
+  }, [])
 
   return (
     <div>

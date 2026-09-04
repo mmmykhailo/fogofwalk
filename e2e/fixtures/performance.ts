@@ -2,6 +2,15 @@ import type { Page } from "@playwright/test"
 
 export type PerformanceActivityKind = "metadata" | "geometry"
 
+export interface PerformanceCounters {
+  /** Calls that clone the complete activity store, including route geometry. */
+  fullActivityLoads: number
+  /** Calls that read the summary store used by the library route. */
+  activitySummaryReads: number
+  /** Requests posted to the unique-distance worker. */
+  uniqueDistanceWorkerRequests: number
+}
+
 export interface PerformanceMetrics {
   kind: PerformanceActivityKind
   count: number
@@ -12,10 +21,84 @@ export interface PerformanceMetrics {
   uniqueDistanceMs: number | null
   sortMs: number | null
   firstGridCommitMs: number | null
+  gridCommitCount: number
   navigationMs: number | null
   cardCount: number
   elementCount: number
   heapUsedBytes: number | null
+}
+
+declare global {
+  interface Window {
+    /** Installed only by the performance E2E fixture before the app loads. */
+    __fogofwalkE2ePerformanceCounters?: PerformanceCounters
+  }
+}
+
+/** Install counters before a navigation so the app's own reads are observable. */
+export async function installPerformanceCounters(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    if (window.__fogofwalkE2ePerformanceCounters) return
+
+    const counters: PerformanceCounters = {
+      fullActivityLoads: 0,
+      activitySummaryReads: 0,
+      uniqueDistanceWorkerRequests: 0,
+    }
+    window.__fogofwalkE2ePerformanceCounters = counters
+
+    const originalGetAll = IDBObjectStore.prototype.getAll
+    IDBObjectStore.prototype.getAll = function (
+      query?: IDBValidKey | IDBKeyRange | null,
+      count?: number
+    ): IDBRequest<unknown[]> {
+      if (this.name === "activities") counters.fullActivityLoads++
+      if (this.name === "activity-summaries") counters.activitySummaryReads++
+      return originalGetAll.call(this, query, count)
+    }
+
+    const originalPostMessage = Worker.prototype.postMessage as unknown as (
+      this: Worker,
+      message: unknown,
+      options?: Transferable[] | StructuredSerializeOptions
+    ) => void
+    Worker.prototype.postMessage = function (
+      this: Worker,
+      message: unknown,
+      options?: Transferable[] | StructuredSerializeOptions
+    ): void {
+      if (message != null && typeof message === "object") {
+        const request = message as {
+          requestId?: unknown
+          activities?: unknown
+          type?: unknown
+        }
+        if (
+          typeof request.requestId === "number" &&
+          Array.isArray(request.activities) &&
+          request.type === undefined
+        ) {
+          counters.uniqueDistanceWorkerRequests++
+        }
+      }
+      if (options === undefined) originalPostMessage.call(this, message)
+      else originalPostMessage.call(this, message, options)
+    }
+  })
+}
+
+export async function readPerformanceCounters(
+  page: Page
+): Promise<PerformanceCounters> {
+  return page.evaluate(() => ({
+    fullActivityLoads:
+      window.__fogofwalkE2ePerformanceCounters?.fullActivityLoads ?? 0,
+    activitySummaryReads:
+      window.__fogofwalkE2ePerformanceCounters?.activitySummaryReads ?? 0,
+    uniqueDistanceWorkerRequests:
+      window.__fogofwalkE2ePerformanceCounters?.uniqueDistanceWorkerRequests ??
+      0,
+  }))
 }
 
 function makeActivity(index: number, kind: PerformanceActivityKind) {
@@ -77,6 +160,7 @@ export async function seedPerformanceDatabase(
   activities: ReturnType<typeof makePerformanceActivities>,
   uniqueDistancesCurrent: boolean
 ): Promise<void> {
+  await installPerformanceCounters(page)
   await page.goto("/favicon.ico")
   await page.evaluate(
     async ({ activities, uniqueDistancesCurrent }) => {
@@ -152,6 +236,7 @@ export async function seedLegacyV3Database(
   page: Page,
   activity: ReturnType<typeof makePerformanceActivities>[number]
 ): Promise<void> {
+  await installPerformanceCounters(page)
   await page.goto("/favicon.ico")
   await page.evaluate(async (activity) => {
     await new Promise<void>((resolve, reject) => {
@@ -286,6 +371,7 @@ export async function readPerformanceMetrics(
           marks.length > 0 && navigation
             ? marks[0]!.startTime - navigation.startTime
             : null,
+        gridCommitCount: marks.length,
         navigationMs: navigation?.duration ?? null,
         cardCount: document.querySelectorAll('[data-testid^="activity-card-"]')
           .length,

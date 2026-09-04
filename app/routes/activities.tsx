@@ -1,4 +1,3 @@
-import { useEffect } from "react"
 import { useLoaderData } from "react-router"
 import { EmptyActivitiesState } from "~/components/activities/EmptyActivitiesState"
 import { ActivitiesGridWithSorting } from "~/components/activities/ActivitiesGridWithSorting"
@@ -19,7 +18,6 @@ import { canSync, initAuth } from "~/lib/server/authStore"
 import { queueActivityMetadataUpdates } from "~/lib/server/syncEngine"
 import type { Route } from "./+types/activities"
 import { markPerformance, measurePerformance } from "~/lib/performance"
-import { ensureUniqueDistancesCurrent } from "~/lib/uniqueDistanceRepair"
 import type { ShouldRevalidateFunction } from "react-router"
 import { isActivitiesViewOnlyNavigation } from "~/lib/activitiesRoute"
 
@@ -166,14 +164,6 @@ export function meta({}: Route.MetaArgs) {
 
 export default function MyActivitiesPage() {
   const activities = useLoaderData<typeof clientLoader>()
-
-  useEffect(() => {
-    if (mapStore.activityHydration !== "full") return
-    markPerformance("activities:unique-distance:queued")
-    void ensureUniqueDistancesCurrent(mapStore.activities).catch((error) => {
-      console.warn("[activities] unique-distance repair failed:", error)
-    })
-  }, [activities])
 
   return (
     <PageShell title="My activities">
