@@ -1,5 +1,5 @@
 import { ActivityCard } from "~/components/public-profile/ActivityCard"
-import { ActivityTypeSelect } from "~/components/activities/ActivityTypeSelect"
+import { ActivityTypeSelectForActivity } from "~/components/activities/ActivityTypeSelect"
 import { Grid } from "~/components/Grid"
 import type { ParsedActivity } from "~/types/activities"
 
@@ -23,7 +23,7 @@ export function ActivitiesGrid({ activities }: ActivitiesGridProps) {
           }}
           activityHref={`/map?activity=${activity.id}`}
           activityTypeControl={
-            <ActivityTypeSelect
+            <ActivityTypeSelectForActivity
               activityId={activity.id}
               activityName={activity.name}
               activityType={activity.activityType}

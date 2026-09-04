@@ -15,6 +15,9 @@ interface VisibilitySelectProps {
   onChange: (isPublic: boolean) => void
   disabled?: boolean
   ariaLabel?: string
+  mixed?: boolean
+  mixedLabel?: string
+  disabledDescription?: string
   className?: string
   size?: "sm" | "default"
   id?: string
@@ -30,29 +33,45 @@ export function VisibilitySelect({
   onChange,
   disabled,
   ariaLabel = "Activity visibility",
+  mixed = false,
+  mixedLabel = "Mixed publicity",
+  disabledDescription,
   className,
   size = "sm",
   id,
 }: VisibilitySelectProps) {
+  const descriptionId = id ? `${id}-description` : undefined
+
   return (
-    <Select
-      value={isPublic ? PUBLIC : PRIVATE}
-      onValueChange={(value) => onChange(value === PUBLIC)}
-      modal={false}
-      disabled={disabled}
-    >
-      <SelectTrigger
-        id={id}
-        size={size}
-        aria-label={ariaLabel}
-        className={cn("bg-muted", className)}
+    <>
+      <Select
+        value={mixed ? null : isPublic ? PUBLIC : PRIVATE}
+        onValueChange={(value) => {
+          if (value === PUBLIC || value === PRIVATE) onChange(value === PUBLIC)
+        }}
+        modal={false}
+        disabled={disabled}
       >
-        <SelectValue />
-      </SelectTrigger>
-      <SelectContent alignItemWithTrigger={false}>
-        <SelectItem value={PRIVATE}>Private</SelectItem>
-        <SelectItem value={PUBLIC}>Public</SelectItem>
-      </SelectContent>
-    </Select>
+        <SelectTrigger
+          id={id}
+          size={size}
+          aria-label={ariaLabel}
+          aria-describedby={disabledDescription ? descriptionId : undefined}
+          title={disabled ? disabledDescription : undefined}
+          className={cn("bg-muted", className)}
+        >
+          <SelectValue>{mixed ? mixedLabel : undefined}</SelectValue>
+        </SelectTrigger>
+        <SelectContent alignItemWithTrigger={false}>
+          <SelectItem value={PRIVATE}>Private</SelectItem>
+          <SelectItem value={PUBLIC}>Public</SelectItem>
+        </SelectContent>
+      </Select>
+      {disabledDescription && (
+        <span id={descriptionId} className="sr-only">
+          {disabledDescription}
+        </span>
+      )}
+    </>
   )
 }
