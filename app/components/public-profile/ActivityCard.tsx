@@ -72,33 +72,31 @@ export function ActivityCard({
       className="@container flex flex-col gap-2 rounded-none bg-card p-4 text-card-foreground ring-1 ring-foreground/10"
     >
       <div className="flex items-start justify-between gap-2">
-        <div className="flex min-w-0 flex-1 items-start gap-2">
-          {selectionControl}
-          <div className="min-w-0 flex-1">
-            <h3 className="font-heading text-sm font-medium">
-              {activityHref ? (
-                <AppLink
-                  to={activityHref}
-                  className="block truncate"
-                  title={activityName}
-                >
-                  {activityName}
-                </AppLink>
-              ) : (
-                activityName
-              )}
-            </h3>
-            {activity.startedAtMs != null && (
-              <p
-                className="text-xs text-muted-foreground"
-                title={new Date(activity.startedAtMs).toLocaleString()}
+        {selectionControl}
+        <div className="min-w-0 flex-1">
+          <h3 className="font-heading text-sm font-medium">
+            {activityHref ? (
+              <AppLink
+                to={activityHref}
+                className="block truncate"
+                title={activityName}
               >
-                {formatRelativeTime(activity.startedAtMs)}
-              </p>
+                {activityName}
+              </AppLink>
+            ) : (
+              activityName
             )}
-          </div>
+          </h3>
+          {activity.startedAtMs != null && (
+            <p
+              className="text-xs text-muted-foreground"
+              title={new Date(activity.startedAtMs).toLocaleString()}
+            >
+              {formatRelativeTime(activity.startedAtMs)}
+            </p>
+          )}
         </div>
-        <div className="flex max-w-full shrink-0 flex-wrap items-center justify-end gap-2">
+        <div className="ml-auto flex max-w-full shrink-0 flex-wrap items-center justify-end gap-2">
           {settingsControls}
           {isOwner && contentHash != null && (
             <Menu.Root>
