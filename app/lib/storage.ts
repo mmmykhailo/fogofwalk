@@ -1,3 +1,4 @@
+import { ACTIVITY_TYPES } from "~/types/activities"
 import type { ParsedActivity, FogMode } from "~/types/activities"
 import type { ServerUser, UserCapabilities } from "~shared/api"
 import type { PhotoEntry } from "~/types/photos"
@@ -33,6 +34,12 @@ export interface UniqueDistanceState {
 }
 
 const UNIQUE_DISTANCE_VERSION = 1
+const START_SUN_PHASES = [
+  "before_sunrise",
+  "daylight",
+  "after_sunset",
+  "unknown",
+] as const
 
 // Fields added after initial release; absent in older IDB records.
 export type StoredActivity = Omit<
@@ -87,19 +94,57 @@ export function activityToSummary(
 function isActivitySummary(value: unknown): value is ActivitySummary {
   if (value == null || typeof value !== "object") return false
   const summary = value as Partial<ActivitySummary>
+  const stats = summary.stats
+  if (stats == null || typeof stats !== "object") return false
+
+  const isFiniteNumber = (value: unknown): value is number =>
+    typeof value === "number" && Number.isFinite(value)
+  const isNullableFiniteNumber = (value: unknown): value is number | null =>
+    value === null || isFiniteNumber(value)
+  const isKnownValue = <T extends string>(
+    value: unknown,
+    values: readonly T[]
+  ): value is T => typeof value === "string" && values.includes(value as T)
+
   return (
     typeof summary.id === "string" &&
     typeof summary.name === "string" &&
-    (summary.startedAtMs === null || typeof summary.startedAtMs === "number") &&
-    typeof summary.stats === "object" &&
-    summary.stats !== null &&
-    typeof summary.stats.distanceKm === "number" &&
-    (summary.stats.durationMs === null ||
-      typeof summary.stats.durationMs === "number") &&
-    typeof summary.stats.elevationGainM === "number" &&
-    (summary.stats.avgMovingSpeedKmh === null ||
-      typeof summary.stats.avgMovingSpeedKmh === "number") &&
+    isNullableFiniteNumber(summary.startedAtMs) &&
+    isFiniteNumber(stats.distanceKm) &&
+    isNullableFiniteNumber(stats.durationMs) &&
+    isFiniteNumber(stats.elevationGainM) &&
+    isNullableFiniteNumber(stats.avgMovingSpeedKmh) &&
+    (summary.activityType === undefined ||
+      isKnownValue(summary.activityType, ACTIVITY_TYPES)) &&
+    (summary.startSunPhase === undefined ||
+      isKnownValue(summary.startSunPhase, START_SUN_PHASES)) &&
+    (summary.contentHash === undefined ||
+      typeof summary.contentHash === "string") &&
     (summary.isPublic === undefined || typeof summary.isPublic === "boolean")
+  )
+}
+
+function hasCompleteActivitySummarySet(
+  activityKeys: readonly IDBValidKey[],
+  storedSummaries: readonly unknown[]
+): storedSummaries is ActivitySummary[] {
+  if (activityKeys.length !== storedSummaries.length) return false
+
+  const activityIds = new Set<string>()
+  for (const key of activityKeys) {
+    if (typeof key !== "string" || activityIds.has(key)) return false
+    activityIds.add(key)
+  }
+
+  const summaryIds = new Set<string>()
+  for (const value of storedSummaries) {
+    if (!isActivitySummary(value) || summaryIds.has(value.id)) return false
+    summaryIds.add(value.id)
+  }
+
+  return (
+    summaryIds.size === activityIds.size &&
+    [...summaryIds].every((id) => activityIds.has(id))
   )
 }
 
@@ -120,6 +165,7 @@ const DB_NAME = "fogofwalk"
 const DB_VERSION = 4
 
 let dbPromise: Promise<IDBDatabase | null> | null = null
+let activitySummariesFallback: ActivitySummary[] | null = null
 
 function getDb(): Promise<IDBDatabase | null> {
   if (dbPromise) return dbPromise
@@ -208,6 +254,29 @@ function promisifyRequest<T>(req: IDBRequest<T>): Promise<T> {
   })
 }
 
+function waitForTransaction(tx: IDBTransaction): Promise<void> {
+  return new Promise((resolve, reject) => {
+    tx.oncomplete = () => resolve()
+    tx.onerror = () =>
+      reject(tx.error ?? new Error("IndexedDB transaction failed"))
+    tx.onabort = () =>
+      reject(tx.error ?? new Error("IndexedDB transaction aborted"))
+  })
+}
+
+function abortTransaction(tx: IDBTransaction | null): void {
+  if (!tx) return
+  try {
+    tx.abort()
+  } catch {
+    // The transaction may already have completed or aborted.
+  }
+}
+
+function invalidateActivitySummariesFallback(): void {
+  activitySummariesFallback = null
+}
+
 // ─── Activities ───────────────────────────────────────────────────────────────────
 
 /** Upsert activities into storage. Uses put, so re-adding the same ID is idempotent. */
@@ -215,21 +284,21 @@ export async function saveActivities(
   activities: ParsedActivity[]
 ): Promise<void> {
   if (activities.length === 0) return
+  invalidateActivitySummariesFallback()
   const db = await getDb()
   if (!db) return
+  let tx: IDBTransaction | null = null
   try {
-    const tx = db.transaction(["activities", "activity-summaries"], "readwrite")
+    tx = db.transaction(["activities", "activity-summaries"], "readwrite")
     const store = tx.objectStore("activities")
     const summaryStore = tx.objectStore("activity-summaries")
     for (const activity of activities) {
       store.put(activity)
       summaryStore.put(activityToSummary(activity))
     }
-    await new Promise<void>((resolve, reject) => {
-      tx.oncomplete = () => resolve()
-      tx.onerror = () => reject(tx.error)
-    })
+    await waitForTransaction(tx)
   } catch (err) {
+    abortTransaction(tx)
     console.warn("[storage] saveActivities failed:", err)
   }
 }
@@ -284,6 +353,54 @@ async function loadFullActivities(): Promise<ParsedActivity[]> {
   }
 }
 
+/** Load activities without touching the derived summary store. */
+async function loadActivitiesForSummaryRecovery(): Promise<ParsedActivity[]> {
+  const db = await getDb()
+  if (!db) return []
+  try {
+    const tx = db.transaction("activities", "readonly")
+    const activities = await promisifyRequest<StoredActivity[]>(
+      tx.objectStore("activities").getAll()
+    )
+
+    let summaries: unknown[] = []
+    try {
+      const summaryTx = db.transaction("activity-summaries", "readonly")
+      summaries = await promisifyRequest<unknown[]>(
+        summaryTx.objectStore("activity-summaries").getAll()
+      )
+    } catch (err) {
+      console.warn("[storage] summary overlay load failed:", err)
+    }
+    const summaryById = new Map(
+      summaries
+        .filter(isActivitySummary)
+        .map((summary) => [summary.id, summary])
+    )
+
+    for (const activity of activities) {
+      activity.startedAtMs = getStoredStartedAt(activity)
+      activity.isPublic = activity.isPublic ?? false
+      if (activity.stats.uniqueDistanceKm === undefined) {
+        activity.stats.uniqueDistanceKm = activity.stats.distanceKm
+      }
+      const summary = summaryById.get(activity.id)
+      if (summary) {
+        activity.name = summary.name
+        activity.startedAtMs = summary.startedAtMs
+        activity.activityType = summary.activityType
+        activity.startSunPhase = summary.startSunPhase
+        activity.contentHash = summary.contentHash
+        activity.isPublic = summary.isPublic ?? false
+      }
+    }
+    return activities as ParsedActivity[]
+  } catch (err) {
+    console.warn("[storage] summary recovery activity load failed:", err)
+    return []
+  }
+}
+
 /** Load only the metadata needed by the activities route. */
 export async function loadActivitySummaries(): Promise<ActivitySummary[]> {
   if (activitySummariesLoad) return activitySummariesLoad
@@ -297,20 +414,20 @@ let activitySummariesLoad: Promise<ActivitySummary[]> | null = null
 
 async function loadStoredActivitySummaries(): Promise<ActivitySummary[]> {
   const db = await getDb()
-  if (!db) return []
+  if (!db) return activitySummariesFallback ?? []
   try {
     const tx = db.transaction(["activities", "activity-summaries"], "readonly")
-    const [activityCount, storedSummaries] = await Promise.all([
-      promisifyRequest<number>(tx.objectStore("activities").count()),
+    const [activityKeys, storedSummaries] = await Promise.all([
+      promisifyRequest<IDBValidKey[]>(
+        tx.objectStore("activities").getAllKeys()
+      ),
       promisifyRequest<unknown[]>(
         tx.objectStore("activity-summaries").getAll()
       ),
     ])
-    const summaries = storedSummaries.filter(isActivitySummary)
-    if (
-      summaries.length === activityCount &&
-      summaries.length === storedSummaries.length
-    ) {
+    if (hasCompleteActivitySummarySet(activityKeys, storedSummaries)) {
+      const summaries = storedSummaries
+      activitySummariesFallback = null
       return sortActivitySummaries(summaries)
     }
   } catch (err) {
@@ -320,28 +437,31 @@ async function loadStoredActivitySummaries(): Promise<ActivitySummary[]> {
   // A partial/corrupt summary store must never turn a populated library into
   // an empty page. This fallback is intentionally full-sized and is only used
   // while recovering the summary store.
-  const fullActivities = await loadActivities()
+  const fullActivities = await loadActivitiesForSummaryRecovery()
   const summaries = sortActivitySummaries(fullActivities.map(activityToSummary))
-  await saveActivitySummaries(summaries)
+  const persisted = await replaceActivitySummaries(summaries)
+  activitySummariesFallback = persisted ? null : summaries
   return summaries
 }
 
-async function saveActivitySummaries(
+/** Replace the summary store atomically; unlike upserts, this removes orphans. */
+async function replaceActivitySummaries(
   summaries: readonly ActivitySummary[]
-): Promise<void> {
-  if (summaries.length === 0) return
+): Promise<boolean> {
   const db = await getDb()
-  if (!db) return
+  if (!db) return false
+  let tx: IDBTransaction | null = null
   try {
-    const tx = db.transaction("activity-summaries", "readwrite")
+    tx = db.transaction("activity-summaries", "readwrite")
     const store = tx.objectStore("activity-summaries")
+    store.clear()
     for (const summary of summaries) store.put(summary)
-    await new Promise<void>((resolve, reject) => {
-      tx.oncomplete = () => resolve()
-      tx.onerror = () => reject(tx.error)
-    })
+    await waitForTransaction(tx)
+    return true
   } catch (err) {
-    console.warn("[storage] saveActivitySummaries failed:", err)
+    abortTransaction(tx)
+    console.warn("[storage] replaceActivitySummaries failed:", err)
+    return false
   }
 }
 
@@ -350,6 +470,7 @@ export async function updateActivitySettings(
   updates: readonly ActivitySettingsPatch[]
 ): Promise<boolean> {
   if (updates.length === 0) return true
+  invalidateActivitySummariesFallback()
   const db = await getDb()
   if (!db) return true
   try {
@@ -406,10 +527,12 @@ export async function saveUniqueDistances(
   activities: ParsedActivity[],
   deletedActivityId?: string
 ): Promise<boolean> {
+  invalidateActivitySummariesFallback()
   const db = await getDb()
   if (!db) return true
+  let tx: IDBTransaction | null = null
   try {
-    const tx = db.transaction(
+    tx = db.transaction(
       ["activities", "activity-summaries", "prefs"],
       "readwrite"
     )
@@ -430,12 +553,10 @@ export async function saveUniqueDistances(
         activityIds: activities.map((activity) => activity.id),
       } satisfies UniqueDistanceState,
     } satisfies PrefEntry)
-    await new Promise<void>((resolve, reject) => {
-      tx.oncomplete = () => resolve()
-      tx.onerror = () => reject(tx.error)
-    })
+    await waitForTransaction(tx)
     return true
   } catch (err) {
+    abortTransaction(tx)
     console.warn("[storage] saveUniqueDistances failed:", err)
     return false
   }
@@ -443,34 +564,34 @@ export async function saveUniqueDistances(
 
 /** Delete a single activity by id from storage. */
 export async function deleteActivity(id: string): Promise<void> {
+  invalidateActivitySummariesFallback()
   const db = await getDb()
   if (!db) return
+  let tx: IDBTransaction | null = null
   try {
-    const tx = db.transaction(["activities", "activity-summaries"], "readwrite")
+    tx = db.transaction(["activities", "activity-summaries"], "readwrite")
     tx.objectStore("activities").delete(id)
     tx.objectStore("activity-summaries").delete(id)
-    await new Promise<void>((resolve, reject) => {
-      tx.oncomplete = () => resolve()
-      tx.onerror = () => reject(tx.error)
-    })
+    await waitForTransaction(tx)
   } catch (err) {
+    abortTransaction(tx)
     console.warn("[storage] deleteActivity failed:", err)
   }
 }
 
 /** Delete all activities from storage. */
 export async function clearActivities(): Promise<void> {
+  invalidateActivitySummariesFallback()
   const db = await getDb()
   if (!db) return
+  let tx: IDBTransaction | null = null
   try {
-    const tx = db.transaction(["activities", "activity-summaries"], "readwrite")
+    tx = db.transaction(["activities", "activity-summaries"], "readwrite")
     tx.objectStore("activities").clear()
     tx.objectStore("activity-summaries").clear()
-    await new Promise<void>((resolve, reject) => {
-      tx.oncomplete = () => resolve()
-      tx.onerror = () => reject(tx.error)
-    })
+    await waitForTransaction(tx)
   } catch (err) {
+    abortTransaction(tx)
     console.warn("[storage] clearActivities failed:", err)
   }
 }
