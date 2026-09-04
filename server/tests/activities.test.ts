@@ -8,6 +8,7 @@ import type {
   ActivityMetadataUpdateResponse,
 } from "~shared/api"
 import {
+  SYNC_PAGE_SIZE,
   UPLOAD_RATE_MAX_PER_WINDOW,
   UPLOAD_RATE_WINDOW_MS,
 } from "~shared/constants"
@@ -280,6 +281,51 @@ describe("upload", () => {
 
     expect(response.status).toBe(404)
     expect((await store.getActivity(user.id, hash))?.name).toBe("Morning run")
+  })
+
+  test("metadata retries are idempotent and reject unknown fields", async () => {
+    const { store, app } = setup()
+    const { token } = await signIn(store)
+    const hash = await computeContentHash(makeActivity())
+    await putActivity(app, token, makeActivity())
+
+    const patch = (body: unknown) =>
+      app.request("/api/activities/metadata", {
+        method: "PATCH",
+        headers: { ...authHeaders(token), "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      })
+
+    const first = await patch({ updates: [{ contentHash: hash, isPublic: true }] })
+    expect(first.status).toBe(200)
+    const firstUpdatedAt = ((await first.json()) as ActivityMetadataUpdateResponse)
+      .activities[0]?.updatedAt
+
+    const second = await patch({ updates: [{ contentHash: hash, isPublic: true }] })
+    expect(second.status).toBe(200)
+    expect(
+      ((await second.json()) as ActivityMetadataUpdateResponse).activities[0]
+        ?.updatedAt
+    ).toBe(firstUpdatedAt)
+
+    expect(
+      (await patch({ updates: [{ contentHash: hash, isPublic: true, name: "nope" }] })).status
+    ).toBe(400)
+  })
+
+  test("metadata batches enforce the shared size limit", async () => {
+    const { store, app } = setup()
+    const { token } = await signIn(store)
+    const updates = Array.from({ length: SYNC_PAGE_SIZE + 1 }, (_, index) => ({
+      contentHash: fakeHash(index),
+      isPublic: true,
+    }))
+    const response = await app.request("/api/activities/metadata", {
+      method: "PATCH",
+      headers: { ...authHeaders(token), "Content-Type": "application/json" },
+      body: JSON.stringify({ updates }),
+    })
+    expect(response.status).toBe(400)
   })
 
   test("round-trips the gzipped blob", async () => {

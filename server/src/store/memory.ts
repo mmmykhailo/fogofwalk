@@ -487,11 +487,10 @@ export class MemoryStore implements ServerStore {
     contentHash: string,
     isPublic: boolean
   ): Promise<ActivityMeta | null> {
-    const stored = this.activities.get(userId)?.get(contentHash)
-    if (!stored) return null
-    stored.meta = { ...stored.meta, isPublic }
-    this.achievementPrevalenceCache.invalidate()
-    return stored.meta
+    const updated = await this.updateActivityMetadata(userId, [
+      { contentHash, isPublic },
+    ])
+    return updated?.[0] ?? null
   }
 
   async updateActivityMetadata(

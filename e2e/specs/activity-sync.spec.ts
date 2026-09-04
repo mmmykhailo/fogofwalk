@@ -13,7 +13,9 @@ async function queuedActivityUpdates(page: import("@playwright/test").Page) {
       const transaction = db.transaction("prefs", "readonly")
       const request = transaction.objectStore("prefs").get("syncState")
       request.onsuccess = () =>
-        resolve(request.result?.value?.outboundActivityUpdateHashes ?? [])
+        resolve(
+          Object.keys(request.result?.value?.outboundActivityMetadata ?? {})
+        )
       request.onerror = () => resolve([])
     })
     db.close()

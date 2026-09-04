@@ -940,16 +940,10 @@ export class SqliteFsStore implements ServerStore {
     contentHash: string,
     isPublic: boolean
   ): Promise<ActivityMeta | null> {
-    if (!isSafeContentHash(contentHash)) return null
-    const now = Date.now()
-    this.db
-      .query(
-        `UPDATE activities SET is_public = ?, updated_at = ?
-          WHERE user_id = ? AND content_hash = ?`
-      )
-      .run(isPublic ? 1 : 0, now, userId, contentHash)
-    this.achievementPrevalenceCache.invalidate()
-    return this.getActivity(userId, contentHash)
+    const updated = await this.updateActivityMetadata(userId, [
+      { contentHash, isPublic },
+    ])
+    return updated?.[0] ?? null
   }
 
   async updateActivityMetadata(
