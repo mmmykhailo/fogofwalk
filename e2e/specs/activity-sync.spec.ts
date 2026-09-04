@@ -206,12 +206,14 @@ test.describe("activity sync", () => {
     const uploadCompletion = new Promise<void>((resolve) => {
       uploadFinished = resolve
     })
+    let metadataPayload: unknown
     const holdUpload = async (route: import("@playwright/test").Route) => {
       if (
         route.request().method() !== "PATCH" ||
         !route.request().url().endsWith("/api/activities/metadata")
       )
         return route.fallback()
+      metadataPayload = route.request().postDataJSON()
       uploadStarted()
       await uploadGate
       try {
@@ -236,6 +238,10 @@ test.describe("activity sync", () => {
     await expect
       .poll(() => queuedActivityUpdates(app.page))
       .toContain(contentHash)
+    expect(metadataPayload).toMatchObject({
+      updates: [{ contentHash, activityType: "cycling" }],
+    })
+    expect(JSON.stringify(metadataPayload)).not.toContain("coordinates")
 
     releaseUpload()
     await uploadCompletion
