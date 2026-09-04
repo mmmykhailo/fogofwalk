@@ -49,6 +49,7 @@ export function ActivitiesGridWithSorting({
   const fetcher = useFetcher<typeof clientAction>()
   const auth = useAuth()
 
+  const sortOption = getCanonicalActivitiesQuery(searchParams).sortOption
   const sortedActivitiesResult = useMemo(() => {
     const startedAt = performanceNow()
     const sorted = sortActivitiesBy(activities, sortOption)

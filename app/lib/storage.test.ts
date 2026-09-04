@@ -80,7 +80,7 @@ class FakeTransaction {
   private pending = 0
   private completionQueued = false
   private aborted = false
-  private didClear = false
+  didClear = false
   private readonly staged = new Map<string, Map<string, unknown>>()
 
   constructor(
