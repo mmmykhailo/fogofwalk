@@ -211,20 +211,20 @@ test.describe("activities performance fixture", () => {
     await page.getByRole("button", { name: "Select all" }).click()
     await expect(page.getByText("Selected 48 activities")).toBeVisible()
     await expect(checkboxes).toHaveCount(48)
-    expect(
-      await checkboxes.evaluateAll((items) =>
-        items.every((item) => item.getAttribute("aria-checked") === "true")
-      )
-    ).toBe(true)
+    await expect(
+      page.getByRole("checkbox", {
+        name: `Select activity ${activities[99]!.name}`,
+      })
+    ).toBeChecked()
 
     await page.getByRole("button", { name: "Next page" }).click()
     await expect(cards).toHaveCount(48)
     await expect(page.getByText("Selected 48 activities")).toBeVisible()
-    expect(
-      await checkboxes.evaluateAll((items) =>
-        items.every((item) => item.getAttribute("aria-checked") !== "true")
-      )
-    ).toBe(true)
+    await expect(
+      page.getByRole("checkbox", {
+        name: `Select activity ${activities[51]!.name}`,
+      })
+    ).not.toBeChecked()
 
     await page.getByRole("button", { name: "Select all" }).click()
     await expect(page.getByText("Selected 96 activities")).toBeVisible()
@@ -241,27 +241,33 @@ test.describe("activities performance fixture", () => {
     await expect(
       page.getByText("Showing 97–100 of 100 activities")
     ).toBeVisible()
-    expect(
-      await checkboxes.evaluateAll((items) =>
-        items.every((item) => item.getAttribute("aria-checked") !== "true")
-      )
-    ).toBe(true)
+    await expect(
+      page.getByRole("checkbox", {
+        name: `Select activity ${activities[0]!.name}`,
+      })
+    ).not.toBeChecked()
 
     await page.getByRole("button", { name: "Previous page" }).click()
+    await expect(page).toHaveURL(/\/activities\?sort=date&page=2$/)
     await page.getByRole("button", { name: "Previous page" }).click()
+    await expect(page).toHaveURL(/\/activities\?sort=date$/)
     await page.getByRole("button", { name: "Select all" }).click()
+    await expect(page.getByText("Selected 48 activities")).toBeVisible()
     await page.getByRole("button", { name: "Next page" }).click()
+    await expect(page).toHaveURL(/\/activities\?sort=date&page=2$/)
     await page.getByRole("button", { name: "Select all" }).click()
+    await expect(page.getByText("Selected 96 activities")).toBeVisible()
     await page
       .getByRole("combobox", {
         name: "Set activity type for selected activities",
       })
       .click()
     await page.getByRole("option", { name: "Cycling", exact: true }).click()
-    await page
-      .getByRole("dialog", { name: "Change 96 activities to Cycling?" })
-      .getByRole("button", { name: "Confirm" })
-      .click()
+    const typeDialog = page.getByRole("dialog", {
+      name: "Change 96 activities to Cycling?",
+    })
+    await typeDialog.getByRole("button", { name: "Confirm" }).click()
+    await expect(typeDialog).toBeHidden()
     await expect(page.getByText("Selected 96 activities")).toBeVisible()
 
     await page.reload()
