@@ -15,7 +15,8 @@ import {
   sortActivities,
   sortActivitiesNewestFirst,
 } from "~/lib/statsAggregator"
-import { isActivityType } from "~/lib/activityType"
+import { parseActivitySettingsUpdate } from "~/lib/activitySettings"
+import { canSync } from "~/lib/server/authStore"
 import { pushActivityUpdate } from "~/lib/server/syncEngine"
 import type { ParsedActivity } from "~/types/activities"
 import type { Route } from "./+types/activities"
@@ -37,21 +38,52 @@ export async function clientLoader(): Promise<ParsedActivity[]> {
 
 export async function clientAction({ request }: Route.ClientActionArgs) {
   const formData = await request.formData()
-  if (formData.get("intent") !== "update-activity-type") return null
+  if (formData.get("intent") !== "update-activity-settings") return null
 
-  const activityId = formData.get("activityId")
-  const activityType = formData.get("activityType")
-  if (typeof activityId !== "string" || !isActivityType(activityType)) {
-    return { ok: false as const }
+  const update = parseActivitySettingsUpdate(formData)
+  if (!update.ok) return update
+
+  const activities = update.activityIds.map((activityId) =>
+    mapStore.activities.find((activity) => activity.id === activityId)
+  )
+  if (activities.some((activity) => activity == null)) {
+    return {
+      ok: false as const,
+      error: "One or more activities no longer exist.",
+    }
   }
 
-  const activity = mapStore.activities.find((item) => item.id === activityId)
-  if (!activity) return { ok: false as const }
+  const resolved = activities as ParsedActivity[]
+  if (
+    update.setting === "publicity" &&
+    (!canSync() || resolved.some((activity) => !activity.contentHash))
+  ) {
+    return {
+      ok: false as const,
+      error: "Publicity can only be changed for synced activities.",
+    }
+  }
 
-  activity.activityType = activityType
-  await saveActivities([activity])
-  await pushActivityUpdate(activity)
-  return { ok: true as const, activityId, activityType }
+  const changed = resolved.filter((activity) =>
+    update.setting === "publicity"
+      ? (activity.isPublic ?? false) !== update.value
+      : activity.activityType !== update.value
+  )
+
+  for (const activity of changed) {
+    if (update.setting === "publicity") activity.isPublic = update.value
+    else activity.activityType = update.value
+  }
+
+  await saveActivities(changed)
+  await Promise.all(changed.map((activity) => pushActivityUpdate(activity)))
+
+  return {
+    ok: true as const,
+    updatedActivityIds: changed.map((activity) => activity.id),
+    setting: update.setting,
+    value: update.value,
+  }
 }
 
 export function meta({}: Route.MetaArgs) {
