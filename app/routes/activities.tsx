@@ -144,7 +144,17 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
   }
 
   await queueActivityMetadataUpdates(
-    changedSummaries.map((summary) => fullById?.get(summary.id) ?? summary)
+    changedSummaries.flatMap((summary) => {
+      if (!summary.contentHash) return []
+      return [
+        {
+          contentHash: summary.contentHash,
+          ...(update.setting === "publicity"
+            ? { isPublic: update.value }
+            : { activityType: update.value }),
+        },
+      ]
+    })
   )
 
   return {

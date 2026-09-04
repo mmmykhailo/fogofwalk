@@ -936,7 +936,7 @@ export interface SyncState {
 
 export interface PendingActivityMetadataUpdate {
   isPublic?: boolean
-  activityType?: ActivityType
+  activityType?: ActivityType | null
 }
 
 export async function saveSyncState(state: SyncState): Promise<void> {

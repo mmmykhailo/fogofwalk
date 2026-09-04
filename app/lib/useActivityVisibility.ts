@@ -2,7 +2,7 @@ import { useCallback, useRef, useState } from "react"
 import type { ParsedActivity } from "~/types/activities"
 import { updateActivityVisibility } from "~/lib/server/activityVisibility"
 import { canSync } from "~/lib/server/authStore"
-import { saveActivities } from "~/lib/storage"
+import { updateActivityMetadata } from "~/lib/storage"
 
 const SAVE_DELAY_MS = 600
 
@@ -53,7 +53,10 @@ export function useActivityVisibility(
             current.isPublic
           )
           current.activity.isPublic = current.isPublic
-          await saveActivities([current.activity])
+          const saved = await updateActivityMetadata([
+            { id: current.activity.id, isPublic: current.isPublic },
+          ])
+          if (!saved) throw new Error("Activity visibility could not be saved")
           onUpdated?.(current.activity.id, current.isPublic)
         } catch (err) {
           console.warn("[visibility] failed to save:", err)

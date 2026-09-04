@@ -254,7 +254,7 @@ describe("upload", () => {
       })
     ).json()) as ManifestPage
     expect(manifest.activities[0]).toMatchObject({
-      name: "Evening ride",
+      name: "Morning run",
       isPublic: true,
       activityType: "cycling",
     })
