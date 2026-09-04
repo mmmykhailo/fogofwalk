@@ -24,6 +24,7 @@ export function ActivitiesGrid({
         return (
           <ActivityCard
             key={activity.id}
+            activityId={activity.id}
             activity={{
               name: activity.name,
               startedAtMs: activity.startedAtMs,
