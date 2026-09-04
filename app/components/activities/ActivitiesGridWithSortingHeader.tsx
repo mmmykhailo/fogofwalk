@@ -84,7 +84,6 @@ export function ActivitiesGridWithSortingHeader({
             Selected {selectedActivityCount}{" "}
             {selectedActivityCount === 1 ? "activity" : "activities"}
           </span>
-          {selectAllButton}
           <VisibilitySelect
             isPublic={publicity === true}
             mixed={publicity === MIXED_PUBLICITY}
@@ -105,6 +104,7 @@ export function ActivitiesGridWithSortingHeader({
             disabled={isSubmitting}
             ariaLabel="Set activity type for selected activities"
           />
+          {selectAllButton}
           <Button
             variant="outline"
             size="sm"
