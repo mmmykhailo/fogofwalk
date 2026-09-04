@@ -307,6 +307,8 @@ export async function readActivityStorage(page: Page): Promise<{
   version: number
   activityCount: number
   summaryCount: number
+  activityIds: string[]
+  summaryIds: string[]
 }> {
   return page.evaluate(async () => {
     const db = await new Promise<IDBDatabase>((resolve, reject) => {
@@ -314,9 +316,11 @@ export async function readActivityStorage(page: Page): Promise<{
       request.onsuccess = () => resolve(request.result)
       request.onerror = () => reject(request.error)
     })
-    const counts = await new Promise<{
+    const stored = await new Promise<{
       activityCount: number
       summaryCount: number
+      activityIds: string[]
+      summaryIds: string[]
     }>((resolve, reject) => {
       const transaction = db.transaction(
         ["activities", "activity-summaries"],
@@ -324,21 +328,52 @@ export async function readActivityStorage(page: Page): Promise<{
       )
       const activityCount = transaction.objectStore("activities").count()
       const summaryCount = transaction.objectStore("activity-summaries").count()
+      const activityKeys = transaction.objectStore("activities").getAllKeys()
+      const summaryKeys = transaction
+        .objectStore("activity-summaries")
+        .getAllKeys()
       let activities: number | undefined
       let summaries: number | undefined
+      let activityIds: string[] | undefined
+      let summaryIds: string[] | undefined
+      const finish = () => {
+        if (
+          activities !== undefined &&
+          summaries !== undefined &&
+          activityIds !== undefined &&
+          summaryIds !== undefined
+        ) {
+          resolve({
+            activityCount: activities,
+            summaryCount: summaries,
+            activityIds,
+            summaryIds,
+          })
+        }
+      }
       activityCount.onsuccess = () => {
         activities = activityCount.result
-        if (summaries !== undefined)
-          resolve({ activityCount: activities, summaryCount: summaries })
+        finish()
       }
       summaryCount.onsuccess = () => {
         summaries = summaryCount.result
-        if (activities !== undefined)
-          resolve({ activityCount: activities, summaryCount: summaries })
+        finish()
+      }
+      activityKeys.onsuccess = () => {
+        activityIds = activityKeys.result.filter(
+          (id): id is string => typeof id === "string"
+        )
+        finish()
+      }
+      summaryKeys.onsuccess = () => {
+        summaryIds = summaryKeys.result.filter(
+          (id): id is string => typeof id === "string"
+        )
+        finish()
       }
       transaction.onerror = () => reject(transaction.error)
     })
-    const result = { version: db.version, ...counts }
+    const result = { version: db.version, ...stored }
     db.close()
     return result
   })

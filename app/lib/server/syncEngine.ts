@@ -271,14 +271,11 @@ function materializeActivityMetadataOutbox(
   state: Awaited<ReturnType<typeof loadSyncState>>,
   summaries: readonly ActivitySummary[]
 ): Map<string, PendingActivityMetadataUpdate> {
-  const outbox = new Map(
-    Object.entries(state?.outboundActivityMetadata ?? {})
-  )
+  const outbox = new Map(Object.entries(state?.outboundActivityMetadata ?? {}))
   const summariesByHash = new Map(
     summaries
-      .filter(
-        (summary): summary is ActivitySummary & { contentHash: string } =>
-          Boolean(summary.contentHash)
+      .filter((summary): summary is ActivitySummary & { contentHash: string } =>
+        Boolean(summary.contentHash)
       )
       .map((summary) => [summary.contentHash, summary])
   )
@@ -1084,9 +1081,7 @@ export async function queueActivityMetadataUpdates(
     lastSyncAt: 0,
     serverHashes: [],
   }
-  const outbox = new Map(
-    Object.entries(state.outboundActivityMetadata ?? {})
-  )
+  const outbox = new Map(Object.entries(state.outboundActivityMetadata ?? {}))
   for (const update of updates) {
     const { contentHash, ...patch } = update
     if (Object.keys(patch).length === 0) continue

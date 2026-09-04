@@ -326,6 +326,7 @@ test.describe("activities performance fixture", () => {
 
     await page.getByRole("button", { name: "Previous page" }).click()
     await expect(page).toHaveURL(/\/activities\?sort=date&page=2$/)
+    await expect(cards).toHaveCount(ACTIVITIES_PAGE_SIZE)
     await page.getByRole("button", { name: "Previous page" }).click()
     await expect(page).toHaveURL(/\/activities\?sort=date$/)
     await expect(
@@ -409,7 +410,13 @@ test.describe("activities performance fixture", () => {
     await expect(page.getByTestId(`activity-card-${activity.id}`)).toBeVisible()
     await expect
       .poll(() => readActivityStorage(page))
-      .toEqual({ version: 4, activityCount: 1, summaryCount: 1 })
+      .toEqual({
+        version: 4,
+        activityCount: 1,
+        summaryCount: 1,
+        activityIds: [activity.id],
+        summaryIds: [activity.id],
+      })
   })
 
   test("recovers a corrupt summary store without hiding activities", async ({
@@ -423,7 +430,13 @@ test.describe("activities performance fixture", () => {
     await expect(page.getByTestId(`activity-card-${activity.id}`)).toBeVisible()
     await expect
       .poll(() => readActivityStorage(page))
-      .toEqual({ version: 4, activityCount: 1, summaryCount: 1 })
+      .toEqual({
+        version: 4,
+        activityCount: 1,
+        summaryCount: 1,
+        activityIds: [activity.id],
+        summaryIds: [activity.id],
+      })
   })
 
   test("creates an empty v4 library without phantom summaries", async ({
@@ -436,6 +449,12 @@ test.describe("activities performance fixture", () => {
     ).toBeVisible()
     await expect
       .poll(() => readActivityStorage(page))
-      .toEqual({ version: 4, activityCount: 0, summaryCount: 0 })
+      .toEqual({
+        version: 4,
+        activityCount: 0,
+        summaryCount: 0,
+        activityIds: [],
+        summaryIds: [],
+      })
   })
 })

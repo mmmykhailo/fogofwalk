@@ -232,7 +232,7 @@ test.describe("activity sync", () => {
     await typeSelect.click()
     await app.page.getByRole("option", { name: "Cycling", exact: true }).click()
 
-    // The route action returns while the background upload is still held.
+    // The route action returns while the background metadata upload is still held.
     await Promise.all([
       uploadRequest,
       expect(typeSelect).toBeEnabled({ timeout: 5_000 }),
@@ -245,6 +245,15 @@ test.describe("activity sync", () => {
     })
     expect(JSON.stringify(metadataPayload)).not.toContain("coordinates")
 
+    // A second offline edit replaces the first value in the persisted
+    // last-write-wins outbox while the first request is still unresolved.
+    await typeSelect.click()
+    await app.page.getByRole("option", { name: "Running", exact: true }).click()
+    await expect(typeSelect).toContainText("Running")
+    await expect
+      .poll(() => queuedActivityUpdates(app.page))
+      .toContain(contentHash)
+
     releaseUpload()
     await uploadCompletion
     await app.page.unroute(`${API_URL}/api/activities/*`, holdUpload)
@@ -252,12 +261,9 @@ test.describe("activity sync", () => {
     await expect(
       app.page.getByRole("heading", { name: "My activities" })
     ).toBeVisible()
-    await expect
-      .poll(() => queuedActivityUpdates(app.page))
-      .toContain(contentHash)
 
     // Returning to the map is an ordinary later sync trigger; it drains the
-    // queued hash through the existing upload gate.
+    // queued metadata patch through the existing upload gate.
     await app.goto()
     await app.syncNow()
     await expect.poll(() => queuedActivityUpdates(app.page)).toEqual([])
@@ -279,7 +285,7 @@ test.describe("activity sync", () => {
           (item) => item.contentHash === contentHash
         )
       })
-      .toMatchObject({ activityType: "cycling" })
+      .toMatchObject({ activityType: "running" })
 
     const deviceB = await secondDevice(app.login)
     await deviceB.goto()
@@ -296,6 +302,6 @@ test.describe("activity sync", () => {
       deviceB.page.getByRole("combobox", {
         name: `Activity type for ${activity.name}`,
       })
-    ).toContainText("Cycling")
+    ).toContainText("Running")
   })
 })

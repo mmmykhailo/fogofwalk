@@ -296,12 +296,17 @@ describe("upload", () => {
         body: JSON.stringify(body),
       })
 
-    const first = await patch({ updates: [{ contentHash: hash, isPublic: true }] })
+    const first = await patch({
+      updates: [{ contentHash: hash, isPublic: true }],
+    })
     expect(first.status).toBe(200)
-    const firstUpdatedAt = ((await first.json()) as ActivityMetadataUpdateResponse)
-      .activities[0]?.updatedAt
+    const firstUpdatedAt = (
+      (await first.json()) as ActivityMetadataUpdateResponse
+    ).activities[0]?.updatedAt
 
-    const second = await patch({ updates: [{ contentHash: hash, isPublic: true }] })
+    const second = await patch({
+      updates: [{ contentHash: hash, isPublic: true }],
+    })
     expect(second.status).toBe(200)
     expect(
       ((await second.json()) as ActivityMetadataUpdateResponse).activities[0]
@@ -309,7 +314,11 @@ describe("upload", () => {
     ).toBe(firstUpdatedAt)
 
     expect(
-      (await patch({ updates: [{ contentHash: hash, isPublic: true, name: "nope" }] })).status
+      (
+        await patch({
+          updates: [{ contentHash: hash, isPublic: true, name: "nope" }],
+        })
+      ).status
     ).toBe(400)
   })
 
