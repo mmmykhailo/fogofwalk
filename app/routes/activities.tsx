@@ -1,6 +1,6 @@
 import { useLoaderData } from "react-router"
 import { EmptyActivitiesState } from "~/components/activities/EmptyActivitiesState"
-import { ActivitiesGridWithSortingHeader } from "~/components/activities/ActivitiesGridWithSortingHeader"
+import { ActivitiesGridWithSorting } from "~/components/activities/ActivitiesGridWithSorting"
 import { PageShell } from "~/components/PageShell"
 import { mapStore } from "~/lib/mapStore"
 import {
@@ -102,7 +102,7 @@ export default function MyActivitiesPage() {
       {activities.length === 0 ? (
         <EmptyActivitiesState />
       ) : (
-        <ActivitiesGridWithSortingHeader activities={activities} />
+        <ActivitiesGridWithSorting activities={activities} />
       )}
     </PageShell>
   )
