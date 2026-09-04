@@ -16,12 +16,13 @@ import {
   sortActivitiesNewestFirst,
 } from "~/lib/statsAggregator"
 import { parseActivitySettingsUpdate } from "~/lib/activitySettings"
-import { canSync } from "~/lib/server/authStore"
+import { canSync, initAuth } from "~/lib/server/authStore"
 import { pushActivityUpdate } from "~/lib/server/syncEngine"
 import type { ParsedActivity } from "~/types/activities"
 import type { Route } from "./+types/activities"
 
 export async function clientLoader(): Promise<ParsedActivity[]> {
+  void initAuth()
   if (mapStore.activities.length === 0) {
     const [activities, uniqueDistanceState] = await Promise.all([
       loadActivities(),

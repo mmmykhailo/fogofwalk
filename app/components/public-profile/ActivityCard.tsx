@@ -30,6 +30,7 @@ export interface ActivityCardData {
 
 interface ActivityCardProps {
   activity: PublicActivityMeta | ActivityCardData
+  activityId?: string
   /** Local map destination. Public-profile activities intentionally have none. */
   activityHref?: string
   selectionControl?: ReactNode
@@ -40,6 +41,7 @@ interface ActivityCardProps {
 
 export function ActivityCard({
   activity,
+  activityId,
   activityHref,
   selectionControl,
   settingsControls,
@@ -65,7 +67,10 @@ export function ActivityCard({
   }
 
   return (
-    <div className="@container flex flex-col gap-2 rounded-none bg-card p-4 text-card-foreground ring-1 ring-foreground/10">
+    <div
+      data-testid={activityId ? `activity-card-${activityId}` : undefined}
+      className="@container flex flex-col gap-2 rounded-none bg-card p-4 text-card-foreground ring-1 ring-foreground/10"
+    >
       <div className="flex items-start justify-between gap-2">
         <div className="flex min-w-0 flex-1 items-start gap-2">
           {selectionControl}
