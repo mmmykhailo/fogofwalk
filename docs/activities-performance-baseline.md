@@ -1,9 +1,14 @@
-# Activities performance baseline
+# Activities performance baseline and result
 
-Measured on 2026-09-04 with the production SPA build, Chromium Desktop, one
-Playwright worker, and five serial repeats per fixture. The fixture seeds
-IndexedDB directly; it does not include GPX parsing. The table reports the
-median and observed p95 of the instrumented values.
+The fixture seeds IndexedDB directly; it does not include GPX parsing. Both
+tables use the production SPA build, Chromium Desktop, and one Playwright
+worker.
+
+## Before optimization
+
+Measured on 2026-09-04 with five serial repeats per fixture. The table reports
+the median and observed p95 of the instrumented values. This was the
+all-activities loader and render path.
 
 | Library | State | Loader (ms) | Unique repair (ms) | First grid commit (ms) | Cards | DOM elements | Heap |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -21,6 +26,38 @@ median and observed p95 of the instrumented values.
 | 2,000 geometry | stale | 889.9 / 1,079.0 | 824.6 / 1,026.5 | 2,946 / 3,302 | 2,000 | 70,053 | 521 MB |
 
 Values are `median / p95` across the five observed samples. The current
-implementation mounts the complete collection, so card, DOM, and heap values
-scale directly with library size. Sort and selection timings, and warm-map
-navigation, remain follow-up scenarios for the optimization commits.
+implementation at this point mounted the complete collection, so card, DOM,
+and heap values scaled directly with library size.
+
+## After optimization
+
+The final production matrix ran all 17 deterministic performance and storage
+tests. These are representative single-run values, not a CI timing gate. The
+parent loader and parent IDB columns are the important cold-path measurements:
+`/activities` now reads summaries and does not start unique-distance repair.
+
+| Library | State | Parent loader (ms) | Parent IDB (ms) | First grid commit (ms) | Cards | DOM elements | Heap |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 100 metadata | current | 0.8 | 0.5 | 225.3 | 48 | 1,595 | 25 MB |
+| 100 metadata | stale | 1.2 | 1.0 | 141.5 | 48 | 1,595 | 22 MB |
+| 500 metadata | current | 2.6 | 2.4 | 144.9 | 48 | 1,595 | 26 MB |
+| 500 metadata | stale | 2.0 | 1.8 | 141.2 | 48 | 1,595 | 26 MB |
+| 2,000 metadata | current | 11.8 | 11.6 | 154.8 | 48 | 1,595 | 37 MB |
+| 2,000 metadata | stale | 7.7 | 7.6 | 158.5 | 48 | 1,595 | 37 MB |
+| 100 geometry | current | 1.2 | 1.1 | 136.3 | 48 | 1,739 | 29 MB |
+| 100 geometry | stale | 0.9 | 0.7 | 133.0 | 48 | 1,739 | 29 MB |
+| 500 geometry | current | 2.4 | 2.3 | 138.8 | 48 | 1,739 | 45 MB |
+| 500 geometry | stale | 2.5 | 2.4 | 140.5 | 48 | 1,739 | 45 MB |
+| 2,000 geometry | current | 2.5 | 2.3 | 139.1 | 48 | 1,739 | 92 MB |
+| 2,000 geometry | stale | 9.9 | 9.7 | 155.2 | 48 | 1,739 | 97 MB |
+
+At 2,000 geometry-heavy activities, the first-grid p95 from the original
+baseline was 3,302 ms; the final smoke run was 155.2 ms. Mounted cards fell
+from 2,000 to 48, DOM elements from 70,053 to 1,739, and heap from 521 MB to
+97 MB. The stale unique-distance repair is no longer on this route's critical
+path; it remains available to map and statistics consumers.
+
+The matrix also asserts progressive paging, global sort order across page
+boundaries, selection/focus persistence, sort-only navigation without storage
+work, v3/empty/corrupt summary migration recovery, offline metadata queueing,
+cross-device metadata sync, and server-disabled no-network behavior.

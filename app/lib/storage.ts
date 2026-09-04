@@ -103,6 +103,17 @@ function isActivitySummary(value: unknown): value is ActivitySummary {
   )
 }
 
+function sortActivitySummaries(
+  summaries: readonly ActivitySummary[]
+): ActivitySummary[] {
+  return [...summaries].sort((a, b) => {
+    if (a.startedAtMs == null && b.startedAtMs == null) return 0
+    if (a.startedAtMs == null) return 1
+    if (b.startedAtMs == null) return -1
+    return a.startedAtMs - b.startedAtMs
+  })
+}
+
 // ─── DB singleton ──────────────────────────────────────────────────────────────
 
 const DB_NAME = "fogofwalk"
@@ -300,7 +311,7 @@ async function loadStoredActivitySummaries(): Promise<ActivitySummary[]> {
       summaries.length === activityCount &&
       summaries.length === storedSummaries.length
     ) {
-      return summaries
+      return sortActivitySummaries(summaries)
     }
   } catch (err) {
     console.warn("[storage] loadActivitySummaries failed:", err)
@@ -310,7 +321,7 @@ async function loadStoredActivitySummaries(): Promise<ActivitySummary[]> {
   // an empty page. This fallback is intentionally full-sized and is only used
   // while recovering the summary store.
   const fullActivities = await loadActivities()
-  const summaries = fullActivities.map(activityToSummary)
+  const summaries = sortActivitySummaries(fullActivities.map(activityToSummary))
   await saveActivitySummaries(summaries)
   return summaries
 }

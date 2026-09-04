@@ -5,6 +5,8 @@ export type PerformanceActivityKind = "metadata" | "geometry"
 export interface PerformanceMetrics {
   kind: PerformanceActivityKind
   count: number
+  homeLoaderMs: number | null
+  homeIdbLoadMs: number | null
   loaderMs: number | null
   idbLoadMs: number | null
   uniqueDistanceMs: number | null
@@ -274,6 +276,8 @@ export async function readPerformanceMetrics(
       return {
         kind,
         count,
+        homeLoaderMs: duration("home:loader"),
+        homeIdbLoadMs: duration("home:idb-load"),
         loaderMs: duration("activities:loader"),
         idbLoadMs: duration("activities:idb-load"),
         uniqueDistanceMs: duration("activities:unique-distance"),
