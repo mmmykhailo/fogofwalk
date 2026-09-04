@@ -25,8 +25,6 @@ import {
   commonPublicity,
   MIXED_ACTIVITY_TYPE,
   MIXED_PUBLICITY,
-  NO_ACTIVITY_SELECTION,
-  UNSET_ACTIVITY_TYPE,
 } from "~/lib/activitySettings"
 import { useAuth } from "~/lib/server/authStore"
 import type { ParsedActivity } from "~/types/activities"

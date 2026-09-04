@@ -1,8 +1,5 @@
 import { ACTIVITY_TYPE_LABELS } from "~/lib/activityType"
-import type {
-  ActivitySettingValue,
-  ActivitySetting,
-} from "~/lib/activitySettings"
+import type { ActivityType } from "~/types/activities"
 import {
   Dialog,
   DialogContent,
@@ -12,12 +9,9 @@ import {
   DialogTitle,
 } from "~/components/ui/dialog"
 import { Button } from "~/components/ui/button"
-import type { ActivityType } from "~/types/activities"
-
-export interface BulkActivityUpdateProposal {
-  setting: ActivitySetting
-  value: ActivitySettingValue
-}
+export type BulkActivityUpdateProposal =
+  | { setting: "publicity"; value: boolean }
+  | { setting: "activityType"; value: ActivityType }
 
 interface ConfirmBulkActivityUpdateDialogProps {
   open: boolean
@@ -33,7 +27,7 @@ function proposalTarget(proposal: BulkActivityUpdateProposal): string {
   if (proposal.setting === "publicity") {
     return proposal.value ? "public" : "private"
   }
-  return ACTIVITY_TYPE_LABELS[proposal.value as ActivityType]
+  return ACTIVITY_TYPE_LABELS[proposal.value]
 }
 
 function proposalTitle(
