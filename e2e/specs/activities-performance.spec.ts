@@ -2,7 +2,10 @@ import { expect, test } from "@playwright/test"
 
 import {
   makePerformanceActivities,
+  corruptPerformanceSummary,
   readPerformanceMetrics,
+  readActivityStorage,
+  seedLegacyV3Database,
   seedPerformanceDatabase,
   type PerformanceActivityKind,
 } from "../fixtures/performance"
@@ -108,5 +111,43 @@ test.describe("activities performance fixture", () => {
         .length,
     }))
     expect(after).toEqual(before)
+  })
+
+  test("upgrades a v3 database and derives summaries", async ({ page }) => {
+    const activity = makePerformanceActivities(1, "geometry")[0]!
+    await seedLegacyV3Database(page, activity)
+
+    await page.goto("/activities")
+    await expect(page.getByTestId(`activity-card-${activity.id}`)).toBeVisible()
+    await expect
+      .poll(() => readActivityStorage(page))
+      .toEqual({ version: 4, activityCount: 1, summaryCount: 1 })
+  })
+
+  test("recovers a corrupt summary store without hiding activities", async ({
+    page,
+  }) => {
+    const activity = makePerformanceActivities(1, "metadata")[0]!
+    await seedPerformanceDatabase(page, [activity], true)
+    await corruptPerformanceSummary(page, activity.id)
+
+    await page.goto("/activities")
+    await expect(page.getByTestId(`activity-card-${activity.id}`)).toBeVisible()
+    await expect
+      .poll(() => readActivityStorage(page))
+      .toEqual({ version: 4, activityCount: 1, summaryCount: 1 })
+  })
+
+  test("creates an empty v4 library without phantom summaries", async ({
+    page,
+  }) => {
+    await seedPerformanceDatabase(page, [], true)
+    await page.goto("/activities")
+    await expect(
+      page.getByText("Import some activities to see them here.")
+    ).toBeVisible()
+    await expect
+      .poll(() => readActivityStorage(page))
+      .toEqual({ version: 4, activityCount: 0, summaryCount: 0 })
   })
 })

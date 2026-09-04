@@ -1,6 +1,8 @@
 import { isActivityType } from "~/lib/activityType"
 import type { ActivityType, ParsedActivity } from "~/types/activities"
 
+type ActivitySettingsItem = Pick<ParsedActivity, "isPublic" | "activityType">
+
 export const NO_ACTIVITY_SELECTION = "no-activity-selection" as const
 export const MIXED_PUBLICITY = "mixed-publicity" as const
 export const UNSET_ACTIVITY_TYPE = "unset-activity-type" as const
@@ -22,7 +24,7 @@ export type CommonActivityType =
   | ActivityType
 
 export function commonPublicity(
-  activities: readonly ParsedActivity[]
+  activities: readonly ActivitySettingsItem[]
 ): CommonPublicity {
   if (activities.length === 0) return NO_ACTIVITY_SELECTION
   const first = activities[0]!.isPublic ?? false
@@ -32,7 +34,7 @@ export function commonPublicity(
 }
 
 export function commonActivityType(
-  activities: readonly ParsedActivity[]
+  activities: readonly ActivitySettingsItem[]
 ): CommonActivityType {
   if (activities.length === 0) return NO_ACTIVITY_SELECTION
   const first = activities[0]!.activityType

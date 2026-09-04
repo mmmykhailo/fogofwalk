@@ -2,12 +2,12 @@ import { useEffect, useState } from "react"
 import { Button } from "~/components/ui/button"
 import { LocalActivityCard } from "~/components/activities/LocalActivityCard"
 import { Grid } from "~/components/Grid"
-import type { ParsedActivity } from "~/types/activities"
+import type { ActivitySummary } from "~/types/activitySummary"
 
 export const ACTIVITIES_PAGE_SIZE = 48
 
 interface ActivitiesGridProps {
-  activities: ParsedActivity[]
+  activities: ActivitySummary[]
   selectedActivityIds: ReadonlySet<string>
   onSelectionChange: (activityId: string, isSelected: boolean) => void
   showActivitySettings: boolean

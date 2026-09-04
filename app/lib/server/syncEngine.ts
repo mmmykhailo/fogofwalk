@@ -36,7 +36,7 @@ import {
   saveSavedPoint,
   saveSavedPoints,
 } from "~/lib/storage"
-import { ingestActivities, mapStore } from "~/lib/mapStore"
+import { ingestActivities, mapStore, setFullActivities } from "~/lib/mapStore"
 import { backfillContentHashes } from "~/lib/activityHash"
 import { createUuid } from "~/lib/uuid"
 import { populateUniqueDistances } from "~/lib/statsAggregator"
@@ -420,8 +420,10 @@ async function syncOnce(reason: string): Promise<void> {
       const byHash = new Map(
         updated.map((activity) => [activity.contentHash, activity])
       )
-      mapStore.activities = mapStore.activities.map(
-        (activity) => byHash.get(activity.contentHash) ?? activity
+      setFullActivities(
+        mapStore.activities.map(
+          (activity) => byHash.get(activity.contentHash) ?? activity
+        )
       )
       await populateUniqueDistances(mapStore.activities)
       await saveUniqueDistances(mapStore.activities)
@@ -867,7 +869,7 @@ async function downloadActivity(
 }
 
 async function removeLocalActivity(activity: ParsedActivity): Promise<void> {
-  mapStore.activities = mapStore.activities.filter((t) => t.id !== activity.id)
+  setFullActivities(mapStore.activities.filter((t) => t.id !== activity.id))
   await deleteActivityFromIdb(activity.id)
 }
 

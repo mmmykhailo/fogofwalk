@@ -2,8 +2,7 @@ import { useLoaderData } from "react-router"
 import { FootprintsIcon } from "@phosphor-icons/react"
 import { PageShell } from "~/components/PageShell"
 import type { Route } from "./+types/stats"
-import { loadActivities } from "~/lib/storage"
-import { mapStore } from "~/lib/mapStore"
+import { hydrateFullActivities, mapStore } from "~/lib/mapStore"
 import {
   sortActivities,
   computeLifetimeTotals,
@@ -39,9 +38,8 @@ export async function clientLoader(): Promise<StatsLoaderData> {
   // clientAction). Fall back to IDB only when navigating directly to /stats on
   // a fresh page load before the home clientLoader has run.
   let activities = mapStore.activities
-  if (activities.length === 0) {
-    activities = sortActivities(await loadActivities())
-    mapStore.activities = activities
+  if (mapStore.activityHydration !== "full") {
+    activities = await hydrateFullActivities()
   }
   await ensureUniqueDistancesCurrent(activities)
   const now = Date.now()

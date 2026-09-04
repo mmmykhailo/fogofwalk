@@ -17,14 +17,14 @@ import {
 } from "~/lib/statsAggregator"
 import { commonActivityType, commonPublicity } from "~/lib/activitySettings"
 import { useAuth } from "~/lib/server/authStore"
-import type { ParsedActivity } from "~/types/activities"
+import type { ActivitySummary } from "~/types/activitySummary"
 import type { clientAction } from "~/routes/activities"
 import { markPerformance, measurePerformance } from "~/lib/performance"
 
 const DEFAULT_SORT_OPTION: ActivitySortOption = "date"
 
 interface ActivitiesGridWithSortingProps {
-  activities: ParsedActivity[]
+  activities: ActivitySummary[]
 }
 
 export function ActivitiesGridWithSorting({
@@ -64,7 +64,7 @@ export function ActivitiesGridWithSorting({
     () =>
       [...selectedActivityIds]
         .map((activityId) => activityById.get(activityId))
-        .filter((activity): activity is ParsedActivity => activity != null),
+        .filter((activity): activity is ActivitySummary => activity != null),
     [activityById, selectedActivityIds]
   )
   const publicity = commonPublicity(selectedActivities)

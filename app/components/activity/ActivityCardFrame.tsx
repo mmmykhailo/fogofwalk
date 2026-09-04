@@ -8,7 +8,7 @@ import {
   formatElevation,
   formatSpeed,
 } from "~/components/activity-stats/formatters"
-import { Stat } from "~/components/public-profile/Stat"
+import { ActivityStat } from "~/components/activity/ActivityStat"
 
 export interface ActivityCardData {
   name: string
@@ -80,18 +80,24 @@ export function ActivityCardFrame({
         </div>
       </div>
       <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs @sm:grid-cols-4">
-        <Stat label="Distance" value={formatDistance(activity.distanceKm)} />
+        <ActivityStat
+          label="Distance"
+          value={formatDistance(activity.distanceKm)}
+        />
         {activity.durationMs != null && (
-          <Stat label="Duration" value={formatDuration(activity.durationMs)} />
+          <ActivityStat
+            label="Duration"
+            value={formatDuration(activity.durationMs)}
+          />
         )}
         {activity.elevationGainM > 0 && (
-          <Stat
+          <ActivityStat
             label="Elevation gain"
             value={formatElevation(activity.elevationGainM)}
           />
         )}
         {activity.avgMovingSpeedKmh != null && (
-          <Stat
+          <ActivityStat
             label="Moving speed"
             value={formatSpeed(activity.avgMovingSpeedKmh)}
           />

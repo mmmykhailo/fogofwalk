@@ -79,11 +79,12 @@ export async function seedPerformanceDatabase(
   await page.evaluate(
     async ({ activities, uniqueDistancesCurrent }) => {
       const db = await new Promise<IDBDatabase>((resolve, reject) => {
-        const request = indexedDB.open("fogofwalk", 3)
+        const request = indexedDB.open("fogofwalk", 4)
         request.onupgradeneeded = () => {
           const database = request.result
           for (const name of [
             "activities",
+            "activity-summaries",
             "photos",
             "saved-points",
             "prefs",
@@ -100,10 +101,31 @@ export async function seedPerformanceDatabase(
       })
 
       await new Promise<void>((resolve, reject) => {
-        const transaction = db.transaction(["activities", "prefs"], "readwrite")
+        const transaction = db.transaction(
+          ["activities", "activity-summaries", "prefs"],
+          "readwrite"
+        )
         const activityStore = transaction.objectStore("activities")
+        const summaryStore = transaction.objectStore("activity-summaries")
         activityStore.clear()
+        summaryStore.clear()
         for (const activity of activities) activityStore.put(activity)
+        for (const activity of activities) {
+          summaryStore.put({
+            id: activity.id,
+            name: activity.name,
+            startedAtMs: activity.startedAtMs,
+            activityType: activity.activityType,
+            contentHash: activity.contentHash,
+            isPublic: activity.isPublic,
+            stats: {
+              distanceKm: activity.stats.distanceKm,
+              durationMs: activity.stats.durationMs,
+              elevationGainM: activity.stats.elevationGainM,
+              avgMovingSpeedKmh: activity.stats.avgMovingSpeedKmh,
+            },
+          })
+        }
         transaction.objectStore("prefs").put({
           key: "uniqueDistanceState",
           value: {
@@ -121,6 +143,110 @@ export async function seedPerformanceDatabase(
     },
     { activities, uniqueDistancesCurrent }
   )
+}
+
+/** Seed the pre-summary schema so the production upgrade path is exercised. */
+export async function seedLegacyV3Database(
+  page: Page,
+  activity: ReturnType<typeof makePerformanceActivities>[number]
+): Promise<void> {
+  await page.goto("/favicon.ico")
+  await page.evaluate(async (activity) => {
+    await new Promise<void>((resolve, reject) => {
+      const request = indexedDB.deleteDatabase("fogofwalk")
+      request.onsuccess = () => resolve()
+      request.onerror = () => reject(request.error)
+      request.onblocked = () =>
+        reject(new Error("legacy database deletion blocked"))
+    })
+
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open("fogofwalk", 3)
+      request.onupgradeneeded = () => {
+        const database = request.result
+        for (const name of ["activities", "photos", "saved-points", "prefs"]) {
+          if (!database.objectStoreNames.contains(name)) {
+            database.createObjectStore(name, {
+              keyPath: name === "prefs" ? "key" : "id",
+            })
+          }
+        }
+      }
+      request.onsuccess = () => resolve(request.result)
+      request.onerror = () => reject(request.error)
+    })
+    await new Promise<void>((resolve, reject) => {
+      const transaction = db.transaction("activities", "readwrite")
+      transaction.objectStore("activities").put(activity)
+      transaction.oncomplete = () => resolve()
+      transaction.onerror = () => reject(transaction.error)
+      transaction.onabort = () => reject(transaction.error)
+    })
+    db.close()
+  }, activity)
+}
+
+/** Replace the summary store with a malformed record for recovery coverage. */
+export async function corruptPerformanceSummary(
+  page: Page,
+  activityId: string
+): Promise<void> {
+  await page.evaluate(async (id) => {
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open("fogofwalk")
+      request.onsuccess = () => resolve(request.result)
+      request.onerror = () => reject(request.error)
+    })
+    await new Promise<void>((resolve, reject) => {
+      const transaction = db.transaction("activity-summaries", "readwrite")
+      transaction.objectStore("activity-summaries").put({ id, name: "broken" })
+      transaction.oncomplete = () => resolve()
+      transaction.onerror = () => reject(transaction.error)
+      transaction.onabort = () => reject(transaction.error)
+    })
+    db.close()
+  }, activityId)
+}
+
+export async function readActivityStorage(page: Page): Promise<{
+  version: number
+  activityCount: number
+  summaryCount: number
+}> {
+  return page.evaluate(async () => {
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open("fogofwalk")
+      request.onsuccess = () => resolve(request.result)
+      request.onerror = () => reject(request.error)
+    })
+    const counts = await new Promise<{
+      activityCount: number
+      summaryCount: number
+    }>((resolve, reject) => {
+      const transaction = db.transaction(
+        ["activities", "activity-summaries"],
+        "readonly"
+      )
+      const activityCount = transaction.objectStore("activities").count()
+      const summaryCount = transaction.objectStore("activity-summaries").count()
+      let activities: number | undefined
+      let summaries: number | undefined
+      activityCount.onsuccess = () => {
+        activities = activityCount.result
+        if (summaries !== undefined)
+          resolve({ activityCount: activities, summaryCount: summaries })
+      }
+      summaryCount.onsuccess = () => {
+        summaries = summaryCount.result
+        if (activities !== undefined)
+          resolve({ activityCount: activities, summaryCount: summaries })
+      }
+      transaction.onerror = () => reject(transaction.error)
+    })
+    const result = { version: db.version, ...counts }
+    db.close()
+    return result
+  })
 }
 
 export async function readPerformanceMetrics(

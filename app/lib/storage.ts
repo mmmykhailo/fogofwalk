@@ -2,6 +2,8 @@ import type { ParsedActivity, FogMode } from "~/types/activities"
 import type { ServerUser, UserCapabilities } from "~shared/api"
 import type { PhotoEntry } from "~/types/photos"
 import type { SavedPoint } from "~shared/saved-points"
+import type { ActivitySummary } from "~/types/activitySummary"
+import type { ActivityType } from "~/types/activities"
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -32,10 +34,79 @@ export interface UniqueDistanceState {
 
 const UNIQUE_DISTANCE_VERSION = 1
 
+// Fields added after initial release; absent in older IDB records.
+export type StoredActivity = Omit<
+  ParsedActivity,
+  "startedAtMs" | "stats" | "isPublic"
+> & {
+  startedAtMs?: number | null
+  isPublic?: boolean
+  stats: Omit<ParsedActivity["stats"], "uniqueDistanceKm"> & {
+    uniqueDistanceKm?: number
+  }
+}
+
+interface ActivitySettingsPatch {
+  id: string
+  isPublic?: boolean
+  activityType?: ActivityType
+}
+
+function getStoredStartedAt(activity: StoredActivity): number | null {
+  if (activity.startedAtMs !== undefined) return activity.startedAtMs
+  return (
+    activity.pointTimestamps?.find(
+      (timestamp) => timestamp != null && isFinite(timestamp)
+    ) ?? null
+  )
+}
+
+/** Convert a full activity to the metadata needed by the library route. */
+export function activityToSummary(
+  activity: StoredActivity | ParsedActivity
+): ActivitySummary {
+  return {
+    id: activity.id,
+    name: activity.name,
+    startedAtMs: getStoredStartedAt(activity),
+    ...(activity.activityType ? { activityType: activity.activityType } : {}),
+    ...(activity.startSunPhase
+      ? { startSunPhase: activity.startSunPhase }
+      : {}),
+    ...(activity.contentHash ? { contentHash: activity.contentHash } : {}),
+    isPublic: activity.isPublic ?? false,
+    stats: {
+      distanceKm: activity.stats.distanceKm,
+      durationMs: activity.stats.durationMs,
+      elevationGainM: activity.stats.elevationGainM,
+      avgMovingSpeedKmh: activity.stats.avgMovingSpeedKmh,
+    },
+  }
+}
+
+function isActivitySummary(value: unknown): value is ActivitySummary {
+  if (value == null || typeof value !== "object") return false
+  const summary = value as Partial<ActivitySummary>
+  return (
+    typeof summary.id === "string" &&
+    typeof summary.name === "string" &&
+    (summary.startedAtMs === null || typeof summary.startedAtMs === "number") &&
+    typeof summary.stats === "object" &&
+    summary.stats !== null &&
+    typeof summary.stats.distanceKm === "number" &&
+    (summary.stats.durationMs === null ||
+      typeof summary.stats.durationMs === "number") &&
+    typeof summary.stats.elevationGainM === "number" &&
+    (summary.stats.avgMovingSpeedKmh === null ||
+      typeof summary.stats.avgMovingSpeedKmh === "number") &&
+    (summary.isPublic === undefined || typeof summary.isPublic === "boolean")
+  )
+}
+
 // ─── DB singleton ──────────────────────────────────────────────────────────────
 
 const DB_NAME = "fogofwalk"
-const DB_VERSION = 3
+const DB_VERSION = 4
 
 let dbPromise: Promise<IDBDatabase | null> | null = null
 
@@ -54,6 +125,10 @@ function getDb(): Promise<IDBDatabase | null> {
         const tx = (e.target as IDBOpenDBRequest).transaction!
         if (!db.objectStoreNames.contains("activities")) {
           db.createObjectStore("activities", { keyPath: "id" })
+        }
+
+        if (!db.objectStoreNames.contains("activity-summaries")) {
+          db.createObjectStore("activity-summaries", { keyPath: "id" })
         }
 
         // v1 called imported activities "tracks". Copy each record inside the
@@ -82,11 +157,27 @@ function getDb(): Promise<IDBDatabase | null> {
         if (!db.objectStoreNames.contains("prefs")) {
           db.createObjectStore("prefs", { keyPath: "key" })
         }
+
+        if (e.oldVersion < 4) {
+          const activityStore = tx.objectStore("activities")
+          const summaryStore = tx.objectStore("activity-summaries")
+          const cursorRequest = activityStore.openCursor()
+          cursorRequest.onsuccess = () => {
+            const cursor = cursorRequest.result
+            if (cursor) {
+              summaryStore.put(
+                activityToSummary(cursor.value as StoredActivity)
+              )
+              cursor.continue()
+            }
+          }
+        }
       }
 
       req.onsuccess = () => resolve(req.result)
       req.onerror = () => {
         console.warn("[storage] IndexedDB open failed:", req.error)
+        dbPromise = null
         resolve(null)
       }
     } catch (err) {
@@ -116,9 +207,13 @@ export async function saveActivities(
   const db = await getDb()
   if (!db) return
   try {
-    const tx = db.transaction("activities", "readwrite")
+    const tx = db.transaction(["activities", "activity-summaries"], "readwrite")
     const store = tx.objectStore("activities")
-    for (const activity of activities) store.put(activity)
+    const summaryStore = tx.objectStore("activity-summaries")
+    for (const activity of activities) {
+      store.put(activity)
+      summaryStore.put(activityToSummary(activity))
+    }
     await new Promise<void>((resolve, reject) => {
       tx.oncomplete = () => resolve()
       tx.onerror = () => reject(tx.error)
@@ -128,44 +223,151 @@ export async function saveActivities(
   }
 }
 
-// Fields added after initial release; absent in older IDB records.
-type StoredActivity = Omit<
-  ParsedActivity,
-  "startedAtMs" | "stats" | "isPublic"
-> & {
-  startedAtMs?: number | null
-  isPublic?: boolean
-  stats: Omit<ParsedActivity["stats"], "uniqueDistanceKm"> & {
-    uniqueDistanceKm?: number
-  }
+/** Load all persisted activities, overlaying the small metadata store. */
+export async function loadActivities(): Promise<ParsedActivity[]> {
+  if (fullActivitiesLoad) return fullActivitiesLoad
+  fullActivitiesLoad = loadFullActivities().finally(() => {
+    fullActivitiesLoad = null
+  })
+  return fullActivitiesLoad
 }
 
-/** Load all persisted activities. Returns [] on any error. */
-export async function loadActivities(): Promise<ParsedActivity[]> {
+let fullActivitiesLoad: Promise<ParsedActivity[]> | null = null
+
+async function loadFullActivities(): Promise<ParsedActivity[]> {
   const db = await getDb()
   if (!db) return []
   try {
-    const tx = db.transaction("activities", "readonly")
-    const store = tx.objectStore("activities")
-    const activities = await promisifyRequest<StoredActivity[]>(store.getAll())
+    const tx = db.transaction(["activities", "activity-summaries"], "readonly")
+    const [activities, summaries] = await Promise.all([
+      promisifyRequest<StoredActivity[]>(tx.objectStore("activities").getAll()),
+      promisifyRequest<ActivitySummary[]>(
+        tx.objectStore("activity-summaries").getAll()
+      ),
+    ])
+    const summaryById = new Map(
+      summaries
+        .filter(isActivitySummary)
+        .map((summary) => [summary.id, summary])
+    )
     for (const activity of activities) {
-      if (activity.startedAtMs === undefined) {
-        const first = activity.pointTimestamps?.find(
-          (t) => t != null && isFinite(t)
-        )
-        activity.startedAtMs = first ?? null
-      }
-      if (activity.isPublic === undefined) {
-        activity.isPublic = false
-      }
+      activity.startedAtMs = getStoredStartedAt(activity)
+      activity.isPublic = activity.isPublic ?? false
       if (activity.stats.uniqueDistanceKm === undefined) {
         activity.stats.uniqueDistanceKm = activity.stats.distanceKm
+      }
+      const summary = summaryById.get(activity.id)
+      if (summary) {
+        activity.name = summary.name
+        activity.startedAtMs = summary.startedAtMs
+        activity.activityType = summary.activityType
+        activity.startSunPhase = summary.startSunPhase
+        activity.contentHash = summary.contentHash
+        activity.isPublic = summary.isPublic ?? false
       }
     }
     return activities as ParsedActivity[]
   } catch (err) {
     console.warn("[storage] loadActivities failed:", err)
     return []
+  }
+}
+
+/** Load only the metadata needed by the activities route. */
+export async function loadActivitySummaries(): Promise<ActivitySummary[]> {
+  if (activitySummariesLoad) return activitySummariesLoad
+  activitySummariesLoad = loadStoredActivitySummaries().finally(() => {
+    activitySummariesLoad = null
+  })
+  return activitySummariesLoad
+}
+
+let activitySummariesLoad: Promise<ActivitySummary[]> | null = null
+
+async function loadStoredActivitySummaries(): Promise<ActivitySummary[]> {
+  const db = await getDb()
+  if (!db) return []
+  try {
+    const tx = db.transaction(["activities", "activity-summaries"], "readonly")
+    const [activityCount, storedSummaries] = await Promise.all([
+      promisifyRequest<number>(tx.objectStore("activities").count()),
+      promisifyRequest<unknown[]>(
+        tx.objectStore("activity-summaries").getAll()
+      ),
+    ])
+    const summaries = storedSummaries.filter(isActivitySummary)
+    if (
+      summaries.length === activityCount &&
+      summaries.length === storedSummaries.length
+    ) {
+      return summaries
+    }
+  } catch (err) {
+    console.warn("[storage] loadActivitySummaries failed:", err)
+  }
+
+  // A partial/corrupt summary store must never turn a populated library into
+  // an empty page. This fallback is intentionally full-sized and is only used
+  // while recovering the summary store.
+  const fullActivities = await loadActivities()
+  const summaries = fullActivities.map(activityToSummary)
+  await saveActivitySummaries(summaries)
+  return summaries
+}
+
+async function saveActivitySummaries(
+  summaries: readonly ActivitySummary[]
+): Promise<void> {
+  if (summaries.length === 0) return
+  const db = await getDb()
+  if (!db) return
+  try {
+    const tx = db.transaction("activity-summaries", "readwrite")
+    const store = tx.objectStore("activity-summaries")
+    for (const summary of summaries) store.put(summary)
+    await new Promise<void>((resolve, reject) => {
+      tx.oncomplete = () => resolve()
+      tx.onerror = () => reject(tx.error)
+    })
+  } catch (err) {
+    console.warn("[storage] saveActivitySummaries failed:", err)
+  }
+}
+
+/** Update only activity metadata; geometry is never read or rewritten. */
+export async function updateActivitySettings(
+  updates: readonly ActivitySettingsPatch[]
+): Promise<boolean> {
+  if (updates.length === 0) return true
+  const db = await getDb()
+  if (!db) return true
+  try {
+    const tx = db.transaction("activity-summaries", "readwrite")
+    const store = tx.objectStore("activity-summaries")
+    for (const update of updates) {
+      const request = store.get(update.id)
+      request.onsuccess = () => {
+        const summary = request.result
+        if (!isActivitySummary(summary)) {
+          tx.abort()
+          return
+        }
+        if (update.isPublic !== undefined) summary.isPublic = update.isPublic
+        if (update.activityType !== undefined) {
+          summary.activityType = update.activityType
+        }
+        store.put(summary)
+      }
+    }
+    await new Promise<void>((resolve, reject) => {
+      tx.oncomplete = () => resolve()
+      tx.onerror = () => reject(tx.error)
+      tx.onabort = () => reject(tx.error)
+    })
+    return true
+  } catch (err) {
+    console.warn("[storage] updateActivitySettings failed:", err)
+    return false
   }
 }
 
@@ -223,8 +425,9 @@ export async function deleteActivity(id: string): Promise<void> {
   const db = await getDb()
   if (!db) return
   try {
-    const tx = db.transaction("activities", "readwrite")
+    const tx = db.transaction(["activities", "activity-summaries"], "readwrite")
     tx.objectStore("activities").delete(id)
+    tx.objectStore("activity-summaries").delete(id)
     await new Promise<void>((resolve, reject) => {
       tx.oncomplete = () => resolve()
       tx.onerror = () => reject(tx.error)
@@ -239,8 +442,9 @@ export async function clearActivities(): Promise<void> {
   const db = await getDb()
   if (!db) return
   try {
-    const tx = db.transaction("activities", "readwrite")
+    const tx = db.transaction(["activities", "activity-summaries"], "readwrite")
     tx.objectStore("activities").clear()
+    tx.objectStore("activity-summaries").clear()
     await new Promise<void>((resolve, reject) => {
       tx.oncomplete = () => resolve()
       tx.onerror = () => reject(tx.error)

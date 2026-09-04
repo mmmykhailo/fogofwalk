@@ -1,9 +1,9 @@
 import { ActivityTypeSelectForActivity } from "~/components/activities/ActivityTypeSelect"
 import { ActivityVisibilitySelect } from "~/components/activities/ActivityVisibilitySelect"
-import type { ParsedActivity } from "~/types/activities"
+import type { ActivitySummary } from "~/types/activitySummary"
 
 interface ActivitySettingsControlsProps {
-  activity: ParsedActivity
+  activity: ActivitySummary
   canEditPublicity: boolean
   publicityDisabledDescription: string
 }

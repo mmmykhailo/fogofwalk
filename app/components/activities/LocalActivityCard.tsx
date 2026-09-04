@@ -2,10 +2,10 @@ import { memo, useCallback, useMemo } from "react"
 import { ActivityCardFrame } from "~/components/activity/ActivityCardFrame"
 import { ActivitySettingsControls } from "~/components/activities/ActivitySettingsControls"
 import { Checkbox } from "~/components/ui/checkbox"
-import type { ParsedActivity } from "~/types/activities"
+import type { ActivitySummary } from "~/types/activitySummary"
 
 interface LocalActivityCardProps {
-  activity: ParsedActivity
+  activity: ActivitySummary
   isSelected: boolean
   showActivitySettings: boolean
   canEditPublicity: boolean

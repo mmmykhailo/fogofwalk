@@ -91,13 +91,17 @@ function toLocalDateStr(ms: number): string {
 
 // ─── Sort helper ──────────────────────────────────────────────────────────────
 
-/**
- * Returns a new array of activities sorted chronologically by startedAtMs.
- * Activities without a timestamp are placed last.
- * Call this once at the data boundary (clientLoader / clientAction) so that
- * aggregators can iterate in order without re-sorting on every call.
- */
-export function sortActivities(activities: ParsedActivity[]): ParsedActivity[] {
+type ActivitySortItem = Pick<ParsedActivity, "startedAtMs"> & {
+  stats: Pick<
+    ParsedActivity["stats"],
+    "distanceKm" | "durationMs" | "elevationGainM" | "avgMovingSpeedKmh"
+  >
+}
+
+/** Returns a new array sorted chronologically, with undated items last. */
+export function sortActivities<T extends ActivitySortItem>(
+  activities: readonly T[]
+): T[] {
   return [...activities].sort((a, b) => {
     if (a.startedAtMs == null && b.startedAtMs == null) return 0
     if (a.startedAtMs == null) return 1
@@ -107,9 +111,9 @@ export function sortActivities(activities: ParsedActivity[]): ParsedActivity[] {
 }
 
 /** Newest-first activity-library ordering, with undated activities last. */
-export function sortActivitiesNewestFirst(
-  activities: ParsedActivity[]
-): ParsedActivity[] {
+export function sortActivitiesNewestFirst<T extends ActivitySortItem>(
+  activities: readonly T[]
+): T[] {
   return [...activities].sort((a, b) => {
     if (a.startedAtMs == null && b.startedAtMs == null) return 0
     if (a.startedAtMs == null) return 1
@@ -135,15 +139,15 @@ export function isActivitySortOption(
 }
 
 /** Returns activities sorted descending by the selected library metric. */
-export function sortActivitiesBy(
-  activities: ParsedActivity[],
+export function sortActivitiesBy<T extends ActivitySortItem>(
+  activities: readonly T[],
   option: ActivitySortOption
-): ParsedActivity[] {
+): T[] {
   if (option === "date") return sortActivitiesNewestFirst(activities)
 
   const values: Record<
     Exclude<ActivitySortOption, "date">,
-    (activity: ParsedActivity) => number | null
+    (activity: ActivitySortItem) => number | null
   > = {
     distance: (activity) => activity.stats.distanceKm,
     speed: (activity) => activity.stats.avgMovingSpeedKmh,

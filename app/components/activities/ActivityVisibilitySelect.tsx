@@ -2,10 +2,10 @@ import { useFetcher } from "react-router"
 import { VisibilitySelect } from "~/components/activity-stats/VisibilitySelect"
 import type { clientAction } from "~/routes/activities"
 import { canSync, getAuthState } from "~/lib/server/authStore"
-import type { ParsedActivity } from "~/types/activities"
+import type { ActivitySummary } from "~/types/activitySummary"
 
 interface ActivityVisibilitySelectProps {
-  activity: ParsedActivity
+  activity: ActivitySummary
   canEditPublicity?: boolean
   publicityDisabledDescription?: string
 }

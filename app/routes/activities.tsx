@@ -3,32 +3,44 @@ import { useLoaderData } from "react-router"
 import { EmptyActivitiesState } from "~/components/activities/EmptyActivitiesState"
 import { ActivitiesGridWithSorting } from "~/components/activities/ActivitiesGridWithSorting"
 import { PageShell } from "~/components/PageShell"
-import { mapStore } from "~/lib/mapStore"
-import { loadActivities, saveActivities } from "~/lib/storage"
-import { sortActivities } from "~/lib/statsAggregator"
+import {
+  mapStore,
+  setActivitySummaries,
+  updateActivitySummaries,
+} from "~/lib/mapStore"
+import {
+  activityToSummary,
+  loadActivitySummaries,
+  updateActivitySettings,
+} from "~/lib/storage"
+import type { ActivitySummary } from "~/types/activitySummary"
 import { parseActivitySettingsUpdate } from "~/lib/activitySettings"
 import { canSync, initAuth } from "~/lib/server/authStore"
 import { pushActivityUpdate } from "~/lib/server/syncEngine"
-import type { ParsedActivity } from "~/types/activities"
 import type { Route } from "./+types/activities"
 import { markPerformance, measurePerformance } from "~/lib/performance"
 import { ensureUniqueDistancesCurrent } from "~/lib/uniqueDistanceRepair"
 import type { ShouldRevalidateFunction } from "react-router"
 import { isActivitiesSortOnlyNavigation } from "~/lib/activitiesRoute"
 
-export async function clientLoader(): Promise<ParsedActivity[]> {
+export async function clientLoader(): Promise<ActivitySummary[]> {
   markPerformance("activities:loader:start")
   void initAuth()
-  if (mapStore.activities.length === 0) {
+  let activities: ActivitySummary[]
+  if (mapStore.activityHydration === "full") {
+    activities = mapStore.activities.map(activityToSummary)
+  } else if (mapStore.activityHydration === "summaries") {
+    activities = mapStore.activitySummaries
+  } else {
     markPerformance("activities:idb-load:start")
-    const activities = await loadActivities()
+    activities = await loadActivitySummaries()
     markPerformance("activities:idb-load:end")
     measurePerformance(
       "activities:idb-load",
       "activities:idb-load:start",
       "activities:idb-load:end"
     )
-    mapStore.activities = sortActivities(activities)
+    setActivitySummaries(activities)
   }
   markPerformance("activities:loader:end")
   measurePerformance(
@@ -36,7 +48,7 @@ export async function clientLoader(): Promise<ParsedActivity[]> {
     "activities:loader:start",
     "activities:loader:end"
   )
-  return mapStore.activities
+  return activities
 }
 
 export const shouldRevalidate: ShouldRevalidateFunction = ({
@@ -61,8 +73,14 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
   const update = parseActivitySettingsUpdate(formData)
   if (!update.ok) return update
 
+  const sourceActivities: ActivitySummary[] =
+    mapStore.activities.length > 0
+      ? mapStore.activities.map(activityToSummary)
+      : mapStore.activityHydration === "summaries"
+        ? mapStore.activitySummaries
+        : await loadActivitySummaries()
   const activityById = new Map(
-    mapStore.activities.map((activity) => [activity.id, activity])
+    sourceActivities.map((activity) => [activity.id, activity])
   )
   const activities = update.activityIds.map((activityId) =>
     activityById.get(activityId)
@@ -74,7 +92,7 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
     }
   }
 
-  const resolved = activities as ParsedActivity[]
+  const resolved = activities as ActivitySummary[]
   if (
     update.setting === "publicity" &&
     (!canSync() || resolved.some((activity) => !activity.contentHash))
@@ -91,13 +109,52 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
       : activity.activityType !== update.value
   )
 
-  for (const activity of changed) {
-    if (update.setting === "publicity") activity.isPublic = update.value
-    else activity.activityType = update.value
+  const changedSummaries = changed.map((activity) => ({
+    ...activity,
+    ...(update.setting === "publicity"
+      ? { isPublic: update.value }
+      : { activityType: update.value }),
+  }))
+  const saved = await updateActivitySettings(
+    changedSummaries.map((activity) => ({
+      id: activity.id,
+      ...(update.setting === "publicity"
+        ? { isPublic: update.value }
+        : { activityType: update.value }),
+    }))
+  )
+  if (!saved) {
+    return {
+      ok: false as const,
+      error: "Activity settings could not be saved.",
+    }
   }
 
-  await saveActivities(changed)
-  await Promise.all(changed.map((activity) => pushActivityUpdate(activity)))
+  if (mapStore.activities.length > 0) {
+    const fullById = new Map(
+      mapStore.activities.map((activity) => [activity.id, activity])
+    )
+    for (const summary of changedSummaries) {
+      const activity = fullById.get(summary.id)
+      if (!activity) continue
+      if (update.setting === "publicity") activity.isPublic = update.value
+      else activity.activityType = update.value
+    }
+  } else {
+    updateActivitySummaries(changedSummaries)
+  }
+
+  if (mapStore.activityHydration === "full") {
+    const fullById = new Map(
+      mapStore.activities.map((activity) => [activity.id, activity])
+    )
+    await Promise.all(
+      changedSummaries.flatMap((summary) => {
+        const activity = fullById.get(summary.id)
+        return activity ? [pushActivityUpdate(activity)] : []
+      })
+    )
+  }
 
   return {
     ok: true as const,
@@ -118,8 +175,9 @@ export default function MyActivitiesPage() {
   const activities = useLoaderData<typeof clientLoader>()
 
   useEffect(() => {
+    if (mapStore.activityHydration !== "full") return
     markPerformance("activities:unique-distance:queued")
-    void ensureUniqueDistancesCurrent(activities).catch((error) => {
+    void ensureUniqueDistancesCurrent(mapStore.activities).catch((error) => {
       console.warn("[activities] unique-distance repair failed:", error)
     })
   }, [activities])
