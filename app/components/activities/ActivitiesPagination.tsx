@@ -21,7 +21,7 @@ export function ActivitiesPagination({
   const pageItems = getActivitiesPageItems(currentPage, totalPages)
 
   return (
-    <div className="mt-4 flex flex-wrap items-center justify-center gap-3 text-xs text-muted-foreground">
+    <div className="mt-4 flex flex-col flex-wrap items-center justify-center gap-3 text-xs text-muted-foreground">
       <span aria-live="polite">
         Showing {start + 1}–{end} of {activityCount} activities
       </span>

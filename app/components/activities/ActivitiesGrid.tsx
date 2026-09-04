@@ -24,6 +24,7 @@ export function ActivitiesGrid({
       data-testid="activities-grid"
       id="activities-grid-anchor"
       tabIndex={-1}
+      className="scroll-mt-24"
     >
       {activities.map((activity) => (
         <LocalActivityCard
