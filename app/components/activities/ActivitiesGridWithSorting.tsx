@@ -1,4 +1,10 @@
-import { useCallback, useEffect, useMemo, useState } from "react"
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useState,
+} from "react"
 import { useFetcher, useSearchParams } from "react-router"
 import { ActivitiesGrid } from "~/components/activities/ActivitiesGrid"
 import { ActivitiesGridWithSortingHeader } from "~/components/activities/ActivitiesGridWithSortingHeader"
@@ -13,6 +19,7 @@ import { commonActivityType, commonPublicity } from "~/lib/activitySettings"
 import { useAuth } from "~/lib/server/authStore"
 import type { ParsedActivity } from "~/types/activities"
 import type { clientAction } from "~/routes/activities"
+import { markPerformance, measurePerformance } from "~/lib/performance"
 
 const DEFAULT_SORT_OPTION: ActivitySortOption = "date"
 
@@ -38,10 +45,17 @@ export function ActivitiesGridWithSorting({
   const sortOption: ActivitySortOption = isActivitySortOption(sortParam)
     ? sortParam
     : DEFAULT_SORT_OPTION
-  const sortedActivities = useMemo(
-    () => sortActivitiesBy(activities, sortOption),
-    [activities, sortOption]
-  )
+  const sortedActivities = useMemo(() => {
+    markPerformance("activities:sort:start")
+    const sorted = sortActivitiesBy(activities, sortOption)
+    markPerformance("activities:sort:end")
+    measurePerformance(
+      "activities:sort",
+      "activities:sort:start",
+      "activities:sort:end"
+    )
+    return sorted
+  }, [activities, sortOption])
   const selectedActivities = useMemo(
     () => activities.filter((activity) => selectedActivityIds.has(activity.id)),
     [activities, selectedActivityIds]
@@ -141,6 +155,10 @@ export function ActivitiesGridWithSorting({
     auth.status === "signedIn" && !auth.canSync
       ? "Publicity editing requires sync access."
       : "Every selected activity must be synced before publicity can change."
+
+  useLayoutEffect(() => {
+    markPerformance("activities:grid:commit")
+  })
 
   return (
     <div>

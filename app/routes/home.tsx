@@ -79,6 +79,7 @@ import { sortActivities, populateUniqueDistances } from "~/lib/statsAggregator"
 import { useMyLocation } from "~/lib/useMyLocation"
 import { useActivityVisibility } from "~/lib/useActivityVisibility"
 import { socialMeta } from "~/lib/socialMeta"
+import { markPerformance, measurePerformance } from "~/lib/performance"
 import type { FogMode, MapMode, ParsedActivity } from "~/types/activities"
 import type { PhotoEntry, PhotoGroup } from "~/types/photos"
 import {
@@ -124,6 +125,7 @@ export async function clientLoader({
   restoredFogMode: FogMode
   viewedSavedPoint: SavedPoint | null
 }> {
+  markPerformance("home:loader:start")
   let didCreateWorker = false
   if (!mapStore.worker) {
     console.debug("[clientLoader] creating worker")
@@ -143,6 +145,7 @@ export async function clientLoader({
   if (new URL(request.url).pathname === "/map") void initAuth()
 
   // Restore persisted data in parallel
+  markPerformance("home:idb-load:start")
   const [
     activities,
     uniqueDistanceState,
@@ -158,6 +161,12 @@ export async function clientLoader({
     loadFogMode(),
     loadFogCache(),
   ])
+  markPerformance("home:idb-load:end")
+  measurePerformance(
+    "home:idb-load",
+    "home:idb-load:start",
+    "home:idb-load:end"
+  )
 
   const restoredFogMode: FogMode = fogMode ?? "corridor"
   mapStore.fogMode = restoredFogMode
@@ -172,8 +181,15 @@ export async function clientLoader({
   if (activities.length > 0) {
     mapStore.activities = sortActivities(activities)
     if (!areUniqueDistancesCurrent(mapStore.activities, uniqueDistanceState)) {
+      markPerformance("home:unique-distance:start")
       await populateUniqueDistances(mapStore.activities)
       await saveUniqueDistances(mapStore.activities)
+      markPerformance("home:unique-distance:end")
+      measurePerformance(
+        "home:unique-distance",
+        "home:unique-distance:start",
+        "home:unique-distance:end"
+      )
     }
     const activityIds = activities.map((t) => t.id).sort()
     if (fogCache && isFogCacheValid(fogCache, activityIds, restoredFogMode)) {
@@ -213,6 +229,8 @@ export async function clientLoader({
     photos.length,
     "photos"
   )
+  markPerformance("home:loader:end")
+  measurePerformance("home:loader", "home:loader:start", "home:loader:end")
   return {
     initialized: true,
     restoredActivityCount: activities.length,

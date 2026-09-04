@@ -20,20 +20,42 @@ import { canSync, initAuth } from "~/lib/server/authStore"
 import { pushActivityUpdate } from "~/lib/server/syncEngine"
 import type { ParsedActivity } from "~/types/activities"
 import type { Route } from "./+types/activities"
+import { markPerformance, measurePerformance } from "~/lib/performance"
 
 export async function clientLoader(): Promise<ParsedActivity[]> {
+  markPerformance("activities:loader:start")
   void initAuth()
   if (mapStore.activities.length === 0) {
+    markPerformance("activities:idb-load:start")
     const [activities, uniqueDistanceState] = await Promise.all([
       loadActivities(),
       loadUniqueDistanceState(),
     ])
+    markPerformance("activities:idb-load:end")
+    measurePerformance(
+      "activities:idb-load",
+      "activities:idb-load:start",
+      "activities:idb-load:end"
+    )
     mapStore.activities = sortActivities(activities)
     if (!areUniqueDistancesCurrent(mapStore.activities, uniqueDistanceState)) {
+      markPerformance("activities:unique-distance:start")
       await populateUniqueDistances(mapStore.activities)
       await saveUniqueDistances(mapStore.activities)
+      markPerformance("activities:unique-distance:end")
+      measurePerformance(
+        "activities:unique-distance",
+        "activities:unique-distance:start",
+        "activities:unique-distance:end"
+      )
     }
   }
+  markPerformance("activities:loader:end")
+  measurePerformance(
+    "activities:loader",
+    "activities:loader:start",
+    "activities:loader:end"
+  )
   return sortActivitiesNewestFirst(mapStore.activities)
 }
 
