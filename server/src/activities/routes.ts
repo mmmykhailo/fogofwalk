@@ -16,8 +16,10 @@ import { z } from "zod"
 import type {
   ActivityDeleteResponse,
   ActivityMeta,
+  ActivityMetadataUpdateResponse,
   ActivityVisibilityUpdateResponse,
 } from "~shared/api"
+import { SYNC_PAGE_SIZE } from "~shared/constants"
 
 import { createRequireSession, requireAllowed } from "../auth/middleware"
 import type { AuthEnv } from "../auth/middleware"
@@ -35,6 +37,34 @@ import { checkRateLimit } from "./rateLimit"
 
 const visibilitySchema = z.object({
   isPublic: z.boolean(),
+})
+
+const activityMetadataUpdateSchema = z
+  .object({
+    contentHash: z.string(),
+    name: z.string().min(1).max(512).optional(),
+    isPublic: z.boolean().optional(),
+    activityType: z
+      .enum(["walking", "running", "cycling", "kayaking", "swimming", "other"])
+      .nullable()
+      .optional(),
+    startSunPhase: z
+      .enum(["before_sunrise", "daylight", "after_sunset", "unknown"])
+      .nullable()
+      .optional(),
+  })
+  .strict()
+  .refine(
+    (update) =>
+      update.name !== undefined ||
+      update.isPublic !== undefined ||
+      update.activityType !== undefined ||
+      update.startSunPhase !== undefined,
+    "At least one metadata field is required."
+  )
+
+const activityMetadataRequestSchema = z.object({
+  updates: z.array(activityMetadataUpdateSchema).min(1).max(SYNC_PAGE_SIZE),
 })
 
 function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
@@ -58,6 +88,39 @@ export function createActivityRoutes(store: ServerStore) {
       )
     }
     return c.json(await store.listManifest(c.get("user").id, since))
+  })
+
+  app.patch("/metadata", async (c) => {
+    let body: unknown
+    try {
+      body = await c.req.json()
+    } catch {
+      return jsonError(c, "bad_request", "Expected a JSON body.")
+    }
+
+    const parsed = activityMetadataRequestSchema.safeParse(body)
+    if (!parsed.success) {
+      const issue = parsed.error.issues[0]
+      return jsonError(
+        c,
+        "bad_request",
+        issue?.message ?? "Malformed activity metadata update."
+      )
+    }
+    if (
+      parsed.data.updates.some((update) => !isContentHash(update.contentHash))
+    ) {
+      return jsonError(c, "bad_request", "Content hash must be 64 hex digits.")
+    }
+
+    const updated = await store.updateActivityMetadata(
+      c.get("user").id,
+      parsed.data.updates
+    )
+    if (!updated) return jsonError(c, "not_found")
+
+    const response: ActivityMetadataUpdateResponse = { activities: updated }
+    return c.json(response satisfies ActivityMetadataUpdateResponse)
   })
 
   app.put("/:contentHash", async (c) => {

@@ -5,6 +5,7 @@ import type {
   ManifestPage,
   ActivityDeleteResponse,
   ActivityMeta,
+  ActivityMetadataUpdateResponse,
 } from "~shared/api"
 import {
   UPLOAD_RATE_MAX_PER_WINDOW,
@@ -216,6 +217,75 @@ describe("upload", () => {
     )
     expect(payload.activityType).toBe("cycling")
     expect(payload.startSunPhase).toBe("after_sunset")
+  })
+
+  test("updates metadata without reading or replacing the activity blob", async () => {
+    const { store, app } = setup()
+    const { token, user } = await signIn(store)
+    const activity = makeActivity({ activityType: "running" })
+    const hash = await computeContentHash(activity)
+
+    await putActivity(app, token, activity)
+    const before = await store.getActivityBlob(user.id, hash)
+    const response = await app.request("/api/activities/metadata", {
+      method: "PATCH",
+      headers: { ...authHeaders(token), "Content-Type": "application/json" },
+      body: JSON.stringify({
+        updates: [
+          {
+            contentHash: hash,
+            name: "Evening ride",
+            isPublic: true,
+            activityType: "cycling",
+          },
+        ],
+      }),
+    })
+
+    expect(response.status).toBe(200)
+    const body = (await response.json()) as ActivityMetadataUpdateResponse
+    expect(body.activities).toHaveLength(1)
+    expect(body.activities[0]).toMatchObject({
+      contentHash: hash,
+      name: "Evening ride",
+      isPublic: true,
+      activityType: "cycling",
+    })
+    const after = await store.getActivityBlob(user.id, hash)
+    expect(after).toEqual(before)
+
+    const manifest = (await (
+      await app.request("/api/activities/manifest", {
+        headers: authHeaders(token),
+      })
+    ).json()) as ManifestPage
+    expect(manifest.activities[0]).toMatchObject({
+      name: "Evening ride",
+      isPublic: true,
+      activityType: "cycling",
+    })
+  })
+
+  test("metadata batches are atomic when one activity is missing", async () => {
+    const { store, app } = setup()
+    const { token, user } = await signIn(store)
+    const activity = makeActivity()
+    const hash = await computeContentHash(activity)
+    await putActivity(app, token, activity)
+
+    const response = await app.request("/api/activities/metadata", {
+      method: "PATCH",
+      headers: { ...authHeaders(token), "Content-Type": "application/json" },
+      body: JSON.stringify({
+        updates: [
+          { contentHash: hash, name: "Should not change" },
+          { contentHash: fakeHash(404), isPublic: true },
+        ],
+      }),
+    })
+
+    expect(response.status).toBe(404)
+    expect((await store.getActivity(user.id, hash))?.name).toBe("Morning run")
   })
 
   test("round-trips the gzipped blob", async () => {

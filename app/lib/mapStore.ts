@@ -168,6 +168,32 @@ export function updateActivitySummaries(
   )
 }
 
+/** Merge server metadata into either the full or summary in-memory cache. */
+export function applyActivityMetadata(
+  updates: readonly ActivitySummary[]
+): void {
+  if (mapStore.activityHydration === "full") {
+    const byId = new Map(updates.map((activity) => [activity.id, activity]))
+    setFullActivities(
+      mapStore.activities.map((activity) => {
+        const summary = byId.get(activity.id)
+        if (!summary) return activity
+        return {
+          ...activity,
+          name: summary.name,
+          startedAtMs: summary.startedAtMs,
+          activityType: summary.activityType,
+          startSunPhase: summary.startSunPhase,
+          contentHash: summary.contentHash,
+          isPublic: summary.isPublic,
+        }
+      })
+    )
+    return
+  }
+  updateActivitySummaries(updates)
+}
+
 export function clearFullActivities(): void {
   setFullActivities([])
 }

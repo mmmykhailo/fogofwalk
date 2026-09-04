@@ -207,7 +207,11 @@ test.describe("activity sync", () => {
       uploadFinished = resolve
     })
     const holdUpload = async (route: import("@playwright/test").Route) => {
-      if (route.request().method() !== "PUT") return route.fallback()
+      if (
+        route.request().method() !== "PATCH" ||
+        !route.request().url().endsWith("/api/activities/metadata")
+      )
+        return route.fallback()
       uploadStarted()
       await uploadGate
       try {

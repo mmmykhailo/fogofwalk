@@ -20,6 +20,7 @@ import type {
   PublicAchievementPrevalence,
   PublicActivityMeta,
   ActivityMeta,
+  ActivityMetadataUpdate,
   ActivityTombstone,
   SavedPointManifestPage,
   SavedPointTombstone,
@@ -949,6 +950,54 @@ export class SqliteFsStore implements ServerStore {
       .run(isPublic ? 1 : 0, now, userId, contentHash)
     this.achievementPrevalenceCache.invalidate()
     return this.getActivity(userId, contentHash)
+  }
+
+  async updateActivityMetadata(
+    userId: string,
+    updates: readonly ActivityMetadataUpdate[]
+  ): Promise<ActivityMeta[] | null> {
+    if (updates.length === 0) return []
+    const current = await Promise.all(
+      updates.map((update) => this.getActivity(userId, update.contentHash))
+    )
+    if (current.some((meta) => meta == null)) return null
+
+    const updatedAt = Date.now()
+    this.db.transaction(() => {
+      for (const [index, update] of updates.entries()) {
+        const previous = current[index]!
+        this.db
+          .query(
+            `UPDATE activities
+                SET name = ?, is_public = ?, activity_type = ?,
+                    start_sun_phase = ?, updated_at = ?
+              WHERE user_id = ? AND content_hash = ?`
+          )
+          .run(
+            update.name ?? previous.name,
+            update.isPublic === undefined
+              ? previous.isPublic
+                ? 1
+                : 0
+              : update.isPublic
+                ? 1
+                : 0,
+            update.activityType === undefined
+              ? (previous.activityType ?? null)
+              : (update.activityType ?? null),
+            update.startSunPhase === undefined
+              ? (previous.startSunPhase ?? null)
+              : (update.startSunPhase ?? null),
+            updatedAt,
+            userId,
+            update.contentHash
+          )
+      }
+    })()
+    this.achievementPrevalenceCache.invalidate()
+    return Promise.all(
+      updates.map((update) => this.getActivity(userId, update.contentHash))
+    ) as Promise<ActivityMeta[]>
   }
 
   async getActivityBlob(

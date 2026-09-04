@@ -223,6 +223,27 @@ export interface ActivityVisibilityUpdateResponse {
   updatedAt: number
 }
 
+/** Mutable activity fields that can be synchronized without its geometry. */
+export interface ActivityMetadataUpdate {
+  contentHash: string
+  name?: string
+  isPublic?: boolean
+  /** `null` clears legacy metadata; omission leaves it unchanged. */
+  activityType?: ActivityType | null
+  /** `null` clears legacy metadata; omission leaves it unchanged. */
+  startSunPhase?: StartSunPhase | null
+}
+
+export type ActivityMetadataPatch = ActivityMetadataUpdate
+
+export interface ActivityMetadataUpdateRequest {
+  updates: ActivityMetadataUpdate[]
+}
+
+export interface ActivityMetadataUpdateResponse {
+  activities: ActivityMeta[]
+}
+
 export interface ManifestPage {
   activities: ActivityMeta[]
   deletions: ActivityTombstone[]

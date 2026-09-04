@@ -15,6 +15,7 @@ import type {
   PublicAchievementPrevalence,
   PublicActivityMeta,
   ActivityMeta,
+  ActivityMetadataUpdate,
   ActivityTombstone,
   SavedPointManifestPage,
   SavedPointTombstone,
@@ -491,6 +492,38 @@ export class MemoryStore implements ServerStore {
     stored.meta = { ...stored.meta, isPublic }
     this.achievementPrevalenceCache.invalidate()
     return stored.meta
+  }
+
+  async updateActivityMetadata(
+    userId: string,
+    updates: readonly ActivityMetadataUpdate[]
+  ): Promise<ActivityMeta[] | null> {
+    if (updates.length === 0) return []
+    const byHash = this.activities.get(userId)
+    const stored = updates.map((update) => byHash?.get(update.contentHash))
+    if (stored.some((activity) => activity == null)) return null
+
+    const updatedAt = Date.now()
+    const updated: ActivityMeta[] = []
+    for (const [index, update] of updates.entries()) {
+      const activity = stored[index]!
+      const previous = activity.meta
+      activity.meta = {
+        ...previous,
+        ...(update.name !== undefined ? { name: update.name } : {}),
+        ...(update.isPublic !== undefined ? { isPublic: update.isPublic } : {}),
+        ...(update.activityType !== undefined
+          ? { activityType: update.activityType ?? undefined }
+          : {}),
+        ...(update.startSunPhase !== undefined
+          ? { startSunPhase: update.startSunPhase ?? undefined }
+          : {}),
+        updatedAt,
+      }
+      updated.push(activity.meta)
+    }
+    this.achievementPrevalenceCache.invalidate()
+    return updated
   }
 
   async deleteActivity(userId: string, contentHash: string): Promise<number> {

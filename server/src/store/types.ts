@@ -18,6 +18,7 @@ import type {
   PublicAchievementPrevalence,
   PublicProfileResponse,
   ActivityMeta,
+  ActivityMetadataUpdate,
   UserStatus,
 } from "~shared/api"
 import type { SavedPoint } from "~shared/saved-points"
@@ -156,6 +157,14 @@ export interface ServerStore {
     contentHash: string,
     isPublic: boolean
   ): Promise<ActivityMeta | null>
+  /**
+   * Updates mutable activity metadata without reading or rewriting its blob.
+   * Returns null and applies nothing when any requested activity is missing.
+   */
+  updateActivityMetadata(
+    userId: string,
+    updates: readonly ActivityMetadataUpdate[]
+  ): Promise<ActivityMeta[] | null>
   /**
    * Removes the row and the blob and writes a tombstone. Idempotent.
    * Returns the tombstone's `deletedAt`, which the caller reports back so the
