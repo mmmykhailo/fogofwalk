@@ -961,11 +961,23 @@ export class SqliteFsStore implements ServerStore {
       updates.map((update) => this.getActivity(userId, update.contentHash))
     )
     if (current.some((meta) => meta == null)) return null
+    const currentMetas = current as ActivityMeta[]
+
+    const changed = currentMetas.some((previous, index) => {
+      const update = updates[index]!
+      return (
+        (update.isPublic !== undefined &&
+          previous.isPublic !== update.isPublic) ||
+        (update.activityType !== undefined &&
+          previous.activityType !== (update.activityType ?? undefined))
+      )
+    })
+    if (!changed) return currentMetas
 
     const updatedAt = Date.now()
     this.db.transaction(() => {
       for (const [index, update] of updates.entries()) {
-        const previous = current[index]!
+        const previous = currentMetas[index]!
         this.db
           .query(
             `UPDATE activities
@@ -974,7 +986,7 @@ export class SqliteFsStore implements ServerStore {
               WHERE user_id = ? AND content_hash = ?`
           )
           .run(
-            update.name ?? previous.name,
+            previous.name,
             update.isPublic === undefined
               ? previous.isPublic
                 ? 1
@@ -985,9 +997,7 @@ export class SqliteFsStore implements ServerStore {
             update.activityType === undefined
               ? (previous.activityType ?? null)
               : (update.activityType ?? null),
-            update.startSunPhase === undefined
-              ? (previous.startSunPhase ?? null)
-              : (update.startSunPhase ?? null),
+            previous.startSunPhase ?? null,
             updatedAt,
             userId,
             update.contentHash

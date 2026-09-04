@@ -232,12 +232,7 @@ describe("upload", () => {
       headers: { ...authHeaders(token), "Content-Type": "application/json" },
       body: JSON.stringify({
         updates: [
-          {
-            contentHash: hash,
-            name: "Evening ride",
-            isPublic: true,
-            activityType: "cycling",
-          },
+          { contentHash: hash, isPublic: true, activityType: "cycling" },
         ],
       }),
     })
@@ -247,7 +242,6 @@ describe("upload", () => {
     expect(body.activities).toHaveLength(1)
     expect(body.activities[0]).toMatchObject({
       contentHash: hash,
-      name: "Evening ride",
       isPublic: true,
       activityType: "cycling",
     })
@@ -278,7 +272,7 @@ describe("upload", () => {
       headers: { ...authHeaders(token), "Content-Type": "application/json" },
       body: JSON.stringify({
         updates: [
-          { contentHash: hash, name: "Should not change" },
+          { contentHash: hash, activityType: "cycling" },
           { contentHash: fakeHash(404), isPublic: true },
         ],
       }),

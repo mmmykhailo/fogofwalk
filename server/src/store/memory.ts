@@ -500,29 +500,37 @@ export class MemoryStore implements ServerStore {
   ): Promise<ActivityMeta[] | null> {
     if (updates.length === 0) return []
     const byHash = this.activities.get(userId)
-    const stored = updates.map((update) => byHash?.get(update.contentHash))
-    if (stored.some((activity) => activity == null)) return null
+    const storedActivities = updates.map((update) =>
+      byHash?.get(update.contentHash)
+    )
+    if (storedActivities.some((activity) => activity == null)) return null
+    const stored = storedActivities as StoredActivity[]
 
-    const updatedAt = Date.now()
+    const changed = stored.some((activity, index) => {
+      const update = updates[index]!
+      return (
+        (update.isPublic !== undefined &&
+          activity.meta.isPublic !== update.isPublic) ||
+        (update.activityType !== undefined &&
+          activity.meta.activityType !== (update.activityType ?? undefined))
+      )
+    })
+    const updatedAt = changed ? Date.now() : null
     const updated: ActivityMeta[] = []
     for (const [index, update] of updates.entries()) {
       const activity = stored[index]!
       const previous = activity.meta
       activity.meta = {
         ...previous,
-        ...(update.name !== undefined ? { name: update.name } : {}),
         ...(update.isPublic !== undefined ? { isPublic: update.isPublic } : {}),
         ...(update.activityType !== undefined
           ? { activityType: update.activityType ?? undefined }
           : {}),
-        ...(update.startSunPhase !== undefined
-          ? { startSunPhase: update.startSunPhase ?? undefined }
-          : {}),
-        updatedAt,
+        ...(updatedAt === null ? {} : { updatedAt }),
       }
       updated.push(activity.meta)
     }
-    this.achievementPrevalenceCache.invalidate()
+    if (changed) this.achievementPrevalenceCache.invalidate()
     return updated
   }
 

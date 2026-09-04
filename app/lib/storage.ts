@@ -4,7 +4,7 @@ import type { ServerUser, UserCapabilities } from "~shared/api"
 import type { PhotoEntry } from "~/types/photos"
 import type { SavedPoint } from "~shared/saved-points"
 import type { ActivitySummary } from "~/types/activitySummary"
-import type { ActivityType } from "~/types/activities"
+import type { ActivityType, StartSunPhase } from "~/types/activities"
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -57,6 +57,12 @@ interface ActivitySettingsPatch {
   id: string
   isPublic?: boolean
   activityType?: ActivityType
+}
+
+export interface ActivityMetadataStoragePatch extends ActivitySettingsPatch {
+  name?: string
+  startedAtMs?: number | null
+  startSunPhase?: StartSunPhase
 }
 
 function getStoredStartedAt(activity: StoredActivity): number | null {
@@ -469,6 +475,13 @@ async function replaceActivitySummaries(
 export async function updateActivitySettings(
   updates: readonly ActivitySettingsPatch[]
 ): Promise<boolean> {
+  return updateActivityMetadata(updates)
+}
+
+/** Update summary metadata without reading or rewriting activity geometry. */
+export async function updateActivityMetadata(
+  updates: readonly ActivityMetadataStoragePatch[]
+): Promise<boolean> {
   if (updates.length === 0) return true
   invalidateActivitySummariesFallback()
   const db = await getDb()
@@ -484,10 +497,14 @@ export async function updateActivitySettings(
           tx.abort()
           return
         }
+        if (update.name !== undefined) summary.name = update.name
+        if (update.startedAtMs !== undefined)
+          summary.startedAtMs = update.startedAtMs
         if (update.isPublic !== undefined) summary.isPublic = update.isPublic
-        if (update.activityType !== undefined) {
+        if ("activityType" in update)
           summary.activityType = update.activityType
-        }
+        if ("startSunPhase" in update)
+          summary.startSunPhase = update.startSunPhase
         store.put(summary)
       }
     }
@@ -910,8 +927,16 @@ export interface SyncState {
   outboundSavedPointIds?: string[]
   /** Local deletions awaiting a successful saved-point tombstone. */
   outboundSavedPointDeletionIds?: string[]
-  /** Content hashes whose local metadata needs a background activity upload. */
+  /** Last-write-wins metadata patches awaiting a successful server update. */
+  outboundActivityMetadata?: Record<string, PendingActivityMetadataUpdate>
+  /** Legacy hash-only outbox, migrated on the next sync from local summaries. */
+  /** @deprecated Use outboundActivityMetadata. */
   outboundActivityUpdateHashes?: string[]
+}
+
+export interface PendingActivityMetadataUpdate {
+  isPublic?: boolean
+  activityType?: ActivityType
 }
 
 export async function saveSyncState(state: SyncState): Promise<void> {

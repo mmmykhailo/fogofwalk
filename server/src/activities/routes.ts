@@ -42,30 +42,24 @@ const visibilitySchema = z.object({
 const activityMetadataUpdateSchema = z
   .object({
     contentHash: z.string(),
-    name: z.string().min(1).max(512).optional(),
     isPublic: z.boolean().optional(),
     activityType: z
       .enum(["walking", "running", "cycling", "kayaking", "swimming", "other"])
-      .nullable()
-      .optional(),
-    startSunPhase: z
-      .enum(["before_sunrise", "daylight", "after_sunset", "unknown"])
       .nullable()
       .optional(),
   })
   .strict()
   .refine(
     (update) =>
-      update.name !== undefined ||
-      update.isPublic !== undefined ||
-      update.activityType !== undefined ||
-      update.startSunPhase !== undefined,
+      update.isPublic !== undefined || update.activityType !== undefined,
     "At least one metadata field is required."
   )
 
-const activityMetadataRequestSchema = z.object({
-  updates: z.array(activityMetadataUpdateSchema).min(1).max(SYNC_PAGE_SIZE),
-})
+const activityMetadataRequestSchema = z
+  .object({
+    updates: z.array(activityMetadataUpdateSchema).min(1).max(SYNC_PAGE_SIZE),
+  })
+  .strict()
 
 function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
   if (a.byteLength !== b.byteLength) return false
@@ -111,6 +105,14 @@ export function createActivityRoutes(store: ServerStore) {
       parsed.data.updates.some((update) => !isContentHash(update.contentHash))
     ) {
       return jsonError(c, "bad_request", "Content hash must be 64 hex digits.")
+    }
+    const hashes = parsed.data.updates.map((update) => update.contentHash)
+    if (new Set(hashes).size !== hashes.length) {
+      return jsonError(
+        c,
+        "bad_request",
+        "Duplicate content hashes are not allowed."
+      )
     }
 
     const updated = await store.updateActivityMetadata(
@@ -254,19 +256,17 @@ export function createActivityRoutes(store: ServerStore) {
       return jsonError(c, "bad_request", "isPublic must be a boolean.")
     }
 
-    const updated = await store.setActivityVisibility(
-      user.id,
-      contentHash,
-      parsed.data.isPublic
-    )
-    if (!updated) {
+    const updated = await store.updateActivityMetadata(user.id, [
+      { contentHash, isPublic: parsed.data.isPublic },
+    ])
+    if (!updated?.[0]) {
       return jsonError(c, "not_found")
     }
 
     const response: ActivityVisibilityUpdateResponse = {
-      contentHash: updated.contentHash,
-      isPublic: updated.isPublic,
-      updatedAt: updated.updatedAt,
+      contentHash: updated[0].contentHash,
+      isPublic: updated[0].isPublic,
+      updatedAt: updated[0].updatedAt,
     }
     return c.json(response)
   })

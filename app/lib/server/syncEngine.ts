@@ -12,6 +12,7 @@
 import { useSyncExternalStore } from "react"
 import type {
   ManifestPage,
+  ActivityMetadataPatch,
   ActivityDeleteResponse,
   ActivityMeta,
   ActivityTombstone,
@@ -22,15 +23,22 @@ import type {
   SavedPointUpsertInput,
   SavedPointUpsertResponse,
 } from "~shared/api"
-import { MAX_ACTIVITY_BYTES, SYNC_CONCURRENCY } from "~shared/constants"
+import {
+  MAX_ACTIVITY_BYTES,
+  SYNC_CONCURRENCY,
+  SYNC_PAGE_SIZE,
+} from "~shared/constants"
 import type { SavedPoint } from "~shared/saved-points"
 import type { ParsedActivity } from "~/types/activities"
+import type { ActivitySummary } from "~/types/activitySummary"
 import {
+  activityToSummary,
   deleteActivity as deleteActivityFromIdb,
   loadSyncState,
+  loadActivitySummaries,
   saveSyncState,
   saveActivities,
-  saveUniqueDistances,
+  updateActivityMetadata as updateActivityMetadataInStorage,
   deleteSavedPoint as deleteSavedPointFromIdb,
   loadSavedPoints,
   saveSavedPoint,
@@ -38,14 +46,15 @@ import {
 } from "~/lib/storage"
 import {
   hydrateFullActivities,
+  applyActivityMetadata,
   ingestActivities,
   mapStore,
   setFullActivities,
 } from "~/lib/mapStore"
 import { backfillContentHashes } from "~/lib/activityHash"
 import { createUuid } from "~/lib/uuid"
-import { populateUniqueDistances } from "~/lib/statsAggregator"
 import { apiRaw, apiSend, ApiRequestError, friendlyMessage } from "./apiClient"
+import { updateActivityMetadata } from "./activityMetadata"
 import { canSync } from "./authStore"
 import {
   acquireUploadSlot,
