@@ -162,8 +162,10 @@ export async function clientLoader({
 
   // Sync is a map-only concern. The shared layout also wraps the library and
   // informational pages, so avoid even revalidating a stored sync session
-  // while one of those pages is open. Deliberately do not await this: the map
-  // must never wait on the network, and it is a no-op when no server exists.
+  // while one of those pages is open. Routes that render account- or
+  // owner-specific UI initialize auth themselves. Deliberately do not await
+  // this: the map must never wait on the network, and it is a no-op when no
+  // server exists.
   if (isMapRoute) void initAuth()
 
   // Restore persisted data in parallel

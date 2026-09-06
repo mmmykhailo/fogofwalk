@@ -19,7 +19,7 @@ import {
   sortEarnedAchievementsNewestFirst,
 } from "~/lib/achievements"
 import { apiUrl } from "~/lib/server/config"
-import { useAuth } from "~/lib/server/authStore"
+import { initAuth, useAuth } from "~/lib/server/authStore"
 import type { PublicProfileResponse } from "~shared/api"
 import type { Route } from "./+types/u.$handle"
 
@@ -35,6 +35,10 @@ export async function clientLoader({
 }: Route.ClientLoaderArgs): Promise<ProfileLoaderData> {
   const handle = params.handle
   if (!handle) return { profile: null, error: "Profile not found." }
+
+  // Public profile data stays anonymous. Start restoring a stored session only
+  // because this route can render owner-specific activity controls.
+  void initAuth()
 
   try {
     const res = await fetch(
