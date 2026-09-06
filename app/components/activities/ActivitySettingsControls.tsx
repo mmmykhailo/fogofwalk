@@ -14,7 +14,7 @@ export function ActivitySettingsControls({
   publicityDisabledDescription,
 }: ActivitySettingsControlsProps) {
   return (
-    <div className="flex flex-wrap items-center justify-end gap-2">
+    <div className="flex flex-col flex-wrap items-center justify-end gap-2 @sm:flex-row">
       <ActivityVisibilitySelect
         activity={activity}
         canEditPublicity={canEditPublicity}
