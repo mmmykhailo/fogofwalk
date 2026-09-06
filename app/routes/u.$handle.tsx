@@ -1,12 +1,12 @@
-import { useEffect, useState } from "react"
 import { useLoaderData } from "react-router"
 import { FootprintsIcon } from "@phosphor-icons/react"
 import { PageShell } from "~/components/PageShell"
 import { AchievementsSection } from "~/components/public-profile/AchievementsSection"
 import { SavedPointsSection } from "~/components/public-profile/SavedPointsSection"
-import { ActivityCard } from "~/components/public-profile/ActivityCard"
+import { PublicActivityCard } from "~/components/public-profile/PublicActivityCard"
+import { PublicActivityOwnerActions } from "~/components/public-profile/PublicActivityOwnerActions"
 import { PublicProfileHeader } from "~/components/public-profile/PublicProfileHeader"
-import { PublicActivityGrid } from "~/components/public-profile/PublicActivityGrid"
+import { RecentActivityCalendarCard } from "~/components/public-profile/RecentActivityCalendarCard"
 import { PublicProfileSummary } from "~/components/public-profile/PublicProfileSummary"
 import { StatCards } from "~/components/stats/StatCards"
 import { WeeklyChart } from "~/components/stats/WeeklyChart"
@@ -18,8 +18,21 @@ import {
   computeEarnedAchievements,
   sortEarnedAchievementsNewestFirst,
 } from "~/lib/achievements"
+import { applyActivityMetadata, mapStore } from "~/lib/mapStore"
 import { apiUrl } from "~/lib/server/config"
-import { initAuth, useAuth } from "~/lib/server/authStore"
+import {
+  canSync,
+  getAuthState,
+  initAuth,
+  useAuth,
+} from "~/lib/server/authStore"
+import { friendlyMessage } from "~/lib/server/apiClient"
+import { updateActivityVisibility } from "~/lib/server/activityVisibility"
+import {
+  activityToSummary,
+  loadActivitySummaries,
+  updateActivityMetadata,
+} from "~/lib/storage"
 import type { PublicProfileResponse } from "~shared/api"
 import type { Route } from "./+types/u.$handle"
 
@@ -29,6 +42,12 @@ interface ProfileLoaderData {
   profile: PublicProfileResponse | null
   error: string | null
 }
+
+export type PublicProfileActionResult =
+  | { ok: true; intent: "hide-activity"; contentHash: string }
+  | { ok: false; intent: "hide-activity"; error: string }
+
+const CONTENT_HASH_RE = /^[a-f0-9]{64}$/
 
 export async function clientLoader({
   params,
@@ -58,6 +77,75 @@ export async function clientLoader({
   }
 }
 
+function failedHide(error: string): PublicProfileActionResult {
+  return { ok: false, intent: "hide-activity", error }
+}
+
+async function reconcileLocalVisibility(contentHash: string): Promise<void> {
+  const summaries =
+    mapStore.activityHydration === "full"
+      ? mapStore.activities.map(activityToSummary)
+      : mapStore.activityHydration === "summaries"
+        ? mapStore.activitySummaries
+        : await loadActivitySummaries()
+  const summary = summaries.find(
+    (activity) => activity.contentHash === contentHash
+  )
+  if (!summary) return
+
+  const updated = { ...summary, isPublic: false }
+  if (!(await updateActivityMetadata([{ id: updated.id, isPublic: false }]))) {
+    throw new Error("The local activity summary could not be updated.")
+  }
+  applyActivityMetadata([updated])
+}
+
+export async function clientAction({
+  params,
+  request,
+}: Route.ClientActionArgs): Promise<PublicProfileActionResult> {
+  const formData = await request.formData()
+  if (formData.get("intent") !== "hide-activity") {
+    return failedHide("Unknown profile action.")
+  }
+
+  const contentHash = formData.get("contentHash")
+  if (typeof contentHash !== "string" || !CONTENT_HASH_RE.test(contentHash)) {
+    return failedHide("Activity identity is invalid.")
+  }
+
+  await initAuth()
+  const auth = getAuthState()
+  const profileHandle = params.handle
+  if (auth.status !== "signedIn" || !canSync()) {
+    return failedHide("Sign in with sync access to manage public activities.")
+  }
+  if (
+    !profileHandle ||
+    !auth.user.handle ||
+    auth.user.handle.toLowerCase() !== profileHandle.toLowerCase()
+  ) {
+    return failedHide("You can only manage activities on your own profile.")
+  }
+
+  try {
+    await updateActivityVisibility(contentHash, false)
+  } catch (err) {
+    return failedHide(friendlyMessage(err))
+  }
+
+  try {
+    await reconcileLocalVisibility(contentHash)
+  } catch (err) {
+    console.warn(
+      "[public-profile] local visibility reconciliation failed:",
+      err
+    )
+  }
+
+  return { ok: true, intent: "hide-activity", contentHash }
+}
+
 export function meta({ data, params }: Route.MetaArgs) {
   const handle = data?.profile?.user.handle || params.handle || "Profile"
   const displayName = data?.profile?.user.displayName || handle
@@ -73,11 +161,9 @@ export function meta({ data, params }: Route.MetaArgs) {
 export default function PublicProfilePage() {
   const { profile, error } = useLoaderData<typeof clientLoader>()
   const auth = useAuth()
-  const [activities, setActivities] = useState(() => profile?.activities ?? [])
-
-  useEffect(() => {
-    setActivities(profile?.activities ?? [])
-  }, [profile])
+  // The profile response carries only a bounded preview. Pagination replaces
+  // this collection with the authoritative activity-card loader.
+  const activities = profile?.recentActivities ?? []
 
   const isOwner =
     auth.status === "signedIn" &&
@@ -88,12 +174,6 @@ export default function PublicProfilePage() {
     computeEarnedAchievements(activities)
   )
   const savedPoints = profile?.savedPoints ?? []
-
-  function handleActivityHidden(contentHash: string) {
-    setActivities((current) =>
-      current.filter((activity) => activity.contentHash !== contentHash)
-    )
-  }
 
   return (
     <PageShell>
@@ -136,7 +216,7 @@ export default function PublicProfilePage() {
                 <StatCards totals={stats.totals} />
                 <WeeklyChart weekly={weeklyChart} />
                 <Grid columns={{ base: 1, sm: 2 }}>
-                  <PublicActivityGrid recentDays={stats.recentDays} />
+                  <RecentActivityCalendarCard recentDays={stats.recentDays} />
                   <PublicProfileSummary stats={stats} />
                 </Grid>
                 <AchievementsSection
@@ -152,11 +232,17 @@ export default function PublicProfilePage() {
                   </h2>
                   <Grid columns={{ base: 1, sm: 2 }}>
                     {activities.map((activity) => (
-                      <ActivityCard
-                        key={activity.contentHash}
+                      <PublicActivityCard
+                        key={`${profile.user.handle.toLowerCase()}:${activity.contentHash}`}
                         activity={activity}
-                        isOwner={isOwner}
-                        onHidden={handleActivityHidden}
+                        actions={
+                          isOwner ? (
+                            <PublicActivityOwnerActions
+                              activityName={activity.name}
+                              contentHash={activity.contentHash}
+                            />
+                          ) : undefined
+                        }
                       />
                     ))}
                   </Grid>
