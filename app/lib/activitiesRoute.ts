@@ -2,6 +2,14 @@ import {
   isActivitySortOption,
   type ActivitySortOption,
 } from "~/lib/statsAggregator"
+import {
+  clampPage,
+  getPageItems,
+  getPageRange,
+  getTotalPages,
+  parsePage,
+  type PageItem,
+} from "~/lib/pagination"
 
 export const ACTIVITIES_PAGE_SIZE = 48
 export const DEFAULT_ACTIVITY_SORT_OPTION = "date" as const
@@ -12,29 +20,16 @@ export type ActivitiesQuery = {
   searchParams: URLSearchParams
 }
 
-export type ActivitiesPageItem = number | "ellipsis"
-
-function normalizeActivityCount(activityCount: number): number {
-  return Number.isFinite(activityCount)
-    ? Math.max(0, Math.floor(activityCount))
-    : 0
-}
+export type ActivitiesPageItem = PageItem
 
 /** Returns the number of pages needed to show an activity count. */
 export function getActivitiesTotalPages(activityCount: number): number {
-  return Math.max(
-    1,
-    Math.ceil(normalizeActivityCount(activityCount) / ACTIVITIES_PAGE_SIZE)
-  )
+  return getTotalPages(activityCount, ACTIVITIES_PAGE_SIZE)
 }
 
 /** Parses a page query value, returning null when it is not a positive integer. */
 export function parseActivitiesPage(value: string | null): number | null {
-  if (value == null || !/^\d+$/.test(value)) return null
-
-  const page = Number(value)
-  if (page <= 0) return null
-  return Number.isSafeInteger(page) ? page : Number.MAX_SAFE_INTEGER
+  return parsePage(value)
 }
 
 /** Clamps a parsed page to the valid page range, which always includes page 1. */
@@ -42,13 +37,7 @@ export function clampActivitiesPage(
   page: number | null,
   totalPages: number
 ): number {
-  const lastPage = Number.isFinite(totalPages)
-    ? Math.max(1, Math.floor(totalPages))
-    : 1
-  if (page == null) return 1
-  if (page === Infinity) return lastPage
-  if (page === -Infinity || Number.isNaN(page)) return 1
-  return Math.min(Math.max(1, Math.floor(page)), lastPage)
+  return clampPage(page, totalPages)
 }
 
 /**
@@ -89,13 +78,7 @@ export function getActivitiesPageRange(
   activityCount: number,
   page: number
 ): { start: number; end: number } {
-  const count = normalizeActivityCount(activityCount)
-  const currentPage = clampActivitiesPage(page, getActivitiesTotalPages(count))
-  const start = (currentPage - 1) * ACTIVITIES_PAGE_SIZE
-  return {
-    start,
-    end: Math.min(start + ACTIVITIES_PAGE_SIZE, count),
-  }
+  return getPageRange(activityCount, page, ACTIVITIES_PAGE_SIZE)
 }
 
 /** Returns the compact page control sequence for the pagination UI. */
@@ -103,38 +86,7 @@ export function getActivitiesPageItems(
   currentPage: number,
   totalPages: number
 ): ActivitiesPageItem[] {
-  const lastPage = Number.isFinite(totalPages)
-    ? Math.max(1, Math.floor(totalPages))
-    : 1
-  const page = clampActivitiesPage(currentPage, lastPage)
-  if (lastPage <= 7) {
-    return Array.from({ length: lastPage }, (_, index) => index + 1)
-  }
-
-  const pages = new Set([1, lastPage, page - 1, page, page + 1])
-  if (page <= 3) {
-    pages.add(2)
-    pages.add(3)
-  }
-  if (page >= lastPage - 2) {
-    pages.add(lastPage - 2)
-    pages.add(lastPage - 1)
-  }
-  const sortedPages = [...pages]
-    .filter((item) => item >= 1 && item <= lastPage)
-    .sort((a, b) => a - b)
-  const items: ActivitiesPageItem[] = []
-
-  for (const [index, pageNumber] of sortedPages.entries()) {
-    if (index > 0) {
-      const previousPage = sortedPages[index - 1]!
-      if (pageNumber - previousPage > 2) items.push("ellipsis")
-      else if (pageNumber - previousPage === 2) items.push(previousPage + 1)
-    }
-    items.push(pageNumber)
-  }
-
-  return items
+  return getPageItems(currentPage, totalPages)
 }
 
 function areSearchParamsEqualIgnoring(
