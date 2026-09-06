@@ -1,5 +1,5 @@
 import { memo, useCallback, useMemo } from "react"
-import { ActivityCardFrame } from "~/components/activity/ActivityCardFrame"
+import { ActivityCard } from "~/components/activity/ActivityCard"
 import { ActivitySettingsControls } from "~/components/activities/ActivitySettingsControls"
 import { Checkbox } from "~/components/ui/checkbox"
 import type { ActivitySummary } from "~/types/activitySummary"
@@ -60,7 +60,7 @@ export const LocalActivityCard = memo(function LocalActivityCard({
   ) : undefined
 
   return (
-    <ActivityCardFrame
+    <ActivityCard
       activity={cardData}
       activityId={activity.id}
       activityHref={`/map?activity=${activity.id}`}

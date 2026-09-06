@@ -1,7 +1,6 @@
 import type { PublicActivityMeta } from "~shared/api"
 import type { ReactNode } from "react"
 import { AppLink } from "~/components/AppLink"
-import { formatRelativeTime } from "~/lib/formatRelativeTime"
 import {
   formatDistance,
   formatDuration,
@@ -9,6 +8,7 @@ import {
   formatSpeed,
 } from "~/components/activity-stats/formatters"
 import { ActivityStat } from "~/components/activity/ActivityStat"
+import { formatRelativeTime } from "~/lib/formatRelativeTime"
 
 export interface ActivityCardData {
   name: string
@@ -19,7 +19,7 @@ export interface ActivityCardData {
   avgMovingSpeedKmh: number | null
 }
 
-interface ActivityCardLayoutProps {
+interface ActivityCardProps {
   activity: PublicActivityMeta | ActivityCardData
   activityId?: string
   /** Local map destination. Public-profile activities intentionally have none. */
@@ -34,14 +34,14 @@ function stripExtension(name: string): string {
   return lastDot > 0 ? name.slice(0, lastDot) : name
 }
 
-export function ActivityCardLayout({
+export function ActivityCard({
   activity,
   activityId,
   activityHref,
   selectionControl,
   settingsControls,
   actions,
-}: ActivityCardLayoutProps) {
+}: ActivityCardProps) {
   const activityName = stripExtension(activity.name)
 
   return (

@@ -5,7 +5,7 @@ import { PageShell } from "~/components/PageShell"
 import { Pagination } from "~/components/Pagination"
 import { AchievementsSection } from "~/components/public-profile/AchievementsSection"
 import { SavedPointsSection } from "~/components/public-profile/SavedPointsSection"
-import { PublicActivityCard } from "~/components/public-profile/PublicActivityCard"
+import { ActivityCard } from "~/components/activity/ActivityCard"
 import { PublicActivityOwnerActions } from "~/components/public-profile/PublicActivityOwnerActions"
 import { PublicProfileHeader } from "~/components/public-profile/PublicProfileHeader"
 import { RecentActivityCalendarCard } from "~/components/public-profile/RecentActivityCalendarCard"
@@ -326,9 +326,10 @@ export default function PublicProfilePage() {
                   </h2>
                   <Grid columns={{ base: 1, sm: 2 }}>
                     {activities.map((activity) => (
-                      <PublicActivityCard
+                      <ActivityCard
                         key={`${profile.user.handle.toLowerCase()}:${activity.contentHash}`}
                         activity={activity}
+                        activityId={activity.contentHash}
                         actions={
                           isOwner ? (
                             <PublicActivityOwnerActions
