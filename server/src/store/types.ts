@@ -15,6 +15,7 @@ import type {
   ManifestPage,
   SavedPointManifestPage,
   NotificationStatus,
+  PublicActivitiesPage,
   PublicAchievementPrevalence,
   PublicProfileResponse,
   ActivityMeta,
@@ -202,12 +203,17 @@ export interface ServerStore {
    * or access status.
    */
   findUserByHandle(handle: string): Promise<User | null>
-  /**
-   * Public activities with their metadata for a user, newest first. The caller
-   * already verified the user exists; this method returns only activities with
-   * `is_public = 1` and never exposes geometry.
-   */
-  listPublicActivities(userId: string): Promise<PublicProfileResponse>
+  /** Bounded overview data for a public profile; it never includes every activity. */
+  getPublicProfile(
+    userId: string,
+    recentLimit: number
+  ): Promise<PublicProfileResponse>
+  /** One newest-first page of anonymous activity summaries. */
+  listPublicActivities(
+    userId: string,
+    page: number,
+    limit: number
+  ): Promise<PublicActivitiesPage>
   /** Achievement percentages across profiles with public activities. */
   getPublicAchievementPrevalence(): Promise<PublicAchievementPrevalence>
 

@@ -1,11 +1,9 @@
 import { describe, expect, test } from "bun:test"
-import type { PublicActivityMeta } from "~shared/api"
+import type { ActivityMeta } from "~shared/api"
 import { computePublicAchievementPrevalence } from "../src/public/achievementPrevalence"
 import { MemoryStore } from "../src/store/memory"
 
-function activity(
-  overrides: Partial<PublicActivityMeta> = {}
-): PublicActivityMeta {
+function activity(overrides: Partial<ActivityMeta> = {}): ActivityMeta {
   return {
     contentHash: "activity",
     name: "Activity",

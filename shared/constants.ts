@@ -6,6 +6,9 @@ export const MAX_ACTIVITY_BYTES = 8 * 1024 * 1024
 /** Manifest rows returned per page. The client follows `hasMore` until dry. */
 export const SYNC_PAGE_SIZE = 500
 
+/** Maximum activity cards returned from the anonymous public-profile endpoint. */
+export const PUBLIC_ACTIVITY_PAGE_SIZE = 48
+
 /** Session lifetime. The client treats an expired token as signed out. */
 export const SESSION_TTL_MS = 90 * 24 * 60 * 60 * 1000
 

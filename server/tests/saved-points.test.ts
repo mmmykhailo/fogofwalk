@@ -183,7 +183,7 @@ describe("saved-point routes", () => {
     const profile = (await (
       await app.request("/api/public/users/point-owner")
     ).json()) as PublicProfileResponse
-    expect(profile.activities).toEqual([])
+    expect(profile.recentActivities).toEqual([])
     expect(profile.savedPoints).toHaveLength(1)
     expect(profile.savedPoints[0]).toMatchObject({
       id: pointId,

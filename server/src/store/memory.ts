@@ -12,6 +12,7 @@ import type {
   AdminUser,
   ManifestPage,
   PublicProfileResponse,
+  PublicActivitiesPage,
   PublicAchievementPrevalence,
   PublicActivityMeta,
   ActivityMeta,
@@ -24,6 +25,13 @@ import type {
 import type { SavedPoint } from "~shared/saved-points"
 import { computePublicAchievementPrevalence } from "../public/achievementPrevalence"
 import { PublicAchievementPrevalenceCache } from "../public/achievementPrevalenceCache"
+import {
+  computePublicEarnedAchievements,
+  computePublicProfileTotals,
+  computePublicWeeklyBars,
+  getPublicRecentDays,
+  toPublicActivitySummary,
+} from "../public/profileSummary"
 import { SYNC_PAGE_SIZE } from "~shared/constants"
 
 import { combineCursors, comparePageable, pageStream } from "./manifestPaging"
@@ -692,7 +700,23 @@ export class MemoryStore implements ServerStore {
     return null
   }
 
-  async listPublicActivities(userId: string): Promise<PublicProfileResponse> {
+  private getPublicActivitySummaries(userId: string): PublicActivityMeta[] {
+    const activities = [...(this.activities.get(userId)?.values() ?? [])]
+      .filter((stored) => stored.meta.isPublic)
+      .map((stored) => toPublicActivitySummary(stored.meta))
+
+    activities.sort(
+      (a, b) =>
+        (b.startedAtMs ?? -Infinity) - (a.startedAtMs ?? -Infinity) ||
+        b.contentHash.localeCompare(a.contentHash)
+    )
+    return activities
+  }
+
+  async getPublicProfile(
+    userId: string,
+    recentLimit: number
+  ): Promise<PublicProfileResponse> {
     const user = await this.getUser(userId)
     if (!user || !user.handle) {
       return {
@@ -701,25 +725,23 @@ export class MemoryStore implements ServerStore {
           displayName: user?.displayName ?? "",
           avatarUrl: user?.avatarUrl ?? null,
         },
-        activities: [],
         savedPoints: [],
+        totals: computePublicProfileTotals([]),
+        firstActivityMs: null,
+        latestActivityMs: null,
+        recentDays: [],
+        weekly: [],
+        achievements: [],
         achievementPrevalence: await this.getPublicAchievementPrevalence(),
+        recentActivities: [],
       }
     }
 
-    const userActivities = this.activities.get(userId)
-    const activities: PublicActivityMeta[] = []
-
-    if (userActivities) {
-      for (const stored of userActivities.values()) {
-        if (!stored.meta.isPublic) continue
-        // Stats are denormalized onto `meta` at upload time (see putActivity),
-        // so this never needs to decompress/parse the stored blob.
-        activities.push({ ...stored.meta })
-      }
-    }
-
-    activities.sort((a, b) => (b.startedAtMs ?? 0) - (a.startedAtMs ?? 0))
+    const activities = this.getPublicActivitySummaries(userId)
+    const datedActivities = activities
+      .map((activity) => activity.startedAtMs)
+      .filter((startedAtMs): startedAtMs is number => startedAtMs != null)
+      .sort((a, b) => a - b)
 
     return {
       user: {
@@ -727,9 +749,28 @@ export class MemoryStore implements ServerStore {
         displayName: user.displayName,
         avatarUrl: user.avatarUrl,
       },
-      activities,
       savedPoints: await this.listPublicSavedPoints(userId),
+      totals: computePublicProfileTotals(activities),
+      firstActivityMs: datedActivities[0] ?? null,
+      latestActivityMs: datedActivities.at(-1) ?? null,
+      recentDays: getPublicRecentDays(activities),
+      weekly: computePublicWeeklyBars(activities),
+      achievements: computePublicEarnedAchievements(activities),
       achievementPrevalence: await this.getPublicAchievementPrevalence(),
+      recentActivities: activities.slice(0, recentLimit),
+    }
+  }
+
+  async listPublicActivities(
+    userId: string,
+    page: number,
+    limit: number
+  ): Promise<PublicActivitiesPage> {
+    const activities = this.getPublicActivitySummaries(userId)
+    const start = (page - 1) * limit
+    return {
+      activities: activities.slice(start, start + limit),
+      totalCount: activities.length,
     }
   }
 

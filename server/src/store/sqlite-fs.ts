@@ -16,9 +16,9 @@ import type {
   AdminAccessRequest,
   AdminUser,
   ManifestPage,
+  PublicActivitiesPage,
   PublicProfileResponse,
   PublicAchievementPrevalence,
-  PublicActivityMeta,
   ActivityMeta,
   ActivityMetadataUpdate,
   ActivityTombstone,
@@ -39,6 +39,13 @@ import type { Pageable } from "./manifestPaging"
 import { parseActivityUpload } from "../activities/payload"
 import { computePublicAchievementPrevalence } from "../public/achievementPrevalence"
 import { PublicAchievementPrevalenceCache } from "../public/achievementPrevalenceCache"
+import {
+  computePublicEarnedAchievements,
+  computePublicProfileTotals,
+  computePublicWeeklyBars,
+  getPublicRecentDays,
+  toPublicActivitySummary,
+} from "../public/profileSummary"
 import type {
   Identity,
   IdentityInput,
@@ -1242,7 +1249,10 @@ export class SqliteFsStore implements ServerStore {
     return row ? toUser(row) : null
   }
 
-  async listPublicActivities(userId: string): Promise<PublicProfileResponse> {
+  async getPublicProfile(
+    userId: string,
+    recentLimit: number
+  ): Promise<PublicProfileResponse> {
     const user = await this.getUser(userId)
     if (!user || !user.handle) {
       return {
@@ -1251,9 +1261,15 @@ export class SqliteFsStore implements ServerStore {
           displayName: user?.displayName ?? "",
           avatarUrl: user?.avatarUrl ?? null,
         },
-        activities: [],
         savedPoints: [],
+        totals: computePublicProfileTotals([]),
+        firstActivityMs: null,
+        latestActivityMs: null,
+        recentDays: [],
+        weekly: [],
+        achievements: [],
         achievementPrevalence: await this.getPublicAchievementPrevalence(),
+        recentActivities: [],
       }
     }
 
@@ -1264,7 +1280,7 @@ export class SqliteFsStore implements ServerStore {
                 t.duration_ms, t.moving_time_ms, t.elevation_gain_m, t.avg_moving_speed_kmh
            FROM activities t
           WHERE t.user_id = ? AND t.is_public = 1
-          ORDER BY (t.started_at_ms IS NULL), t.started_at_ms DESC, t.updated_at DESC`
+          ORDER BY (t.started_at_ms IS NULL), t.started_at_ms DESC, t.updated_at DESC, t.content_hash DESC`
       )
       .all(userId) as ActivityRow[]
 
@@ -1273,6 +1289,11 @@ export class SqliteFsStore implements ServerStore {
     const activities = await Promise.all(
       rows.map((row) => this.hydrateLegacyPublicMeta(userId, row))
     )
+    const summaries = activities.map(toPublicActivitySummary)
+    const datedActivities = summaries
+      .map((activity) => activity.startedAtMs)
+      .filter((startedAtMs): startedAtMs is number => startedAtMs != null)
+      .sort((a, b) => a - b)
 
     return {
       user: {
@@ -1280,9 +1301,46 @@ export class SqliteFsStore implements ServerStore {
         displayName: user.displayName,
         avatarUrl: user.avatarUrl,
       },
-      activities,
       savedPoints: await this.listPublicSavedPoints(userId),
+      totals: computePublicProfileTotals(summaries),
+      firstActivityMs: datedActivities[0] ?? null,
+      latestActivityMs: datedActivities.at(-1) ?? null,
+      recentDays: getPublicRecentDays(summaries),
+      weekly: computePublicWeeklyBars(summaries),
+      achievements: computePublicEarnedAchievements(summaries),
       achievementPrevalence: await this.getPublicAchievementPrevalence(),
+      recentActivities: summaries.slice(0, recentLimit),
+    }
+  }
+
+  async listPublicActivities(
+    userId: string,
+    page: number,
+    limit: number
+  ): Promise<PublicActivitiesPage> {
+    const offset = (page - 1) * limit
+    const total = this.db
+      .query(
+        `SELECT COUNT(*) AS count FROM activities WHERE user_id = ? AND is_public = 1`
+      )
+      .get(userId) as { count: number }
+    const rows = this.db
+      .query(
+        `SELECT t.content_hash, t.name, t.is_public, t.format, t.activity_type, t.start_sun_phase, t.started_at_ms,
+                t.distance_km, t.point_count, t.size_bytes, t.updated_at,
+                t.duration_ms, t.moving_time_ms, t.elevation_gain_m, t.avg_moving_speed_kmh
+           FROM activities t
+          WHERE t.user_id = ? AND t.is_public = 1
+          ORDER BY (t.started_at_ms IS NULL), t.started_at_ms DESC, t.updated_at DESC, t.content_hash DESC
+          LIMIT ? OFFSET ?`
+      )
+      .all(userId, limit, offset) as ActivityRow[]
+    const activities = await Promise.all(
+      rows.map((row) => this.hydrateLegacyPublicMeta(userId, row))
+    )
+    return {
+      activities: activities.map(toPublicActivitySummary),
+      totalCount: total.count,
     }
   }
 
@@ -1308,7 +1366,7 @@ export class SqliteFsStore implements ServerStore {
   private async hydrateLegacyPublicMeta(
     userId: string,
     row: ActivityRow
-  ): Promise<PublicActivityMeta> {
+  ): Promise<ActivityMeta> {
     if (
       row.duration_ms !== null ||
       row.moving_time_ms !== null ||
