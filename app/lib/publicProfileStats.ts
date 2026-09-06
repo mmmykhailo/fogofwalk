@@ -1,5 +1,9 @@
 import type { PublicActivityMeta } from "~shared/api"
-import type { LifetimeTotals, WeeklyBar } from "~/lib/statsAggregator"
+import {
+  computeActivityTotals,
+  type LifetimeTotals,
+  type WeeklyBar,
+} from "~/lib/statsAggregator"
 
 export interface PublicProfileStats {
   totals: LifetimeTotals
@@ -86,26 +90,10 @@ function buildWeeklyBars(activities: PublicActivityMeta[]): WeeklyBar[] {
 export function computePublicProfileStats(
   activities: PublicActivityMeta[]
 ): PublicProfileStats {
-  let totalDistanceKm = 0
-  let totalElevationGainM = 0
-  let totalMovingTimeMs = 0
-  let timedDistanceKm = 0
-  let totalDurationMs = 0
-  let movingDistanceKm = 0
   const dates: number[] = []
   const recentDays = new Set<string>()
 
   for (const activity of activities) {
-    totalDistanceKm += activity.distanceKm
-    totalElevationGainM += activity.elevationGainM
-    if (activity.durationMs != null && activity.durationMs > 0) {
-      timedDistanceKm += activity.distanceKm
-      totalDurationMs += activity.durationMs
-    }
-    if (activity.movingTimeMs != null && activity.movingTimeMs > 0) {
-      movingDistanceKm += activity.distanceKm
-      totalMovingTimeMs += activity.movingTimeMs
-    }
     if (activity.startedAtMs != null) {
       dates.push(activity.startedAtMs)
       recentDays.add(toLocalDateStr(activity.startedAtMs))
@@ -114,27 +102,7 @@ export function computePublicProfileStats(
 
   dates.sort((a, b) => a - b)
   return {
-    totals: {
-      totalDistanceKm,
-      totalElevationGainM,
-      totalMovingTimeMs,
-      totalActivities: activities.length,
-      activeDays: recentDays.size,
-      avgSpeedKmh:
-        totalDurationMs > 0
-          ? timedDistanceKm / (totalDurationMs / 3_600_000)
-          : null,
-      avgMovingSpeedKmh:
-        totalMovingTimeMs > 0
-          ? movingDistanceKm / (totalMovingTimeMs / 3_600_000)
-          : null,
-      avgPaceMinPerKm:
-        totalDurationMs > 0 ? totalDurationMs / 60_000 / timedDistanceKm : null,
-      avgMovingPaceMinPerKm:
-        totalMovingTimeMs > 0
-          ? totalMovingTimeMs / 60_000 / movingDistanceKm
-          : null,
-    },
+    totals: computeActivityTotals(activities),
     firstActivityMs: dates[0] ?? null,
     latestActivityMs: dates.at(-1) ?? null,
     recentDays: [...recentDays],

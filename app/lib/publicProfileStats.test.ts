@@ -1,6 +1,8 @@
 import { expect, test } from "bun:test"
 import type { PublicActivityMeta } from "~shared/api"
 import { computePublicProfileStats } from "~/lib/publicProfileStats"
+import { computeLifetimeTotals } from "~/lib/statsAggregator"
+import type { ParsedActivity } from "~/types/activities"
 
 function activity(overrides: Partial<PublicActivityMeta>): PublicActivityMeta {
   return {
@@ -59,4 +61,79 @@ test("excludes untimed activities from elapsed-speed calculations", () => {
 
   expect(stats.totals.totalDistanceKm).toBe(30)
   expect(stats.totals.avgSpeedKmh).toBe(10)
+})
+
+test("returns null averages for timed zero-distance activities", () => {
+  const stats = computePublicProfileStats([
+    activity({ distanceKm: 0, durationMs: 3_600_000 }),
+  ])
+
+  expect(stats.totals.avgSpeedKmh).toBeNull()
+  expect(stats.totals.avgPaceMinPerKm).toBeNull()
+  expect(stats.totals.avgMovingSpeedKmh).toBeNull()
+  expect(stats.totals.avgMovingPaceMinPerKm).toBeNull()
+})
+
+test("uses only contributing distance for finite weighted averages", () => {
+  const stats = computePublicProfileStats([
+    activity({ distanceKm: 0, durationMs: 3_600_000, movingTimeMs: 600_000 }),
+    activity({
+      distanceKm: 10,
+      durationMs: 3_600_000,
+      movingTimeMs: 1_800_000,
+    }),
+    activity({ distanceKm: 20 }),
+  ])
+
+  expect(stats.totals.totalDistanceKm).toBe(30)
+  expect(stats.totals.avgSpeedKmh).toBe(5)
+  expect(stats.totals.avgPaceMinPerKm).toBe(12)
+  expect(stats.totals.avgMovingSpeedKmh).toBe(15)
+  expect(stats.totals.avgMovingPaceMinPerKm).toBe(4)
+  for (const value of Object.values(stats.totals)) {
+    expect(
+      value == null || typeof value !== "number" || Number.isFinite(value)
+    ).toBe(true)
+  }
+})
+
+test("shares weighted total rules with local activities", () => {
+  const publicActivities = [
+    activity({
+      startedAtMs: new Date(2026, 0, 5).getTime(),
+      distanceKm: 10,
+      elevationGainM: 120,
+      durationMs: 3_600_000,
+      movingTimeMs: 3_000_000,
+    }),
+    activity({ distanceKm: 0, durationMs: 600_000, movingTimeMs: 600_000 }),
+  ]
+  const localActivities = publicActivities.map(
+    (item) =>
+      ({
+        id: item.contentHash,
+        name: item.name,
+        format: item.format,
+        coordinates: [],
+        startedAtMs: item.startedAtMs,
+        stats: {
+          distanceKm: item.distanceKm,
+          elevationGainM: item.elevationGainM,
+          elevationLossM: 0,
+          hasElevation: false,
+          durationMs: item.durationMs,
+          movingTimeMs: item.movingTimeMs,
+          uniqueDistanceKm: 0,
+          avgPaceMinPerKm: null,
+          avgMovingPaceMinPerKm: null,
+          avgSpeedKmh: null,
+          avgMovingSpeedKmh: null,
+          elevationProfile: [],
+        },
+      }) satisfies ParsedActivity
+  )
+
+  expect(computePublicProfileStats(publicActivities).totals).toEqual(
+    computeLifetimeTotals(localActivities)
+  )
 })

@@ -21,6 +21,19 @@ export interface LifetimeTotals {
   avgMovingPaceMinPerKm: number | null
 }
 
+/**
+ * The subset of an activity required for library and public-profile totals.
+ * Both views use this contract so their weighted averages retain identical
+ * denominator rules.
+ */
+export interface ActivityTotalsInput {
+  startedAtMs: number | null
+  distanceKm: number
+  elevationGainM: number
+  durationMs: number | null
+  movingTimeMs: number | null
+}
+
 export interface WeeklyBar {
   /** ISO week label e.g. "2024-W03" */
   week: string
@@ -168,8 +181,8 @@ export function sortActivitiesBy<T extends ActivitySortItem>(
 
 // ─── Aggregators ──────────────────────────────────────────────────────────────
 
-export function computeLifetimeTotals(
-  activities: ParsedActivity[]
+export function computeActivityTotals(
+  activities: readonly ActivityTotalsInput[]
 ): LifetimeTotals {
   let totalDistanceKm = 0
   let totalElevationGainM = 0
@@ -182,10 +195,16 @@ export function computeLifetimeTotals(
   let movingDistanceKm = 0
   const daySet = new Set<string>()
 
-  for (const t of activities) {
-    const { distanceKm, durationMs, movingTimeMs } = t.stats
+  for (const activity of activities) {
+    const {
+      distanceKm,
+      durationMs,
+      movingTimeMs,
+      elevationGainM,
+      startedAtMs,
+    } = activity
     totalDistanceKm += distanceKm
-    totalElevationGainM += t.stats.elevationGainM
+    totalElevationGainM += elevationGainM
     totalMovingTimeMs += movingTimeMs ?? 0
     if (durationMs != null && durationMs > 0) {
       totalDurationMs += durationMs
@@ -194,7 +213,7 @@ export function computeLifetimeTotals(
     if (movingTimeMs != null && movingTimeMs > 0) {
       movingDistanceKm += distanceKm
     }
-    if (t.startedAtMs != null) daySet.add(toLocalDateStr(t.startedAtMs))
+    if (startedAtMs != null) daySet.add(toLocalDateStr(startedAtMs))
   }
 
   const hasElapsed = totalDurationMs > 0 && timedDistanceKm > 0
@@ -219,6 +238,20 @@ export function computeLifetimeTotals(
       ? totalMovingTimeMs / 60_000 / movingDistanceKm
       : null,
   }
+}
+
+export function computeLifetimeTotals(
+  activities: readonly ParsedActivity[]
+): LifetimeTotals {
+  return computeActivityTotals(
+    activities.map((activity) => ({
+      startedAtMs: activity.startedAtMs,
+      distanceKm: activity.stats.distanceKm,
+      elevationGainM: activity.stats.elevationGainM,
+      durationMs: activity.stats.durationMs,
+      movingTimeMs: activity.stats.movingTimeMs,
+    }))
+  )
 }
 
 export function computeWeeklyBars(activities: ParsedActivity[]): WeeklyBar[] {
