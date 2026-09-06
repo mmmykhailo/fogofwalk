@@ -1,4 +1,5 @@
-import { test, expect } from "../fixtures/app"
+import { test, expect, readSessionToken } from "../fixtures/app"
+import { API_URL } from "../fixtures/ports"
 
 const PUBLIC_PROFILE_URL = (handle: string) => `/u/${handle}`
 
@@ -72,5 +73,69 @@ test.describe("public profile", () => {
         .locator("dd")
         .first()
     ).toContainText(/\d+(\.\d+)? km/)
+  })
+
+  test("bounds public profile cards and pages through a large library", async ({
+    app,
+    login,
+    request,
+    serverState,
+  }) => {
+    await app.goto()
+    await app.signIn()
+    await app.importActivities(50)
+    await app.waitForImportToSettle()
+    await app.syncNow()
+
+    const token = await readSessionToken(app.page)
+    const serverActivities = await serverState(app.page)
+    const publish = await request.patch(`${API_URL}/api/activities/metadata`, {
+      headers: { Authorization: `Bearer ${token}` },
+      data: {
+        updates: serverActivities.activities.map(({ contentHash }) => ({
+          contentHash,
+          isPublic: true,
+        })),
+      },
+    })
+    expect(publish.ok()).toBe(true)
+
+    const firstPageResponse = app.page.waitForResponse(
+      (response) =>
+        response
+          .url()
+          .includes(`/api/public/users/${login}/activities?page=1`) &&
+        response.request().method() === "GET"
+    )
+    await app.page.goto(PUBLIC_PROFILE_URL(login))
+    const firstPage = (await (await firstPageResponse).json()) as {
+      activities: unknown[]
+      totalCount: number
+    }
+    expect(firstPage.totalCount).toBe(50)
+    expect(firstPage.activities).toHaveLength(48)
+    await expect(
+      app.page.locator('[data-testid^="activity-card-"]')
+    ).toHaveCount(48)
+
+    const secondPageResponse = app.page.waitForResponse(
+      (response) =>
+        response
+          .url()
+          .includes(`/api/public/users/${login}/activities?page=2`) &&
+        response.request().method() === "GET"
+    )
+    await app.page.getByRole("button", { name: "Next page" }).click()
+    await expect(app.page).toHaveURL(new RegExp(`/u/${login}\\?page=2$`))
+    expect(
+      ((await (await secondPageResponse).json()) as { activities: unknown[] })
+        .activities
+    ).toHaveLength(2)
+    await expect(
+      app.page.locator('[data-testid^="activity-card-"]')
+    ).toHaveCount(2)
+    await expect(
+      app.page.getByRole("heading", { name: "Public activities" })
+    ).toBeFocused()
   })
 })

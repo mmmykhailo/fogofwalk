@@ -1,6 +1,8 @@
-import { useLoaderData } from "react-router"
+import { useEffect, useRef } from "react"
+import { useLoaderData, useLocation, useNavigate } from "react-router"
 import { FootprintsIcon } from "@phosphor-icons/react"
 import { PageShell } from "~/components/PageShell"
+import { Pagination } from "~/components/Pagination"
 import { AchievementsSection } from "~/components/public-profile/AchievementsSection"
 import { SavedPointsSection } from "~/components/public-profile/SavedPointsSection"
 import { PublicActivityCard } from "~/components/public-profile/PublicActivityCard"
@@ -12,11 +14,12 @@ import { StatCards } from "~/components/stats/StatCards"
 import { WeeklyChart } from "~/components/stats/WeeklyChart"
 import { TransitionLink } from "~/components/TransitionLink"
 import { Grid } from "~/components/Grid"
-import { computePublicProfileStats } from "~/lib/publicProfileStats"
+import { getTotalPages } from "~/lib/pagination"
+import { getCanonicalPublicProfilePage } from "~/lib/publicProfileRoute"
 import { socialMeta } from "~/lib/socialMeta"
 import {
-  computeEarnedAchievements,
   sortEarnedAchievementsNewestFirst,
+  toEarnedAchievements,
 } from "~/lib/achievements"
 import { applyActivityMetadata, mapStore } from "~/lib/mapStore"
 import { apiUrl } from "~/lib/server/config"
@@ -33,13 +36,17 @@ import {
   loadActivitySummaries,
   updateActivityMetadata,
 } from "~/lib/storage"
-import type { PublicProfileResponse } from "~shared/api"
+import type { PublicActivitiesPage, PublicProfileResponse } from "~shared/api"
+import { PUBLIC_ACTIVITY_PAGE_SIZE } from "~shared/constants"
 import type { Route } from "./+types/u.$handle"
 
 const MAX_WEEKLY_CHART_DAYS = 180
 
 interface ProfileLoaderData {
   profile: PublicProfileResponse | null
+  activityPage: PublicActivitiesPage | null
+  page: number
+  canonicalSearch: string
   error: string | null
 }
 
@@ -51,27 +58,65 @@ const CONTENT_HASH_RE = /^[a-f0-9]{64}$/
 
 export async function clientLoader({
   params,
+  request,
 }: Route.ClientLoaderArgs): Promise<ProfileLoaderData> {
   const handle = params.handle
-  if (!handle) return { profile: null, error: "Profile not found." }
+  if (!handle) {
+    return {
+      profile: null,
+      activityPage: null,
+      page: 1,
+      canonicalSearch: "",
+      error: "Profile not found.",
+    }
+  }
 
   // Public profile data stays anonymous. Start restoring a stored session only
   // because this route can render owner-specific activity controls.
   void initAuth()
 
   try {
-    const res = await fetch(
-      apiUrl(`/api/public/users/${encodeURIComponent(handle)}`)
-    )
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}))
+    const searchParams = new URL(request.url).searchParams
+    const requested = getCanonicalPublicProfilePage(searchParams)
+    const encodedHandle = encodeURIComponent(handle)
+    const [profileRes, activitiesRes] = await Promise.all([
+      fetch(apiUrl(`/api/public/users/${encodedHandle}`), {
+        signal: request.signal,
+      }),
+      fetch(
+        apiUrl(
+          `/api/public/users/${encodedHandle}/activities?page=${requested.page}`
+        ),
+        { signal: request.signal }
+      ),
+    ])
+    if (!profileRes.ok || !activitiesRes.ok) {
+      const body = await (profileRes.ok ? activitiesRes : profileRes)
+        .json()
+        .catch(() => ({}))
       throw new Error(body.message || "Profile not found.")
     }
-    const profile = (await res.json()) as PublicProfileResponse
-    return { profile, error: null }
+    const [profile, activityPage] = (await Promise.all([
+      profileRes.json(),
+      activitiesRes.json(),
+    ])) as [PublicProfileResponse, PublicActivitiesPage]
+    const page = getCanonicalPublicProfilePage(
+      searchParams,
+      activityPage.totalCount
+    )
+    return {
+      profile,
+      activityPage,
+      page: page.page,
+      canonicalSearch: page.searchParams.toString(),
+      error: null,
+    }
   } catch (err) {
     return {
       profile: null,
+      activityPage: null,
+      page: 1,
+      canonicalSearch: "",
       error: err instanceof Error ? err.message : String(err),
     }
   }
@@ -159,21 +204,58 @@ export function meta({ data, params }: Route.MetaArgs) {
 }
 
 export default function PublicProfilePage() {
-  const { profile, error } = useLoaderData<typeof clientLoader>()
+  const { profile, activityPage, page, canonicalSearch, error } =
+    useLoaderData<typeof clientLoader>()
   const auth = useAuth()
-  // The profile response carries only a bounded preview. Pagination replaces
-  // this collection with the authoritative activity-card loader.
-  const activities = profile?.recentActivities ?? []
+  const location = useLocation()
+  const navigate = useNavigate()
+  const activities = activityPage?.activities ?? []
+  const activityHeadingRef = useRef<HTMLHeadingElement>(null)
+  const previousPageRef = useRef(page)
+
+  useEffect(() => {
+    const currentSearch = location.search.slice(1)
+    if (canonicalSearch !== currentSearch) {
+      navigate(
+        {
+          pathname: location.pathname,
+          search: canonicalSearch ? `?${canonicalSearch}` : "",
+        },
+        { replace: true }
+      )
+    }
+  }, [canonicalSearch, location.pathname, location.search, navigate])
+
+  useEffect(() => {
+    if (previousPageRef.current !== page) {
+      activityHeadingRef.current?.focus()
+    }
+    previousPageRef.current = page
+  }, [page])
 
   const isOwner =
     auth.status === "signedIn" &&
     auth.user.handle?.toLowerCase() === profile?.user.handle.toLowerCase()
-  const stats = computePublicProfileStats(activities)
-  const weeklyChart = stats.weekly.slice(-Math.floor(MAX_WEEKLY_CHART_DAYS / 7))
+  const weeklyChart = profile?.weekly.slice(
+    -Math.floor(MAX_WEEKLY_CHART_DAYS / 7)
+  )
   const achievements = sortEarnedAchievementsNewestFirst(
-    computeEarnedAchievements(activities)
+    toEarnedAchievements(profile?.achievements ?? [])
   )
   const savedPoints = profile?.savedPoints ?? []
+  const activityCount = activityPage?.totalCount ?? 0
+  const totalPages = getTotalPages(activityCount, PUBLIC_ACTIVITY_PAGE_SIZE)
+
+  function navigateToPage(nextPage: number) {
+    if (!profile) return
+    const next = new URLSearchParams(location.search)
+    if (nextPage <= 1) next.delete("page")
+    else next.set("page", String(nextPage))
+    navigate({
+      pathname: location.pathname,
+      search: next.size > 0 ? `?${next}` : "",
+    })
+  }
 
   return (
     <PageShell>
@@ -193,7 +275,7 @@ export default function PublicProfilePage() {
 
       {!error &&
         profile &&
-        activities.length === 0 &&
+        profile.totals.totalActivities === 0 &&
         savedPoints.length === 0 && (
           <div className="flex flex-col items-center justify-center gap-3 rounded-none border border-dashed border-border py-24 text-center">
             <FootprintsIcon
@@ -209,15 +291,23 @@ export default function PublicProfilePage() {
 
       {!error &&
         profile &&
-        (activities.length > 0 || savedPoints.length > 0) && (
+        (profile.totals.totalActivities > 0 || savedPoints.length > 0) && (
           <div className="space-y-3">
-            {activities.length > 0 && (
+            {profile.totals.totalActivities > 0 && (
               <>
-                <StatCards totals={stats.totals} />
-                <WeeklyChart weekly={weeklyChart} />
+                <StatCards totals={profile.totals} />
+                <WeeklyChart weekly={weeklyChart ?? []} />
                 <Grid columns={{ base: 1, sm: 2 }}>
-                  <RecentActivityCalendarCard recentDays={stats.recentDays} />
-                  <PublicProfileSummary stats={stats} />
+                  <RecentActivityCalendarCard recentDays={profile.recentDays} />
+                  <PublicProfileSummary
+                    stats={{
+                      totals: profile.totals,
+                      firstActivityMs: profile.firstActivityMs,
+                      latestActivityMs: profile.latestActivityMs,
+                      recentDays: profile.recentDays,
+                      weekly: profile.weekly,
+                    }}
+                  />
                 </Grid>
                 <AchievementsSection
                   achievements={achievements}
@@ -227,7 +317,11 @@ export default function PublicProfilePage() {
                   achievementPrevalence={profile.achievementPrevalence}
                 />
                 <section>
-                  <h2 className="mt-6 mb-3 font-heading text-lg font-semibold">
+                  <h2
+                    ref={activityHeadingRef}
+                    tabIndex={-1}
+                    className="mt-6 mb-3 font-heading text-lg font-semibold outline-none"
+                  >
                     Public activities
                   </h2>
                   <Grid columns={{ base: 1, sm: 2 }}>
@@ -246,6 +340,14 @@ export default function PublicProfilePage() {
                       />
                     ))}
                   </Grid>
+                  <Pagination
+                    itemCount={activityCount}
+                    pageSize={PUBLIC_ACTIVITY_PAGE_SIZE}
+                    itemLabel="public activities"
+                    currentPage={page}
+                    totalPages={totalPages}
+                    onPageChange={navigateToPage}
+                  />
                 </section>
               </>
             )}

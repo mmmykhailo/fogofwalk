@@ -26,7 +26,10 @@ export function PublicActivityCard({
   return (
     <ActivityCardLayout
       activity={activity}
-      activityId={activityId}
+      activityId={
+        activityId ??
+        ("contentHash" in activity ? activity.contentHash : undefined)
+      }
       activityHref={activityHref}
       selectionControl={selectionControl}
       settingsControls={settingsControls}
