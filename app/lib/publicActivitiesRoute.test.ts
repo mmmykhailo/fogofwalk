@@ -1,16 +1,16 @@
 import { describe, expect, test } from "bun:test"
-import { getCanonicalPublicProfilePage } from "./publicProfileRoute"
+import { getCanonicalPublicActivitiesPage } from "./publicActivitiesRoute"
 
-describe("public profile page query", () => {
+describe("public activities page query", () => {
   test("normalizes invalid and first-page aliases while preserving unrelated parameters", () => {
     expect([
-      ...getCanonicalPublicProfilePage(
+      ...getCanonicalPublicActivitiesPage(
         new URLSearchParams("page=bad&tab=map"),
         49
       ).searchParams.entries(),
     ]).toEqual([["tab", "map"]])
     expect([
-      ...getCanonicalPublicProfilePage(
+      ...getCanonicalPublicActivitiesPage(
         new URLSearchParams("page=002&tab=map"),
         49
       ).searchParams.entries(),
@@ -21,11 +21,20 @@ describe("public profile page query", () => {
   })
 
   test("clamps pages made invalid by a visibility change", () => {
-    const result = getCanonicalPublicProfilePage(
+    const result = getCanonicalPublicActivitiesPage(
       new URLSearchParams("page=2"),
       48
     )
     expect(result.page).toBe(1)
     expect(result.searchParams.toString()).toBe("")
+  })
+
+  test("clamps an out-of-range page to the last page", () => {
+    const result = getCanonicalPublicActivitiesPage(
+      new URLSearchParams("page=999"),
+      49
+    )
+    expect(result.page).toBe(2)
+    expect(result.searchParams.toString()).toBe("page=2")
   })
 })

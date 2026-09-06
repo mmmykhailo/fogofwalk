@@ -1,7 +1,33 @@
-import { test, expect, readSessionToken } from "../fixtures/app"
+import {
+  test,
+  expect,
+  readSessionToken,
+  type ServerState,
+} from "../fixtures/app"
+import type { APIRequestContext, Page } from "@playwright/test"
 import { API_URL } from "../fixtures/ports"
 
 const PUBLIC_PROFILE_URL = (handle: string) => `/u/${handle}`
+const PUBLIC_ACTIVITIES_URL = (handle: string) => `/u/${handle}/activities`
+
+async function publishActivities(
+  request: APIRequestContext,
+  page: Page,
+  activities: ServerState["activities"],
+  include: (activity: ServerState["activities"][number]) => boolean = () => true
+) {
+  const token = await readSessionToken(page)
+  const response = await request.patch(`${API_URL}/api/activities/metadata`, {
+    headers: { Authorization: `Bearer ${token}` },
+    data: {
+      updates: activities.filter(include).map(({ contentHash }) => ({
+        contentHash,
+        isPublic: true,
+      })),
+    },
+  })
+  expect(response.ok()).toBe(true)
+}
 
 /**
  * Public profiles are a server-only feature: the URL is intentionally
@@ -19,20 +45,36 @@ test.describe("public profile", () => {
     await expect(app.page.getByText(`@${login}`)).toBeVisible()
   })
 
-  test("a private activity does not appear on the public profile", async ({
+  test("private activities never appear on public activity pages", async ({
     app,
     login,
+    request,
+    serverState,
   }) => {
     await app.goto()
     await app.signIn()
-    await app.importActivities(1)
+    await app.importActivities(2)
     await app.waitForImportToSettle()
     await app.syncNow()
 
+    const { activities } = await serverState(app.page)
+    await publishActivities(
+      request,
+      app.page,
+      activities,
+      (activity) => activity.name === "t1.gpx"
+    )
+
     await app.page.goto(PUBLIC_PROFILE_URL(login))
     await expect(app.page.locator("h1").getByText(login)).toBeVisible()
+    await expect(app.page.getByText("t1")).toBeVisible()
+    await expect(app.page.getByText("t2")).toHaveCount(0)
+
+    await app.page.goto(PUBLIC_ACTIVITIES_URL(login))
+    await expect(app.page.getByText("t1")).toBeVisible()
+    await expect(app.page.getByText("t2")).toHaveCount(0)
     await expect(
-      app.page.getByText("This user has no public activities yet")
+      app.page.getByText("Showing 1–1 of 1 public activities")
     ).toBeVisible()
   })
 
@@ -75,7 +117,7 @@ test.describe("public profile", () => {
     ).toContainText(/\d+(\.\d+)? km/)
   })
 
-  test("bounds public profile cards and pages through a large library", async ({
+  test("bounds the profile preview at four cards and requests no page", async ({
     app,
     login,
     request,
@@ -87,55 +129,167 @@ test.describe("public profile", () => {
     await app.waitForImportToSettle()
     await app.syncNow()
 
-    const token = await readSessionToken(app.page)
-    const serverActivities = await serverState(app.page)
-    const publish = await request.patch(`${API_URL}/api/activities/metadata`, {
-      headers: { Authorization: `Bearer ${token}` },
-      data: {
-        updates: serverActivities.activities.map(({ contentHash }) => ({
-          contentHash,
-          isPublic: true,
-        })),
-      },
-    })
-    expect(publish.ok()).toBe(true)
+    const { activities } = await serverState(app.page)
+    await publishActivities(request, app.page, activities)
 
-    const firstPageResponse = app.page.waitForResponse(
-      (response) =>
-        response
-          .url()
-          .includes(`/api/public/users/${login}/activities?page=1`) &&
-        response.request().method() === "GET"
-    )
-    await app.page.goto(PUBLIC_PROFILE_URL(login))
-    const firstPage = (await (await firstPageResponse).json()) as {
-      activities: unknown[]
-      totalCount: number
+    const activityRequests: string[] = []
+    const recordActivityRequest = (request: { url(): string }) => {
+      if (request.url().includes(`/api/public/users/${login}/activities`)) {
+        activityRequests.push(request.url())
+      }
     }
-    expect(firstPage.totalCount).toBe(50)
-    expect(firstPage.activities).toHaveLength(48)
+    app.page.on("request", recordActivityRequest)
+    await app.page.goto(PUBLIC_PROFILE_URL(login))
+    await expect(
+      app.page.locator('[data-testid^="activity-card-"]')
+    ).toHaveCount(4)
+    await expect(
+      app.page.getByRole("link", { name: "View all activities" })
+    ).toBeVisible()
+    app.page.off("request", recordActivityRequest)
+
+    expect(activityRequests).toEqual([])
+  })
+
+  test("does not show a view-all link for four or fewer activities", async ({
+    app,
+    login,
+    request,
+    serverState,
+  }) => {
+    await app.goto()
+    await app.signIn()
+    await app.importActivities(4)
+    await app.waitForImportToSettle()
+    await app.syncNow()
+
+    const { activities } = await serverState(app.page)
+    await publishActivities(request, app.page, activities)
+
+    await app.page.goto(PUBLIC_PROFILE_URL(login))
+    await expect(
+      app.page.locator('[data-testid^="activity-card-"]')
+    ).toHaveCount(4)
+    await expect(
+      app.page.getByRole("link", { name: "View all activities" })
+    ).toHaveCount(0)
+  })
+
+  test("opens the full activity page from a larger preview", async ({
+    app,
+    login,
+    request,
+    serverState,
+  }) => {
+    await app.goto()
+    await app.signIn()
+    await app.importActivities(5)
+    await app.waitForImportToSettle()
+    await app.syncNow()
+
+    const { activities } = await serverState(app.page)
+    await publishActivities(request, app.page, activities)
+
+    await app.page.goto(PUBLIC_PROFILE_URL(login))
+    await app.page.getByRole("link", { name: "View all activities" }).click()
+    await expect(app.page).toHaveURL(new RegExp(`/u/${login}/activities$`))
+    await expect(
+      app.page.locator('[data-testid^="activity-card-"]')
+    ).toHaveCount(5)
+  })
+
+  test("paginates the complete public library in 48-card pages", async ({
+    app,
+    login,
+    request,
+    serverState,
+  }) => {
+    await app.goto()
+    await app.signIn()
+    await app.importActivities(50)
+    await app.waitForImportToSettle()
+    await app.syncNow()
+
+    const { activities } = await serverState(app.page)
+    await publishActivities(request, app.page, activities)
+
+    await app.page.goto(PUBLIC_ACTIVITIES_URL(login))
     await expect(
       app.page.locator('[data-testid^="activity-card-"]')
     ).toHaveCount(48)
+    await expect(
+      app.page.getByText("Showing 1–48 of 50 public activities")
+    ).toBeVisible()
 
-    const secondPageResponse = app.page.waitForResponse(
-      (response) =>
-        response
-          .url()
-          .includes(`/api/public/users/${login}/activities?page=2`) &&
-        response.request().method() === "GET"
-    )
     await app.page.getByRole("button", { name: "Next page" }).click()
-    await expect(app.page).toHaveURL(new RegExp(`/u/${login}\\?page=2$`))
-    expect(
-      ((await (await secondPageResponse).json()) as { activities: unknown[] })
-        .activities
-    ).toHaveLength(2)
+    await expect(app.page).toHaveURL(
+      new RegExp(`/u/${login}/activities\\?page=2$`)
+    )
     await expect(
       app.page.locator('[data-testid^="activity-card-"]')
     ).toHaveCount(2)
     await expect(
-      app.page.getByRole("heading", { name: "Public activities" })
-    ).toBeFocused()
+      app.page.getByText("Showing 49–50 of 50 public activities")
+    ).toBeVisible()
+  })
+
+  test("shows activity management only to the profile owner", async ({
+    app,
+    login,
+    secondDevice,
+  }) => {
+    await app.goto()
+    await app.signIn()
+
+    await app.page.goto(PUBLIC_ACTIVITIES_URL(login))
+    await expect(
+      app.page.getByRole("link", { name: "Manage activities" })
+    ).toHaveAttribute("href", "/activities")
+
+    const visitor = await secondDevice(login)
+    await visitor.page.goto(PUBLIC_ACTIVITIES_URL(login))
+    await expect(
+      visitor.page.getByRole("link", { name: "Manage activities" })
+    ).toHaveCount(0)
+  })
+
+  test("hiding an activity refreshes the preview and clamps the full page", async ({
+    app,
+    login,
+    request,
+    serverState,
+  }) => {
+    await app.goto()
+    await app.signIn()
+    await app.importActivities(49)
+    await app.waitForImportToSettle()
+    await app.syncNow()
+
+    const { activities } = await serverState(app.page)
+    await publishActivities(request, app.page, activities)
+
+    await app.page.goto(`${PUBLIC_ACTIVITIES_URL(login)}?page=2`)
+    const lastCard = app.page
+      .locator('[data-testid^="activity-card-"]')
+      .filter({ hasText: "t1" })
+    await expect(lastCard).toHaveCount(1)
+    await lastCard
+      .getByRole("button", { name: "Activity actions for t1" })
+      .click()
+    await app.page.getByRole("menuitem", { name: "Hide from profile" }).click()
+
+    await expect(app.page).toHaveURL(new RegExp(`/u/${login}/activities$`))
+    await expect(
+      app.page.locator('[data-testid^="activity-card-"]')
+    ).toHaveCount(48)
+    await expect(
+      app.page.getByText("Showing 1–48 of 48 public activities")
+    ).toBeVisible()
+
+    await app.page.goto(PUBLIC_PROFILE_URL(login))
+    await expect(
+      app.page.locator('[data-testid^="activity-card-"]')
+    ).toHaveCount(4)
+    await expect(app.page.getByText("t1")).toHaveCount(0)
   })
 })

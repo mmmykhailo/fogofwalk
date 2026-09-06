@@ -1,194 +1,74 @@
-import { useEffect, useRef } from "react"
-import { useLoaderData, useLocation, useNavigate } from "react-router"
+import { useLoaderData } from "react-router"
 import { FootprintsIcon } from "@phosphor-icons/react"
 import { PageShell } from "~/components/PageShell"
-import { Pagination } from "~/components/Pagination"
+import { Grid } from "~/components/Grid"
+import { PublicActivitiesSection } from "~/components/public-profile/PublicActivitiesSection"
 import { AchievementsSection } from "~/components/public-profile/AchievementsSection"
 import { SavedPointsSection } from "~/components/public-profile/SavedPointsSection"
-import { ActivityCard } from "~/components/activity/ActivityCard"
-import { PublicActivityOwnerActions } from "~/components/public-profile/PublicActivityOwnerActions"
 import { PublicProfileHeader } from "~/components/public-profile/PublicProfileHeader"
 import { RecentActivityCalendarCard } from "~/components/public-profile/RecentActivityCalendarCard"
 import { PublicProfileSummary } from "~/components/public-profile/PublicProfileSummary"
 import { StatCards } from "~/components/stats/StatCards"
 import { WeeklyChart } from "~/components/stats/WeeklyChart"
 import { TransitionLink } from "~/components/TransitionLink"
-import { Grid } from "~/components/Grid"
-import { getTotalPages } from "~/lib/pagination"
-import { getCanonicalPublicProfilePage } from "~/lib/publicProfileRoute"
-import { socialMeta } from "~/lib/socialMeta"
 import {
   sortEarnedAchievementsNewestFirst,
   toEarnedAchievements,
 } from "~/lib/achievements"
-import { applyActivityMetadata, mapStore } from "~/lib/mapStore"
+import { handlePublicActivityAction } from "~/lib/publicActivityActions"
 import { apiUrl } from "~/lib/server/config"
-import {
-  canSync,
-  getAuthState,
-  initAuth,
-  useAuth,
-} from "~/lib/server/authStore"
-import { friendlyMessage } from "~/lib/server/apiClient"
-import { updateActivityVisibility } from "~/lib/server/activityVisibility"
-import {
-  activityToSummary,
-  loadActivitySummaries,
-  updateActivityMetadata,
-} from "~/lib/storage"
-import type { PublicActivitiesPage, PublicProfileResponse } from "~shared/api"
-import { PUBLIC_ACTIVITY_PAGE_SIZE } from "~shared/constants"
+import { initAuth, useAuth } from "~/lib/server/authStore"
+import { socialMeta } from "~/lib/socialMeta"
+import type { PublicProfileResponse } from "~shared/api"
 import type { Route } from "./+types/u.$handle"
 
 const MAX_WEEKLY_CHART_DAYS = 180
 
 interface ProfileLoaderData {
   profile: PublicProfileResponse | null
-  activityPage: PublicActivitiesPage | null
-  page: number
-  canonicalSearch: string
   error: string | null
 }
-
-export type PublicProfileActionResult =
-  | { ok: true; intent: "hide-activity"; contentHash: string }
-  | { ok: false; intent: "hide-activity"; error: string }
-
-const CONTENT_HASH_RE = /^[a-f0-9]{64}$/
 
 export async function clientLoader({
   params,
   request,
 }: Route.ClientLoaderArgs): Promise<ProfileLoaderData> {
   const handle = params.handle
-  if (!handle) {
-    return {
-      profile: null,
-      activityPage: null,
-      page: 1,
-      canonicalSearch: "",
-      error: "Profile not found.",
-    }
-  }
+  if (!handle) return { profile: null, error: "Profile not found." }
 
   // Public profile data stays anonymous. Start restoring a stored session only
   // because this route can render owner-specific activity controls.
   void initAuth()
 
   try {
-    const searchParams = new URL(request.url).searchParams
-    const requested = getCanonicalPublicProfilePage(searchParams)
-    const encodedHandle = encodeURIComponent(handle)
-    const [profileRes, activitiesRes] = await Promise.all([
-      fetch(apiUrl(`/api/public/users/${encodedHandle}`), {
-        signal: request.signal,
-      }),
-      fetch(
-        apiUrl(
-          `/api/public/users/${encodedHandle}/activities?page=${requested.page}`
-        ),
-        { signal: request.signal }
-      ),
-    ])
-    if (!profileRes.ok || !activitiesRes.ok) {
-      const body = await (profileRes.ok ? activitiesRes : profileRes)
-        .json()
-        .catch(() => ({}))
+    const response = await fetch(
+      apiUrl(`/api/public/users/${encodeURIComponent(handle)}`),
+      { signal: request.signal }
+    )
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}))
       throw new Error(body.message || "Profile not found.")
     }
-    const [profile, activityPage] = (await Promise.all([
-      profileRes.json(),
-      activitiesRes.json(),
-    ])) as [PublicProfileResponse, PublicActivitiesPage]
-    const page = getCanonicalPublicProfilePage(
-      searchParams,
-      activityPage.totalCount
-    )
     return {
-      profile,
-      activityPage,
-      page: page.page,
-      canonicalSearch: page.searchParams.toString(),
+      profile: (await response.json()) as PublicProfileResponse,
       error: null,
     }
   } catch (err) {
     return {
       profile: null,
-      activityPage: null,
-      page: 1,
-      canonicalSearch: "",
       error: err instanceof Error ? err.message : String(err),
     }
   }
 }
 
-function failedHide(error: string): PublicProfileActionResult {
-  return { ok: false, intent: "hide-activity", error }
-}
-
-async function reconcileLocalVisibility(contentHash: string): Promise<void> {
-  const summaries =
-    mapStore.activityHydration === "full"
-      ? mapStore.activities.map(activityToSummary)
-      : mapStore.activityHydration === "summaries"
-        ? mapStore.activitySummaries
-        : await loadActivitySummaries()
-  const summary = summaries.find(
-    (activity) => activity.contentHash === contentHash
-  )
-  if (!summary) return
-
-  const updated = { ...summary, isPublic: false }
-  if (!(await updateActivityMetadata([{ id: updated.id, isPublic: false }]))) {
-    throw new Error("The local activity summary could not be updated.")
-  }
-  applyActivityMetadata([updated])
-}
-
 export async function clientAction({
   params,
   request,
-}: Route.ClientActionArgs): Promise<PublicProfileActionResult> {
-  const formData = await request.formData()
-  if (formData.get("intent") !== "hide-activity") {
-    return failedHide("Unknown profile action.")
-  }
-
-  const contentHash = formData.get("contentHash")
-  if (typeof contentHash !== "string" || !CONTENT_HASH_RE.test(contentHash)) {
-    return failedHide("Activity identity is invalid.")
-  }
-
-  await initAuth()
-  const auth = getAuthState()
-  const profileHandle = params.handle
-  if (auth.status !== "signedIn" || !canSync()) {
-    return failedHide("Sign in with sync access to manage public activities.")
-  }
-  if (
-    !profileHandle ||
-    !auth.user.handle ||
-    auth.user.handle.toLowerCase() !== profileHandle.toLowerCase()
-  ) {
-    return failedHide("You can only manage activities on your own profile.")
-  }
-
-  try {
-    await updateActivityVisibility(contentHash, false)
-  } catch (err) {
-    return failedHide(friendlyMessage(err))
-  }
-
-  try {
-    await reconcileLocalVisibility(contentHash)
-  } catch (err) {
-    console.warn(
-      "[public-profile] local visibility reconciliation failed:",
-      err
-    )
-  }
-
-  return { ok: true, intent: "hide-activity", contentHash }
+}: Route.ClientActionArgs) {
+  return handlePublicActivityAction({
+    profileHandle: params.handle,
+    request,
+  })
 }
 
 export function meta({ data, params }: Route.MetaArgs) {
@@ -204,35 +84,8 @@ export function meta({ data, params }: Route.MetaArgs) {
 }
 
 export default function PublicProfilePage() {
-  const { profile, activityPage, page, canonicalSearch, error } =
-    useLoaderData<typeof clientLoader>()
+  const { profile, error } = useLoaderData<typeof clientLoader>()
   const auth = useAuth()
-  const location = useLocation()
-  const navigate = useNavigate()
-  const activities = activityPage?.activities ?? []
-  const activityHeadingRef = useRef<HTMLHeadingElement>(null)
-  const previousPageRef = useRef(page)
-
-  useEffect(() => {
-    const currentSearch = location.search.slice(1)
-    if (canonicalSearch !== currentSearch) {
-      navigate(
-        {
-          pathname: location.pathname,
-          search: canonicalSearch ? `?${canonicalSearch}` : "",
-        },
-        { replace: true }
-      )
-    }
-  }, [canonicalSearch, location.pathname, location.search, navigate])
-
-  useEffect(() => {
-    if (previousPageRef.current !== page) {
-      activityHeadingRef.current?.focus()
-    }
-    previousPageRef.current = page
-  }, [page])
-
   const isOwner =
     auth.status === "signedIn" &&
     auth.user.handle?.toLowerCase() === profile?.user.handle.toLowerCase()
@@ -243,19 +96,12 @@ export default function PublicProfilePage() {
     toEarnedAchievements(profile?.achievements ?? [])
   )
   const savedPoints = profile?.savedPoints ?? []
-  const activityCount = activityPage?.totalCount ?? 0
-  const totalPages = getTotalPages(activityCount, PUBLIC_ACTIVITY_PAGE_SIZE)
-
-  function navigateToPage(nextPage: number) {
-    if (!profile) return
-    const next = new URLSearchParams(location.search)
-    if (nextPage <= 1) next.delete("page")
-    else next.set("page", String(nextPage))
-    navigate({
-      pathname: location.pathname,
-      search: next.size > 0 ? `?${next}` : "",
-    })
-  }
+  const recentActivities = profile?.recentActivities ?? []
+  const hasMoreActivities =
+    profile != null && profile.totals.totalActivities > recentActivities.length
+  const profilePath = profile
+    ? `/u/${encodeURIComponent(profile.user.handle)}`
+    : "/map"
 
   return (
     <PageShell>
@@ -312,51 +158,26 @@ export default function PublicProfilePage() {
                 <AchievementsSection
                   achievements={achievements}
                   maxAchievements={4}
-                  viewAllTo={`/u/${encodeURIComponent(profile.user.handle)}/achievements`}
+                  viewAllTo={`${profilePath}/achievements`}
                   groupByFamily={false}
                   achievementPrevalence={profile.achievementPrevalence}
                 />
-                <section>
-                  <h2
-                    ref={activityHeadingRef}
-                    tabIndex={-1}
-                    className="mt-6 mb-3 font-heading text-lg font-semibold outline-none"
-                  >
-                    Public activities
-                  </h2>
-                  <Grid columns={{ base: 1, sm: 2 }}>
-                    {activities.map((activity) => (
-                      <ActivityCard
-                        key={`${profile.user.handle.toLowerCase()}:${activity.contentHash}`}
-                        activity={activity}
-                        activityId={activity.contentHash}
-                        actions={
-                          isOwner ? (
-                            <PublicActivityOwnerActions
-                              activityName={activity.name}
-                              contentHash={activity.contentHash}
-                            />
-                          ) : undefined
-                        }
-                      />
-                    ))}
-                  </Grid>
-                  <Pagination
-                    itemCount={activityCount}
-                    pageSize={PUBLIC_ACTIVITY_PAGE_SIZE}
-                    itemLabel="public activities"
-                    currentPage={page}
-                    totalPages={totalPages}
-                    onPageChange={navigateToPage}
-                  />
-                </section>
+                <PublicActivitiesSection
+                  activities={recentActivities}
+                  maxActivities={4}
+                  hasMore={hasMoreActivities}
+                  viewAllTo={
+                    hasMoreActivities ? `${profilePath}/activities` : undefined
+                  }
+                  isOwner={isOwner}
+                />
               </>
             )}
             <SavedPointsSection
               points={savedPoints}
               maxPoints={4}
               hasMore={profile.savedPointCount > savedPoints.length}
-              viewAllTo={`/u/${encodeURIComponent(profile.user.handle)}/saved-points`}
+              viewAllTo={`${profilePath}/saved-points`}
             />
           </div>
         )}

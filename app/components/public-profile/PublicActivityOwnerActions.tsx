@@ -1,7 +1,7 @@
 import { Menu } from "@base-ui/react/menu"
 import { DotsThreeIcon } from "@phosphor-icons/react"
 import { useFetcher } from "react-router"
-import type { clientAction } from "~/routes/u.$handle"
+import type { PublicActivityActionResult } from "~/lib/publicActivityActions"
 
 interface PublicActivityOwnerActionsProps {
   activityName: string
@@ -12,7 +12,7 @@ export function PublicActivityOwnerActions({
   activityName,
   contentHash,
 }: PublicActivityOwnerActionsProps) {
-  const fetcher = useFetcher<typeof clientAction>()
+  const fetcher = useFetcher<PublicActivityActionResult>()
   const submittedHash = fetcher.formData?.get("contentHash")
   const isHiding = fetcher.state !== "idle" && submittedHash === contentHash
   const error =

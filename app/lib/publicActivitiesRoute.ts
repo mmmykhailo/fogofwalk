@@ -1,7 +1,7 @@
 import { clampPage, getTotalPages, parsePage } from "~/lib/pagination"
 import { PUBLIC_ACTIVITY_PAGE_SIZE } from "~shared/constants"
 
-export interface PublicProfilePageQuery {
+export interface PublicActivitiesPageQuery {
   page: number
   searchParams: URLSearchParams
 }
@@ -10,10 +10,10 @@ export interface PublicProfilePageQuery {
  * Canonicalizes the public activity page while preserving unrelated search
  * parameters. Page one is represented by the absence of a `page` parameter.
  */
-export function getCanonicalPublicProfilePage(
+export function getCanonicalPublicActivitiesPage(
   searchParams: URLSearchParams,
   activityCount = Number.MAX_SAFE_INTEGER
-): PublicProfilePageQuery {
+): PublicActivitiesPageQuery {
   const page = clampPage(
     parsePage(searchParams.get("page")),
     getTotalPages(activityCount, PUBLIC_ACTIVITY_PAGE_SIZE)
