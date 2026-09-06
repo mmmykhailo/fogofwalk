@@ -1,6 +1,7 @@
 import { test, expect } from "../fixtures/app"
 import { API_URL } from "../fixtures/ports"
 import type { Page } from "@playwright/test"
+import type { PublicProfileResponse } from "~shared/api"
 
 async function chooseOption(
   page: Page,
@@ -192,25 +193,17 @@ test.describe("activities bulk settings", () => {
           `${API_URL}/api/public/users/${app.login}`
         )
         if (!response.ok()) return null
-        const profile = (await response.json()) as {
-          activities: {
-            name: string
-            isPublic: boolean
-            activityType?: string
-          }[]
-        }
-        return profile.activities
+        const profile = (await response.json()) as PublicProfileResponse
+        return profile.recentActivities
       })
       .toEqual(
         expect.arrayContaining([
           expect.objectContaining({
             name: "t1.gpx",
-            isPublic: true,
             activityType: "cycling",
           }),
           expect.objectContaining({
             name: "t2.gpx",
-            isPublic: true,
             activityType: "cycling",
           }),
         ])
