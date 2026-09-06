@@ -1,10 +1,11 @@
 import { describe, expect, test } from "bun:test"
 import {
   commonActivityType,
-  commonPublicity,
+  commonVisibility,
   MIXED_ACTIVITY_TYPE,
-  MIXED_PUBLICITY,
+  MIXED_VISIBILITY,
   NO_ACTIVITY_SELECTION,
+  createActivitySettingsFormData,
   parseActivitySettingsUpdate,
   UNSET_ACTIVITY_TYPE,
 } from "~/lib/activitySettings"
@@ -52,14 +53,14 @@ describe("parseActivitySettingsUpdate", () => {
           ["activityId", "one"],
           ["activityId", "one"],
           ["activityId", "two"],
-          ["setting", "publicity"],
+          ["setting", "visibility"],
           ["value", "true"],
         ])
       )
     ).toEqual({
       ok: true,
       activityIds: ["one", "two"],
-      setting: "publicity",
+      setting: "visibility",
       value: true,
     })
   })
@@ -81,16 +82,49 @@ describe("parseActivitySettingsUpdate", () => {
     })
   })
 
-  test("rejects malformed values", () => {
+  test("normalizes the legacy publicity form value to visibility", () => {
     expect(
       parseActivitySettingsUpdate(
         formData([
           ["activityId", "one"],
           ["setting", "publicity"],
+          ["value", "false"],
+        ])
+      )
+    ).toEqual({
+      ok: true,
+      activityIds: ["one"],
+      setting: "visibility",
+      value: false,
+    })
+  })
+
+  test("serializes card and bulk updates through one form contract", () => {
+    const form = createActivitySettingsFormData({
+      activityIds: ["one", "two"],
+      setting: "visibility",
+      value: true,
+    })
+
+    expect([...form.entries()]).toEqual([
+      ["intent", "update-activity-settings"],
+      ["activityId", "one"],
+      ["activityId", "two"],
+      ["setting", "visibility"],
+      ["value", "true"],
+    ])
+  })
+
+  test("rejects malformed values", () => {
+    expect(
+      parseActivitySettingsUpdate(
+        formData([
+          ["activityId", "one"],
+          ["setting", "visibility"],
           ["value", "yes"],
         ])
       )
-    ).toEqual({ ok: false, error: "Choose a valid publicity value." })
+    ).toEqual({ ok: false, error: "Choose a valid visibility value." })
     expect(
       parseActivitySettingsUpdate(
         formData([
@@ -106,7 +140,7 @@ describe("parseActivitySettingsUpdate", () => {
     expect(
       parseActivitySettingsUpdate(
         formData([
-          ["setting", "publicity"],
+          ["setting", "visibility"],
           ["value", "false"],
         ])
       )
@@ -125,13 +159,13 @@ describe("parseActivitySettingsUpdate", () => {
 
 describe("common activity settings", () => {
   test("uses explicit no-selection sentinels", () => {
-    expect(commonPublicity([])).toBe(NO_ACTIVITY_SELECTION)
+    expect(commonVisibility([])).toBe(NO_ACTIVITY_SELECTION)
     expect(commonActivityType([])).toBe(NO_ACTIVITY_SELECTION)
   })
 
   test("returns one activity's values", () => {
     const selected = [activity({ isPublic: true, activityType: "walking" })]
-    expect(commonPublicity(selected)).toBe(true)
+    expect(commonVisibility(selected)).toBe(true)
     expect(commonActivityType(selected)).toBe("walking")
   })
 
@@ -140,17 +174,17 @@ describe("common activity settings", () => {
       activity({ isPublic: false, activityType: "cycling" }),
       activity({ isPublic: false, activityType: "cycling" }),
     ]
-    expect(commonPublicity(selected)).toBe(false)
+    expect(commonVisibility(selected)).toBe(false)
     expect(commonActivityType(selected)).toBe("cycling")
   })
 
-  test("marks mixed publicity", () => {
+  test("marks mixed visibility", () => {
     expect(
-      commonPublicity([
+      commonVisibility([
         activity({ isPublic: false }),
         activity({ isPublic: true }),
       ])
-    ).toBe(MIXED_PUBLICITY)
+    ).toBe(MIXED_VISIBILITY)
   })
 
   test("distinguishes unset, equal, and mixed activity types", () => {

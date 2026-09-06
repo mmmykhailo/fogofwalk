@@ -130,13 +130,13 @@ describe("activities settings action", () => {
       ["intent", "update-activity-settings"],
       ["activityId", "one"],
       ["activityId", "two"],
-      ["setting", "publicity"],
+      ["setting", "visibility"],
       ["value", "true"],
     ])
 
     expect(result).toEqual({
       ok: false,
-      error: "Publicity can only be changed for synced activities.",
+      error: "Visibility can only be changed for synced activities.",
     })
     expect(first.isPublic).toBe(false)
     expect(second.isPublic).toBe(true)

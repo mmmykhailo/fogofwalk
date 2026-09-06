@@ -8,8 +8,6 @@ import {
 import { ACTIVITY_TYPE_LABELS, isActivityType } from "~/lib/activityType"
 import { cn } from "~/lib/utils"
 import { ACTIVITY_TYPES, type ActivityType } from "~/types/activities"
-import { useFetcher } from "react-router"
-import type { clientAction } from "~/routes/activities"
 
 interface ActivityTypeSelectProps {
   activityType?: ActivityType
@@ -17,6 +15,7 @@ interface ActivityTypeSelectProps {
   disabled?: boolean
   mixed?: boolean
   ariaLabel?: string
+  ariaDescribedBy?: string
   className?: string
 }
 
@@ -26,6 +25,7 @@ export function ActivityTypeSelect({
   disabled,
   mixed = false,
   ariaLabel = "Activity type",
+  ariaDescribedBy,
   className,
 }: ActivityTypeSelectProps) {
   return (
@@ -39,6 +39,7 @@ export function ActivityTypeSelect({
       <SelectTrigger
         size="sm"
         aria-label={ariaLabel}
+        aria-describedby={ariaDescribedBy}
         className={cn("bg-muted", className)}
       >
         <SelectValue>
@@ -56,40 +57,5 @@ export function ActivityTypeSelect({
         ))}
       </SelectContent>
     </Select>
-  )
-}
-
-interface ActivityTypeSelectForActivityProps {
-  activityId: string
-  activityName: string
-  activityType?: ActivityType
-}
-
-export function ActivityTypeSelectForActivity({
-  activityId,
-  activityName,
-  activityType,
-}: ActivityTypeSelectForActivityProps) {
-  const fetcher = useFetcher<typeof clientAction>()
-  const pendingType = fetcher.formData?.get("value")
-  const value = isActivityType(pendingType) ? pendingType : activityType
-
-  function handleChange(nextType: ActivityType | null) {
-    if (!nextType || nextType === value) return
-    const formData = new FormData()
-    formData.set("intent", "update-activity-settings")
-    formData.set("activityId", activityId)
-    formData.set("setting", "activityType")
-    formData.set("value", nextType)
-    fetcher.submit(formData, { method: "post" })
-  }
-
-  return (
-    <ActivityTypeSelect
-      activityType={value}
-      onChange={handleChange}
-      ariaLabel={`Activity type for ${activityName}`}
-      disabled={fetcher.state !== "idle"}
-    />
   )
 }

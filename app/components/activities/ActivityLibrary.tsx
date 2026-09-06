@@ -9,11 +9,15 @@ import {
 import { useFetcher, useSearchParams } from "react-router"
 import { ActivitiesGrid } from "~/components/activities/ActivitiesGrid"
 import { ActivitiesPagination } from "~/components/activities/ActivitiesPagination"
-import { ActivitiesGridWithSortingHeader } from "~/components/activities/ActivitiesGridWithSortingHeader"
+import { ActivitiesToolbar } from "~/components/activities/ActivitiesToolbar"
 import { ConfirmBulkActivityUpdateDialog } from "~/components/activities/ConfirmBulkActivityUpdateDialog"
 import type { BulkActivityUpdateProposal } from "~/components/activities/ConfirmBulkActivityUpdateDialog"
 import { isActivitySortOption, sortActivitiesBy } from "~/lib/statsAggregator"
-import { commonActivityType, commonPublicity } from "~/lib/activitySettings"
+import {
+  commonActivityType,
+  commonVisibility,
+  createActivitySettingsFormData,
+} from "~/lib/activitySettings"
 import { useAuth } from "~/lib/server/authStore"
 import type { ActivitySummary } from "~/types/activitySummary"
 import type { clientAction } from "~/routes/activities"
@@ -29,13 +33,11 @@ import {
   getActivitiesTotalPages,
 } from "~/lib/activitiesRoute"
 
-interface ActivitiesGridWithSortingProps {
+interface ActivityLibraryProps {
   activities: ActivitySummary[]
 }
 
-export function ActivitiesGridWithSorting({
-  activities,
-}: ActivitiesGridWithSortingProps) {
+export function ActivityLibrary({ activities }: ActivityLibraryProps) {
   const [selectedActivityIds, setSelectedActivityIds] = useState<Set<string>>(
     () => new Set()
   )
@@ -92,18 +94,18 @@ export function ActivitiesGridWithSorting({
         .filter((activity): activity is ActivitySummary => activity != null),
     [activityById, selectedActivityIds]
   )
-  const publicity = commonPublicity(selectedActivities)
+  const visibility = commonVisibility(selectedActivities)
   const activityType = commonActivityType(selectedActivities)
   const hasSelection = selectedActivities.length > 0
-  const canEditPublicity =
+  const canEditVisibility =
     auth.status === "signedIn" &&
     auth.canSync &&
     selectedActivities.every((activity) => Boolean(activity.contentHash))
-  const canEditActivityPublicity = auth.status === "signedIn" && auth.canSync
-  const rowPublicityDisabledDescription =
+  const canEditActivityVisibility = auth.status === "signedIn" && auth.canSync
+  const rowVisibilityDisabledDescription =
     auth.status === "signedIn" && !auth.canSync
-      ? "Publicity editing requires sync access."
-      : "Publicity editing requires a synced activity and sync access."
+      ? "Visibility editing requires sync access."
+      : "Visibility editing requires a synced activity and sync access."
 
   useEffect(() => {
     const activityIds = new Set(activities.map((activity) => activity.id))
@@ -220,15 +222,14 @@ export function ActivitiesGridWithSorting({
 
   const confirmUpdate = useCallback(() => {
     if (!pendingProposal || selectedActivities.length === 0) return
-    const formData = new FormData()
-    formData.set("intent", "update-activity-settings")
-    for (const activity of selectedActivities) {
-      formData.append("activityId", activity.id)
-    }
-    formData.set("setting", pendingProposal.setting)
-    formData.set("value", String(pendingProposal.value))
     setIsAwaitingResult(true)
-    fetcher.submit(formData, { method: "post" })
+    fetcher.submit(
+      createActivitySettingsFormData({
+        activityIds: selectedActivities.map((activity) => activity.id),
+        ...pendingProposal,
+      }),
+      { method: "post" }
+    )
   }, [fetcher, pendingProposal, selectedActivities])
 
   const handleDialogOpenChange = useCallback(
@@ -243,9 +244,9 @@ export function ActivitiesGridWithSorting({
   const isCurrentPageFullySelected = pageActivities.every((activity) =>
     selectedActivityIds.has(activity.id)
   )
-  const selectedPublicityDisabledDescription =
+  const selectedVisibilityDisabledDescription =
     auth.status === "signedIn" && !auth.canSync
-      ? "Publicity editing requires sync access."
+      ? "Visibility editing requires sync access."
       : "Every selected activity must be synced before publicity can change."
 
   useLayoutEffect(() => {
@@ -256,13 +257,13 @@ export function ActivitiesGridWithSorting({
 
   return (
     <div>
-      <ActivitiesGridWithSortingHeader
+      <ActivitiesToolbar
         hasSelection={hasSelection}
         selectedActivityCount={selectedActivities.length}
-        publicity={publicity}
+        visibility={visibility}
         activityType={activityType}
-        canEditPublicity={canEditPublicity}
-        publicityDisabledDescription={selectedPublicityDisabledDescription}
+        canEditVisibility={canEditVisibility}
+        visibilityDisabledDescription={selectedVisibilityDisabledDescription}
         isSubmitting={isSubmitting}
         isCurrentPageFullySelected={isCurrentPageFullySelected}
         isSelectionDisabled={isSubmitting}
@@ -270,8 +271,8 @@ export function ActivitiesGridWithSorting({
         onSortChange={handleSortChange}
         onSelectAll={selectAllCurrentPage}
         onPublicityChange={(value) => {
-          if (publicity !== value) {
-            proposeUpdate({ setting: "publicity", value })
+          if (visibility !== value) {
+            proposeUpdate({ setting: "visibility", value })
           }
         }}
         onActivityTypeChange={(value) => {
@@ -286,8 +287,8 @@ export function ActivitiesGridWithSorting({
         selectedActivityIds={selectedActivityIds}
         onSelectionChange={handleSelectionChange}
         showActivitySettings={!hasSelection}
-        canEditPublicity={canEditActivityPublicity}
-        publicityDisabledDescription={rowPublicityDisabledDescription}
+        canEditVisibility={canEditActivityVisibility}
+        visibilityDisabledDescription={rowVisibilityDisabledDescription}
       />
       <ActivitiesPagination
         activityCount={sortedActivities.length}

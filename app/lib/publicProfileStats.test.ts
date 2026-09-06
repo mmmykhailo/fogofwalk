@@ -1,20 +1,17 @@
 import { expect, test } from "bun:test"
-import type { PublicActivityMeta } from "~shared/api"
+import type { PublicActivitySummary } from "~shared/api"
 import { computePublicProfileStats } from "~/lib/publicProfileStats"
 import { computeLifetimeTotals } from "~/lib/statsAggregator"
 import type { ParsedActivity } from "~/types/activities"
 
-function activity(overrides: Partial<PublicActivityMeta>): PublicActivityMeta {
+function activity(
+  overrides: Partial<PublicActivitySummary>
+): PublicActivitySummary {
   return {
     contentHash: crypto.randomUUID(),
     name: "walk.gpx",
-    isPublic: true,
-    format: "gpx",
     startedAtMs: null,
     distanceKm: 0,
-    pointCount: 2,
-    sizeBytes: 100,
-    updatedAt: 0,
     durationMs: null,
     movingTimeMs: null,
     elevationGainM: 0,
@@ -113,7 +110,7 @@ test("shares weighted total rules with local activities", () => {
       ({
         id: item.contentHash,
         name: item.name,
-        format: item.format,
+        format: "gpx",
         coordinates: [],
         startedAtMs: item.startedAtMs,
         stats: {

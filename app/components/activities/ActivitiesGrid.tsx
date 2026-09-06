@@ -7,8 +7,8 @@ interface ActivitiesGridProps {
   selectedActivityIds: ReadonlySet<string>
   onSelectionChange: (activityId: string, isSelected: boolean) => void
   showActivitySettings: boolean
-  canEditPublicity: boolean
-  publicityDisabledDescription: string
+  canEditVisibility: boolean
+  visibilityDisabledDescription: string
 }
 
 export function ActivitiesGrid({
@@ -16,8 +16,8 @@ export function ActivitiesGrid({
   selectedActivityIds,
   onSelectionChange,
   showActivitySettings,
-  canEditPublicity,
-  publicityDisabledDescription,
+  canEditVisibility,
+  visibilityDisabledDescription,
 }: ActivitiesGridProps) {
   return (
     <Grid
@@ -32,8 +32,8 @@ export function ActivitiesGrid({
           activity={activity}
           isSelected={selectedActivityIds.has(activity.id)}
           showActivitySettings={showActivitySettings}
-          canEditPublicity={canEditPublicity}
-          publicityDisabledDescription={publicityDisabledDescription}
+          canEditVisibility={canEditVisibility}
+          visibilityDisabledDescription={visibilityDisabledDescription}
           onSelectionChange={onSelectionChange}
         />
       ))}

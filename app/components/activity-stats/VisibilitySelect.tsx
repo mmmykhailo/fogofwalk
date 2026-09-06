@@ -15,6 +15,7 @@ interface VisibilitySelectProps {
   onChange: (isPublic: boolean) => void
   disabled?: boolean
   ariaLabel?: string
+  ariaDescribedBy?: string
   mixed?: boolean
   mixedLabel?: string
   disabledDescription?: string
@@ -33,14 +34,21 @@ export function VisibilitySelect({
   onChange,
   disabled,
   ariaLabel = "Activity visibility",
+  ariaDescribedBy,
   mixed = false,
-  mixedLabel = "Mixed publicity",
+  mixedLabel = "Mixed visibility",
   disabledDescription,
   className,
   size = "sm",
   id,
 }: VisibilitySelectProps) {
   const descriptionId = id ? `${id}-description` : undefined
+  const describedBy = [
+    disabledDescription ? descriptionId : undefined,
+    ariaDescribedBy,
+  ]
+    .filter(Boolean)
+    .join(" ")
 
   return (
     <>
@@ -56,7 +64,7 @@ export function VisibilitySelect({
           id={id}
           size={size}
           aria-label={ariaLabel}
-          aria-describedby={disabledDescription ? descriptionId : undefined}
+          aria-describedby={describedBy || undefined}
           title={disabled ? disabledDescription : undefined}
           className={cn("bg-muted", className)}
         >

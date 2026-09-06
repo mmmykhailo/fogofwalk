@@ -4,17 +4,17 @@ import type { ActivityType, ParsedActivity } from "~/types/activities"
 type ActivitySettingsItem = Pick<ParsedActivity, "isPublic" | "activityType">
 
 export const NO_ACTIVITY_SELECTION = "no-activity-selection" as const
-export const MIXED_PUBLICITY = "mixed-publicity" as const
+export const MIXED_VISIBILITY = "mixed-visibility" as const
 export const UNSET_ACTIVITY_TYPE = "unset-activity-type" as const
 export const MIXED_ACTIVITY_TYPE = "mixed-activity-type" as const
 
-export type ActivitySetting = "publicity" | "activityType"
+export type ActivitySetting = "visibility" | "activityType"
 
 export type ActivitySettingValue = boolean | ActivityType
 
-export type CommonPublicity =
+export type CommonVisibility =
   | typeof NO_ACTIVITY_SELECTION
-  | typeof MIXED_PUBLICITY
+  | typeof MIXED_VISIBILITY
   | boolean
 
 export type CommonActivityType =
@@ -23,14 +23,14 @@ export type CommonActivityType =
   | typeof MIXED_ACTIVITY_TYPE
   | ActivityType
 
-export function commonPublicity(
+export function commonVisibility(
   activities: readonly ActivitySettingsItem[]
-): CommonPublicity {
+): CommonVisibility {
   if (activities.length === 0) return NO_ACTIVITY_SELECTION
   const first = activities[0]!.isPublic ?? false
   return activities.every((activity) => (activity.isPublic ?? false) === first)
     ? first
-    : MIXED_PUBLICITY
+    : MIXED_VISIBILITY
 }
 
 export function commonActivityType(
@@ -44,20 +44,42 @@ export function commonActivityType(
   return MIXED_ACTIVITY_TYPE
 }
 
-export type ParsedActivitySettingsUpdate =
+export type ActivitySettingUpdate =
   | {
-      ok: true
       activityIds: string[]
-      setting: "publicity"
+      setting: "visibility"
       value: boolean
     }
   | {
-      ok: true
       activityIds: string[]
       setting: "activityType"
       value: ActivityType
     }
+
+export type ParsedActivitySettingsUpdate =
+  | ({ ok: true } & ActivitySettingUpdate)
   | { ok: false; error: string }
+
+export type ActivitySettingsActionResult =
+  | ({ ok: true; updatedActivityIds: string[] } & Omit<
+      ActivitySettingUpdate,
+      "activityIds"
+    >)
+  | { ok: false; error: string }
+
+/** Serializes the shared card and bulk activity-settings action contract. */
+export function createActivitySettingsFormData(
+  update: ActivitySettingUpdate
+): FormData {
+  const formData = new FormData()
+  formData.set("intent", "update-activity-settings")
+  for (const activityId of update.activityIds) {
+    formData.append("activityId", activityId)
+  }
+  formData.set("setting", update.setting)
+  formData.set("value", String(update.value))
+  return formData
+}
 
 /** Parse the shared route action contract used by card and bulk controls. */
 export function parseActivitySettingsUpdate(
@@ -77,11 +99,18 @@ export function parseActivitySettingsUpdate(
   const setting = formData.get("setting")
   const value = formData.get("value")
 
-  if (setting === "publicity") {
+  // Accept the former form value while callers migrate to the user-facing
+  // visibility terminology.
+  if (setting === "visibility" || setting === "publicity") {
     if (value !== "true" && value !== "false") {
-      return { ok: false, error: "Choose a valid publicity value." }
+      return { ok: false, error: "Choose a valid visibility value." }
     }
-    return { ok: true, activityIds, setting, value: value === "true" }
+    return {
+      ok: true,
+      activityIds,
+      setting: "visibility",
+      value: value === "true",
+    }
   }
 
   if (setting === "activityType") {

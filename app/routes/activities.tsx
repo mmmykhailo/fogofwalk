@@ -1,6 +1,6 @@
 import { useLoaderData } from "react-router"
 import { EmptyActivitiesState } from "~/components/activities/EmptyActivitiesState"
-import { ActivitiesGridWithSorting } from "~/components/activities/ActivitiesGridWithSorting"
+import { ActivityLibrary } from "~/components/activities/ActivityLibrary"
 import { PageShell } from "~/components/PageShell"
 import {
   mapStore,
@@ -13,7 +13,10 @@ import {
   updateActivitySettings,
 } from "~/lib/storage"
 import type { ActivitySummary } from "~/types/activitySummary"
-import { parseActivitySettingsUpdate } from "~/lib/activitySettings"
+import {
+  parseActivitySettingsUpdate,
+  type ActivitySettingsActionResult,
+} from "~/lib/activitySettings"
 import { canSync, initAuth } from "~/lib/server/authStore"
 import { queueActivityMetadataUpdates } from "~/lib/server/syncEngine"
 import type { Route } from "./+types/activities"
@@ -64,7 +67,9 @@ export const shouldRevalidate: ShouldRevalidateFunction = ({
   return defaultShouldRevalidate
 }
 
-export async function clientAction({ request }: Route.ClientActionArgs) {
+export async function clientAction({
+  request,
+}: Route.ClientActionArgs): Promise<ActivitySettingsActionResult | null> {
   const formData = await request.formData()
   if (formData.get("intent") !== "update-activity-settings") return null
 
@@ -92,31 +97,31 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
 
   const resolved = activities as ActivitySummary[]
   if (
-    update.setting === "publicity" &&
+    update.setting === "visibility" &&
     (!canSync() || resolved.some((activity) => !activity.contentHash))
   ) {
     return {
       ok: false as const,
-      error: "Publicity can only be changed for synced activities.",
+      error: "Visibility can only be changed for synced activities.",
     }
   }
 
   const changed = resolved.filter((activity) =>
-    update.setting === "publicity"
+    update.setting === "visibility"
       ? (activity.isPublic ?? false) !== update.value
       : activity.activityType !== update.value
   )
 
   const changedSummaries = changed.map((activity) => ({
     ...activity,
-    ...(update.setting === "publicity"
+    ...(update.setting === "visibility"
       ? { isPublic: update.value }
       : { activityType: update.value }),
   }))
   const saved = await updateActivitySettings(
     changedSummaries.map((activity) => ({
       id: activity.id,
-      ...(update.setting === "publicity"
+      ...(update.setting === "visibility"
         ? { isPublic: update.value }
         : { activityType: update.value }),
     }))
@@ -136,7 +141,7 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
     for (const summary of changedSummaries) {
       const activity = fullById.get(summary.id)
       if (!activity) continue
-      if (update.setting === "publicity") activity.isPublic = update.value
+      if (update.setting === "visibility") activity.isPublic = update.value
       else activity.activityType = update.value
     }
   } else {
@@ -149,7 +154,7 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
       return [
         {
           contentHash: summary.contentHash,
-          ...(update.setting === "publicity"
+          ...(update.setting === "visibility"
             ? { isPublic: update.value }
             : { activityType: update.value }),
         },
@@ -180,7 +185,7 @@ export default function MyActivitiesPage() {
       {activities.length === 0 ? (
         <EmptyActivitiesState />
       ) : (
-        <ActivitiesGridWithSorting activities={activities} />
+        <ActivityLibrary activities={activities} />
       )}
     </PageShell>
   )

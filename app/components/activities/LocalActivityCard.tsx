@@ -8,8 +8,8 @@ interface LocalActivityCardProps {
   activity: ActivitySummary
   isSelected: boolean
   showActivitySettings: boolean
-  canEditPublicity: boolean
-  publicityDisabledDescription: string
+  canEditVisibility: boolean
+  visibilityDisabledDescription: string
   onSelectionChange: (activityId: string, isSelected: boolean) => void
 }
 
@@ -17,8 +17,8 @@ export const LocalActivityCard = memo(function LocalActivityCard({
   activity,
   isSelected,
   showActivitySettings,
-  canEditPublicity,
-  publicityDisabledDescription,
+  canEditVisibility,
+  visibilityDisabledDescription,
   onSelectionChange,
 }: LocalActivityCardProps) {
   const handleSelectionChange = useCallback(
@@ -54,8 +54,8 @@ export const LocalActivityCard = memo(function LocalActivityCard({
   const settingsControls = showActivitySettings ? (
     <ActivitySettingsControls
       activity={activity}
-      canEditPublicity={canEditPublicity}
-      publicityDisabledDescription={publicityDisabledDescription}
+      canEditVisibility={canEditVisibility}
+      visibilityDisabledDescription={visibilityDisabledDescription}
     />
   ) : undefined
 

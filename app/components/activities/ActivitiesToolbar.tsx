@@ -15,9 +15,9 @@ import {
 } from "~/lib/statsAggregator"
 import {
   MIXED_ACTIVITY_TYPE,
-  MIXED_PUBLICITY,
+  MIXED_VISIBILITY,
   type CommonActivityType,
-  type CommonPublicity,
+  type CommonVisibility,
 } from "~/lib/activitySettings"
 import { isActivityType } from "~/lib/activityType"
 
@@ -29,13 +29,13 @@ const sortLabels = {
   date: "Date",
 } satisfies Record<ActivitySortOption, string>
 
-interface ActivitiesGridWithSortingHeaderProps {
+interface ActivitiesToolbarProps {
   hasSelection: boolean
   selectedActivityCount: number
-  publicity: CommonPublicity
+  visibility: CommonVisibility
   activityType: CommonActivityType
-  canEditPublicity: boolean
-  publicityDisabledDescription: string
+  canEditVisibility: boolean
+  visibilityDisabledDescription: string
   isSubmitting: boolean
   isCurrentPageFullySelected: boolean
   isSelectionDisabled: boolean
@@ -47,13 +47,13 @@ interface ActivitiesGridWithSortingHeaderProps {
   onClearSelection: () => void
 }
 
-export function ActivitiesGridWithSortingHeader({
+export function ActivitiesToolbar({
   hasSelection,
   selectedActivityCount,
-  publicity,
+  visibility,
   activityType,
-  canEditPublicity,
-  publicityDisabledDescription,
+  canEditVisibility,
+  visibilityDisabledDescription,
   isSubmitting,
   isCurrentPageFullySelected,
   isSelectionDisabled,
@@ -63,7 +63,7 @@ export function ActivitiesGridWithSortingHeader({
   onPublicityChange,
   onActivityTypeChange,
   onClearSelection,
-}: ActivitiesGridWithSortingHeaderProps) {
+}: ActivitiesToolbarProps) {
   const selectAllButton = (
     <Button
       variant="outline"
@@ -85,14 +85,14 @@ export function ActivitiesGridWithSortingHeader({
             {selectedActivityCount === 1 ? "activity" : "activities"}
           </span>
           <VisibilitySelect
-            isPublic={publicity === true}
-            mixed={publicity === MIXED_PUBLICITY}
+            isPublic={visibility === true}
+            mixed={visibility === MIXED_VISIBILITY}
             onChange={onPublicityChange}
-            disabled={!canEditPublicity || isSubmitting}
+            disabled={!canEditVisibility || isSubmitting}
             disabledDescription={
-              !canEditPublicity ? publicityDisabledDescription : undefined
+              !canEditVisibility ? visibilityDisabledDescription : undefined
             }
-            ariaLabel="Set publicity for selected activities"
+            ariaLabel="Set visibility for selected activities"
             id="bulk-activity-visibility"
           />
           <ActivityTypeSelect

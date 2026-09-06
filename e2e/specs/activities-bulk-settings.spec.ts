@@ -49,7 +49,7 @@ test.describe("activities bulk settings", () => {
     ).toBeVisible()
     await expect(
       app.page.getByRole("combobox", {
-        name: `Publicity for ${first.name}`,
+        name: `Visibility for ${first.name}`,
       })
     ).toBeVisible()
 
@@ -59,10 +59,10 @@ test.describe("activities bulk settings", () => {
         name: `Activity type for ${first.name}`,
       })
     ).toContainText("Cycling")
-    await chooseOption(app.page, `Publicity for ${first.name}`, "Public")
+    await chooseOption(app.page, `Visibility for ${first.name}`, "Public")
     await expect(
       firstCard.getByRole("combobox", {
-        name: `Publicity for ${first.name}`,
+        name: `Visibility for ${first.name}`,
       })
     ).toContainText("Public")
 
@@ -80,15 +80,15 @@ test.describe("activities bulk settings", () => {
     ).toHaveCount(0)
     await expect(
       app.page.getByRole("combobox", {
-        name: `Publicity for ${second.name}`,
+        name: `Visibility for ${second.name}`,
       })
     ).toHaveCount(0)
 
     await expect(
       app.page.getByRole("combobox", {
-        name: "Set publicity for selected activities",
+        name: "Set visibility for selected activities",
       })
-    ).toContainText("Mixed publicity")
+    ).toContainText("Mixed visibility")
     await expect(
       app.page.getByRole("combobox", {
         name: "Set activity type for selected activities",
@@ -114,7 +114,7 @@ test.describe("activities bulk settings", () => {
 
     await chooseOption(
       app.page,
-      "Set publicity for selected activities",
+      "Set visibility for selected activities",
       "Public"
     )
     const publicityDialog = app.page.getByRole("dialog", {
@@ -125,9 +125,9 @@ test.describe("activities bulk settings", () => {
     await expect(publicityDialog).toBeHidden()
     await expect(
       app.page.getByRole("combobox", {
-        name: "Set publicity for selected activities",
+        name: "Set visibility for selected activities",
       })
-    ).toContainText("Mixed publicity")
+    ).toContainText("Mixed visibility")
 
     await chooseOption(
       app.page,
@@ -147,7 +147,7 @@ test.describe("activities bulk settings", () => {
 
     await chooseOption(
       app.page,
-      "Set publicity for selected activities",
+      "Set visibility for selected activities",
       "Public"
     )
     await app.page
@@ -167,7 +167,7 @@ test.describe("activities bulk settings", () => {
     ).toContainText("Cycling")
     await expect(
       app.page.getByRole("combobox", {
-        name: `Publicity for ${first.name}`,
+        name: `Visibility for ${first.name}`,
       })
     ).toContainText("Public")
 
@@ -182,7 +182,7 @@ test.describe("activities bulk settings", () => {
     ).toContainText("Cycling")
     await expect(
       app.page.getByTestId(`activity-card-${first.id}`).getByRole("combobox", {
-        name: `Publicity for ${first.name}`,
+        name: `Visibility for ${first.name}`,
       })
     ).toContainText("Public")
 

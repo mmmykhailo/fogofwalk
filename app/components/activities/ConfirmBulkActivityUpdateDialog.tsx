@@ -10,7 +10,7 @@ import {
 } from "~/components/ui/dialog"
 import { Button } from "~/components/ui/button"
 export type BulkActivityUpdateProposal =
-  | { setting: "publicity"; value: boolean }
+  | { setting: "visibility"; value: boolean }
   | { setting: "activityType"; value: ActivityType }
 
 interface ConfirmBulkActivityUpdateDialogProps {
@@ -24,7 +24,7 @@ interface ConfirmBulkActivityUpdateDialogProps {
 }
 
 function proposalTarget(proposal: BulkActivityUpdateProposal): string {
-  if (proposal.setting === "publicity") {
+  if (proposal.setting === "visibility") {
     return proposal.value ? "public" : "private"
   }
   return ACTIVITY_TYPE_LABELS[proposal.value]
@@ -35,7 +35,7 @@ function proposalTitle(
   activityCount: number
 ): string {
   const noun = `${activityCount} activit${activityCount === 1 ? "y" : "ies"}`
-  return proposal.setting === "publicity"
+  return proposal.setting === "visibility"
     ? `Make ${noun} ${proposalTarget(proposal)}?`
     : `Change ${noun} to ${proposalTarget(proposal)}?`
 }
