@@ -354,6 +354,7 @@ export default function PublicProfilePage() {
             <SavedPointsSection
               points={savedPoints}
               maxPoints={4}
+              hasMore={profile.savedPointCount > savedPoints.length}
               viewAllTo={`/u/${encodeURIComponent(profile.user.handle)}/saved-points`}
             />
           </div>

@@ -99,7 +99,8 @@ export function computePublicProfileTotals(
 }
 
 export function computePublicWeeklyBars(
-  activities: readonly PublicActivitySummary[]
+  activities: readonly PublicActivitySummary[],
+  maxBars = Infinity
 ): PublicWeeklyBar[] {
   const bars = new Map<number, PublicWeeklyBar>()
   for (const activity of activities) {
@@ -133,7 +134,7 @@ export function computePublicWeeklyBars(
       }
     )
   }
-  return result
+  return result.slice(-maxBars)
 }
 
 function achievementIds(activity: PublicActivitySummary): string[] {

@@ -198,6 +198,7 @@ export type PublicAchievementPrevalence = Record<string, number>
 export interface PublicProfileResponse {
   user: PublicProfileUser
   savedPoints: PublicSavedPoint[]
+  savedPointCount: number
   totals: PublicProfileTotals
   firstActivityMs: number | null
   latestActivityMs: number | null
@@ -212,6 +213,10 @@ export interface PublicProfileResponse {
 export interface PublicActivitiesPage {
   activities: PublicActivitySummary[]
   totalCount: number
+}
+
+export interface PublicSavedPointsResponse {
+  savedPoints: PublicSavedPoint[]
 }
 
 // ─── Saved points ─────────────────────────────────────────────────────────────

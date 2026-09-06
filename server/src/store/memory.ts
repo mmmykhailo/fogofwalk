@@ -32,7 +32,11 @@ import {
   getPublicRecentDays,
   toPublicActivitySummary,
 } from "../public/profileSummary"
-import { SYNC_PAGE_SIZE } from "~shared/constants"
+import {
+  PUBLIC_PROFILE_SAVED_POINT_LIMIT,
+  PUBLIC_PROFILE_WEEKLY_BAR_LIMIT,
+  SYNC_PAGE_SIZE,
+} from "~shared/constants"
 
 import { combineCursors, comparePageable, pageStream } from "./manifestPaging"
 import type { Pageable } from "./manifestPaging"
@@ -726,6 +730,7 @@ export class MemoryStore implements ServerStore {
           avatarUrl: user?.avatarUrl ?? null,
         },
         savedPoints: [],
+        savedPointCount: 0,
         totals: computePublicProfileTotals([]),
         firstActivityMs: null,
         latestActivityMs: null,
@@ -743,18 +748,23 @@ export class MemoryStore implements ServerStore {
       .filter((startedAtMs): startedAtMs is number => startedAtMs != null)
       .sort((a, b) => a - b)
 
+    const savedPoints = await this.listPublicSavedPoints(userId)
     return {
       user: {
         handle: user.handle,
         displayName: user.displayName,
         avatarUrl: user.avatarUrl,
       },
-      savedPoints: await this.listPublicSavedPoints(userId),
+      savedPoints: savedPoints.slice(0, PUBLIC_PROFILE_SAVED_POINT_LIMIT),
+      savedPointCount: savedPoints.length,
       totals: computePublicProfileTotals(activities),
       firstActivityMs: datedActivities[0] ?? null,
       latestActivityMs: datedActivities.at(-1) ?? null,
       recentDays: getPublicRecentDays(activities),
-      weekly: computePublicWeeklyBars(activities),
+      weekly: computePublicWeeklyBars(
+        activities,
+        PUBLIC_PROFILE_WEEKLY_BAR_LIMIT
+      ),
       achievements: computePublicEarnedAchievements(activities),
       achievementPrevalence: await this.getPublicAchievementPrevalence(),
       recentActivities: activities.slice(0, recentLimit),

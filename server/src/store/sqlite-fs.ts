@@ -27,7 +27,11 @@ import type {
   UserStatus,
 } from "~shared/api"
 import type { SavedPoint, SavedPointColor } from "~shared/saved-points"
-import { SYNC_PAGE_SIZE } from "~shared/constants"
+import {
+  PUBLIC_PROFILE_SAVED_POINT_LIMIT,
+  PUBLIC_PROFILE_WEEKLY_BAR_LIMIT,
+  SYNC_PAGE_SIZE,
+} from "~shared/constants"
 import type {
   ActivityFormat,
   ActivityType,
@@ -1262,6 +1266,7 @@ export class SqliteFsStore implements ServerStore {
           avatarUrl: user?.avatarUrl ?? null,
         },
         savedPoints: [],
+        savedPointCount: 0,
         totals: computePublicProfileTotals([]),
         firstActivityMs: null,
         latestActivityMs: null,
@@ -1295,18 +1300,23 @@ export class SqliteFsStore implements ServerStore {
       .filter((startedAtMs): startedAtMs is number => startedAtMs != null)
       .sort((a, b) => a - b)
 
+    const savedPoints = await this.listPublicSavedPoints(userId)
     return {
       user: {
         handle: user.handle,
         displayName: user.displayName,
         avatarUrl: user.avatarUrl,
       },
-      savedPoints: await this.listPublicSavedPoints(userId),
+      savedPoints: savedPoints.slice(0, PUBLIC_PROFILE_SAVED_POINT_LIMIT),
+      savedPointCount: savedPoints.length,
       totals: computePublicProfileTotals(summaries),
       firstActivityMs: datedActivities[0] ?? null,
       latestActivityMs: datedActivities.at(-1) ?? null,
       recentDays: getPublicRecentDays(summaries),
-      weekly: computePublicWeeklyBars(summaries),
+      weekly: computePublicWeeklyBars(
+        summaries,
+        PUBLIC_PROFILE_WEEKLY_BAR_LIMIT
+      ),
       achievements: computePublicEarnedAchievements(summaries),
       achievementPrevalence: await this.getPublicAchievementPrevalence(),
       recentActivities: summaries.slice(0, recentLimit),

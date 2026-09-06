@@ -9,6 +9,7 @@ interface SavedPointsSectionProps {
   points: PublicSavedPoint[]
   maxPoints?: number
   viewAllTo?: string
+  hasMore?: boolean
   showHeading?: boolean
 }
 
@@ -16,12 +17,13 @@ export function SavedPointsSection({
   points,
   maxPoints,
   viewAllTo,
+  hasMore = false,
   showHeading = true,
 }: SavedPointsSectionProps) {
   if (points.length === 0) return null
 
   const visiblePoints = points.slice(0, maxPoints)
-  const hasHiddenPoints = visiblePoints.length < points.length
+  const hasHiddenPoints = visiblePoints.length < points.length || hasMore
 
   return (
     <section

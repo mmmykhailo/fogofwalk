@@ -205,6 +205,12 @@ describe("public profiles", () => {
     ).json()) as PublicActivitiesPage
     expect(oversized.activities).toEqual([])
     expect(oversized.totalCount).toBe(50)
+
+    const overview = (await (
+      await app.request("/api/public/users/paged-user")
+    ).json()) as PublicProfileResponse
+    expect(overview.recentActivities).toHaveLength(4)
+    expect(overview.totals.totalActivities).toBe(50)
   })
 
   test("visibility update is refused for another user's activity", async () => {

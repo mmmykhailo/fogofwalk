@@ -11,8 +11,15 @@
 
 import { Hono } from "hono"
 
-import type { PublicActivitiesPage, PublicProfileResponse } from "~shared/api"
-import { PUBLIC_ACTIVITY_PAGE_SIZE } from "~shared/constants"
+import type {
+  PublicActivitiesPage,
+  PublicProfileResponse,
+  PublicSavedPointsResponse,
+} from "~shared/api"
+import {
+  PUBLIC_ACTIVITY_PAGE_SIZE,
+  PUBLIC_PROFILE_RECENT_ACTIVITY_LIMIT,
+} from "~shared/constants"
 
 import { jsonError } from "../errors"
 import type { ServerStore } from "../store/types"
@@ -51,7 +58,7 @@ export function createPublicRoutes(store: ServerStore) {
 
     const profile = await store.getPublicProfile(
       user.id,
-      PUBLIC_ACTIVITY_PAGE_SIZE
+      PUBLIC_PROFILE_RECENT_ACTIVITY_LIMIT
     )
     const body: PublicProfileResponse = profile
     return c.json(body)
@@ -70,6 +77,19 @@ export function createPublicRoutes(store: ServerStore) {
       page,
       PUBLIC_ACTIVITY_PAGE_SIZE
     )
+    return c.json(body)
+  })
+
+  app.get("/users/:handle/saved-points", async (c) => {
+    const handle = c.req.param("handle")
+    if (!isSafeHandle(handle)) return jsonError(c, "not_found", "Unknown user.")
+
+    const user = await store.findUserByHandle(handle)
+    if (!user) return jsonError(c, "not_found", "Unknown user.")
+
+    const body: PublicSavedPointsResponse = {
+      savedPoints: await store.listPublicSavedPoints(user.id),
+    }
     return c.json(body)
   })
 
