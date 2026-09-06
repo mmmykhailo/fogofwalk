@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, test } from "bun:test"
 
 import type {
+  PublicActivitiesPage,
   PublicProfileResponse,
   ActivityVisibilityUpdateResponse,
 } from "~shared/api"
@@ -96,17 +97,19 @@ describe("public profiles", () => {
     const body = (await response.json()) as PublicProfileResponse
     expect(body.user.handle).toBe("public-user")
     expect(body.user.displayName).toBe("public-user")
-    expect(body.activities).toHaveLength(1)
-    expect(body.activities[0]!.name).toBe("public.gpx")
-    // The profile returns all server metadata (but never the geometry blob).
-    expect(body.activities[0]!.isPublic).toBe(true)
-    expect(body.activities[0]!.sizeBytes).toBeGreaterThan(0)
-    expect(body.activities[0]!.updatedAt).toBeGreaterThan(0)
-    expect(body.activities[0]!.durationMs).toBe(1_800_000)
-    expect(body.activities[0]!.movingTimeMs).toBe(1_700_000)
-    expect(body.activities[0]!.elevationGainM).toBe(12)
-    expect(body.activities[0]!.avgMovingSpeedKmh).toBe(8.9)
-    expect(body.activities[0]!.startSunPhase).toBe("before_sunrise")
+    expect(body.recentActivities).toHaveLength(1)
+    expect(body.recentActivities[0]!.name).toBe("public.gpx")
+    expect(body.recentActivities[0]!.durationMs).toBe(1_800_000)
+    expect(body.recentActivities[0]!.movingTimeMs).toBe(1_700_000)
+    expect(body.recentActivities[0]!.elevationGainM).toBe(12)
+    expect(body.recentActivities[0]!.avgMovingSpeedKmh).toBe(8.9)
+    expect(body.recentActivities[0]!.startSunPhase).toBe("before_sunrise")
+    // Contract-level minimization: never expose internal storage/sync fields.
+    expect(body.recentActivities[0]).not.toHaveProperty("isPublic")
+    expect(body.recentActivities[0]).not.toHaveProperty("pointCount")
+    expect(body.recentActivities[0]).not.toHaveProperty("sizeBytes")
+    expect(body.recentActivities[0]).not.toHaveProperty("updatedAt")
+    expect(body.totals.totalActivities).toBe(1)
     expect(body.achievementPrevalence["early-bird"]).toBe(100)
     expect(body.achievementPrevalence).not.toHaveProperty("eligibleUserCount")
     expect(body.achievementPrevalence).not.toHaveProperty("earnedUserCounts")
@@ -122,7 +125,7 @@ describe("public profiles", () => {
     expect(response.status).toBe(200)
 
     const body = (await response.json()) as PublicProfileResponse
-    expect(body.activities).toHaveLength(0)
+    expect(body.recentActivities).toHaveLength(0)
   })
 
   test("visibility update is reflected on the public endpoint", async () => {
@@ -136,7 +139,7 @@ describe("public profiles", () => {
     const before = (await (
       await app.request("/api/public/users/toggle-user")
     ).json()) as PublicProfileResponse
-    expect(before.activities).toHaveLength(0)
+    expect(before.recentActivities).toHaveLength(0)
 
     const update = await app.request(`/api/activities/${hash}/visibility`, {
       method: "PATCH",
@@ -153,8 +156,61 @@ describe("public profiles", () => {
     const after = (await (
       await app.request("/api/public/users/toggle-user")
     ).json()) as PublicProfileResponse
-    expect(after.activities).toHaveLength(1)
-    expect(after.activities[0]!.contentHash).toBe(hash)
+    expect(after.recentActivities).toHaveLength(1)
+    expect(after.recentActivities[0]!.contentHash).toBe(hash)
+  })
+
+  test("public activities are bounded, newest first, and exclude private rows", async () => {
+    const { store, app } = setup()
+    const { token } = await signIn(store, { login: "paged-user" })
+
+    for (let index = 0; index < 50; index += 1) {
+      await putActivity(
+        app,
+        token,
+        makeActivity({
+          name: `activity-${index}.gpx`,
+          startedAtMs: 1_700_000_000_000 + index,
+          isPublic: true,
+        })
+      )
+    }
+    await putActivity(
+      app,
+      token,
+      makeActivity({
+        name: "private.gpx",
+        startedAtMs: 1_700_000_000_100,
+      })
+    )
+
+    const first = (await (
+      await app.request("/api/public/users/paged-user/activities?page=1")
+    ).json()) as PublicActivitiesPage
+    expect(first.totalCount).toBe(50)
+    expect(first.activities).toHaveLength(48)
+    expect(first.activities[0]!.name).toBe("activity-49.gpx")
+    expect(first.activities.at(-1)!.name).toBe("activity-2.gpx")
+
+    const second = (await (
+      await app.request("/api/public/users/paged-user/activities?page=2")
+    ).json()) as PublicActivitiesPage
+    expect(second.activities.map((activity) => activity.name)).toEqual([
+      "activity-1.gpx",
+      "activity-0.gpx",
+    ])
+
+    const oversized = (await (
+      await app.request("/api/public/users/paged-user/activities?page=999")
+    ).json()) as PublicActivitiesPage
+    expect(oversized.activities).toEqual([])
+    expect(oversized.totalCount).toBe(50)
+
+    const overview = (await (
+      await app.request("/api/public/users/paged-user")
+    ).json()) as PublicProfileResponse
+    expect(overview.recentActivities).toHaveLength(4)
+    expect(overview.totals.totalActivities).toBe(50)
   })
 
   test("visibility update is refused for another user's activity", async () => {

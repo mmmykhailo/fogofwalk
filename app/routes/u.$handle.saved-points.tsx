@@ -6,32 +6,50 @@ import { SavedPointsSection } from "~/components/public-profile/SavedPointsSecti
 import { TransitionLink } from "~/components/TransitionLink"
 import { apiUrl } from "~/lib/server/config"
 import { socialMeta } from "~/lib/socialMeta"
-import type { PublicProfileResponse } from "~shared/api"
+import type {
+  PublicProfileResponse,
+  PublicSavedPointsResponse,
+} from "~shared/api"
 import type { Route } from "./+types/u.$handle.saved-points"
 
 interface SavedPointsLoaderData {
   profile: PublicProfileResponse | null
+  points: PublicSavedPointsResponse["savedPoints"]
   error: string | null
 }
 
 export async function clientLoader({
   params,
+  request,
 }: Route.ClientLoaderArgs): Promise<SavedPointsLoaderData> {
   const handle = params.handle
-  if (!handle) return { profile: null, error: "Profile not found." }
+  if (!handle) return { profile: null, points: [], error: "Profile not found." }
 
   try {
-    const res = await fetch(
-      apiUrl(`/api/public/users/${encodeURIComponent(handle)}`)
-    )
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}))
+    const encodedHandle = encodeURIComponent(handle)
+    const [profileRes, pointsRes] = await Promise.all([
+      fetch(apiUrl(`/api/public/users/${encodedHandle}`), {
+        signal: request.signal,
+      }),
+      fetch(apiUrl(`/api/public/users/${encodedHandle}/saved-points`), {
+        signal: request.signal,
+      }),
+    ])
+    if (!profileRes.ok || !pointsRes.ok) {
+      const body = await (profileRes.ok ? pointsRes : profileRes)
+        .json()
+        .catch(() => ({}))
       throw new Error(body.message || "Profile not found.")
     }
-    return { profile: (await res.json()) as PublicProfileResponse, error: null }
+    const [profile, points] = (await Promise.all([
+      profileRes.json(),
+      pointsRes.json(),
+    ])) as [PublicProfileResponse, PublicSavedPointsResponse]
+    return { profile, points: points.savedPoints, error: null }
   } catch (err) {
     return {
       profile: null,
+      points: [],
       error: err instanceof Error ? err.message : String(err),
     }
   }
@@ -50,8 +68,7 @@ export function meta({ data, params }: Route.MetaArgs) {
 }
 
 export default function PublicSavedPointsPage() {
-  const { profile, error } = useLoaderData<typeof clientLoader>()
-  const points = profile?.savedPoints ?? []
+  const { profile, points, error } = useLoaderData<typeof clientLoader>()
 
   return (
     <PageShell

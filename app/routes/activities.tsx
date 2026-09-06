@@ -1,57 +1,173 @@
 import { useLoaderData } from "react-router"
 import { EmptyActivitiesState } from "~/components/activities/EmptyActivitiesState"
-import { ActivitiesGridWithSorting } from "~/components/activities/ActivitiesGridWithSorting"
+import { ActivityLibrary } from "~/components/activities/ActivityLibrary"
 import { PageShell } from "~/components/PageShell"
-import { mapStore } from "~/lib/mapStore"
 import {
-  areUniqueDistancesCurrent,
-  loadActivities,
-  loadUniqueDistanceState,
-  saveActivities,
-  saveUniqueDistances,
+  mapStore,
+  setActivitySummaries,
+  updateActivitySummaries,
+} from "~/lib/mapStore"
+import {
+  activityToSummary,
+  loadActivitySummaries,
+  updateActivitySettings,
 } from "~/lib/storage"
+import type { ActivitySummary } from "~/types/activitySummary"
 import {
-  populateUniqueDistances,
-  sortActivities,
-  sortActivitiesNewestFirst,
-} from "~/lib/statsAggregator"
-import { isActivityType } from "~/lib/activityType"
-import { pushActivityUpdate } from "~/lib/server/syncEngine"
-import type { ParsedActivity } from "~/types/activities"
+  parseActivitySettingsUpdate,
+  type ActivitySettingsActionResult,
+} from "~/lib/activitySettings"
+import { canSync, initAuth } from "~/lib/server/authStore"
+import { queueActivityMetadataUpdates } from "~/lib/server/syncEngine"
 import type { Route } from "./+types/activities"
+import { markPerformance, measurePerformance } from "~/lib/performance"
+import type { ShouldRevalidateFunction } from "react-router"
+import { isActivitiesViewOnlyNavigation } from "~/lib/activitiesRoute"
 
-export async function clientLoader(): Promise<ParsedActivity[]> {
-  if (mapStore.activities.length === 0) {
-    const [activities, uniqueDistanceState] = await Promise.all([
-      loadActivities(),
-      loadUniqueDistanceState(),
-    ])
-    mapStore.activities = sortActivities(activities)
-    if (!areUniqueDistancesCurrent(mapStore.activities, uniqueDistanceState)) {
-      await populateUniqueDistances(mapStore.activities)
-      await saveUniqueDistances(mapStore.activities)
-    }
+export async function clientLoader(): Promise<ActivitySummary[]> {
+  markPerformance("activities:loader:start")
+  void initAuth()
+  let activities: ActivitySummary[]
+  if (mapStore.activityHydration === "full") {
+    activities = mapStore.activities.map(activityToSummary)
+  } else if (mapStore.activityHydration === "summaries") {
+    activities = mapStore.activitySummaries
+  } else {
+    markPerformance("activities:idb-load:start")
+    activities = await loadActivitySummaries()
+    markPerformance("activities:idb-load:end")
+    measurePerformance(
+      "activities:idb-load",
+      "activities:idb-load:start",
+      "activities:idb-load:end"
+    )
+    setActivitySummaries(activities)
   }
-  return sortActivitiesNewestFirst(mapStore.activities)
+  markPerformance("activities:loader:end")
+  measurePerformance(
+    "activities:loader",
+    "activities:loader:start",
+    "activities:loader:end"
+  )
+  return activities
 }
 
-export async function clientAction({ request }: Route.ClientActionArgs) {
-  const formData = await request.formData()
-  if (formData.get("intent") !== "update-activity-type") return null
+export const shouldRevalidate: ShouldRevalidateFunction = ({
+  currentUrl,
+  nextUrl,
+  formMethod,
+  defaultShouldRevalidate,
+}) => {
+  if (
+    (formMethod == null || formMethod === "GET") &&
+    isActivitiesViewOnlyNavigation(currentUrl, nextUrl)
+  ) {
+    return false
+  }
+  return defaultShouldRevalidate
+}
 
-  const activityId = formData.get("activityId")
-  const activityType = formData.get("activityType")
-  if (typeof activityId !== "string" || !isActivityType(activityType)) {
-    return { ok: false as const }
+export async function clientAction({
+  request,
+}: Route.ClientActionArgs): Promise<ActivitySettingsActionResult | null> {
+  const formData = await request.formData()
+  if (formData.get("intent") !== "update-activity-settings") return null
+
+  const update = parseActivitySettingsUpdate(formData)
+  if (!update.ok) return update
+
+  const sourceActivities: ActivitySummary[] =
+    mapStore.activities.length > 0
+      ? mapStore.activities.map(activityToSummary)
+      : mapStore.activityHydration === "summaries"
+        ? mapStore.activitySummaries
+        : await loadActivitySummaries()
+  const activityById = new Map(
+    sourceActivities.map((activity) => [activity.id, activity])
+  )
+  const activities = update.activityIds.map((activityId) =>
+    activityById.get(activityId)
+  )
+  if (activities.some((activity) => activity == null)) {
+    return {
+      ok: false as const,
+      error: "One or more activities no longer exist.",
+    }
   }
 
-  const activity = mapStore.activities.find((item) => item.id === activityId)
-  if (!activity) return { ok: false as const }
+  const resolved = activities as ActivitySummary[]
+  if (
+    update.setting === "visibility" &&
+    (!canSync() || resolved.some((activity) => !activity.contentHash))
+  ) {
+    return {
+      ok: false as const,
+      error: "Visibility can only be changed for synced activities.",
+    }
+  }
 
-  activity.activityType = activityType
-  await saveActivities([activity])
-  await pushActivityUpdate(activity)
-  return { ok: true as const, activityId, activityType }
+  const changed = resolved.filter((activity) =>
+    update.setting === "visibility"
+      ? (activity.isPublic ?? false) !== update.value
+      : activity.activityType !== update.value
+  )
+
+  const changedSummaries = changed.map((activity) => ({
+    ...activity,
+    ...(update.setting === "visibility"
+      ? { isPublic: update.value }
+      : { activityType: update.value }),
+  }))
+  const saved = await updateActivitySettings(
+    changedSummaries.map((activity) => ({
+      id: activity.id,
+      ...(update.setting === "visibility"
+        ? { isPublic: update.value }
+        : { activityType: update.value }),
+    }))
+  )
+  if (!saved) {
+    return {
+      ok: false as const,
+      error: "Activity settings could not be saved.",
+    }
+  }
+
+  const fullById =
+    mapStore.activities.length > 0
+      ? new Map(mapStore.activities.map((activity) => [activity.id, activity]))
+      : null
+  if (fullById) {
+    for (const summary of changedSummaries) {
+      const activity = fullById.get(summary.id)
+      if (!activity) continue
+      if (update.setting === "visibility") activity.isPublic = update.value
+      else activity.activityType = update.value
+    }
+  } else {
+    updateActivitySummaries(changedSummaries)
+  }
+
+  await queueActivityMetadataUpdates(
+    changedSummaries.flatMap((summary) => {
+      if (!summary.contentHash) return []
+      return [
+        {
+          contentHash: summary.contentHash,
+          ...(update.setting === "visibility"
+            ? { isPublic: update.value }
+            : { activityType: update.value }),
+        },
+      ]
+    })
+  )
+
+  return {
+    ok: true as const,
+    updatedActivityIds: changed.map((activity) => activity.id),
+    setting: update.setting,
+    value: update.value,
+  }
 }
 
 export function meta({}: Route.MetaArgs) {
@@ -69,7 +185,7 @@ export default function MyActivitiesPage() {
       {activities.length === 0 ? (
         <EmptyActivitiesState />
       ) : (
-        <ActivitiesGridWithSorting activities={activities} />
+        <ActivityLibrary activities={activities} />
       )}
     </PageShell>
   )

@@ -69,6 +69,7 @@ a missing or malformed one aborts startup with a message naming it.
 | GET    | `/api/account/export`                         | session | Full JSON export of the requesting user's account data.                                                      |
 | DELETE | `/api/account`                                | session | Erases the account server-side.                                                                              |
 | GET    | `/api/activities/manifest?since=<cursor>`     | allowed | Metadata + tombstones page.                                                                                  |
+| PATCH  | `/api/activities/metadata`                    | allowed | Atomic metadata-only batch update; max `SYNC_PAGE_SIZE` items.                                               |
 | PUT    | `/api/activities/:contentHash`                | allowed | Gzipped upload, idempotent.                                                                                  |
 | GET    | `/api/activities/:contentHash`                | allowed | The gzipped activity JSON.                                                                                   |
 | DELETE | `/api/activities`                             | allowed | Purge every activity for this user. **No tombstones** — other devices keep their copies. Backs "Remove all". |
@@ -202,6 +203,11 @@ and content hash.
 - The manifest cursor is a timestamp used as an **inclusive** lower bound, and
   a page never splits a millisecond. The reasoning, including the two ways this
   goes wrong, is in the header comment of `src/store/manifestPaging.ts`.
+- `PATCH /api/activities/metadata` accepts at most `SYNC_PAGE_SIZE` strict,
+  non-empty updates and applies the whole batch atomically. It changes only
+  `isPublic` and `activityType`, so it never reads or rewrites geometry; unknown
+  hashes reject the entire batch. Manifest metadata is authoritative for these
+  mutable fields, while the gzipped blob remains the geometry payload.
 - `MAX_ACTIVITY_BYTES` (8 MB, from `shared/constants.ts`) is enforced _while_
   reading the body, and decompression is capped too, so neither a huge upload
   nor a zip bomb gets buffered.

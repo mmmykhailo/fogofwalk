@@ -8,13 +8,8 @@ function activity(
   return {
     contentHash: crypto.randomUUID(),
     name: "activity.gpx",
-    isPublic: true,
-    format: "gpx",
     startedAtMs: null,
     distanceKm: 0,
-    pointCount: 2,
-    sizeBytes: 100,
-    updatedAt: 0,
     durationMs: null,
     movingTimeMs: null,
     elevationGainM: 0,
@@ -186,11 +181,9 @@ describe("computeEarnedAchievements", () => {
     ).toBeNull()
   })
 
-  test("evaluates exactly the supplied public endpoint input without making private-state assumptions", () => {
+  test("evaluates exactly the supplied public endpoint input", () => {
     expect(
-      earnedIds([
-        activity({ isPublic: false, activityType: "cycling", distanceKm: 50 }),
-      ])
+      earnedIds([activity({ activityType: "cycling", distanceKm: 50 })])
     ).toContain("cycling-50k")
   })
 })
