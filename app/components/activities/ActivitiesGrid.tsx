@@ -1,34 +1,40 @@
-import { ActivityCard } from "~/components/public-profile/ActivityCard"
-import { ActivityTypeSelect } from "~/components/activities/ActivityTypeSelect"
+import { LocalActivityCard } from "~/components/activities/LocalActivityCard"
 import { Grid } from "~/components/Grid"
-import type { ParsedActivity } from "~/types/activities"
+import type { ActivitySummary } from "~/types/activitySummary"
 
 interface ActivitiesGridProps {
-  activities: ParsedActivity[]
+  activities: ActivitySummary[]
+  selectedActivityIds: ReadonlySet<string>
+  onSelectionChange: (activityId: string, isSelected: boolean) => void
+  showActivitySettings: boolean
+  canEditVisibility: boolean
+  visibilityDisabledDescription: string
 }
 
-export function ActivitiesGrid({ activities }: ActivitiesGridProps) {
+export function ActivitiesGrid({
+  activities,
+  selectedActivityIds,
+  onSelectionChange,
+  showActivitySettings,
+  canEditVisibility,
+  visibilityDisabledDescription,
+}: ActivitiesGridProps) {
   return (
-    <Grid>
+    <Grid
+      data-testid="activities-grid"
+      id="activities-grid-anchor"
+      tabIndex={-1}
+      className="scroll-mt-24"
+    >
       {activities.map((activity) => (
-        <ActivityCard
+        <LocalActivityCard
           key={activity.id}
-          activity={{
-            name: activity.name,
-            startedAtMs: activity.startedAtMs,
-            distanceKm: activity.stats.distanceKm,
-            durationMs: activity.stats.durationMs,
-            elevationGainM: activity.stats.elevationGainM,
-            avgMovingSpeedKmh: activity.stats.avgMovingSpeedKmh,
-          }}
-          activityHref={`/map?activity=${activity.id}`}
-          activityTypeControl={
-            <ActivityTypeSelect
-              activityId={activity.id}
-              activityName={activity.name}
-              activityType={activity.activityType}
-            />
-          }
+          activity={activity}
+          isSelected={selectedActivityIds.has(activity.id)}
+          showActivitySettings={showActivitySettings}
+          canEditVisibility={canEditVisibility}
+          visibilityDisabledDescription={visibilityDisabledDescription}
+          onSelectionChange={onSelectionChange}
         />
       ))}
     </Grid>

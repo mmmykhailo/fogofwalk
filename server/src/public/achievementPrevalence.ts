@@ -1,13 +1,10 @@
-import type {
-  PublicAchievementPrevalence,
-  PublicActivityMeta,
-} from "~shared/api"
+import type { PublicAchievementPrevalence, ActivityMeta } from "~shared/api"
 
 const HOUR_MS = 60 * 60 * 1_000
 
-type PublicActivity = { userId: string; activity: PublicActivityMeta }
+type PublicActivity = { userId: string; activity: ActivityMeta }
 
-function earnedAchievementIds(activity: PublicActivityMeta): string[] {
+function earnedAchievementIds(activity: ActivityMeta): string[] {
   const ids: string[] = []
   const durationHours =
     activity.durationMs == null ? 0 : activity.durationMs / HOUR_MS

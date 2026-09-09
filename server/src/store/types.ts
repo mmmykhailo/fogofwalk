@@ -15,9 +15,11 @@ import type {
   ManifestPage,
   SavedPointManifestPage,
   NotificationStatus,
+  PublicActivitiesPage,
   PublicAchievementPrevalence,
   PublicProfileResponse,
   ActivityMeta,
+  ActivityMetadataUpdate,
   UserStatus,
 } from "~shared/api"
 import type { SavedPoint } from "~shared/saved-points"
@@ -157,6 +159,14 @@ export interface ServerStore {
     isPublic: boolean
   ): Promise<ActivityMeta | null>
   /**
+   * Updates mutable activity metadata without reading or rewriting its blob.
+   * Returns null and applies nothing when any requested activity is missing.
+   */
+  updateActivityMetadata(
+    userId: string,
+    updates: readonly ActivityMetadataUpdate[]
+  ): Promise<ActivityMeta[] | null>
+  /**
    * Removes the row and the blob and writes a tombstone. Idempotent.
    * Returns the tombstone's `deletedAt`, which the caller reports back so the
    * deleting device can record its own tombstone as already applied.
@@ -193,12 +203,17 @@ export interface ServerStore {
    * or access status.
    */
   findUserByHandle(handle: string): Promise<User | null>
-  /**
-   * Public activities with their metadata for a user, newest first. The caller
-   * already verified the user exists; this method returns only activities with
-   * `is_public = 1` and never exposes geometry.
-   */
-  listPublicActivities(userId: string): Promise<PublicProfileResponse>
+  /** Bounded overview data for a public profile; it never includes every activity. */
+  getPublicProfile(
+    userId: string,
+    recentLimit: number
+  ): Promise<PublicProfileResponse>
+  /** One newest-first page of anonymous activity summaries. */
+  listPublicActivities(
+    userId: string,
+    page: number,
+    limit: number
+  ): Promise<PublicActivitiesPage>
   /** Achievement percentages across profiles with public activities. */
   getPublicAchievementPrevalence(): Promise<PublicAchievementPrevalence>
 

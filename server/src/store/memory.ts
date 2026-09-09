@@ -12,9 +12,11 @@ import type {
   AdminUser,
   ManifestPage,
   PublicProfileResponse,
+  PublicActivitiesPage,
   PublicAchievementPrevalence,
   PublicActivityMeta,
   ActivityMeta,
+  ActivityMetadataUpdate,
   ActivityTombstone,
   SavedPointManifestPage,
   SavedPointTombstone,
@@ -23,7 +25,18 @@ import type {
 import type { SavedPoint } from "~shared/saved-points"
 import { computePublicAchievementPrevalence } from "../public/achievementPrevalence"
 import { PublicAchievementPrevalenceCache } from "../public/achievementPrevalenceCache"
-import { SYNC_PAGE_SIZE } from "~shared/constants"
+import {
+  computePublicEarnedAchievements,
+  computePublicProfileTotals,
+  computePublicWeeklyBars,
+  getPublicRecentDays,
+  toPublicActivitySummary,
+} from "../public/profileSummary"
+import {
+  PUBLIC_PROFILE_SAVED_POINT_LIMIT,
+  PUBLIC_PROFILE_WEEKLY_BAR_LIMIT,
+  SYNC_PAGE_SIZE,
+} from "~shared/constants"
 
 import { combineCursors, comparePageable, pageStream } from "./manifestPaging"
 import type { Pageable } from "./manifestPaging"
@@ -486,11 +499,50 @@ export class MemoryStore implements ServerStore {
     contentHash: string,
     isPublic: boolean
   ): Promise<ActivityMeta | null> {
-    const stored = this.activities.get(userId)?.get(contentHash)
-    if (!stored) return null
-    stored.meta = { ...stored.meta, isPublic }
-    this.achievementPrevalenceCache.invalidate()
-    return stored.meta
+    const updated = await this.updateActivityMetadata(userId, [
+      { contentHash, isPublic },
+    ])
+    return updated?.[0] ?? null
+  }
+
+  async updateActivityMetadata(
+    userId: string,
+    updates: readonly ActivityMetadataUpdate[]
+  ): Promise<ActivityMeta[] | null> {
+    if (updates.length === 0) return []
+    const byHash = this.activities.get(userId)
+    const storedActivities = updates.map((update) =>
+      byHash?.get(update.contentHash)
+    )
+    if (storedActivities.some((activity) => activity == null)) return null
+    const stored = storedActivities as StoredActivity[]
+
+    const changed = stored.some((activity, index) => {
+      const update = updates[index]!
+      return (
+        (update.isPublic !== undefined &&
+          activity.meta.isPublic !== update.isPublic) ||
+        (update.activityType !== undefined &&
+          activity.meta.activityType !== (update.activityType ?? undefined))
+      )
+    })
+    const updatedAt = changed ? Date.now() : null
+    const updated: ActivityMeta[] = []
+    for (const [index, update] of updates.entries()) {
+      const activity = stored[index]!
+      const previous = activity.meta
+      activity.meta = {
+        ...previous,
+        ...(update.isPublic !== undefined ? { isPublic: update.isPublic } : {}),
+        ...(update.activityType !== undefined
+          ? { activityType: update.activityType ?? undefined }
+          : {}),
+        ...(updatedAt === null ? {} : { updatedAt }),
+      }
+      updated.push(activity.meta)
+    }
+    if (changed) this.achievementPrevalenceCache.invalidate()
+    return updated
   }
 
   async deleteActivity(userId: string, contentHash: string): Promise<number> {
@@ -652,7 +704,23 @@ export class MemoryStore implements ServerStore {
     return null
   }
 
-  async listPublicActivities(userId: string): Promise<PublicProfileResponse> {
+  private getPublicActivitySummaries(userId: string): PublicActivityMeta[] {
+    const activities = [...(this.activities.get(userId)?.values() ?? [])]
+      .filter((stored) => stored.meta.isPublic)
+      .map((stored) => toPublicActivitySummary(stored.meta))
+
+    activities.sort(
+      (a, b) =>
+        (b.startedAtMs ?? -Infinity) - (a.startedAtMs ?? -Infinity) ||
+        b.contentHash.localeCompare(a.contentHash)
+    )
+    return activities
+  }
+
+  async getPublicProfile(
+    userId: string,
+    recentLimit: number
+  ): Promise<PublicProfileResponse> {
     const user = await this.getUser(userId)
     if (!user || !user.handle) {
       return {
@@ -661,35 +729,58 @@ export class MemoryStore implements ServerStore {
           displayName: user?.displayName ?? "",
           avatarUrl: user?.avatarUrl ?? null,
         },
-        activities: [],
         savedPoints: [],
+        savedPointCount: 0,
+        totals: computePublicProfileTotals([]),
+        firstActivityMs: null,
+        latestActivityMs: null,
+        recentDays: [],
+        weekly: [],
+        achievements: [],
         achievementPrevalence: await this.getPublicAchievementPrevalence(),
+        recentActivities: [],
       }
     }
 
-    const userActivities = this.activities.get(userId)
-    const activities: PublicActivityMeta[] = []
+    const activities = this.getPublicActivitySummaries(userId)
+    const datedActivities = activities
+      .map((activity) => activity.startedAtMs)
+      .filter((startedAtMs): startedAtMs is number => startedAtMs != null)
+      .sort((a, b) => a - b)
 
-    if (userActivities) {
-      for (const stored of userActivities.values()) {
-        if (!stored.meta.isPublic) continue
-        // Stats are denormalized onto `meta` at upload time (see putActivity),
-        // so this never needs to decompress/parse the stored blob.
-        activities.push({ ...stored.meta })
-      }
-    }
-
-    activities.sort((a, b) => (b.startedAtMs ?? 0) - (a.startedAtMs ?? 0))
-
+    const savedPoints = await this.listPublicSavedPoints(userId)
     return {
       user: {
         handle: user.handle,
         displayName: user.displayName,
         avatarUrl: user.avatarUrl,
       },
-      activities,
-      savedPoints: await this.listPublicSavedPoints(userId),
+      savedPoints: savedPoints.slice(0, PUBLIC_PROFILE_SAVED_POINT_LIMIT),
+      savedPointCount: savedPoints.length,
+      totals: computePublicProfileTotals(activities),
+      firstActivityMs: datedActivities[0] ?? null,
+      latestActivityMs: datedActivities.at(-1) ?? null,
+      recentDays: getPublicRecentDays(activities),
+      weekly: computePublicWeeklyBars(
+        activities,
+        PUBLIC_PROFILE_WEEKLY_BAR_LIMIT
+      ),
+      achievements: computePublicEarnedAchievements(activities),
       achievementPrevalence: await this.getPublicAchievementPrevalence(),
+      recentActivities: activities.slice(0, recentLimit),
+    }
+  }
+
+  async listPublicActivities(
+    userId: string,
+    page: number,
+    limit: number
+  ): Promise<PublicActivitiesPage> {
+    const activities = this.getPublicActivitySummaries(userId)
+    const start = (page - 1) * limit
+    return {
+      activities: activities.slice(start, start + limit),
+      totalCount: activities.length,
     }
   }
 

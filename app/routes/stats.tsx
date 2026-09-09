@@ -2,13 +2,7 @@ import { useLoaderData } from "react-router"
 import { FootprintsIcon } from "@phosphor-icons/react"
 import { PageShell } from "~/components/PageShell"
 import type { Route } from "./+types/stats"
-import {
-  areUniqueDistancesCurrent,
-  loadActivities,
-  loadUniqueDistanceState,
-  saveUniqueDistances,
-} from "~/lib/storage"
-import { mapStore } from "~/lib/mapStore"
+import { hydrateFullActivities, mapStore } from "~/lib/mapStore"
 import {
   sortActivities,
   computeLifetimeTotals,
@@ -16,12 +10,12 @@ import {
   computeStreaks,
   computePersonalRecords,
   computeUniqueDistance,
-  populateUniqueDistances,
   type LifetimeTotals,
   type WeeklyBar,
   type Streaks,
   type PersonalRecords,
 } from "~/lib/statsAggregator"
+import { ensureUniqueDistancesCurrent } from "~/lib/uniqueDistanceRepair"
 import { StatCards } from "~/components/stats/StatCards"
 import { WeeklyChart } from "~/components/stats/WeeklyChart"
 import { StreaksCard } from "~/components/stats/StreaksCard"
@@ -43,21 +37,11 @@ export async function clientLoader(): Promise<StatsLoaderData> {
   // Prefer in-memory activities (always current — updated before the IDB write in
   // clientAction). Fall back to IDB only when navigating directly to /stats on
   // a fresh page load before the home clientLoader has run.
-  let raw = mapStore.activities
-  if (raw.length === 0) {
-    const [storedActivities, uniqueDistanceState] = await Promise.all([
-      loadActivities(),
-      loadUniqueDistanceState(),
-    ])
-    raw = storedActivities
-    const sorted = sortActivities(raw)
-    if (!areUniqueDistancesCurrent(sorted, uniqueDistanceState)) {
-      await populateUniqueDistances(sorted)
-      await saveUniqueDistances(sorted)
-    }
-    mapStore.activities = sorted
+  let activities = mapStore.activities
+  if (mapStore.activityHydration !== "full") {
+    activities = await hydrateFullActivities()
   }
-  const activities = sortActivities(raw)
+  await ensureUniqueDistancesCurrent(activities)
   const now = Date.now()
   return {
     totals: computeLifetimeTotals(activities),

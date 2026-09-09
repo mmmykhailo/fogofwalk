@@ -37,15 +37,17 @@ describe("public profile legacy metadata", () => {
     }
     await store.putActivity(user.id, meta, blob)
 
-    const profile = await store.listPublicActivities(user.id)
-    expect(profile.activities[0]!.durationMs).toBe(activity.stats.durationMs)
-    expect(profile.activities[0]!.movingTimeMs).toBe(
+    const profile = await store.getPublicProfile(user.id, 48)
+    expect(profile.recentActivities[0]!.durationMs).toBe(
+      activity.stats.durationMs
+    )
+    expect(profile.recentActivities[0]!.movingTimeMs).toBe(
       activity.stats.movingTimeMs
     )
-    expect(profile.activities[0]!.elevationGainM).toBe(
+    expect(profile.recentActivities[0]!.elevationGainM).toBe(
       activity.stats.elevationGainM
     )
-    expect(profile.activities[0]!.avgMovingSpeedKmh).toBe(
+    expect(profile.recentActivities[0]!.avgMovingSpeedKmh).toBe(
       activity.stats.avgMovingSpeedKmh
     )
     expect(

@@ -16,8 +16,10 @@ import { z } from "zod"
 import type {
   ActivityDeleteResponse,
   ActivityMeta,
+  ActivityMetadataUpdateResponse,
   ActivityVisibilityUpdateResponse,
 } from "~shared/api"
+import { SYNC_PAGE_SIZE } from "~shared/constants"
 
 import { createRequireSession, requireAllowed } from "../auth/middleware"
 import type { AuthEnv } from "../auth/middleware"
@@ -36,6 +38,28 @@ import { checkRateLimit } from "./rateLimit"
 const visibilitySchema = z.object({
   isPublic: z.boolean(),
 })
+
+const activityMetadataUpdateSchema = z
+  .object({
+    contentHash: z.string(),
+    isPublic: z.boolean().optional(),
+    activityType: z
+      .enum(["walking", "running", "cycling", "kayaking", "swimming", "other"])
+      .nullable()
+      .optional(),
+  })
+  .strict()
+  .refine(
+    (update) =>
+      update.isPublic !== undefined || update.activityType !== undefined,
+    "At least one metadata field is required."
+  )
+
+const activityMetadataRequestSchema = z
+  .object({
+    updates: z.array(activityMetadataUpdateSchema).min(1).max(SYNC_PAGE_SIZE),
+  })
+  .strict()
 
 function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
   if (a.byteLength !== b.byteLength) return false
@@ -58,6 +82,47 @@ export function createActivityRoutes(store: ServerStore) {
       )
     }
     return c.json(await store.listManifest(c.get("user").id, since))
+  })
+
+  app.patch("/metadata", async (c) => {
+    let body: unknown
+    try {
+      body = await c.req.json()
+    } catch {
+      return jsonError(c, "bad_request", "Expected a JSON body.")
+    }
+
+    const parsed = activityMetadataRequestSchema.safeParse(body)
+    if (!parsed.success) {
+      const issue = parsed.error.issues[0]
+      return jsonError(
+        c,
+        "bad_request",
+        issue?.message ?? "Malformed activity metadata update."
+      )
+    }
+    if (
+      parsed.data.updates.some((update) => !isContentHash(update.contentHash))
+    ) {
+      return jsonError(c, "bad_request", "Content hash must be 64 hex digits.")
+    }
+    const hashes = parsed.data.updates.map((update) => update.contentHash)
+    if (new Set(hashes).size !== hashes.length) {
+      return jsonError(
+        c,
+        "bad_request",
+        "Duplicate content hashes are not allowed."
+      )
+    }
+
+    const updated = await store.updateActivityMetadata(
+      c.get("user").id,
+      parsed.data.updates
+    )
+    if (!updated) return jsonError(c, "not_found")
+
+    const response: ActivityMetadataUpdateResponse = { activities: updated }
+    return c.json(response satisfies ActivityMetadataUpdateResponse)
   })
 
   app.put("/:contentHash", async (c) => {
@@ -191,19 +256,17 @@ export function createActivityRoutes(store: ServerStore) {
       return jsonError(c, "bad_request", "isPublic must be a boolean.")
     }
 
-    const updated = await store.setActivityVisibility(
-      user.id,
-      contentHash,
-      parsed.data.isPublic
-    )
-    if (!updated) {
+    const updated = await store.updateActivityMetadata(user.id, [
+      { contentHash, isPublic: parsed.data.isPublic },
+    ])
+    if (!updated?.[0]) {
       return jsonError(c, "not_found")
     }
 
     const response: ActivityVisibilityUpdateResponse = {
-      contentHash: updated.contentHash,
-      isPublic: updated.isPublic,
-      updatedAt: updated.updatedAt,
+      contentHash: updated[0].contentHash,
+      isPublic: updated[0].isPublic,
+      updatedAt: updated[0].updatedAt,
     }
     return c.json(response)
   })

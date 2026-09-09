@@ -4,8 +4,10 @@ import type {
   FogMode,
   WorkerInboundMessage,
 } from "~/types/activities"
-import { sortActivities, populateUniqueDistances } from "~/lib/statsAggregator"
-import { saveUniqueDistances, clearFogCache } from "~/lib/storage"
+import type { ActivitySummary } from "~/types/activitySummary"
+import { sortActivities } from "~/lib/statsAggregator"
+import { clearFogCache, loadActivities } from "~/lib/storage"
+import { ensureUniqueDistancesCurrent } from "~/lib/uniqueDistanceRepair"
 import { worldFogFeature } from "~/lib/fogGeometry"
 
 // ─── Map position persistence (localStorage — synchronous, survives page unload) ──
@@ -58,11 +60,15 @@ const _savedPosition =
 
 // ─── Store ────────────────────────────────────────────────────────────────────
 
+export type ActivityHydration = "unloaded" | "summaries" | "full"
+
 interface MapStore {
   map: maplibregl.Map | null
   worker: Worker | null
   fogData: GeoJSON.Feature<GeoJSON.Polygon | GeoJSON.MultiPolygon> | null
   activities: ParsedActivity[]
+  activitySummaries: ActivitySummary[]
+  activityHydration: ActivityHydration
   isProcessing: boolean
   processedCount: number
   sourcesReady: boolean
@@ -120,6 +126,8 @@ export const mapStore: MapStore = {
   worker: null,
   fogData: null,
   activities: [],
+  activitySummaries: [],
+  activityHydration: "unloaded",
   isProcessing: false,
   processedCount: 0,
   sourcesReady: false,
@@ -134,6 +142,79 @@ export const mapStore: MapStore = {
   fogWorkerMode: null,
   isFogWorkerListenerReady: false,
   shareCardCache: null,
+}
+
+/** Replace the in-memory full library and make its hydration state explicit. */
+export function setFullActivities(activities: ParsedActivity[]): void {
+  mapStore.activities = activities
+  mapStore.activitySummaries = []
+  mapStore.activityHydration = "full"
+}
+
+/** Replace the lightweight library used by non-map routes. */
+export function setActivitySummaries(summaries: ActivitySummary[]): void {
+  mapStore.activitySummaries = summaries
+  mapStore.activityHydration = "summaries"
+}
+
+/** Update the summary cache after a metadata-only edit. */
+export function updateActivitySummaries(
+  updates: readonly ActivitySummary[]
+): void {
+  if (mapStore.activityHydration !== "summaries") return
+  const byId = new Map(updates.map((activity) => [activity.id, activity]))
+  mapStore.activitySummaries = mapStore.activitySummaries.map(
+    (activity) => byId.get(activity.id) ?? activity
+  )
+}
+
+/** Merge server metadata into either the full or summary in-memory cache. */
+export function applyActivityMetadata(
+  updates: readonly ActivitySummary[]
+): void {
+  if (mapStore.activityHydration === "full") {
+    const byId = new Map(updates.map((activity) => [activity.id, activity]))
+    setFullActivities(
+      mapStore.activities.map((activity) => {
+        const summary = byId.get(activity.id)
+        if (!summary) return activity
+        return {
+          ...activity,
+          name: summary.name,
+          startedAtMs: summary.startedAtMs,
+          activityType: summary.activityType,
+          startSunPhase: summary.startSunPhase,
+          contentHash: summary.contentHash,
+          isPublic: summary.isPublic,
+        }
+      })
+    )
+    return
+  }
+  updateActivitySummaries(updates)
+}
+
+export function clearFullActivities(): void {
+  setFullActivities([])
+}
+
+let fullHydration: Promise<ParsedActivity[]> | null = null
+
+/** Coalesced full-library hydrator for map, stats, fog, sharing, and sync. */
+export function hydrateFullActivities(): Promise<ParsedActivity[]> {
+  if (mapStore.activityHydration === "full") {
+    return Promise.resolve(mapStore.activities)
+  }
+  if (fullHydration) return fullHydration
+  fullHydration = loadActivities()
+    .then((activities) => {
+      setFullActivities(sortActivities(activities))
+      return mapStore.activities
+    })
+    .finally(() => {
+      fullHydration = null
+    })
+  return fullHydration
 }
 
 const fogProgressListeners = new Set<() => void>()
@@ -291,10 +372,9 @@ export async function ingestActivities(
   // PROCESS_ACTIVITIES was posted and so no DONE ever comes back.
   if (added.length === 0) return added
 
-  mapStore.activities = sortActivities([...mapStore.activities, ...added])
-  await populateUniqueDistances(mapStore.activities)
+  setFullActivities(sortActivities([...mapStore.activities, ...added]))
   // A backdated addition can change every later activity's unique distance.
-  await saveUniqueDistances(mapStore.activities)
+  await ensureUniqueDistancesCurrent(mapStore.activities)
   await clearFogCache()
   // Start processing only after invalidation finishes. A small worker batch can
   // otherwise save its fresh cache first and have this call erase it afterward.

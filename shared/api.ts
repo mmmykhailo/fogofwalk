@@ -148,17 +148,75 @@ export interface ActivityMeta {
   avgMovingSpeedKmh: number | null
 }
 
-/** Activity metadata displayed on a public profile; geometry stays private. */
-export type PublicActivityMeta = ActivityMeta
+/**
+ * The deliberately small activity representation exposed to anonymous profile
+ * visitors. Keep storage, sync, and transport-only fields out of this DTO.
+ */
+export interface PublicActivitySummary {
+  contentHash: string
+  name: string
+  activityType?: ActivityType
+  startSunPhase?: StartSunPhase
+  startedAtMs: number | null
+  distanceKm: number
+  durationMs: number | null
+  movingTimeMs: number | null
+  elevationGainM: number
+  avgMovingSpeedKmh: number | null
+}
+
+/** @deprecated Use PublicActivitySummary for new public-profile code. */
+export type PublicActivityMeta = PublicActivitySummary
+
+export interface PublicProfileTotals {
+  totalDistanceKm: number
+  totalElevationGainM: number
+  totalMovingTimeMs: number
+  totalActivities: number
+  activeDays: number
+  avgSpeedKmh: number | null
+  avgMovingSpeedKmh: number | null
+  avgPaceMinPerKm: number | null
+  avgMovingPaceMinPerKm: number | null
+}
+
+export interface PublicWeeklyBar {
+  week: string
+  startMs: number
+  distanceKm: number
+  activityCount: number
+}
+
+export interface PublicEarnedAchievement {
+  id: string
+  earnedAtMs: number | null
+}
 
 /** Achievement id to rounded percentage across eligible public profiles. */
 export type PublicAchievementPrevalence = Record<string, number>
 
 export interface PublicProfileResponse {
   user: PublicProfileUser
-  activities: PublicActivityMeta[]
   savedPoints: PublicSavedPoint[]
+  savedPointCount: number
+  totals: PublicProfileTotals
+  firstActivityMs: number | null
+  latestActivityMs: number | null
+  recentDays: string[]
+  weekly: PublicWeeklyBar[]
+  achievements: PublicEarnedAchievement[]
   achievementPrevalence: PublicAchievementPrevalence
+  /** A fixed-size, newest-first preview. Fetch the paged endpoint for cards. */
+  recentActivities: PublicActivitySummary[]
+}
+
+export interface PublicActivitiesPage {
+  activities: PublicActivitySummary[]
+  totalCount: number
+}
+
+export interface PublicSavedPointsResponse {
+  savedPoints: PublicSavedPoint[]
 }
 
 // ─── Saved points ─────────────────────────────────────────────────────────────
@@ -221,6 +279,24 @@ export interface ActivityVisibilityUpdateResponse {
   contentHash: string
   isPublic: boolean
   updatedAt: number
+}
+
+/** Mutable activity fields that can be synchronized without its geometry. */
+export interface ActivityMetadataPatch {
+  contentHash: string
+  isPublic?: boolean
+  /** `null` clears legacy metadata; omission leaves it unchanged. */
+  activityType?: ActivityType | null
+}
+
+export type ActivityMetadataUpdate = ActivityMetadataPatch
+
+export interface ActivityMetadataUpdateRequest {
+  updates: ActivityMetadataUpdate[]
+}
+
+export interface ActivityMetadataUpdateResponse {
+  activities: ActivityMeta[]
 }
 
 export interface ManifestPage {

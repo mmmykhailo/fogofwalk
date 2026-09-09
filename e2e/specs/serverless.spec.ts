@@ -52,6 +52,32 @@ test.describe("server-less build", () => {
     expect(apiCalls).toEqual([])
   })
 
+  test("metadata edits stay local with no server configured", async ({
+    app,
+  }) => {
+    const apiCalls: string[] = []
+    app.page.on("request", (request) => {
+      if (request.url().startsWith(API_URL)) apiCalls.push(request.url())
+    })
+
+    await app.goto()
+    await app.importActivities(1)
+    await app.waitForImportToSettle()
+    const activity = (await app.localActivities())[0]!
+    await app.page.goto("/activities")
+    await expect(
+      app.page.getByRole("heading", { name: "My activities" })
+    ).toBeVisible()
+
+    const typeSelect = app.page.getByRole("combobox", {
+      name: `Activity type for ${activity.name}`,
+    })
+    await typeSelect.click()
+    await app.page.getByRole("option", { name: "Cycling", exact: true }).click()
+    await expect(typeSelect).toContainText("Cycling")
+    expect(apiCalls).toEqual([])
+  })
+
   test("keeps restored clearings when another activity is imported", async ({
     app,
   }) => {

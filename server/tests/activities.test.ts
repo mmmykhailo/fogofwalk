@@ -5,8 +5,10 @@ import type {
   ManifestPage,
   ActivityDeleteResponse,
   ActivityMeta,
+  ActivityMetadataUpdateResponse,
 } from "~shared/api"
 import {
+  SYNC_PAGE_SIZE,
   UPLOAD_RATE_MAX_PER_WINDOW,
   UPLOAD_RATE_WINDOW_MS,
 } from "~shared/constants"
@@ -216,6 +218,123 @@ describe("upload", () => {
     )
     expect(payload.activityType).toBe("cycling")
     expect(payload.startSunPhase).toBe("after_sunset")
+  })
+
+  test("updates metadata without reading or replacing the activity blob", async () => {
+    const { store, app } = setup()
+    const { token, user } = await signIn(store)
+    const activity = makeActivity({ activityType: "running" })
+    const hash = await computeContentHash(activity)
+
+    await putActivity(app, token, activity)
+    const before = await store.getActivityBlob(user.id, hash)
+    const response = await app.request("/api/activities/metadata", {
+      method: "PATCH",
+      headers: { ...authHeaders(token), "Content-Type": "application/json" },
+      body: JSON.stringify({
+        updates: [
+          { contentHash: hash, isPublic: true, activityType: "cycling" },
+        ],
+      }),
+    })
+
+    expect(response.status).toBe(200)
+    const body = (await response.json()) as ActivityMetadataUpdateResponse
+    expect(body.activities).toHaveLength(1)
+    expect(body.activities[0]).toMatchObject({
+      contentHash: hash,
+      isPublic: true,
+      activityType: "cycling",
+    })
+    const after = await store.getActivityBlob(user.id, hash)
+    expect(after).toEqual(before)
+
+    const manifest = (await (
+      await app.request("/api/activities/manifest", {
+        headers: authHeaders(token),
+      })
+    ).json()) as ManifestPage
+    expect(manifest.activities[0]).toMatchObject({
+      name: "Morning run",
+      isPublic: true,
+      activityType: "cycling",
+    })
+  })
+
+  test("metadata batches are atomic when one activity is missing", async () => {
+    const { store, app } = setup()
+    const { token, user } = await signIn(store)
+    const activity = makeActivity()
+    const hash = await computeContentHash(activity)
+    await putActivity(app, token, activity)
+
+    const response = await app.request("/api/activities/metadata", {
+      method: "PATCH",
+      headers: { ...authHeaders(token), "Content-Type": "application/json" },
+      body: JSON.stringify({
+        updates: [
+          { contentHash: hash, activityType: "cycling" },
+          { contentHash: fakeHash(404), isPublic: true },
+        ],
+      }),
+    })
+
+    expect(response.status).toBe(404)
+    expect((await store.getActivity(user.id, hash))?.name).toBe("Morning run")
+  })
+
+  test("metadata retries are idempotent and reject unknown fields", async () => {
+    const { store, app } = setup()
+    const { token } = await signIn(store)
+    const hash = await computeContentHash(makeActivity())
+    await putActivity(app, token, makeActivity())
+
+    const patch = (body: unknown) =>
+      app.request("/api/activities/metadata", {
+        method: "PATCH",
+        headers: { ...authHeaders(token), "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      })
+
+    const first = await patch({
+      updates: [{ contentHash: hash, isPublic: true }],
+    })
+    expect(first.status).toBe(200)
+    const firstUpdatedAt = (
+      (await first.json()) as ActivityMetadataUpdateResponse
+    ).activities[0]?.updatedAt
+
+    const second = await patch({
+      updates: [{ contentHash: hash, isPublic: true }],
+    })
+    expect(second.status).toBe(200)
+    expect(
+      ((await second.json()) as ActivityMetadataUpdateResponse).activities[0]
+        ?.updatedAt
+    ).toBe(firstUpdatedAt)
+
+    expect(
+      (
+        await patch({
+          updates: [{ contentHash: hash, isPublic: true, name: "nope" }],
+        })
+      ).status
+    ).toBe(400)
+  })
+
+  test("metadata batches enforce the shared size limit", async () => {
+    const { store, app } = setup()
+    const { token } = await signIn(store)
+    const updates = Array.from({ length: SYNC_PAGE_SIZE + 1 }, (_, index) => ({
+      contentHash: fakeHash(index),
+      isPublic: true,
+    }))
+    const response = await app.request("/api/activities/metadata", {
+      method: "PATCH",
+      headers: { ...authHeaders(token), "Content-Type": "application/json" },
+      body: JSON.stringify({ updates }),
+    })
+    expect(response.status).toBe(400)
   })
 
   test("round-trips the gzipped blob", async () => {

@@ -5,8 +5,8 @@ import { PublicProfileHeader } from "~/components/public-profile/PublicProfileHe
 import { PageShell } from "~/components/PageShell"
 import { TransitionLink } from "~/components/TransitionLink"
 import {
-  computeEarnedAchievements,
   sortEarnedAchievementsNewestFirst,
+  toEarnedAchievements,
 } from "~/lib/achievements"
 import { apiUrl } from "~/lib/server/config"
 import { socialMeta } from "~/lib/socialMeta"
@@ -57,7 +57,7 @@ export default function PublicAchievementsPage() {
   const { profile, error } = useLoaderData<typeof clientLoader>()
   const achievements = profile
     ? sortEarnedAchievementsNewestFirst(
-        computeEarnedAchievements(profile.activities)
+        toEarnedAchievements(profile.achievements)
       )
     : []
 

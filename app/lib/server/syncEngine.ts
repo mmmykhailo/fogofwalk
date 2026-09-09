@@ -1,9 +1,10 @@
 /**
  * Activity synchronisation.
  *
- * Activities are content-addressed and immutable, so there is nothing to merge:
- * a hash the server lacks is uploaded, a hash this device lacks is downloaded,
- * and a tombstone deletes locally. That is the whole conflict model.
+ * Activity geometry is content-addressed and immutable, so there is nothing to
+ * merge there: a hash the server lacks is uploaded, a hash this device lacks is
+ * downloaded, and a tombstone deletes locally. Mutable metadata is reconciled
+ * separately through the summary-only endpoint.
  *
  * Every step is individually resumable — a failed activity is simply retried on
  * the next run, and the manifest cursor only advances after a clean page.
@@ -14,6 +15,7 @@ import type {
   ManifestPage,
   ActivityDeleteResponse,
   ActivityMeta,
+  ActivityMetadataPatch,
   ActivityTombstone,
   ActivityUploadPayload,
   SavedPointDeleteResponse,
@@ -22,25 +24,40 @@ import type {
   SavedPointUpsertInput,
   SavedPointUpsertResponse,
 } from "~shared/api"
-import { MAX_ACTIVITY_BYTES, SYNC_CONCURRENCY } from "~shared/constants"
+import {
+  MAX_ACTIVITY_BYTES,
+  SYNC_CONCURRENCY,
+  SYNC_PAGE_SIZE,
+} from "~shared/constants"
 import type { SavedPoint } from "~shared/saved-points"
 import type { ParsedActivity } from "~/types/activities"
+import type { ActivitySummary } from "~/types/activitySummary"
 import {
+  activityToSummary,
   deleteActivity as deleteActivityFromIdb,
   loadSyncState,
+  loadActivitySummaries,
+  type PendingActivityMetadataUpdate,
   saveSyncState,
   saveActivities,
-  saveUniqueDistances,
+  updateActivityMetadata as updateActivityMetadataInStorage,
   deleteSavedPoint as deleteSavedPointFromIdb,
   loadSavedPoints,
   saveSavedPoint,
   saveSavedPoints,
 } from "~/lib/storage"
-import { ingestActivities, mapStore } from "~/lib/mapStore"
+import {
+  applyActivityMetadata,
+  hydrateFullActivities,
+  ingestActivities,
+  mapStore,
+  setActivitySummaries,
+  setFullActivities,
+} from "~/lib/mapStore"
 import { backfillContentHashes } from "~/lib/activityHash"
 import { createUuid } from "~/lib/uuid"
-import { populateUniqueDistances } from "~/lib/statsAggregator"
 import { apiRaw, apiSend, ApiRequestError, friendlyMessage } from "./apiClient"
+import { updateActivityMetadata } from "./activityMetadata"
 import { canSync } from "./authStore"
 import {
   acquireUploadSlot,
@@ -250,6 +267,30 @@ async function runSync(reason: string): Promise<void> {
   }
 }
 
+function materializeActivityMetadataOutbox(
+  state: Awaited<ReturnType<typeof loadSyncState>>,
+  summaries: readonly ActivitySummary[]
+): Map<string, PendingActivityMetadataUpdate> {
+  const outbox = new Map(Object.entries(state?.outboundActivityMetadata ?? {}))
+  const summariesByHash = new Map(
+    summaries
+      .filter((summary): summary is ActivitySummary & { contentHash: string } =>
+        Boolean(summary.contentHash)
+      )
+      .map((summary) => [summary.contentHash, summary])
+  )
+  for (const hash of state?.outboundActivityUpdateHashes ?? []) {
+    if (outbox.has(hash)) continue
+    const summary = summariesByHash.get(hash)
+    if (!summary) continue
+    outbox.set(hash, {
+      isPublic: summary.isPublic ?? false,
+      activityType: summary.activityType ?? null,
+    })
+  }
+  return outbox
+}
+
 async function syncOnce(reason: string): Promise<void> {
   const lastSyncAt = status.phase === "syncing" ? null : status.lastSyncAt
   console.debug("[sync] start", reason)
@@ -267,9 +308,31 @@ async function syncOnce(reason: string): Promise<void> {
     const since = state?.cursor ?? 0
     const { serverActivities, deletions, cursor } = await fetchManifest(since)
 
-    const localByHash = new Map<string, ParsedActivity>()
-    for (const activity of mapStore.activities) {
+    // Metadata reconciliation must remain summary-only. A full library is
+    // already in memory on the map, while a non-map route keeps only these
+    // small records. Hydrate later only if a genuinely new geometry upload is
+    // required.
+    const localSummaries: ActivitySummary[] =
+      mapStore.activityHydration === "full"
+        ? mapStore.activities.map(activityToSummary)
+        : mapStore.activityHydration === "summaries"
+          ? mapStore.activitySummaries
+          : await loadActivitySummaries()
+    const metadataOutbox = materializeActivityMetadataOutbox(
+      state,
+      localSummaries
+    )
+    const dirtyActivityHashes = new Set(metadataOutbox.keys())
+    const settledActivityUpdateHashes = new Set<string>()
+    const localByHash = new Map<string, ActivitySummary>()
+    for (const activity of localSummaries) {
       if (activity.contentHash) localByHash.set(activity.contentHash, activity)
+    }
+    for (const hash of dirtyActivityHashes) {
+      if (!localByHash.has(hash)) {
+        dirtyActivityHashes.delete(hash)
+        settledActivityUpdateHashes.add(hash)
+      }
     }
 
     // Accumulated across syncs — this window only describes what changed since
@@ -297,26 +360,20 @@ async function syncOnce(reason: string): Promise<void> {
      */
     const isFromScratch = since === 0
 
-    const serverByHash = new Map(
-      serverActivities.map((activity) => [activity.contentHash, activity])
-    )
     const metadataDiffers = (
-      local: ParsedActivity,
-      server: ActivityMeta
+      local: Pick<
+        ActivitySummary,
+        "name" | "isPublic" | "activityType" | "startSunPhase"
+      >,
+      server: Pick<
+        ActivityMeta,
+        "name" | "isPublic" | "activityType" | "startSunPhase"
+      >
     ): boolean =>
       local.name !== server.name ||
       Boolean(local.isPublic) !== server.isPublic ||
       local.activityType !== server.activityType ||
       local.startSunPhase !== server.startSunPhase
-
-    // Unlike user-editable metadata, sun phase is derived during import. A
-    // newly derived value may safely backfill an older server record even in
-    // an incremental sync; never let the missing legacy value overwrite it.
-    const shouldBackfillSunPhase = (
-      local: ParsedActivity,
-      server: ActivityMeta
-    ): boolean =>
-      local.startSunPhase !== undefined && server.startSunPhase === undefined
 
     /**
      * A tombstone must be acted on exactly once per device.
@@ -337,34 +394,46 @@ async function syncOnce(reason: string): Promise<void> {
       freshTombstones.map((tomb) => tomb.contentHash)
     )
 
-    const toUpload = [...localByHash.values()].filter((t) => {
-      if (!t.contentHash) return false
-      const server = serverByHash.get(t.contentHash)
-      const isMissing = !serverHashes.has(t.contentHash)
-      const shouldRestoreLocalMetadata =
-        server != null &&
-        metadataDiffers(t, server) &&
-        (isFromScratch || shouldBackfillSunPhase(t, server))
+    const toMetadataUpload = [...metadataOutbox.entries()].flatMap(
+      ([contentHash, patch]) => {
+        const activity = localByHash.get(contentHash)
+        if (
+          !activity ||
+          !serverHashes.has(contentHash) ||
+          (!isFromScratch && freshDeletedHashes.has(contentHash)) ||
+          ignoredHashes.has(contentHash)
+        )
+          return []
+        return [
+          {
+            activity,
+            patch: { contentHash, ...patch } satisfies ActivityMetadataPatch,
+          },
+        ]
+      }
+    )
+    const fullUploadSummaries = [...localByHash.values()].filter((activity) => {
+      if (!activity.contentHash) return false
       return (
-        (isMissing || shouldRestoreLocalMetadata) &&
-        // Suppressed only while the deletion is still being applied. Once it
-        // has been, a local copy means a deliberate re-import — resurrect it.
-        (isFromScratch || !freshDeletedHashes.has(t.contentHash)) &&
-        // Deliberately unsynced (a server purge, or a local-only delete that
-        // was later re-imported). Never push these back up.
-        !ignoredHashes.has(t.contentHash)
+        !serverHashes.has(activity.contentHash) &&
+        (isFromScratch || !freshDeletedHashes.has(activity.contentHash)) &&
+        !ignoredHashes.has(activity.contentHash)
       )
     })
-    const toDownload = serverActivities.filter((server) => {
+    const toMetadataDownload = serverActivities.filter((server) => {
       if (ignoredHashes.has(server.contentHash)) return false
       const local = localByHash.get(server.contentHash)
-      if (!local) return true
+      if (!local) return false
       return (
-        !isFromScratch &&
-        metadataDiffers(local, server) &&
-        !shouldBackfillSunPhase(local, server)
+        !dirtyActivityHashes.has(server.contentHash) &&
+        metadataDiffers(local, server)
       )
     })
+    const toDownload = serverActivities.filter(
+      (server) =>
+        !ignoredHashes.has(server.contentHash) &&
+        !localByHash.has(server.contentHash)
+    )
     const toDelete = isFromScratch
       ? []
       : [...freshDeletedHashes].filter((h) => localByHash.has(h))
@@ -373,9 +442,43 @@ async function syncOnce(reason: string): Promise<void> {
     // whole backlog primed to fire on the next incremental sync.
     for (const tomb of deletions) applied.set(tomb.contentHash, tomb.deletedAt)
 
-    const total = toUpload.length + toDownload.length + toDelete.length
+    if (fullUploadSummaries.length > 0) {
+      // A metadata-only edit never reaches this branch. This is deliberately
+      // lazy so an activities page can synchronize thousands of settings using
+      // summaries without reading any geometry from IndexedDB.
+      if (mapStore.activityHydration !== "full") await hydrateFullActivities()
+    }
+    const fullActivitiesByHash = new Map(
+      mapStore.activities
+        .filter((activity) => activity.contentHash)
+        .map((activity) => [activity.contentHash!, activity])
+    )
+    const fullUploads = fullUploadSummaries.map((summary) => {
+      const activity = fullActivitiesByHash.get(summary.contentHash!)
+      if (!activity) {
+        throw new Error(
+          `Activity ${summary.contentHash} is not fully available`
+        )
+      }
+      return activity
+    })
+
+    const total =
+      toMetadataUpload.length +
+      fullUploads.length +
+      toMetadataDownload.length +
+      toDownload.length +
+      toDelete.length
     if (total === 0) {
-      await finish(cursor, serverHashes, ignoredHashes, applied)
+      await finish(
+        cursor,
+        serverHashes,
+        ignoredHashes,
+        applied,
+        dirtyActivityHashes,
+        metadataOutbox,
+        settledActivityUpdateHashes
+      )
       return
     }
 
@@ -391,24 +494,91 @@ async function syncOnce(reason: string): Promise<void> {
         await removeLocalActivity(activity)
         deletedIds.push(activity.id)
       }
+      dirtyActivityHashes.delete(hash)
+      settledActivityUpdateHashes.add(hash)
       step()
     }
 
-    const uploadFailures = await pooled(toUpload, async (activity) => {
-      await uploadActivity(activity)
+    const metadataUploadBatches = chunk(toMetadataUpload, SYNC_PAGE_SIZE)
+    const metadataUploadFailures = await pooled(
+      metadataUploadBatches,
+      async (batch) => {
+        const updated = await updateActivityMetadata(
+          batch.map((item) => item.patch)
+        )
+        const updatedByHash = new Map(
+          updated.map((activity) => [activity.contentHash, activity])
+        )
+        if (
+          updated.length !== batch.length ||
+          batch.some((item) => !updatedByHash.has(item.activity.contentHash!))
+        ) {
+          throw new Error(
+            "Activity metadata update returned an incomplete result"
+          )
+        }
+        for (const item of batch) {
+          serverHashes.add(item.activity.contentHash!)
+          if (dirtyActivityHashes.delete(item.activity.contentHash!)) {
+            settledActivityUpdateHashes.add(item.activity.contentHash!)
+          }
+          step()
+        }
+      }
+    )
+
+    let oversizedUploadFailures = 0
+    const uploadFailures = await pooled(fullUploads, async (activity) => {
+      try {
+        await uploadActivity(activity)
+      } catch (err) {
+        if (err instanceof ApiRequestError && err.code === "too_large") {
+          oversizedUploadFailures++
+        }
+        throw err
+      }
       // Only on success: a failed upload must be retried next run.
-      if (activity.contentHash) serverHashes.add(activity.contentHash)
+      if (activity.contentHash) {
+        serverHashes.add(activity.contentHash)
+        if (dirtyActivityHashes.delete(activity.contentHash)) {
+          settledActivityUpdateHashes.add(activity.contentHash)
+        }
+      }
       step()
     })
 
+    const updatedSummaries = toMetadataDownload.map((server) => {
+      const local = localByHash.get(server.contentHash)!
+      return {
+        ...local,
+        name: server.name,
+        startedAtMs: server.startedAtMs,
+        activityType: server.activityType,
+        startSunPhase: server.startSunPhase,
+        contentHash: server.contentHash,
+        isPublic: server.isPublic,
+      }
+    })
+    if (updatedSummaries.length > 0) {
+      const saved = await updateActivityMetadataInStorage(
+        updatedSummaries.map((summary) => ({
+          id: summary.id,
+          name: summary.name,
+          isPublic: summary.isPublic,
+          activityType: summary.activityType,
+          startSunPhase: summary.startSunPhase,
+        }))
+      )
+      if (!saved) throw new Error("Activity metadata could not be saved")
+      applyActivityMetadata(updatedSummaries)
+      for (const _summary of updatedSummaries) step()
+    }
+
     const downloaded: ParsedActivity[] = []
-    const updated: ParsedActivity[] = []
     const downloadFailures = await pooled(toDownload, async (meta) => {
-      const local = localByHash.get(meta.contentHash)
-      const activity = await downloadActivity(meta, local?.id)
+      const activity = await downloadActivity(meta)
       if (activity) {
-        if (local) updated.push(activity)
-        else downloaded.push(activity)
+        downloaded.push(activity)
       }
       step()
     })
@@ -416,21 +586,14 @@ async function syncOnce(reason: string): Promise<void> {
     // unique-distance pass rather than one per activity.
     if (downloaded.length > 0) await ingestActivities(downloaded)
 
-    if (updated.length > 0) {
-      const byHash = new Map(
-        updated.map((activity) => [activity.contentHash, activity])
-      )
-      mapStore.activities = mapStore.activities.map(
-        (activity) => byHash.get(activity.contentHash) ?? activity
-      )
-      await populateUniqueDistances(mapStore.activities)
-      await saveUniqueDistances(mapStore.activities)
-    }
-
-    if (downloaded.length > 0 || updated.length > 0 || deletedIds.length > 0) {
+    if (
+      downloaded.length > 0 ||
+      updatedSummaries.length > 0 ||
+      deletedIds.length > 0
+    ) {
       onChanged?.({
         downloadedCount: downloaded.length,
-        updatedCount: updated.length,
+        updatedCount: updatedSummaries.length,
         deletedIds,
       })
     }
@@ -439,7 +602,15 @@ async function syncOnce(reason: string): Promise<void> {
       // Hold the cursor where it was. Advancing past an activity we failed to
       // fetch would skip it forever — the window never covers it again.
       console.warn(`[sync] ${downloadFailures} download(s) failed; cursor held`)
-      await finish(since, serverHashes, ignoredHashes, applied)
+      await finish(
+        since,
+        serverHashes,
+        ignoredHashes,
+        applied,
+        dirtyActivityHashes,
+        metadataOutbox,
+        settledActivityUpdateHashes
+      )
       setStatus({
         phase: "error",
         message: "Some activities couldn't be downloaded",
@@ -448,11 +619,24 @@ async function syncOnce(reason: string): Promise<void> {
       return
     }
 
-    await finish(cursor, serverHashes, ignoredHashes, applied)
-    if (uploadFailures > 0) {
+    await finish(
+      cursor,
+      serverHashes,
+      ignoredHashes,
+      applied,
+      dirtyActivityHashes,
+      metadataOutbox,
+      settledActivityUpdateHashes
+    )
+    if (metadataUploadFailures > 0 || uploadFailures > 0) {
       setStatus({
         phase: "error",
-        message: "Some activities couldn't be uploaded",
+        message:
+          oversizedUploadFailures > 0
+            ? "That activity is too large to upload."
+            : metadataUploadFailures > 0
+              ? "Some activity changes couldn't be synced"
+              : "Some activities couldn't be uploaded",
         lastSyncAt: Date.now(),
       })
     }
@@ -578,7 +762,10 @@ async function finish(
   cursor: number,
   serverHashes: Set<string>,
   ignoredHashes: Set<string>,
-  applied: Map<string, number>
+  applied: Map<string, number>,
+  dirtyActivityHashes: Set<string>,
+  metadataOutbox: Map<string, PendingActivityMetadataUpdate>,
+  settledActivityUpdateHashes: Set<string>
 ): Promise<void> {
   // Saved-point synchronisation maintains an independent cursor in the same
   // preference record. Preserve it while activity sync advances its cursor.
@@ -589,12 +776,34 @@ async function finish(
   for (const [hash, deletedAt] of applied) {
     if (deletedAt >= cutoff) appliedTombstones[hash] = deletedAt
   }
+  const outboundActivityMetadata = new Map(
+    Object.entries(existing?.outboundActivityMetadata ?? {})
+  )
+  if (!isRerunQueued) {
+    for (const hash of settledActivityUpdateHashes) {
+      outboundActivityMetadata.delete(hash)
+    }
+    for (const hash of dirtyActivityHashes) {
+      const patch = metadataOutbox.get(hash)
+      if (patch) outboundActivityMetadata.set(hash, patch)
+    }
+  } else {
+    // A settings action may have written a newer last-write-wins value while
+    // this run was in flight. Preserve that value; only restore snapshot
+    // entries that are not present in the current persisted outbox.
+    for (const [hash, patch] of metadataOutbox) {
+      if (!outboundActivityMetadata.has(hash)) {
+        outboundActivityMetadata.set(hash, patch)
+      }
+    }
+  }
   await saveSyncState({
     savedPointsCursor: existing?.savedPointsCursor,
     serverSavedPointIds: existing?.serverSavedPointIds,
     appliedSavedPointTombstones: existing?.appliedSavedPointTombstones,
     outboundSavedPointIds: existing?.outboundSavedPointIds,
     outboundSavedPointDeletionIds: existing?.outboundSavedPointDeletionIds,
+    outboundActivityMetadata: Object.fromEntries(outboundActivityMetadata),
     cursor,
     lastSyncAt,
     serverHashes: [...serverHashes],
@@ -687,6 +896,32 @@ async function fetchSavedPointsManifest(since: number): Promise<{
 
 // ─── Upload / download / delete ───────────────────────────────────────────────
 
+function chunk<T>(items: T[], size: number): T[][] {
+  const batches: T[][] = []
+  for (let index = 0; index < items.length; index += size) {
+    batches.push(items.slice(index, index + size))
+  }
+  return batches
+}
+
+export class ActivityUploadTooLargeError extends Error {
+  readonly contentHash: string
+  readonly activityName: string
+  readonly actualBytes: number
+  readonly maxBytes: number
+
+  constructor(activity: ParsedActivity, actualBytes: number) {
+    super(
+      `Activity “${activity.name}” is too large to upload (${actualBytes} bytes; limit ${MAX_ACTIVITY_BYTES}).`
+    )
+    this.name = "ActivityUploadTooLargeError"
+    this.contentHash = activity.contentHash ?? ""
+    this.activityName = activity.name
+    this.actualBytes = actualBytes
+    this.maxBytes = MAX_ACTIVITY_BYTES
+  }
+}
+
 async function uploadActivity(activity: ParsedActivity): Promise<void> {
   const { id: _id, ...rest } = activity
   const payload: ActivityUploadPayload = {
@@ -703,7 +938,7 @@ async function uploadActivity(activity: ParsedActivity): Promise<void> {
       activity.name,
       body.size
     )
-    return
+    throw new ActivityUploadTooLargeError(activity, body.size)
   }
 
   // Bounded retry rather than one shot: the only expected failure here is the
@@ -835,17 +1070,34 @@ export async function pushSavedPointDeletion(id: string): Promise<void> {
   }
 }
 
-/** Push a same-geometry metadata edit without waiting for manifest diffing. */
-export async function pushActivityUpdate(
-  activity: ParsedActivity
+/** Persist last-write-wins metadata edits and let sync upload them later. */
+export async function queueActivityMetadataUpdates(
+  updates: readonly ActivityMetadataPatch[]
 ): Promise<void> {
-  if (!canSync() || !activity.contentHash) return
-  try {
-    await uploadActivity(activity)
-    requestSync("activity-update")
-  } catch (err) {
-    console.warn("[sync] failed to propagate activity update:", err)
+  if (updates.length === 0) return
+
+  const state = (await loadSyncState()) ?? {
+    cursor: 0,
+    lastSyncAt: 0,
+    serverHashes: [],
   }
+  const { outboundActivityUpdateHashes: _legacy, ...stateWithoutLegacy } =
+    state
+  const outbox = new Map(Object.entries(state.outboundActivityMetadata ?? {}))
+  for (const update of updates) {
+    const { contentHash, ...patch } = update
+    if (Object.keys(patch).length === 0) continue
+    outbox.set(contentHash, {
+      ...(outbox.get(contentHash) ?? {}),
+      ...patch,
+    })
+  }
+  await saveSyncState({
+    ...stateWithoutLegacy,
+    outboundActivityMetadata: Object.fromEntries(outbox),
+  })
+  if (isRunning) isRerunQueued = true
+  requestSync("activity-settings")
 }
 
 async function downloadActivity(
@@ -866,8 +1118,16 @@ async function downloadActivity(
   }
 }
 
-async function removeLocalActivity(activity: ParsedActivity): Promise<void> {
-  mapStore.activities = mapStore.activities.filter((t) => t.id !== activity.id)
+async function removeLocalActivity(
+  activity: Pick<ActivitySummary, "id">
+): Promise<void> {
+  if (mapStore.activityHydration === "full") {
+    setFullActivities(mapStore.activities.filter((t) => t.id !== activity.id))
+  } else if (mapStore.activityHydration === "summaries") {
+    setActivitySummaries(
+      mapStore.activitySummaries.filter((summary) => summary.id !== activity.id)
+    )
+  }
   await deleteActivityFromIdb(activity.id)
 }
 
@@ -903,8 +1163,15 @@ async function recordAppliedTombstone(
     lastSyncAt: 0,
     serverHashes: [],
   }
+  const { outboundActivityUpdateHashes: _legacy, ...stateWithoutLegacy } =
+    state
   await saveSyncState({
-    ...state,
+    ...stateWithoutLegacy,
+    outboundActivityMetadata: Object.fromEntries(
+      Object.entries(state.outboundActivityMetadata ?? {}).filter(
+        ([hash]) => hash !== contentHash
+      )
+    ),
     appliedTombstones: {
       ...(state.appliedTombstones ?? {}),
       [contentHash]: deletedAt,
@@ -936,11 +1203,29 @@ async function addIgnoredHashes(hashes: string[]): Promise<void> {
     lastSyncAt: 0,
     serverHashes: [],
   }
+  const { outboundActivityUpdateHashes: _legacy, ...stateWithoutLegacy } =
+    state
   const ignored = new Set(state.ignoredHashes ?? [])
+  const outboundActivityUpdates = new Map(
+    Object.entries(state.outboundActivityMetadata ?? {})
+  )
+  for (const hash of state.outboundActivityUpdateHashes ?? []) {
+    outboundActivityUpdates.delete(hash)
+  }
   const before = ignored.size
   for (const hash of hashes) ignored.add(hash)
-  if (ignored.size === before) return
-  await saveSyncState({ ...state, ignoredHashes: [...ignored] })
+  for (const hash of hashes) outboundActivityUpdates.delete(hash)
+  if (
+    ignored.size === before &&
+    outboundActivityUpdates.size ===
+      Object.keys(state.outboundActivityMetadata ?? {}).length
+  )
+    return
+  await saveSyncState({
+    ...stateWithoutLegacy,
+    ignoredHashes: [...ignored],
+    outboundActivityMetadata: Object.fromEntries(outboundActivityUpdates),
+  })
 }
 
 /**

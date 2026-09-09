@@ -1,11 +1,13 @@
 import { ActivityGrid } from "~/components/stats/ActivityGrid"
 import { Card, CardContent, CardHeader, CardTitle } from "~/components/ui/card"
 
-interface PublicActivityGridProps {
+interface RecentActivityCalendarCardProps {
   recentDays: string[]
 }
 
-export function PublicActivityGrid({ recentDays }: PublicActivityGridProps) {
+export function RecentActivityCalendarCard({
+  recentDays,
+}: RecentActivityCalendarCardProps) {
   return (
     <Card>
       <CardHeader>
