@@ -12,13 +12,12 @@ untouched.
 
 - Branch: `refactor/fog-processing`
 - Started: 2026-09-11
-- Current phase: Phase 7 — route/UI cleanup and terminal recovery states
-- Last completed commit: `843a17c surface durable sync status`
-- Current working slice: add local structured diagnostics and a safe fog
-  representation decision record, then finish cache/style cleanup and rollout
-  checks
-- Next action: instrument import, fog, render, and sync boundaries with
-  redacted operation events and provide a local export action
+- Current phase: completion audit across Phases 0–8
+- Last completed commit: `8b77b6f replace api request errors`
+- Current working slice: close remaining acceptance gaps, add deterministic
+  boundary tests, and verify the full client/server matrix
+- Next action: audit the matrix against the implemented seams, then add the
+  highest-priority missing fault and migration coverage
 
 ## A1 activity contract slice
 
@@ -275,6 +274,35 @@ untouched.
   path-aligned timestamps and a compatibility alias.
 - Focused tests and client typecheck pass; this slice is committed independently.
 
+## Phase 0 diagnostics and safe representation slices
+
+- Added a local-only, redacted diagnostics ring buffer and export action with a
+  fixed schema and bounded event count; no payload, coordinate, token, or file
+  name escape hatch is exposed by default. Committed as `44bc05c`.
+- Documented the bounded fog representation decision and added a deterministic
+  benchmark comparing positive-mask, regional inverse, raster/vector, and the
+  excluded global-hole representation. The aggregate crossing-route/loop
+  regression is covered; the supplied raw FIT remains excluded. Committed as
+  `cf52394`.
+- Instrumented import, fog, render/cache, and sync boundaries with the same
+  scalar diagnostic schema. Committed as `675ff77`.
+- Added revision-guarded map-source handoff and a worker watchdog with bounded
+  recovery for `error`, `messageerror`, and timeout. Committed as `8f70558` and
+  `bef6127`.
+
+## Functional-style cleanup slices
+
+- Converted the refactor-owned stateful client modules to closure factories:
+  fog coordinator (`6d1a812`), fog engine (`bd675c8`), unique-distance
+  projection (`20c395a`), activity import (`8cc3644`), activity repositories
+  (`c0b4cf9`), activity library (`10a88be`), sync scheduler (`a2a1c49`), sync
+  repositories (`2ba7f0c`), and sync executor (`7c67c57`).
+- Replaced custom activity, transport, executor, and API error subclasses with
+  typed plain-error factories and predicates (`af9e551`, `a886031`,
+  `8b77b6f`). The React error boundary remains a framework-required class and
+  is outside the pipeline state model.
+- Focused tests and typecheck passed after every functional-style slice.
+
 ## Commit log
 
 | Commit    | Slice                                                                | Verification                                                     |
@@ -302,11 +330,29 @@ untouched.
 | `86894c8` | Route fog work through library changes                    | 175 client tests pass; client typecheck passes                   |
 | `051b683` | Surface import and fog recovery status                         | Focused import/fog tests pass; client typecheck passes                 |
 | `843a17c` | Surface durable sync status                                      | Focused sync tests pass; client typecheck passes                       |
+| `44bc05c` | Add local diagnostics buffer                                | Diagnostics tests and typecheck pass                                  |
+| `cf52394` | Document bounded fog representation                         | Fog regression, benchmark, and typecheck pass                         |
+| `675ff77` | Instrument activity pipeline diagnostics                    | Focused tests and typecheck pass                                      |
+| `8f70558` | Guard fog style handoff by revision                         | Map/fog tests and typecheck pass                                      |
+| `bef6127` | Bound fog worker recovery                                   | Watchdog/fog tests and typecheck pass                                 |
+| `6d1a812` | Make fog coordinator functional                             | Fog coordinator/state tests and typecheck pass                        |
+| `bd675c8` | Make fog engine functional                                  | Fog engine tests and typecheck pass                                   |
+| `20c395a` | Make distance projection functional                          | Projection tests and typecheck pass                                   |
+| `8cc3644` | Make activity import functional                              | Import tests and typecheck pass                                       |
+| `af9e551` | Replace activity errors with factories                       | Activity/import tests and typecheck pass                              |
+| `c0b4cf9` | Make activity repositories functional                        | Activity/repository/sync tests and typecheck pass                     |
+| `10a88be` | Make activity library functional                             | Activity/repository/sync tests and typecheck pass                     |
+| `a886031` | Replace sync transport errors                                | Sync transport/executor tests and typecheck pass                      |
+| `a2a1c49` | Make sync scheduler functional                               | Scheduler/repository/status tests and typecheck pass                  |
+| `2ba7f0c` | Make sync repositories functional                             | Sync repository/executor tests and typecheck pass                     |
+| `7c67c57` | Make sync executor functional                                | Sync executor/repository/transport tests and typecheck pass            |
+| `8b77b6f` | Replace API request errors                                   | Sync tests and typecheck pass                                         |
 
 ## Phase checklist
 
 - [ ] Phase 0 — baseline diagnostics, safe reproducer/geometry ADR, and
-      performance measurements
+      performance measurements (diagnostics/ADR/benchmark landed; tile fixture
+      and pixel-overdraw harness remain)
 - [x] Phase 1 — characterization tests, fault seams, callable fog engine and
       planner façade
 - [x] Phase 2 — versioned activity repository and serialized library service
@@ -328,10 +374,13 @@ untouched.
   refactor commits unless a later migration explicitly requires them.
 - Do not add product-level activity/file/point caps before measurements; any
   technical safety limit must be typed and user-visible.
+- Refactor-owned stateful modules use closure factories and typed plain-error
+  records; do not reintroduce classes in future slices.
 
 ## Resume notes
 
 When continuing, inspect this file and `git status` first. Re-run the focused
 tests for the last slice before changing the next ownership boundary. Update the
 commit table, checklist, and next action in the same commit as the relevant
-implementation change.
+implementation change. Preserve the two user-owned architecture documents and
+never stage them accidentally.
