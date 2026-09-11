@@ -2,7 +2,12 @@ import { useCallback, useEffect, useRef } from "react"
 import type maplibregl from "maplibre-gl"
 import { activitiesFeatureCollection } from "~/lib/map/geojson"
 import { MAP_SOURCE_IDS } from "~/lib/map/layers"
-import { fogCoordinator, mapStore, setFogProcessedCount } from "~/lib/mapStore"
+import {
+  fogCoordinator,
+  mapStore,
+  recordFogSnapshot,
+  setFogProcessedCount,
+} from "~/lib/mapStore"
 import { saveFogCache } from "~/lib/storage"
 import {
   FOG_ALGORITHM_VERSION,
@@ -51,6 +56,7 @@ export function useFogWorkerBridge(onProcessingComplete?: ProcessingComplete): {
 
     const setSnapshotOnMap = (snapshot: FogSnapshot) => {
       if (!isCurrentSnapshot(snapshot)) return false
+      recordFogSnapshot(snapshot)
       mapStore.fogSnapshot = {
         generation: snapshot.generation,
         libraryRevision: snapshot.libraryRevision,

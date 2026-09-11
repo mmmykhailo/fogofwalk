@@ -37,12 +37,18 @@ import {
   mapStore,
   activityLibrary,
   initializeActivityLibrary,
-  startFogRun,
-  postToFogWorker,
-  setFogProcessedCount,
+  rebuildFogProjection,
+  useFogStatus,
 } from "~/lib/mapStore"
 import { ActivityImportService } from "~/lib/activities/import/service"
 import type { LibraryCommit } from "~/lib/activities/libraryEvents"
+import {
+  beginImport,
+  completeImport,
+  failImport,
+  reportImportProgress,
+} from "~/lib/activities/import/status"
+import type { ImportFailureSummary } from "~/lib/activities/import/service"
 import { createUuid } from "~/lib/uuid"
 import { createActivityUploadOutboxItem } from "~/lib/server/sync/activityEffects"
 import { createActivityDeleteOutboxItem } from "~/lib/server/sync/activityEffects"
@@ -229,8 +235,12 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
       fileCount: files.length,
       files: files.map((f) => f.name),
     })
+    const operationId = createUuid()
+    beginImport(operationId, files.length)
     const commitState: { value: LibraryCommit | null } = { value: null }
     const importService = new ActivityImportService({
+      signal: request.signal,
+      onProgress: reportImportProgress,
       commit: (operationId, activities) =>
         activityLibrary
           .dispatch(
@@ -253,7 +263,32 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
             return result
           }),
     })
-    const batch = await importService.importFiles(files)
+    let batch
+    try {
+      batch = await importService.importFiles(files, operationId)
+      completeImport(batch)
+    } catch (error) {
+      failImport(operationId, error)
+      const failure =
+        error instanceof Error
+          ? error.message
+          : "The activity files could not be imported."
+      const failedFileDetails: ImportFailureSummary[] = files.map((file) => ({
+        name: file.name,
+        status: "failed",
+        error: failure,
+      }))
+      return {
+        intent: "add-files" as const,
+        count: files.length,
+        activityCount: mapStore.activities.length,
+        newActivitiesCount: 0,
+        duplicateCount: 0,
+        missingActivityTypeCount: 0,
+        failedFiles: failedFileDetails.map((file) => file.name),
+        failedFileDetails,
+      }
+    }
     const added = commitState.value?.change.added ?? []
     if (added.length > 0) {
       void requestSync("add-files")
@@ -263,6 +298,16 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
         ["failed", "rejected", "cancelled"].includes(file.status)
       )
       .map((file) => file.name)
+    const failedFileDetails: ImportFailureSummary[] = batch.files
+      .filter((file) =>
+        ["failed", "rejected", "cancelled"].includes(file.status)
+      )
+      .map((file) => ({
+        name: file.name,
+        status: file.status as ImportFailureSummary["status"],
+        ...(file.errorCode ? { errorCode: file.errorCode } : {}),
+        ...(file.error ? { error: file.error } : {}),
+      }))
     const duplicateCount = batch.activities.filter(
       (activity) => activity.status === "duplicate"
     ).length
@@ -278,6 +323,7 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
         (activity) => activity.activityType == null
       ).length,
       failedFiles,
+      failedFileDetails,
     }
   }
 
@@ -290,8 +336,6 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
       type: "clearLocal",
       operationId: createUuid(),
     })
-    mapStore.fogData = null
-    setFogProcessedCount(0)
     // Runs synchronously before the fetcher effect resets React selection state.
     clearRenderedActivityState()
     await clearAll({ includeActivities: false })
@@ -334,8 +378,6 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
             : [],
       }
     )
-    setFogProcessedCount(0)
-
     // The library subscription has already reset/rebuilt the fog projection for
     // the committed survivor revision. Clear the current map source before its
     // next validated snapshot arrives.
@@ -454,7 +496,9 @@ export default function Home() {
   const [activityCount, setActivityCount] = useState(
     loaderData.restoredActivityCount
   )
-  const [isProcessing, setIsProcessing] = useState(false)
+  const fogStatus = useFogStatus()
+  const isProcessing =
+    fogStatus.phase === "processing" || fogStatus.phase === "recovering"
   const [showActivities, setShowActivities] = useState(true)
   const [showFog, setShowFog] = useState(true)
   const [fogMode, setFogMode] = useState<FogMode>(loaderData.restoredFogMode)
@@ -524,9 +568,13 @@ export default function Home() {
   const [selectedGroup, setSelectedGroup] = useState<PhotoGroup | null>(null)
   const [photoErrorOpen, setPhotoErrorOpen] = useState(false)
   const [parseFailedFiles, setParseFailedFiles] = useState<string[]>([])
+  const [parseFailureDetails, setParseFailureDetails] = useState<
+    ImportFailureSummary[]
+  >([])
   const [isParseErrorOpen, setIsParseErrorOpen] = useState(false)
   const [duplicateCount, setDuplicateCount] = useState(0)
   const [isDuplicateOpen, setIsDuplicateOpen] = useState(false)
+  const [shareRetryCount, setShareRetryCount] = useState(0)
   const [missingActivityTypeCount, setMissingActivityTypeCount] = useState(0)
   const [isMissingActivityTypeOpen, setIsMissingActivityTypeOpen] =
     useState(false)
@@ -571,8 +619,7 @@ export default function Home() {
 
     if (mapStore.isFogRunInFlight) {
       if (mapStore.isFogWorkerListenerReady) return
-      startFogRun()
-      postToFogWorker({ type: "RESET" })
+      rebuildFogProjection(mapStore.fogMode)
       mapStore.isRestoreReprocess = true
     }
 
@@ -633,50 +680,64 @@ export default function Home() {
     setViewingSavedPoint(ownedPoint ? null : point)
   }, [loaderData.viewedSavedPoint, mapReady, savedPoints, searchParams])
 
-  // Handle files shared via the Web Share Target API (PWA installed).
-  // The service worker intercepts the POST to /map?share-target, buffers the
-  // files in Cache Storage, then redirects to /map?from-share. We drain the queue here.
-  useEffect(() => {
-    if (!mapReady || !searchParams.has("from-share")) return
-    ;(async () => {
-      if (!("caches" in window)) return
+  async function drainShareTargetQueue(): Promise<void> {
+    if (!("caches" in window)) return
+    try {
       const cache = await caches.open("share-target-queue")
       const keys = await cache.keys()
       if (keys.length === 0) {
-        setSearchParams({}, { replace: true })
+        clearSearchParam("from-share")
         return
       }
       const files: File[] = []
       const importedRequests: Request[] = []
-      for (const req of keys) {
-        const res = await cache.match(req)
-        if (!res) continue
-        const name = res.headers.get("X-File-Name") ?? "file"
-        const type = res.headers.get("Content-Type") ?? ""
-        files.push(new File([await res.arrayBuffer()], name, { type }))
-        importedRequests.push(req)
+      for (const request of keys) {
+        const response = await cache.match(request)
+        if (!response) continue
+        const name = response.headers.get("X-File-Name") ?? "file"
+        const type = response.headers.get("Content-Type") ?? ""
+        files.push(new File([await response.arrayBuffer()], name, { type }))
+        importedRequests.push(request)
       }
-      if (files.length > 0) {
-        pendingShareRequestsRef.current = importedRequests
-        const dt = new DataTransfer()
-        files.forEach((f) => dt.items.add(f))
-        handleAddFiles(dt.files)
+      if (files.length === 0) return
+      pendingShareRequestsRef.current = importedRequests
+      const dataTransfer = new DataTransfer()
+      files.forEach((file) => dataTransfer.items.add(file))
+      handleAddFiles(dataTransfer.files)
+    } catch (error) {
+      console.warn("[share-target] queue read failed:", error)
+    }
+  }
+
+  async function discardShareTargetQueue(): Promise<void> {
+    pendingShareRequestsRef.current = []
+    try {
+      if ("caches" in window) {
+        const cache = await caches.open("share-target-queue")
+        for (const request of await cache.keys()) await cache.delete(request)
       }
-    })()
-  }, [mapReady])
+    } catch (error) {
+      console.warn("[share-target] queue discard failed:", error)
+    } finally {
+      clearSearchParam("from-share")
+    }
+  }
+
+  // Handle files shared via the Web Share Target API (PWA installed).
+  // The service worker retains the bytes until a terminal durable import. A
+  // retry therefore reads the same queue again instead of relying on File
+  // objects surviving navigation.
+  useEffect(() => {
+    if (!mapReady || !searchParams.has("from-share")) return
+    void drainShareTargetQueue()
+  }, [mapReady, searchParams, shareRetryCount])
 
   // Trigger worker reprocessing when fog cache was stale
   useEffect(() => {
     if (!mapReady || !needsReprocessRef.current) return
     needsReprocessRef.current = false
     if (mapStore.activities.length === 0) return
-    setIsProcessing(true)
-    setFogProcessedCount(0)
-    postToFogWorker({
-      type: "PROCESS_ACTIVITIES",
-      activities: mapStore.activities,
-      mode: loaderData.restoredFogMode,
-    })
+    rebuildFogProjection(loaderData.restoredFogMode)
   }, [mapReady])
 
   // Zoom to activities after a new upload finishes processing.
@@ -734,8 +795,8 @@ export default function Home() {
     if (!data) return
     if (data.intent === "add-files") {
       const pendingShareRequests = pendingShareRequestsRef.current
-      pendingShareRequestsRef.current = []
       if (pendingShareRequests.length > 0 && data.failedFiles.length === 0) {
+        pendingShareRequestsRef.current = []
         void caches
           .open("share-target-queue")
           .then(async (cache) => {
@@ -755,13 +816,11 @@ export default function Home() {
       if (data.newActivitiesCount > 0) {
         isNewUploadRef.current = true // triggers fitBounds in the isProcessing effect below
         setActivityCount(data.activityCount)
-        // Only if the worker has not already finished — see isFogRunInFlight.
-        setIsProcessing(mapStore.isFogRunInFlight)
-        setFogProcessedCount(0)
       }
       if (data.failedFiles.length > 0) {
         setMissingActivityTypeCount(data.missingActivityTypeCount)
         setParseFailedFiles(data.failedFiles)
+        setParseFailureDetails(data.failedFileDetails)
         setIsParseErrorOpen(true)
       } else if (data.missingActivityTypeCount > 0) {
         setMissingActivityTypeCount(data.missingActivityTypeCount)
@@ -775,8 +834,6 @@ export default function Home() {
     }
     if (data.intent === "clear-all") {
       setActivityCount(0)
-      setFogProcessedCount(0)
-      setIsProcessing(false)
       setSelectedActivityIds([])
       setPendingActivityId(null)
       setShowShareDialog(false)
@@ -788,8 +845,6 @@ export default function Home() {
       setPendingActivityId(null)
       setShowShareDialog(false)
       setActivityCount(data.activityCount)
-      setFogProcessedCount(0)
-      setIsProcessing(data.activityCount > 0 && mapStore.isFogRunInFlight)
     }
   }, [fetcher.data])
 
@@ -826,15 +881,7 @@ export default function Home() {
             prev.filter((id) => !deletedIds.includes(id))
           )
           setPendingActivityId(null)
-          setFogProcessedCount(0)
           clearRenderedActivityState()
-        }
-
-        if (downloadedCount > 0 || deletedIds.length > 0) {
-          setFogProcessedCount(0)
-          setIsProcessing(
-            mapStore.activities.length > 0 && mapStore.isFogRunInFlight
-          )
         }
 
         if (
@@ -942,26 +989,10 @@ export default function Home() {
     // Abandon whatever the worker is still chewing on: a rapid corridor↔fill
     // toggle must start the new mode immediately rather than queue behind the
     // old one. Replies from the abandoned run are dropped by their stale runId.
-    startFogRun()
-    postToFogWorker({ type: "RESET" })
-    if (mapStore.activities.length === 0) {
-      // Nothing to replay — clear the bar the abandoned run's DONE will no
-      // longer clear.
-      setIsProcessing(false)
-      setFogProcessedCount(0)
-      return
-    }
-    setIsProcessing(true)
-    setFogProcessedCount(0)
-    postToFogWorker({
-      type: "PROCESS_ACTIVITIES",
-      activities: mapStore.activities,
-      mode: newMode,
-    })
+    rebuildFogProjection(newMode)
   }
 
   function handleProcessingComplete() {
-    setIsProcessing(false)
     setActivityCount(mapStore.activities.length)
     // fitBounds is handled by the useEffect([isProcessing]) above:
     // it fires after React re-renders, when map state is fully settled.
@@ -1109,6 +1140,7 @@ export default function Home() {
                 onShowFogChange={setShowFog}
                 fogMode={fogMode}
                 onFogModeChange={handleFogModeChange}
+                onRetryFog={() => rebuildFogProjection(mapStore.fogMode)}
                 mapMode={mapMode}
                 onMapModeChange={setMapMode}
                 onAddFiles={handleAddFiles}
@@ -1178,6 +1210,16 @@ export default function Home() {
                   }
                 }}
                 failedFiles={parseFailedFiles}
+                failureDetails={parseFailureDetails}
+                canRetry={searchParams.has("from-share")}
+                onRetry={() => {
+                  setIsParseErrorOpen(false)
+                  setShareRetryCount((count) => count + 1)
+                }}
+                onDiscard={() => {
+                  setIsParseErrorOpen(false)
+                  void discardShareTargetQueue()
+                }}
               />
               <MissingActivityTypeDialog
                 open={isMissingActivityTypeOpen}

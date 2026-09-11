@@ -2,9 +2,11 @@ import { afterEach, describe, expect, test } from "bun:test"
 import {
   finishFogJob,
   getFogProcessedCount,
+  getFogStatus,
   mapStore,
   postToFogWorker,
   queueAddedActivitiesForFog,
+  rebuildFogProjection,
   setFogProcessedCount,
   subscribeFogProgress,
   worldFogGeoJSON,
@@ -174,6 +176,34 @@ describe("fog worker run state", () => {
     expect(mapStore.isFogRunInFlight).toBe(false)
     expect(mapStore.fogWorkerActivityIds.size).toBe(0)
     expect(mapStore.fogWorkerMode).toBeNull()
+  })
+
+  test("exposes an unavailable-worker failure and a retryable rebuild", () => {
+    mapStore.activities = [activity("retry")]
+    mapStore.libraryRevision = 3
+    mapStore.fogMode = "corridor"
+    mapStore.worker = null
+
+    expect(rebuildFogProjection()).toBe(false)
+    expect(getFogStatus()).toMatchObject({
+      phase: "failed",
+      libraryRevision: 3,
+    })
+
+    const messages: unknown[] = []
+    mapStore.worker = {
+      postMessage(message: unknown) {
+        messages.push(message)
+      },
+    } as unknown as Worker
+    expect(rebuildFogProjection()).toBe(true)
+    expect(getFogStatus()).toMatchObject({ phase: "processing", total: 1 })
+    expect(messages).toHaveLength(2)
+    expectFogRequest(messages[1], {
+      kind: "rebuild",
+      libraryRevision: 3,
+      activities: [{ id: "retry" }],
+    })
   })
 
   test("replays the library before adding to a cache-cold worker", () => {

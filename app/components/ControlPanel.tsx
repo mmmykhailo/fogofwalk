@@ -3,7 +3,8 @@ import { DotsThreeIcon } from "@phosphor-icons/react"
 import { Button } from "~/components/ui/button"
 import type { FogMode, MapMode } from "~/types/activities"
 import { MapDrawer } from "~/components/MapDrawer"
-import { FogProgressIndicator } from "~/components/FogProgress"
+import { FogProgressIndicator, FogStatusNotice } from "~/components/FogProgress"
+import { ImportProgressIndicator } from "~/components/ImportProgress"
 
 interface ControlPanelProps {
   activityCount: number
@@ -14,6 +15,7 @@ interface ControlPanelProps {
   onShowFogChange: (value: boolean) => void
   fogMode: FogMode
   onFogModeChange: (mode: FogMode) => void
+  onRetryFog: () => void
   mapMode: MapMode
   onMapModeChange: (mode: MapMode) => void
   onAddFiles: (files: FileList) => void
@@ -39,6 +41,7 @@ export function ControlPanel({
   onShowFogChange,
   fogMode,
   onFogModeChange,
+  onRetryFog,
   mapMode,
   onMapModeChange,
   onAddFiles,
@@ -97,6 +100,7 @@ export function ControlPanel({
 
       {/* FAB — grouped visually with the compass (top-right) */}
       <div className="absolute top-28 right-1.5 z-10 flex items-center gap-2 sm:right-3">
+        <ImportProgressIndicator />
         {isProcessing && <FogProgressIndicator activityCount={activityCount} />}
         <Button
           variant="outline"
@@ -107,6 +111,9 @@ export function ControlPanel({
         >
           <DotsThreeIcon weight="bold" size={20} />
         </Button>
+      </div>
+      <div className="absolute top-38 right-1.5 z-10 sm:right-3">
+        <FogStatusNotice onRetry={onRetryFog} />
       </div>
 
       {/* All controls in one drawer */}

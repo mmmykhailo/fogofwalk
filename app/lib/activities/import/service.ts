@@ -7,6 +7,7 @@ import { flattenActivityPaths } from "~shared/activityContract"
 import { createUuid } from "~/lib/uuid"
 import { parseFile as defaultParseFile } from "~/lib/parsers"
 import { normalizeAndHashActivity } from "~/lib/activities/normalize"
+import { ActivityStorageError } from "../errors"
 import type { DuplicateReason, LibraryCommit } from "../libraryEvents"
 
 export type ImportStage =
@@ -51,6 +52,13 @@ export interface ImportFileOutcome {
   error?: string
 }
 
+export interface ImportFailureSummary {
+  name: string
+  status: Extract<ImportTerminalStatus, "failed" | "rejected" | "cancelled">
+  errorCode?: string
+  error?: string
+}
+
 export interface ImportBatchResult {
   operationId: string
   files: ImportFileOutcome[]
@@ -78,6 +86,12 @@ export interface ImportServiceOptions {
 }
 
 function safeError(error: unknown): { errorCode: string; error: string } {
+  if (error instanceof ActivityStorageError) {
+    return {
+      errorCode: `storage-${error.code}`,
+      error: error.message,
+    }
+  }
   if (error instanceof Error) {
     return {
       errorCode: error.name || "parse-failed",
