@@ -34,12 +34,31 @@ interface PrefEntry {
   value: unknown
 }
 
-interface UniqueDistanceState {
+export interface UniqueDistanceState {
   version: number
   activityIds: string[]
+  /** Canonical activity-library revision represented by the marker. */
+  libraryRevision: number
 }
 
-const UNIQUE_DISTANCE_VERSION = 1
+export type UniqueDistanceSaveResult =
+  | { status: "saved"; libraryRevision: number }
+  | {
+      status: "stale"
+      expectedLibraryRevision: number
+      actualLibraryRevision: number | null
+    }
+  | { status: "unavailable"; error: Error }
+  | { status: "failed"; error: unknown }
+
+export interface SaveUniqueDistancesOptions {
+  /** Only write when library-meta still has this revision. */
+  libraryRevision?: number
+  /** Compatibility cleanup for callers that still pass a deleted id. */
+  deletedActivityId?: string
+}
+
+const UNIQUE_DISTANCE_VERSION = 2
 
 // ─── DB singleton ──────────────────────────────────────────────────────────────
 
@@ -229,44 +248,82 @@ export async function loadUniqueDistanceState(): Promise<UniqueDistanceState | n
 
 export function areUniqueDistancesCurrent(
   activities: ParsedActivity[],
-  state: UniqueDistanceState | null
+  state: UniqueDistanceState | null,
+  libraryRevision?: number
 ): boolean {
   if (
     state?.version !== UNIQUE_DISTANCE_VERSION ||
-    state.activityIds.length !== activities.length
+    state.activityIds.length !== activities.length ||
+    (libraryRevision !== undefined && state.libraryRevision !== libraryRevision)
   ) {
     return false
   }
-  return activities.every(
-    (activity, index) => activity.id === state.activityIds[index]
-  )
+  const activityIds = activities.map((activity) => activity.id).sort()
+  const savedIds = [...state.activityIds].sort()
+  return activities.every((_, index) => activityIds[index] === savedIds[index])
 }
 
 /** Atomically persists recalculated values, their library marker, and an optional deletion. */
 export async function saveUniqueDistances(
   activities: ParsedActivity[],
-  deletedActivityId?: string
-): Promise<void> {
+  options: SaveUniqueDistancesOptions = {}
+): Promise<UniqueDistanceSaveResult> {
   const db = await getDb()
-  if (!db) return
+  if (!db) {
+    return {
+      status: "unavailable",
+      error: new Error("IndexedDB is unavailable."),
+    }
+  }
   try {
-    const tx = db.transaction(["activities", "prefs"], "readwrite")
+    const tx = db.transaction(
+      ["activities", "prefs", "library-meta"],
+      "readwrite"
+    )
     const activityStore = tx.objectStore("activities")
-    if (deletedActivityId) activityStore.delete(deletedActivityId)
+    const metaStore = tx.objectStore("library-meta")
+    const rawMeta = await promisifyRequest<
+      { key?: unknown; revision?: unknown } | undefined
+    >(metaStore.get("library"))
+    const actualLibraryRevision =
+      typeof rawMeta?.revision === "number" &&
+      Number.isSafeInteger(rawMeta.revision) &&
+      rawMeta.revision >= 0
+        ? rawMeta.revision
+        : null
+    if (
+      options.libraryRevision !== undefined &&
+      actualLibraryRevision !== options.libraryRevision
+    ) {
+      tx.abort()
+      return {
+        status: "stale",
+        expectedLibraryRevision: options.libraryRevision,
+        actualLibraryRevision,
+      }
+    }
+    if (options.deletedActivityId) {
+      activityStore.delete(options.deletedActivityId)
+    }
     for (const activity of activities) activityStore.put(activity)
+    const revision = options.libraryRevision ?? actualLibraryRevision ?? 0
     tx.objectStore("prefs").put({
       key: "uniqueDistanceState",
       value: {
         version: UNIQUE_DISTANCE_VERSION,
-        activityIds: activities.map((activity) => activity.id),
+        libraryRevision: revision,
+        activityIds: activities.map((activity) => activity.id).sort(),
       } satisfies UniqueDistanceState,
     } satisfies PrefEntry)
     await new Promise<void>((resolve, reject) => {
       tx.oncomplete = () => resolve()
+      tx.onabort = () => reject(tx.error)
       tx.onerror = () => reject(tx.error)
     })
+    return { status: "saved", libraryRevision: revision }
   } catch (err) {
     console.warn("[storage] saveUniqueDistances failed:", err)
+    return { status: "failed", error: err }
   }
 }
 

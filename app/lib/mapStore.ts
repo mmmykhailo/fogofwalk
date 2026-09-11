@@ -16,6 +16,7 @@ import type { LibrarySnapshot } from "~/lib/activities/libraryEvents"
 import { createUuid } from "~/lib/uuid"
 import { isServerEnabled } from "~/lib/server/config"
 import { createActivityUploadOutboxItem } from "~/lib/server/sync/activityEffects"
+import { UniqueDistanceProjection } from "~/lib/uniqueDistanceProjection"
 
 // ─── Map position persistence (localStorage — synchronous, survives page unload) ──
 
@@ -122,6 +123,8 @@ interface MapStore {
   } | null
   /** Revision of the canonical activity snapshot projected into this store. */
   libraryRevision: number
+  /** Revision for which unique-distance values have been applied to this projection. */
+  uniqueDistanceProjectionRevision: number | null
   /** True once MapView is ready to receive fog-worker replies. */
   isFogWorkerListenerReady: boolean
   /**
@@ -156,6 +159,7 @@ export const mapStore: MapStore = {
   fogWorkerLibraryRevision: 0,
   fogSnapshot: null,
   libraryRevision: 0,
+  uniqueDistanceProjectionRevision: null,
   isFogWorkerListenerReady: false,
   shareCardCache: null,
 }
@@ -165,6 +169,24 @@ const fogProgressListeners = new Set<() => void>()
 /** Canonical activity ownership lives in ActivityLibrary; this is its map projection. */
 export const activityLibrary = new ActivityLibrary()
 let activityLibrarySubscription: (() => void) | null = null
+
+/** Revision-keyed derived-stat projection; canonical activity commits do not wait for it. */
+export const uniqueDistanceProjection = new UniqueDistanceProjection(
+  {},
+  {
+    onError: ({ revision, error }) =>
+      console.warn(
+        `[projection] unique distance failed for library revision ${revision}:`,
+        error
+      ),
+    onComplete: ({ revision, activities }) => {
+      if (mapStore.libraryRevision === revision) {
+        mapStore.activities = cloneActivities(activities)
+        mapStore.uniqueDistanceProjectionRevision = revision
+      }
+    },
+  }
+)
 
 /** Revision-aware owner of fog requests; mapStore keeps only its UI projection. */
 export const fogCoordinator = new FogCoordinator(
@@ -212,8 +234,12 @@ function toFogWorkerActivity(activity: FogWorkerActivity): FogWorkerActivity {
 }
 
 function applyLibrarySnapshot(snapshot: LibrarySnapshot): void {
-  mapStore.activities = cloneActivities(snapshot.activities)
+  if (mapStore.uniqueDistanceProjectionRevision !== snapshot.revision) {
+    mapStore.activities = cloneActivities(snapshot.activities)
+    mapStore.uniqueDistanceProjectionRevision = null
+  }
   mapStore.libraryRevision = snapshot.revision
+  uniqueDistanceProjection.schedule(snapshot)
 }
 
 /** Load and bind the canonical activity library to the map render projection. */

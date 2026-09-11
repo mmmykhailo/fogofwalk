@@ -50,9 +50,6 @@ import { createActivityDeleteOutboxItem } from "~/lib/server/sync/activityEffect
 import { buildLapActivity, lapSubtitle } from "~/lib/laps"
 import { processPhotoFiles } from "~/lib/photos"
 import {
-  loadUniqueDistanceState,
-  areUniqueDistancesCurrent,
-  saveUniqueDistances,
   savePhotos,
   loadPhotos,
   saveFogMode,
@@ -79,7 +76,6 @@ import {
   pushSavedPointDeletion,
   pushSavedPointUpdate,
 } from "~/lib/server/syncEngine"
-import { populateUniqueDistances } from "~/lib/statsAggregator"
 import { useMyLocation } from "~/lib/useMyLocation"
 import { useActivityVisibility } from "~/lib/useActivityVisibility"
 import { socialMeta } from "~/lib/socialMeta"
@@ -150,21 +146,14 @@ export async function clientLoader({
   if (new URL(request.url).pathname === "/map") void initAuth()
 
   // Restore persisted data in parallel
-  const [
-    activities,
-    uniqueDistanceState,
-    photos,
-    savedPoints,
-    fogMode,
-    fogCache,
-  ] = await Promise.all([
-    initializeActivityLibrary(),
-    loadUniqueDistanceState(),
-    loadPhotos(),
-    loadSavedPoints(),
-    loadFogMode(),
-    loadFogCache(),
-  ])
+  const [activities, photos, savedPoints, fogMode, fogCache] =
+    await Promise.all([
+      initializeActivityLibrary(),
+      loadPhotos(),
+      loadSavedPoints(),
+      loadFogMode(),
+      loadFogCache(),
+    ])
 
   const restoredFogMode: FogMode = fogMode ?? "corridor"
   mapStore.fogMode = restoredFogMode
@@ -177,10 +166,6 @@ export async function clientLoader({
       : null
 
   if (activities.length > 0) {
-    if (!areUniqueDistancesCurrent(mapStore.activities, uniqueDistanceState)) {
-      await populateUniqueDistances(mapStore.activities)
-      await saveUniqueDistances(mapStore.activities)
-    }
     const activityIds = activities.map((t) => t.id).sort()
     if (
       fogCache &&
@@ -362,9 +347,6 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
             : [],
       }
     )
-    // Recompute derived values for the committed survivor set. This projection
-    // is intentionally separate from the canonical delete transaction.
-    await populateUniqueDistances(mapStore.activities)
     setFogProcessedCount(0)
 
     // Reset worker + update map sources immediately
@@ -374,8 +356,8 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
     postToFogWorker({ type: "RESET" })
     clearRenderedActivityState()
 
-    // Persist and invalidate fog cache
-    await saveUniqueDistances(mapStore.activities)
+    // Invalidate the old fog projection; the library listener has already
+    // queued unique-distance projection work for the committed revision.
     await clearFogCache()
 
     // Replay only after invalidation finishes. Otherwise a fast worker can save

@@ -2,16 +2,7 @@ import { useLoaderData } from "react-router"
 import { FootprintsIcon } from "@phosphor-icons/react"
 import { PageShell } from "~/components/PageShell"
 import type { Route } from "./+types/stats"
-import {
-  areUniqueDistancesCurrent,
-  loadUniqueDistanceState,
-  saveUniqueDistances,
-} from "~/lib/storage"
-import {
-  initializeActivityLibrary,
-  mapStore,
-  setActivityProjection,
-} from "~/lib/mapStore"
+import { initializeActivityLibrary, mapStore } from "~/lib/mapStore"
 import {
   sortActivities,
   computeLifetimeTotals,
@@ -19,7 +10,6 @@ import {
   computeStreaks,
   computePersonalRecords,
   computeUniqueDistance,
-  populateUniqueDistances,
   type LifetimeTotals,
   type WeeklyBar,
   type Streaks,
@@ -46,18 +36,11 @@ export async function clientLoader(): Promise<StatsLoaderData> {
   // Prefer in-memory activities (always current — updated before the IDB write in
   // clientAction). Fall back to IDB only when navigating directly to /stats on
   // a fresh page load before the home clientLoader has run.
-  const raw = await initializeActivityLibrary()
-  const uniqueDistanceState = await loadUniqueDistanceState()
-  const sorted = sortActivities(raw)
-  if (!areUniqueDistancesCurrent(sorted, uniqueDistanceState)) {
-    await populateUniqueDistances(sorted)
-    await saveUniqueDistances(sorted)
-  }
-  setActivityProjection({
-    revision: mapStore.libraryRevision,
-    activities: sorted,
-  })
-  const activities = sortActivities(raw)
+  await initializeActivityLibrary()
+  // The map-store projection is updated by the unique-distance coordinator
+  // after a durable revision-keyed save, so a later stats render can use the
+  // latest derived values without making the loader wait for the worker.
+  const activities = sortActivities(mapStore.activities)
   const now = Date.now()
   return {
     totals: computeLifetimeTotals(activities),
