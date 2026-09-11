@@ -42,7 +42,7 @@ import { canSync } from "./authStore"
 import { isServerEnabled } from "./config"
 import { createApiSyncTransport } from "./sync/transport"
 import { createIndexedDbSyncRepository } from "./sync/repository"
-import { ActivitySyncExecutor } from "./sync/executor"
+import { createActivitySyncExecutor } from "./sync/executor"
 import { createSyncScheduler } from "./sync/scheduler"
 import {
   describeSyncStatus,
@@ -368,7 +368,7 @@ async function runActivitySync(
 ): Promise<void> {
   if (!activitySyncRepository || !syncTransport) return
   setStatus({ phase: "syncing", done: 0, total: 0 })
-  const result = await new ActivitySyncExecutor({
+  const result = await createActivitySyncExecutor({
     repository: activitySyncRepository,
     library: activityLibrary,
     transport: syncTransport,

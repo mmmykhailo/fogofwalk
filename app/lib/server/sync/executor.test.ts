@@ -9,7 +9,10 @@ import { createMemoryActivityLibraryRepository } from "~/lib/activities/reposito
 import type { SyncState } from "~/lib/storage"
 import type { ParsedActivity } from "~/types/activities"
 import { createMemorySyncRepository } from "./repository"
-import { ActivitySyncExecutor, SyncExecutorProtocolError } from "./executor"
+import {
+  createActivitySyncExecutor,
+  isSyncExecutorProtocolError,
+} from "./executor"
 import {
   createSyncTransportError,
   type SyncTransport,
@@ -136,7 +139,7 @@ async function createExecutor(
   )
   const repository = createMemorySyncRepository({ now: options.now })
   if (options.state) await repository.saveState(options.state)
-  const executor = new ActivitySyncExecutor({
+  const executor = createActivitySyncExecutor({
     repository,
     library,
     transport,
@@ -239,7 +242,7 @@ describe("ActivitySyncExecutor", () => {
         return 9
       },
     }
-    const second = new ActivitySyncExecutor({
+    const second = createActivitySyncExecutor({
       repository,
       library: (await createExecutor([], deleteTransport)).library,
       transport: deleteTransport,
@@ -464,9 +467,8 @@ describe("ActivitySyncExecutor", () => {
       )
     )
 
-    await expect(executor.run()).rejects.toBeInstanceOf(
-      SyncExecutorProtocolError
-    )
+    const failure = await executor.run().catch((error: unknown) => error)
+    expect(isSyncExecutorProtocolError(failure)).toBe(true)
     expect(await repository.loadState()).toBeNull()
     expect(await repository.loadOutbox()).toEqual([])
   })

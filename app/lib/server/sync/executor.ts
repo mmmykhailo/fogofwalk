@@ -90,20 +90,45 @@ export interface SyncExecutorResult {
   cursorHeld: boolean
 }
 
-export class SyncExecutorProtocolError extends Error {
-  readonly code = "protocol"
-
-  constructor(message: string) {
-    super(message)
-    this.name = "SyncExecutorProtocolError"
-  }
+export type SyncExecutorProtocolError = Error & {
+  readonly name: "SyncExecutorProtocolError"
+  readonly code: "protocol"
 }
 
-class PermanentSyncEffectError extends Error {
-  constructor(message: string) {
-    super(message)
-    this.name = "PermanentSyncEffectError"
-  }
+export function createSyncExecutorProtocolError(
+  message: string
+): SyncExecutorProtocolError {
+  const error = new Error(message) as SyncExecutorProtocolError
+  Object.assign(error, { name: "SyncExecutorProtocolError", code: "protocol" })
+  return error
+}
+
+export function isSyncExecutorProtocolError(
+  error: unknown
+): error is SyncExecutorProtocolError {
+  return (
+    error instanceof Error &&
+    error.name === "SyncExecutorProtocolError" &&
+    (error as Partial<SyncExecutorProtocolError>).code === "protocol"
+  )
+}
+
+type PermanentSyncEffectError = Error & {
+  readonly name: "PermanentSyncEffectError"
+}
+
+function createPermanentSyncEffectError(
+  message: string
+): PermanentSyncEffectError {
+  const error = new Error(message) as PermanentSyncEffectError
+  error.name = "PermanentSyncEffectError"
+  return error
+}
+
+function isPermanentSyncEffectError(
+  error: unknown
+): error is PermanentSyncEffectError {
+  return error instanceof Error && error.name === "PermanentSyncEffectError"
 }
 
 type ActivityEffectPayload =
@@ -271,7 +296,9 @@ function effectPayload(
 
 function intentFromPayload(payload: unknown): ActivityEffectPayload {
   if (!payload || typeof payload !== "object") {
-    throw new PermanentSyncEffectError("The queued sync effect is malformed.")
+    throw createPermanentSyncEffectError(
+      "The queued sync effect is malformed."
+    )
   }
   const candidate = payload as Partial<ActivityEffectPayload>
   if (
@@ -279,16 +306,18 @@ function intentFromPayload(payload: unknown): ActivityEffectPayload {
     typeof candidate.intentId !== "string" ||
     typeof candidate.contentHash !== "string"
   ) {
-    throw new PermanentSyncEffectError("The queued sync effect is malformed.")
+    throw createPermanentSyncEffectError(
+      "The queued sync effect is malformed."
+    )
   }
   if (candidate.kind === "upload") {
     if (typeof candidate.activityId !== "string") {
-      throw new PermanentSyncEffectError(
+      throw createPermanentSyncEffectError(
         "The queued upload effect is malformed."
       )
     }
     if (candidate.source !== undefined && candidate.source !== "local") {
-      throw new PermanentSyncEffectError(
+      throw createPermanentSyncEffectError(
         "The queued upload effect has an invalid source."
       )
     }
@@ -296,7 +325,7 @@ function intentFromPayload(payload: unknown): ActivityEffectPayload {
   }
   if (candidate.kind === "download" || candidate.kind === "metadata") {
     if (!candidate.remote || typeof candidate.remote !== "object") {
-      throw new PermanentSyncEffectError(
+      throw createPermanentSyncEffectError(
         "The queued remote effect is malformed."
       )
     }
@@ -315,13 +344,13 @@ function intentFromPayload(payload: unknown): ActivityEffectPayload {
       typeof candidate.intentId !== "string" ||
       typeof candidate.contentHash !== "string"
     ) {
-      throw new PermanentSyncEffectError(
+      throw createPermanentSyncEffectError(
         "The queued local deletion effect is malformed."
       )
     }
     return candidate as ActivityEffectPayload
   }
-  throw new PermanentSyncEffectError("The queued sync effect is malformed.")
+  throw createPermanentSyncEffectError("The queued sync effect is malformed.")
 }
 
 function isRemoteRequiredIntent(intent: SyncIntent): boolean {
@@ -360,7 +389,7 @@ function intentOperation(
 }
 
 function retryableError(error: unknown): boolean {
-  if (error instanceof PermanentSyncEffectError) return false
+  if (isPermanentSyncEffectError(error)) return false
   if (isSyncTransportError(error)) return error.retryable
   if (error instanceof ApiRequestError) {
     return (
@@ -377,7 +406,7 @@ function safeErrorMessage(error: unknown): string {
   if (isSyncTransportError(error) || error instanceof ApiRequestError) {
     return error.message
   }
-  if (error instanceof PermanentSyncEffectError) return error.message
+  if (isPermanentSyncEffectError(error)) return error.message
   return "The sync effect could not be completed."
 }
 
@@ -499,29 +528,24 @@ function applyEffectState(
   }
 }
 
-export class ActivitySyncExecutor {
-  private readonly now: () => number
-  private readonly random: () => number
-  private readonly owner: string
-  private readonly leaseMs: number
-  private readonly maxPages: number
-  private readonly onProgress:
-    | ((progress: SyncExecutorProgress) => void)
-    | undefined
+export interface ActivitySyncExecutor {
+  run(): Promise<SyncExecutorResult>
+}
 
-  constructor(private readonly options: SyncExecutorOptions) {
-    this.now = options.now ?? (() => Date.now())
-    this.random = options.random ?? Math.random
-    this.owner = options.owner ?? `sync-executor:${createUuid()}`
-    this.leaseMs = options.leaseMs ?? DEFAULT_LEASE_MS
-    this.maxPages = options.maxPages ?? DEFAULT_MAX_PAGES
-    this.onProgress = options.onProgress
-  }
+export function createActivitySyncExecutor(
+  options: SyncExecutorOptions
+): ActivitySyncExecutor {
+  const now = options.now ?? (() => Date.now())
+  const random = options.random ?? Math.random
+  const owner = options.owner ?? `sync-executor:${createUuid()}`
+  const leaseMs = options.leaseMs ?? DEFAULT_LEASE_MS
+  const maxPages = options.maxPages ?? DEFAULT_MAX_PAGES
+  const onProgress = options.onProgress
 
-  async run(): Promise<SyncExecutorResult> {
-    await this.options.library.initialize()
+  async function run(): Promise<SyncExecutorResult> {
+    await options.library.initialize()
     let state =
-      (await this.options.repository.loadState()) ?? clone(EMPTY_SYNC_STATE)
+      (await options.repository.loadState()) ?? clone(EMPTY_SYNC_STATE)
     let pages = 0
     let downloadedCount = 0
     let updatedCount = 0
@@ -529,14 +553,14 @@ export class ActivitySyncExecutor {
     const deletedIds: string[] = []
     const failures: SyncEffectFailure[] = []
 
-    const localResult = await this.executeLocalOutbox()
+    const localResult = await executeLocalOutbox()
     if (
       localResult.completions.length > 0 ||
       localResult.appliedTombstones.length > 0 ||
       localResult.addedServerHashes.length > 0 ||
       localResult.removedServerHashes.length > 0
     ) {
-      const committed = await this.options.repository.commitStateAndOutbox({
+      const committed = await options.repository.commitStateAndOutbox({
         state: applyEffectState(state, localResult),
         complete: localResult.completions,
       })
@@ -550,24 +574,22 @@ export class ActivitySyncExecutor {
     failures.push(...localResult.failures)
 
     for (;;) {
-      if (pages >= this.maxPages) {
-        throw new SyncExecutorProtocolError(
+      if (pages >= maxPages) {
+        throw createSyncExecutorProtocolError(
           "The activity manifest exceeded the safe page limit."
         )
       }
-      const page = await this.options.transport.fetchActivityManifest(
-        state.cursor
-      )
+      const page = await options.transport.fetchActivityManifest(state.cursor)
       const plan = planActivitySync({
-        localActivities: localMetadata(this.options.library.getSnapshot()),
+        localActivities: localMetadata(options.library.getSnapshot()),
         state,
         remote: { ...page, since: state.cursor },
       })
       if (plan.diagnostics.length > 0) {
-        throw new SyncExecutorProtocolError(plan.diagnostics[0]!.message)
+        throw createSyncExecutorProtocolError(plan.diagnostics[0]!.message)
       }
 
-      const pageResult = await this.executePage(
+      const pageResult = await executePage(
         plan,
         new Set(localResult.addedServerHashes)
       )
@@ -577,7 +599,7 @@ export class ActivitySyncExecutor {
       )
 
       if (pageResult.changes.length > 0) {
-        const commit = await this.options.library.dispatch({
+        const commit = await options.library.dispatch({
           type: "applyRemote",
           operationId: createUuid(),
           changes: pageResult.changes,
@@ -594,10 +616,10 @@ export class ActivitySyncExecutor {
         page.hasMore,
         pageResult.completedIntentIds,
         page.deletions,
-        this.now()
+        now()
       )
       const stateWithEffects = applyEffectState(nextState, pageResult)
-      const committed = await this.options.repository.commitStateAndOutbox({
+      const committed = await options.repository.commitStateAndOutbox({
         state: stateWithEffects,
         complete: pageResult.completions,
       })
@@ -609,7 +631,7 @@ export class ActivitySyncExecutor {
 
       pages++
       failures.push(...pageResult.failures)
-      this.onProgress?.({
+      onProgress?.({
         page: pages,
         done: pageResult.completedIntentIds.size,
         total: plan.intents.filter((intent) => effectOperation(intent) !== null)
@@ -633,13 +655,13 @@ export class ActivitySyncExecutor {
     }
   }
 
-  private async enqueueEffects(
+  async function enqueueEffects(
     plan: SyncPlan,
     libraryRevision: number,
     alreadyUploaded: ReadonlySet<string> = new Set()
   ): Promise<Map<string, SyncOutboxItem>> {
     const existing = new Map(
-      (await this.options.repository.loadOutbox()).map((item) => [
+      (await options.repository.loadOutbox()).map((item) => [
         item.dedupeKey,
         item,
       ])
@@ -659,7 +681,7 @@ export class ActivitySyncExecutor {
       const current = existing.get(dedupeKey)
       const item =
         current ??
-        (await this.options.repository.enqueueOutbox({
+        (await options.repository.enqueueOutbox({
           dedupeKey,
           operation,
           payload,
@@ -669,12 +691,12 @@ export class ActivitySyncExecutor {
     return items
   }
 
-  private async executePage(
+  async function executePage(
     plan: SyncPlan,
     alreadyUploaded: ReadonlySet<string> = new Set()
   ): Promise<ExecutedPage> {
-    const libraryRevision = this.options.library.getSnapshot().revision
-    const items = await this.enqueueEffects(
+    const libraryRevision = options.library.getSnapshot().revision
+    const items = await enqueueEffects(
       plan,
       libraryRevision,
       alreadyUploaded
@@ -700,12 +722,12 @@ export class ActivitySyncExecutor {
         })
       }
     }
-    return this.executeEffects(work, completedWithoutWork)
+    return executeEffects(work, completedWithoutWork)
   }
 
-  private async executeLocalOutbox(): Promise<ExecutedPage> {
+  async function executeLocalOutbox(): Promise<ExecutedPage> {
     const work: EffectWork[] = []
-    for (const item of await this.options.repository.loadOutbox()) {
+    for (const item of await options.repository.loadOutbox()) {
       if (!hasLocalActivityEffectSource(item.payload)) continue
       const payload = item.payload as Partial<
         LocalActivityUploadPayload | LocalActivityDeletePayload
@@ -721,10 +743,10 @@ export class ActivitySyncExecutor {
             : undefined,
       })
     }
-    return this.executeEffects(work)
+    return executeEffects(work)
   }
 
-  private async executeEffects(
+  async function executeEffects(
     work: readonly EffectWork[],
     completedWithoutWork: readonly string[] = []
   ): Promise<ExecutedPage> {
@@ -753,7 +775,7 @@ export class ActivitySyncExecutor {
         })
         continue
       }
-      if (item.status === "in-flight" && (item.leaseUntil ?? 0) > this.now()) {
+      if (item.status === "in-flight" && (item.leaseUntil ?? 0) > now()) {
         failures.push({
           intentId,
           operation,
@@ -764,7 +786,7 @@ export class ActivitySyncExecutor {
         })
         continue
       }
-      if (item.status === "retryable" && item.availableAt > this.now()) {
+      if (item.status === "retryable" && item.availableAt > now()) {
         failures.push({
           intentId,
           operation,
@@ -778,10 +800,10 @@ export class ActivitySyncExecutor {
         continue
       }
 
-      const [claimed] = await this.options.repository.claimOutbox({
-        now: this.now(),
-        leaseMs: this.leaseMs,
-        owner: this.owner,
+      const [claimed] = await options.repository.claimOutbox({
+        now: now(),
+        leaseMs,
+        owner,
         ids: [item.id],
         limit: 1,
       })
@@ -797,7 +819,7 @@ export class ActivitySyncExecutor {
       }
 
       try {
-        const result = await this.executeEffect(claimed)
+        const result = await executeEffect(claimed)
         if (result.change) changes.push(result.change)
         if (result.appliedTombstone)
           appliedTombstones.push(result.appliedTombstone)
@@ -815,9 +837,9 @@ export class ActivitySyncExecutor {
           contentHash,
           message: safeErrorMessage(error),
           retryable,
-          retryAt: retryAt(error, claimed.attempts, this.now(), this.random),
+          retryAt: retryAt(error, claimed.attempts, now(), random),
         }
-        await this.options.repository.failOutbox(claimed.id, claimed.leaseId, {
+        await options.repository.failOutbox(claimed.id, claimed.leaseId, {
           code:
             isSyncTransportError(error) ||
             error instanceof ApiRequestError
@@ -829,7 +851,7 @@ export class ActivitySyncExecutor {
             ? { retryAt: failure.retryAt }
             : {}),
           ...(error instanceof ApiRequestError ? { status: error.status } : {}),
-          failedAt: this.now(),
+          failedAt: now(),
         })
         failures.push(failure)
       }
@@ -846,9 +868,9 @@ export class ActivitySyncExecutor {
     }
   }
 
-  private async executeEffect(item: SyncOutboxItem): Promise<EffectExecution> {
+  async function executeEffect(item: SyncOutboxItem): Promise<EffectExecution> {
     const payload = intentFromPayload(item.payload)
-    const snapshot = this.options.library.getSnapshot()
+    const snapshot = options.library.getSnapshot()
     switch (payload.kind) {
       case "upload": {
         const activity = activityFor(
@@ -858,12 +880,12 @@ export class ActivitySyncExecutor {
         )
         if (!activity) return { change: null }
         if (activity.contentHash !== payload.contentHash) {
-          throw new PermanentSyncEffectError(
+          throw createPermanentSyncEffectError(
             "The queued upload no longer matches the local activity."
           )
         }
         try {
-          await this.options.transport.uploadActivity(activity)
+          await options.transport.uploadActivity(activity)
         } catch (error) {
           if (error instanceof ApiRequestError && error.status === 409) {
             return {
@@ -876,7 +898,7 @@ export class ActivitySyncExecutor {
         return { change: null, addedServerHash: payload.contentHash }
       }
       case "download": {
-        const result = await this.options.transport.downloadActivity(
+        const result = await options.transport.downloadActivity(
           payload.contentHash
         )
         const local = activityFor(snapshot, undefined, payload.contentHash)
@@ -922,7 +944,7 @@ export class ActivitySyncExecutor {
           },
         }
       case "local-delete": {
-        const deletedAt = await this.options.transport.deleteActivity(
+        const deletedAt = await options.transport.deleteActivity(
           payload.contentHash
         )
         return {
@@ -936,4 +958,6 @@ export class ActivitySyncExecutor {
       }
     }
   }
+
+  return { run }
 }
