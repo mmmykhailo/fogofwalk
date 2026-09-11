@@ -44,6 +44,7 @@ import { isServerEnabled } from "./config"
 import { createApiSyncTransport } from "./sync/transport"
 import { IndexedDbSyncRepository } from "./sync/repository"
 import { ActivitySyncExecutor } from "./sync/executor"
+import { SyncScheduler } from "./sync/scheduler"
 import {
   createActivityDeleteOutboxItem,
   createActivityUploadOutboxItem,
@@ -168,11 +169,53 @@ export function describeSyncStatus(s: SyncStatus): string | null {
 
 // ─── Run loop ─────────────────────────────────────────────────────────────────
 
-let isRunning = false
-/** Set when a trigger fires mid-run: the loop repeats instead of dropping it. */
-let isRerunQueued = false
 const syncTransport = createApiSyncTransport()
 const activitySyncRepository = new IndexedDbSyncRepository()
+const syncOwner = `sync-tab:${createUuid()}`
+const SYNC_LEASE_MS = 90_000
+
+async function acquireSyncLeadership(
+  run: () => Promise<void>
+): Promise<boolean> {
+  if (typeof navigator !== "undefined" && navigator.locks) {
+    return navigator.locks.request(
+      "fogofwalk:sync",
+      { mode: "exclusive", ifAvailable: true },
+      async (lock) => {
+        if (!lock) return false
+        await run()
+        return true
+      }
+    )
+  }
+
+  const acquired = await activitySyncRepository.acquireSyncLease({
+    owner: syncOwner,
+    now: Date.now(),
+    leaseMs: SYNC_LEASE_MS,
+  })
+  if (!acquired) return false
+  try {
+    await run()
+    return true
+  } finally {
+    await activitySyncRepository.releaseSyncLease(syncOwner)
+  }
+}
+
+const syncScheduler = new SyncScheduler({
+  enabled: canSync,
+  execute: (reason) => syncOnce(reason),
+  acquireLeadership: acquireSyncLeadership,
+  onError: (error) => {
+    console.warn("[sync] scheduler failed:", error)
+    setStatus({
+      phase: "error",
+      message: friendlyMessage(error),
+      lastSyncAt: status.phase === "syncing" ? null : status.lastSyncAt,
+    })
+  },
+})
 
 async function loadActivitySyncState() {
   return (
@@ -204,11 +247,7 @@ export function requestSync(
     }
     resumeAutoSync()
   }
-  if (isRunning) {
-    isRerunQueued = true
-    return
-  }
-  void runSync(reason)
+  syncScheduler.trigger(reason)
 }
 
 /** How often to poll for other devices' changes while the tab is visible. */
@@ -239,18 +278,6 @@ export function startSyncScheduler(): () => void {
     document.removeEventListener("visibilitychange", onFocus)
     window.removeEventListener("online", onFocus)
     window.clearInterval(timer)
-  }
-}
-
-async function runSync(reason: string): Promise<void> {
-  isRunning = true
-  try {
-    do {
-      isRerunQueued = false
-      await syncOnce(reason)
-    } while (isRerunQueued && canSync())
-  } finally {
-    isRunning = false
   }
 }
 

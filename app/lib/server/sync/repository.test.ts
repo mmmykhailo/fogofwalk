@@ -199,4 +199,33 @@ describe("MemorySyncRepository", () => {
     ).toBe(false)
     expect((await repository.loadState())?.cursor).toBe(3)
   })
+
+  test("allows one sync leader at a time and permits expiry takeover", async () => {
+    const repository = new MemorySyncRepository()
+
+    expect(
+      await repository.acquireSyncLease({
+        owner: "tab-a",
+        now: 100,
+        leaseMs: 50,
+      })
+    ).toBe(true)
+    expect(
+      await repository.acquireSyncLease({
+        owner: "tab-b",
+        now: 120,
+        leaseMs: 50,
+      })
+    ).toBe(false)
+    expect(await repository.releaseSyncLease("tab-b")).toBe(false)
+    expect(
+      await repository.acquireSyncLease({
+        owner: "tab-b",
+        now: 150,
+        leaseMs: 50,
+      })
+    ).toBe(true)
+    expect(await repository.releaseSyncLease("tab-a")).toBe(false)
+    expect(await repository.releaseSyncLease("tab-b")).toBe(true)
+  })
 })

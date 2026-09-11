@@ -2,6 +2,12 @@ import { openStorageDatabase, type SyncState } from "~/lib/storage"
 
 const SYNC_STATE_ID = "default"
 
+const EMPTY_SYNC_STATE: SyncState = {
+  cursor: 0,
+  lastSyncAt: 0,
+  serverHashes: [],
+}
+
 export type SyncOutboxOperation = "upload" | "download" | "delete" | "metadata"
 
 export type SyncOutboxStatus =
@@ -67,6 +73,12 @@ export interface ClaimOutboxOptions {
   ids?: readonly string[]
 }
 
+export interface SyncLeaseOptions {
+  now: number
+  leaseMs: number
+  owner: string
+}
+
 export interface SyncStateCommit {
   state: SyncState
   complete: readonly { id: string; leaseId: string }[]
@@ -79,6 +91,8 @@ export interface SyncRepository {
   /** Atomically persists sync state with outbox enqueue/completion effects. */
   commitStateAndOutbox(commit: SyncStateCommit): Promise<boolean>
   clearState(): Promise<void>
+  acquireSyncLease(options: SyncLeaseOptions): Promise<boolean>
+  releaseSyncLease(owner: string): Promise<boolean>
   enqueueOutbox(item: SyncOutboxItemInput): Promise<SyncOutboxItem>
   loadOutbox(): Promise<SyncOutboxItem[]>
   claimOutbox(options: ClaimOutboxOptions): Promise<SyncOutboxItem[]>
@@ -137,7 +151,13 @@ function isSyncState(value: unknown): value is SyncState {
     isStringArray(candidate.serverSavedPointIds ?? []) &&
     isTombstoneMap(candidate.appliedSavedPointTombstones) &&
     isStringArray(candidate.outboundSavedPointIds ?? []) &&
-    isStringArray(candidate.outboundSavedPointDeletionIds ?? [])
+    isStringArray(candidate.outboundSavedPointDeletionIds ?? []) &&
+    (candidate.syncLeaseOwner === undefined ||
+      typeof candidate.syncLeaseOwner === "string") &&
+    (candidate.syncLeaseUntil === undefined ||
+      (typeof candidate.syncLeaseUntil === "number" &&
+        Number.isFinite(candidate.syncLeaseUntil) &&
+        candidate.syncLeaseUntil >= 0))
   )
 }
 
@@ -306,6 +326,71 @@ export class IndexedDbSyncRepository implements SyncRepository {
     // Remove the legacy copy once the dedicated record is explicitly cleared.
     tx.objectStore("prefs").delete("syncState")
     await transactionResult(tx)
+  }
+
+  async acquireSyncLease(options: SyncLeaseOptions): Promise<boolean> {
+    const db = await openStorageDatabase()
+    if (!db) return false
+    const tx = db.transaction(["sync-state", "prefs"], "readwrite")
+    const stateStore = tx.objectStore("sync-state")
+    const dedicated = await requestResult<StoredSyncState | undefined>(
+      stateStore.get(SYNC_STATE_ID)
+    )
+    let state: SyncState
+    if (dedicated) {
+      const { id: _id, ...candidate } = dedicated
+      if (!isSyncState(candidate)) {
+        tx.abort()
+        throw new Error("The durable sync state is invalid.")
+      }
+      state = clone(candidate)
+    } else {
+      const legacy = await requestResult<
+        { key: string; value: unknown } | undefined
+      >(tx.objectStore("prefs").get("syncState"))
+      state =
+        legacy && isSyncState(legacy.value)
+          ? clone(legacy.value)
+          : clone(EMPTY_SYNC_STATE)
+    }
+
+    if (
+      state.syncLeaseOwner &&
+      state.syncLeaseOwner !== options.owner &&
+      (state.syncLeaseUntil ?? 0) > options.now
+    ) {
+      await transactionResult(tx)
+      return false
+    }
+    stateStore.put({
+      id: SYNC_STATE_ID,
+      ...state,
+      syncLeaseOwner: options.owner,
+      syncLeaseUntil: options.now + Math.max(1, options.leaseMs),
+    })
+    await transactionResult(tx)
+    return true
+  }
+
+  async releaseSyncLease(owner: string): Promise<boolean> {
+    const db = await openStorageDatabase()
+    if (!db) return false
+    const tx = db.transaction("sync-state", "readwrite")
+    const store = tx.objectStore("sync-state")
+    const record = await requestResult<StoredSyncState | undefined>(
+      store.get(SYNC_STATE_ID)
+    )
+    if (!record || record.syncLeaseOwner !== owner) {
+      await transactionResult(tx)
+      return false
+    }
+    store.put({
+      ...record,
+      syncLeaseOwner: undefined,
+      syncLeaseUntil: undefined,
+    })
+    await transactionResult(tx)
+    return true
   }
 
   async enqueueOutbox(item: SyncOutboxItemInput): Promise<SyncOutboxItem> {
@@ -494,6 +579,33 @@ export class MemorySyncRepository implements SyncRepository {
 
   async clearState(): Promise<void> {
     this.state = null
+  }
+
+  async acquireSyncLease(options: SyncLeaseOptions): Promise<boolean> {
+    const state = this.state ? clone(this.state) : clone(EMPTY_SYNC_STATE)
+    if (
+      state.syncLeaseOwner &&
+      state.syncLeaseOwner !== options.owner &&
+      (state.syncLeaseUntil ?? 0) > options.now
+    ) {
+      return false
+    }
+    this.state = {
+      ...state,
+      syncLeaseOwner: options.owner,
+      syncLeaseUntil: options.now + Math.max(1, options.leaseMs),
+    }
+    return true
+  }
+
+  async releaseSyncLease(owner: string): Promise<boolean> {
+    if (!this.state || this.state.syncLeaseOwner !== owner) return false
+    this.state = {
+      ...this.state,
+      syncLeaseOwner: undefined,
+      syncLeaseUntil: undefined,
+    }
+    return true
   }
 
   async enqueueOutbox(item: SyncOutboxItemInput): Promise<SyncOutboxItem> {

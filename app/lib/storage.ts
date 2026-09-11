@@ -648,6 +648,9 @@ export interface SyncState {
   outboundSavedPointIds?: string[]
   /** Local deletions awaiting a successful saved-point tombstone. */
   outboundSavedPointDeletionIds?: string[]
+  /** Short-lived cross-tab sync leadership lease. */
+  syncLeaseOwner?: string
+  syncLeaseUntil?: number
 }
 
 /** Sync state owned exclusively by the saved-point reconciler. */
