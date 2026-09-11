@@ -13,11 +13,11 @@ untouched.
 - Branch: `refactor/fog-processing`
 - Started: 2026-09-11
 - Current phase: completion audit across Phases 0–8
-- Last completed commit: `8b77b6f replace api request errors`
+- Last completed commit: `c47b918 remove fog state shadow`
 - Current working slice: close remaining acceptance gaps, add deterministic
   boundary tests, and verify the full client/server matrix
-- Next action: audit the matrix against the implemented seams, then add the
-  highest-priority missing fault and migration coverage
+- Next action: run the full client/server/build matrix, then add the
+  highest-priority missing fault or migration coverage
 
 ## A1 activity contract slice
 
@@ -301,6 +301,10 @@ untouched.
   typed plain-error factories and predicates (`af9e551`, `a886031`,
   `8b77b6f`). The React error boundary remains a framework-required class and
   is outside the pipeline state model.
+- Removed the superseded fog-worker counters, activity-ID set, mode/revision
+  bookkeeping, restore flag, and `finishFogJob()` façade from `mapStore`.
+  `FogCoordinator` is now the only scheduling/in-flight authority; map state
+  keeps render and revision projections only. Committed as `c47b918`.
 - Focused tests and typecheck passed after every functional-style slice.
 
 ## Commit log
@@ -347,6 +351,7 @@ untouched.
 | `2ba7f0c` | Make sync repositories functional                             | Sync repository/executor tests and typecheck pass                     |
 | `7c67c57` | Make sync executor functional                                | Sync executor/repository/transport tests and typecheck pass            |
 | `8b77b6f` | Replace API request errors                                   | Sync tests and typecheck pass                                         |
+| `c47b918` | Remove fog state shadow                                      | Fog state tests and client typecheck pass                              |
 
 ## Phase checklist
 
