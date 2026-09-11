@@ -40,7 +40,7 @@ import {
   rebuildFogProjection,
   useFogStatus,
 } from "~/lib/mapStore"
-import { ActivityImportService } from "~/lib/activities/import/service"
+import { createActivityImportService } from "~/lib/activities/import/service"
 import type { LibraryCommit } from "~/lib/activities/libraryEvents"
 import {
   beginImport,
@@ -244,7 +244,7 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
       result: "started",
     })
     const commitState: { value: LibraryCommit | null } = { value: null }
-    const importService = new ActivityImportService({
+    const importService = createActivityImportService({
       signal: request.signal,
       onProgress: (progress) => {
         reportImportProgress(progress)

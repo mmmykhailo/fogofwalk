@@ -190,16 +190,19 @@ function isDuplicate(
  * per file, while one library commit gives the whole accepted batch one
  * operation id and one revision.
  */
-export class ActivityImportService {
-  private readonly parse: (file: File) => Promise<ParsedActivity[]>
-  private readonly options: ImportServiceOptions
+export interface ActivityImportService {
+  importFiles(
+    files: readonly File[],
+    operationId?: string
+  ): Promise<ImportBatchResult>
+}
 
-  constructor(options: ImportServiceOptions) {
-    this.options = options
-    this.parse = options.parseFile ?? defaultParseFile
-  }
+export function createActivityImportService(
+  options: ImportServiceOptions
+): ActivityImportService {
+  const parse = options.parseFile ?? defaultParseFile
 
-  async importFiles(
+  async function importFiles(
     files: readonly File[],
     operationId = createUuid()
   ): Promise<ImportBatchResult> {
@@ -217,11 +220,11 @@ export class ActivityImportService {
     let completedFiles = 0
     const concurrency = Math.max(
       1,
-      Math.min(8, Math.floor(this.options.concurrency ?? defaultConcurrency()))
+      Math.min(8, Math.floor(options.concurrency ?? defaultConcurrency()))
     )
 
     const processOne = async (outcome: ImportFileOutcome): Promise<void> => {
-      if (this.options.signal?.aborted) {
+      if (options.signal?.aborted) {
         outcome.status = "cancelled"
         outcome.errorCode = "cancelled"
         outcome.error = "Import cancelled before reading the file."
@@ -231,7 +234,7 @@ export class ActivityImportService {
           operationId,
           files.length,
           completedFiles,
-          this.options.onProgress
+          options.onProgress
         )
         return
       }
@@ -243,7 +246,7 @@ export class ActivityImportService {
           operationId,
           files.length,
           completedFiles,
-          this.options.onProgress
+          options.onProgress
         )
         setStage(
           outcome,
@@ -251,9 +254,9 @@ export class ActivityImportService {
           operationId,
           files.length,
           completedFiles,
-          this.options.onProgress
+          options.onProgress
         )
-        const parsed = await this.parse(files[outcome.index]!)
+        const parsed = await parse(files[outcome.index]!)
         outcome.parsedActivityCount = parsed.length
         if (parsed.length === 0) {
           outcome.status = "rejected"
@@ -268,7 +271,7 @@ export class ActivityImportService {
           operationId,
           files.length,
           completedFiles,
-          this.options.onProgress
+          options.onProgress
         )
         for (const parsedActivity of parsed) {
           const normalized = await normalizeAndHashActivity(
@@ -327,7 +330,7 @@ export class ActivityImportService {
       (outcome) => parsedByFile.get(outcome.index) ?? []
     )
 
-    const cancelled = this.options.signal?.aborted ?? false
+    const cancelled = options.signal?.aborted ?? false
     if (cancelled) {
       for (const outcome of outcomes) {
         if (outcome.status === "committed") {
@@ -357,13 +360,13 @@ export class ActivityImportService {
             operationId,
             files.length,
             completedFiles,
-            this.options.onProgress
+            options.onProgress
           )
         }
       }
       let commitResult: LibraryCommit | null = null
       try {
-        commitResult = await this.options.commit(operationId, parsedActivities)
+        commitResult = await options.commit(operationId, parsedActivities)
       } catch (error) {
         const safe = safeError(error)
         for (const outcome of outcomes) {
@@ -418,7 +421,7 @@ export class ActivityImportService {
           operationId,
           files.length,
           completedFiles,
-          this.options.onProgress
+          options.onProgress
         )
         setStage(
           outcome,
@@ -426,7 +429,7 @@ export class ActivityImportService {
           operationId,
           files.length,
           completedFiles,
-          this.options.onProgress
+          options.onProgress
         )
       }
       setStage(
@@ -435,7 +438,7 @@ export class ActivityImportService {
         operationId,
         files.length,
         completedFiles,
-        this.options.onProgress
+        options.onProgress
       )
     }
 
@@ -446,4 +449,6 @@ export class ActivityImportService {
       cancelled: false,
     }
   }
+
+  return { importFiles }
 }

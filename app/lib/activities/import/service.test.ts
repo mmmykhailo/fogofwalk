@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import type { ParsedActivity } from "~shared/activities"
-import { ActivityImportService } from "./service"
+import { createActivityImportService } from "./service"
 import { MemoryActivityLibraryRepository } from "../repository"
 
 function activity(id: string, hash = `hash-${id}`): ParsedActivity {
@@ -46,7 +46,7 @@ describe("ActivityImportService", () => {
     let active = 0
     let peak = 0
     const repository = new MemoryActivityLibraryRepository()
-    const service = new ActivityImportService({
+    const service = createActivityImportService({
       concurrency: 2,
       parseFile: async (input) => {
         active++
@@ -79,7 +79,7 @@ describe("ActivityImportService", () => {
 
   test("keeps a bad sibling from rejecting valid files", async () => {
     const repository = new MemoryActivityLibraryRepository()
-    const service = new ActivityImportService({
+    const service = createActivityImportService({
       parseFile: async (input) => {
         if (input.name === "bad.gpx") throw new Error("malformed")
         return [activity(input.name)]
@@ -104,7 +104,7 @@ describe("ActivityImportService", () => {
   test("cancellation before commit never invokes the committer", async () => {
     const controller = new AbortController()
     let commits = 0
-    const service = new ActivityImportService({
+    const service = createActivityImportService({
       parseFile: async () => {
         controller.abort()
         return [activity("cancelled")]
@@ -125,7 +125,7 @@ describe("ActivityImportService", () => {
 
   test("returns an explicit empty result without invoking the committer", async () => {
     let commits = 0
-    const service = new ActivityImportService({
+    const service = createActivityImportService({
       commit: async () => {
         commits++
         throw new Error("must not commit")
@@ -141,7 +141,7 @@ describe("ActivityImportService", () => {
   })
 
   test("marks accepted files failed when the durable commit fails", async () => {
-    const service = new ActivityImportService({
+    const service = createActivityImportService({
       parseFile: async () => [activity("storage-failure")],
       commit: async () => {
         throw new Error("storage unavailable")
