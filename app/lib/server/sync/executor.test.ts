@@ -11,6 +11,10 @@ import type { ParsedActivity } from "~/types/activities"
 import { MemorySyncRepository } from "./repository"
 import { ActivitySyncExecutor, SyncExecutorProtocolError } from "./executor"
 import { SyncTransportError, type SyncTransport } from "./transport"
+import {
+  createActivityDeleteOutboxItem,
+  createActivityUploadOutboxItem,
+} from "./activityEffects"
 
 const HASH_A = "a".repeat(64)
 const HASH_B = "b".repeat(64)
@@ -171,6 +175,83 @@ describe("ActivitySyncExecutor", () => {
     expect(result.state.serverHashes).toEqual([HASH_A])
     expect(await repository.loadOutbox()).toMatchObject([
       { operation: "download", status: "complete" },
+    ])
+  })
+
+  test("drains a durable local upload even when the manifest has no activity row", async () => {
+    const local = activity("local-a", HASH_A)
+    let uploads = 0
+    const { executor, library, repository } = await createExecutor(
+      [local],
+      transportFor(
+        new Map([
+          [0, { activities: [], deletions: [], cursor: 1, hasMore: false }],
+        ]),
+        {
+          upload: async () => {
+            uploads++
+          },
+        }
+      )
+    )
+    await repository.enqueueOutbox(
+      createActivityUploadOutboxItem(local, "import-1", 1)!
+    )
+
+    const result = await executor.run()
+
+    expect(uploads).toBe(1)
+    expect(result.state.cursor).toBe(1)
+    expect(result.state.serverHashes).toEqual([HASH_A])
+    expect(result.failures).toEqual([])
+    expect(await repository.loadOutbox()).toMatchObject([
+      { operation: "upload", status: "complete" },
+    ])
+    expect(library.getSnapshot().activities).toHaveLength(1)
+  })
+
+  test("drains a durable local deletion and remembers the returned tombstone", async () => {
+    const local = activity("local-a", HASH_A)
+    let deletions = 0
+    const { executor, repository } = await createExecutor(
+      [],
+      transportFor(
+        new Map([
+          [0, { activities: [], deletions: [], cursor: 1, hasMore: false }],
+        ])
+      ),
+      { now: () => 10 }
+    )
+    const item = createActivityDeleteOutboxItem(local, "delete-1", 1)!
+    await repository.enqueueOutbox(item)
+    const originalTransport = transportFor(
+      new Map([
+        [0, { activities: [], deletions: [], cursor: 1, hasMore: false }],
+      ])
+    )
+    const deleteTransport: SyncTransport = {
+      ...originalTransport,
+      async deleteActivity() {
+        deletions++
+        return 9
+      },
+    }
+    const second = new ActivitySyncExecutor({
+      repository,
+      library: (await createExecutor([], deleteTransport)).library,
+      transport: deleteTransport,
+      owner: "test-delete",
+      now: () => 10,
+      random: () => 0,
+    })
+
+    const result = await second.run()
+
+    expect(deletions).toBe(1)
+    expect(result.state.serverHashes).toEqual([])
+    expect(result.state.appliedTombstones).toEqual({ [HASH_A]: 9 })
+    expect(await repository.loadOutbox()).toMatchObject([
+      { operation: "delete", status: "complete" },
     ])
   })
 

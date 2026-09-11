@@ -21,8 +21,9 @@ import { SYNC_CONCURRENCY } from "~shared/constants"
 import type { SavedPoint } from "~shared/saved-points"
 import type { ParsedActivity } from "~/types/activities"
 import {
-  loadSyncState,
-  saveSyncState,
+  emptySavedPointSyncState,
+  loadSavedPointSyncState,
+  saveSavedPointSyncState,
   clearFogCache,
   deleteSavedPoint as deleteSavedPointFromIdb,
   loadSavedPoints,
@@ -37,17 +38,16 @@ import {
 } from "~/lib/mapStore"
 import { backfillContentHashes } from "~/lib/activityHash"
 import { createUuid } from "~/lib/uuid"
-import { apiRaw, ApiRequestError, friendlyMessage } from "./apiClient"
+import { apiRaw, friendlyMessage } from "./apiClient"
 import { canSync } from "./authStore"
+import { isServerEnabled } from "./config"
 import { createApiSyncTransport } from "./sync/transport"
 import { IndexedDbSyncRepository } from "./sync/repository"
 import { ActivitySyncExecutor } from "./sync/executor"
 import {
-  acquireUploadSlot,
-  fallbackBackoffMs,
-  MAX_UPLOAD_RETRIES,
-  penalizeUploads,
-} from "./uploadGate"
+  createActivityDeleteOutboxItem,
+  createActivityUploadOutboxItem,
+} from "./sync/activityEffects"
 
 // ─── Status, published to the drawer ──────────────────────────────────────────
 
@@ -338,30 +338,26 @@ async function runActivitySync(lastSyncAt: number | null): Promise<void> {
 
 /** Reconcile remote point changes/deletions, then upload local outbound edits. */
 async function syncSavedPoints(): Promise<void> {
-  const state = await loadSyncState()
-  const since = state?.savedPointsCursor ?? 0
+  const state = await loadSavedPointSyncState()
+  const since = state?.cursor ?? 0
   const isFromScratch = since === 0
   const { serverPoints, deletions, cursor } =
     await fetchSavedPointsManifest(since)
   const localById = new Map(
     (await loadSavedPoints()).map((point) => [point.id, point])
   )
-  const serverIds = new Set(
-    isFromScratch ? [] : (state?.serverSavedPointIds ?? [])
-  )
+  const serverIds = new Set(isFromScratch ? [] : (state?.serverPointIds ?? []))
   for (const point of serverPoints) serverIds.add(point.id)
   for (const tombstone of deletions) serverIds.delete(tombstone.id)
 
   const applied = new Map<string, number>(
-    Object.entries(state?.appliedSavedPointTombstones ?? {})
+    Object.entries(state?.appliedTombstones ?? {})
   )
   const freshTombstones = deletions.filter(
     (tombstone) => applied.get(tombstone.id) !== tombstone.deletedAt
   )
-  const dirtyIds = new Set(state?.outboundSavedPointIds ?? [])
-  const outboundDeletionIds = new Set(
-    state?.outboundSavedPointDeletionIds ?? []
-  )
+  const dirtyIds = new Set(state?.outboundIds ?? [])
+  const outboundDeletionIds = new Set(state?.outboundDeletionIds ?? [])
   const deletedIds: string[] = []
   if (!isFromScratch) {
     for (const tombstone of freshTombstones) {
@@ -416,16 +412,13 @@ async function syncSavedPoints(): Promise<void> {
   for (const [id, deletedAt] of applied) {
     if (deletedAt >= cutoff) appliedSavedPointTombstones[id] = deletedAt
   }
-  await saveSyncState({
-    cursor: state?.cursor ?? 0,
+  await saveSavedPointSyncState({
+    cursor,
     lastSyncAt: state?.lastSyncAt ?? 0,
-    serverHashes: state?.serverHashes ?? [],
-    ...state,
-    savedPointsCursor: cursor,
-    serverSavedPointIds: [...serverIds],
-    appliedSavedPointTombstones,
-    outboundSavedPointIds: [...dirtyIds],
-    outboundSavedPointDeletionIds: [...outboundDeletionIds],
+    serverPointIds: [...serverIds],
+    appliedTombstones: appliedSavedPointTombstones,
+    outboundIds: [...dirtyIds],
+    outboundDeletionIds: [...outboundDeletionIds],
   })
   if (remoteUpdates.length > 0 || deletedIds.length > 0) {
     onChanged?.({
@@ -496,35 +489,6 @@ async function fetchSavedPointsManifest(since: number): Promise<{
   return { serverPoints, deletions, cursor }
 }
 
-// ─── Upload / download / delete ───────────────────────────────────────────────
-
-async function uploadActivity(activity: ParsedActivity): Promise<void> {
-  // Bounded retry rather than one shot: the only expected failure here is the
-  // upload rate limit, and dropping the activity for the whole run over it means
-  // waiting for a later sync trigger to try again. `acquireUploadSlot` should
-  // keep us under the limit in the first place — this is the fallback for when
-  // the client's view of the window and the server's disagree.
-  for (let attempt = 0; ; attempt++) {
-    await acquireUploadSlot()
-    try {
-      await syncTransport.uploadActivity(activity)
-      return
-    } catch (err) {
-      // Another device won the race and stored the identical bytes first.
-      if (err instanceof ApiRequestError && err.status === 409) return
-      if (
-        err instanceof ApiRequestError &&
-        err.status === 429 &&
-        attempt < MAX_UPLOAD_RETRIES - 1
-      ) {
-        penalizeUploads(err.retryAfterMs ?? fallbackBackoffMs(attempt))
-        continue
-      }
-      throw err
-    }
-  }
-}
-
 async function uploadSavedPoint(point: SavedPoint): Promise<SavedPoint> {
   const input: SavedPointUpsertInput = {
     id: point.id,
@@ -556,28 +520,24 @@ async function deleteSavedPointOnServer(id: string): Promise<number> {
 export async function pushSavedPointUpdate(
   point: SavedPoint
 ): Promise<SavedPoint> {
-  const state = (await loadSyncState()) ?? {
-    cursor: 0,
-    lastSyncAt: 0,
-    serverHashes: [],
-  }
-  const outbound = new Set(state.outboundSavedPointIds ?? [])
+  const state = (await loadSavedPointSyncState()) ?? emptySavedPointSyncState()
+  const outbound = new Set(state.outboundIds)
   outbound.add(point.id)
-  const outboundDeletions = new Set(state.outboundSavedPointDeletionIds ?? [])
+  const outboundDeletions = new Set(state.outboundDeletionIds)
   outboundDeletions.delete(point.id)
-  await saveSyncState({
+  await saveSavedPointSyncState({
     ...state,
-    outboundSavedPointIds: [...outbound],
-    outboundSavedPointDeletionIds: [...outboundDeletions],
+    outboundIds: [...outbound],
+    outboundDeletionIds: [...outboundDeletions],
   })
   if (!canSync()) return point
   try {
     const saved = await uploadSavedPoint(point)
     outbound.delete(point.id)
-    await saveSyncState({
+    await saveSavedPointSyncState({
       ...state,
-      outboundSavedPointIds: [...outbound],
-      outboundSavedPointDeletionIds: [...outboundDeletions],
+      outboundIds: [...outbound],
+      outboundDeletionIds: [...outboundDeletions],
     })
     requestSync("saved-point-update")
     return saved
@@ -589,30 +549,26 @@ export async function pushSavedPointUpdate(
 
 /** Queue a local deletion and try to propagate its tombstone immediately. */
 export async function pushSavedPointDeletion(id: string): Promise<void> {
-  const state = (await loadSyncState()) ?? {
-    cursor: 0,
-    lastSyncAt: 0,
-    serverHashes: [],
-  }
-  const outbound = new Set(state.outboundSavedPointIds ?? [])
-  const outboundDeletions = new Set(state.outboundSavedPointDeletionIds ?? [])
+  const state = (await loadSavedPointSyncState()) ?? emptySavedPointSyncState()
+  const outbound = new Set(state.outboundIds)
+  const outboundDeletions = new Set(state.outboundDeletionIds)
   outbound.delete(id)
   outboundDeletions.add(id)
-  await saveSyncState({
+  await saveSavedPointSyncState({
     ...state,
-    outboundSavedPointIds: [...outbound],
-    outboundSavedPointDeletionIds: [...outboundDeletions],
+    outboundIds: [...outbound],
+    outboundDeletionIds: [...outboundDeletions],
   })
   if (!canSync()) return
   try {
     const deletedAt = await deleteSavedPointOnServer(id)
     outboundDeletions.delete(id)
-    await saveSyncState({
+    await saveSavedPointSyncState({
       ...state,
-      outboundSavedPointIds: [...outbound],
-      outboundSavedPointDeletionIds: [...outboundDeletions],
-      appliedSavedPointTombstones: {
-        ...(state.appliedSavedPointTombstones ?? {}),
+      outboundIds: [...outbound],
+      outboundDeletionIds: [...outboundDeletions],
+      appliedTombstones: {
+        ...state.appliedTombstones,
         [id]: deletedAt,
       },
     })
@@ -622,17 +578,19 @@ export async function pushSavedPointDeletion(id: string): Promise<void> {
   }
 }
 
-/** Push a same-geometry metadata edit without waiting for manifest diffing. */
+/** Compatibility facade for callers that already committed a local update. */
 export async function pushActivityUpdate(
   activity: ParsedActivity
 ): Promise<void> {
-  if (!canSync() || !activity.contentHash) return
-  try {
-    await uploadActivity(activity)
-    requestSync("activity-update")
-  } catch (err) {
-    console.warn("[sync] failed to propagate activity update:", err)
-  }
+  if (!isServerEnabled || !activity.contentHash) return
+  const item = createActivityUploadOutboxItem(
+    activity,
+    createUuid(),
+    activityLibrary.getSnapshot().revision
+  )
+  if (!item) return
+  await activitySyncRepository.enqueueOutbox(item)
+  requestSync("activity-update")
 }
 
 /**
@@ -642,30 +600,15 @@ export async function pushActivityUpdate(
 export async function pushActivityDeletion(
   activity: ParsedActivity
 ): Promise<void> {
-  if (!canSync() || !activity.contentHash) return
-  try {
-    const deletedAt = await syncTransport.deleteActivity(activity.contentHash)
-    // Record our own tombstone as already applied. Without this the next sync
-    // reads it back out of the manifest as news and deletes the activity again —
-    // including a copy the user has deliberately re-imported since.
-    await recordAppliedTombstone(activity.contentHash, deletedAt)
-  } catch (err) {
-    console.warn("[sync] failed to propagate deletion:", err)
-  }
-}
-
-async function recordAppliedTombstone(
-  contentHash: string,
-  deletedAt: number
-): Promise<void> {
-  const state = await loadActivitySyncState()
-  await activitySyncRepository.saveState({
-    ...state,
-    appliedTombstones: {
-      ...(state.appliedTombstones ?? {}),
-      [contentHash]: deletedAt,
-    },
-  })
+  if (!isServerEnabled || !activity.contentHash) return
+  const item = createActivityDeleteOutboxItem(
+    activity,
+    createUuid(),
+    activityLibrary.getSnapshot().revision
+  )
+  if (!item) return
+  await activitySyncRepository.enqueueOutbox(item)
+  requestSync("activity-deletion")
 }
 
 /**

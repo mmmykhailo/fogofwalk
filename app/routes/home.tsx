@@ -44,6 +44,8 @@ import {
 import { ActivityImportService } from "~/lib/activities/import/service"
 import type { LibraryCommit } from "~/lib/activities/libraryEvents"
 import { createUuid } from "~/lib/uuid"
+import { createActivityUploadOutboxItem } from "~/lib/server/sync/activityEffects"
+import { createActivityDeleteOutboxItem } from "~/lib/server/sync/activityEffects"
 import { buildLapActivity, lapSubtitle } from "~/lib/laps"
 import { processPhotoFiles } from "~/lib/photos"
 import {
@@ -69,7 +71,6 @@ import { initAuth, useAuth } from "~/lib/server/authStore"
 import { apiUrl, isServerEnabled } from "~/lib/server/config"
 import {
   ignoreActivityLocally,
-  pushActivityDeletion,
   requestSync,
   setSyncChangeHandler,
   startSyncScheduler,
@@ -248,7 +249,21 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
     const importService = new ActivityImportService({
       commit: (operationId, activities) =>
         activityLibrary
-          .dispatch({ type: "import", operationId, activities })
+          .dispatch(
+            { type: "import", operationId, activities },
+            {
+              outbox: isServerEnabled
+                ? activities.flatMap((activity) => {
+                    const item = createActivityUploadOutboxItem(
+                      activity,
+                      operationId,
+                      activityLibrary.getSnapshot().revision
+                    )
+                    return item ? [item] : []
+                  })
+                : [],
+            }
+          )
           .then((result) => {
             commitState.value = result
             return result
@@ -315,17 +330,34 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
 
   if (intent === "delete-activity") {
     const activityId = formData.get("activityId") as string
+    const deleteEverywhere = formData.get("alsoOnServer") !== "0"
 
     await initializeActivityLibrary()
 
     // Captured before the filter — the content hash is what the server keys on.
     const deletedActivity = mapStore.activities.find((t) => t.id === activityId)
 
-    await activityLibrary.dispatch({
-      type: "delete",
-      operationId: createUuid(),
-      activityId,
-    })
+    const operationId = createUuid()
+    await activityLibrary.dispatch(
+      {
+        type: "delete",
+        operationId,
+        activityId,
+      },
+      {
+        outbox:
+          deleteEverywhere && isServerEnabled && deletedActivity
+            ? (() => {
+                const item = createActivityDeleteOutboxItem(
+                  deletedActivity,
+                  operationId,
+                  activityLibrary.getSnapshot().revision
+                )
+                return item ? [item] : []
+              })()
+            : [],
+      }
+    )
     // Recompute derived values for the committed survivor set. This projection
     // is intentionally separate from the canonical delete transaction.
     await populateUniqueDistances(mapStore.activities)
@@ -358,10 +390,7 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
         // not to download it back on the next sync.
         await ignoreActivityLocally(deletedActivity)
         suspendAutoSync("local-only-delete")
-      } else {
-        // Writes the tombstone that removes it from the user's other devices.
-        await pushActivityDeletion(deletedActivity)
-      }
+      } else requestSync("activity-deletion")
     }
 
     return {

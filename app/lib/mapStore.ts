@@ -16,6 +16,8 @@ import { pathsForActivity } from "~shared/activityContract"
 import { ActivityLibrary } from "~/lib/activities/library"
 import type { LibrarySnapshot } from "~/lib/activities/libraryEvents"
 import { createUuid } from "~/lib/uuid"
+import { isServerEnabled } from "~/lib/server/config"
+import { createActivityUploadOutboxItem } from "~/lib/server/sync/activityEffects"
 
 // ─── Map position persistence (localStorage — synchronous, survives page unload) ──
 
@@ -236,9 +238,7 @@ export function startFogRun(): number {
 }
 
 /** Posts a versioned request to the fog worker, stamping the current run id. */
-export function postToFogWorker(
-  msg: FogWorkerCommand
-): boolean {
+export function postToFogWorker(msg: FogWorkerCommand): boolean {
   if (msg.type === "PROCESS_ACTIVITIES") {
     const worker = mapStore.worker
     if (!worker) return false
@@ -268,9 +268,7 @@ export function postToFogWorker(
         id: activity.id,
         name: activity.name,
         coordinates: activity.coordinates,
-        ...(activity.paths
-          ? { paths: pathsForActivity(activity) }
-          : {}),
+        ...(activity.paths ? { paths: pathsForActivity(activity) } : {}),
       })),
     }
     try {
@@ -376,11 +374,26 @@ export async function ingestActivities(
   newActivities: ParsedActivity[]
 ): Promise<ParsedActivity[]> {
   await initializeActivityLibrary()
-  const result = await activityLibrary.dispatch({
-    type: "import",
-    operationId: createUuid(),
-    activities: newActivities,
-  })
+  const operationId = createUuid()
+  const result = await activityLibrary.dispatch(
+    {
+      type: "import",
+      operationId,
+      activities: newActivities,
+    },
+    {
+      outbox: isServerEnabled
+        ? newActivities.flatMap((activity) => {
+            const item = createActivityUploadOutboxItem(
+              activity,
+              operationId,
+              activityLibrary.getSnapshot().revision
+            )
+            return item ? [item] : []
+          })
+        : [],
+    }
+  )
   const added = result.change.added
   if (added.length === 0) return added
 

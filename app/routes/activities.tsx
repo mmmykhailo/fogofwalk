@@ -9,7 +9,9 @@ import {
 } from "~/lib/mapStore"
 import { sortActivitiesNewestFirst } from "~/lib/statsAggregator"
 import { isActivityType } from "~/lib/activityType"
-import { pushActivityUpdate } from "~/lib/server/syncEngine"
+import { isServerEnabled } from "~/lib/server/config"
+import { requestSync } from "~/lib/server/syncEngine"
+import { createActivityUploadOutboxItem } from "~/lib/server/sync/activityEffects"
 import { createUuid } from "~/lib/uuid"
 import type { ParsedActivity } from "~/types/activities"
 import type { Route } from "./+types/activities"
@@ -36,12 +38,23 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
     ...activity,
     activityType,
   }
-  await activityLibrary.dispatch({
-    type: "applyRemote",
-    operationId: createUuid(),
-    changes: [{ type: "upsert", activity: updatedActivity }],
-  })
-  await pushActivityUpdate(updatedActivity)
+  const operationId = createUuid()
+  const outboxItem = isServerEnabled
+    ? createActivityUploadOutboxItem(
+        updatedActivity,
+        operationId,
+        activityLibrary.getSnapshot().revision
+      )
+    : null
+  await activityLibrary.dispatch(
+    {
+      type: "applyRemote",
+      operationId,
+      changes: [{ type: "upsert", activity: updatedActivity }],
+    },
+    { outbox: outboxItem ? [outboxItem] : [] }
+  )
+  requestSync("activity-type-update")
   return { ok: true as const, activityId, activityType }
 }
 

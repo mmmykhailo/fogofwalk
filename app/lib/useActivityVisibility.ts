@@ -1,7 +1,9 @@
 import { useCallback, useRef, useState } from "react"
 import type { ParsedActivity } from "~/types/activities"
-import { updateActivityVisibility } from "~/lib/server/activityVisibility"
 import { canSync } from "~/lib/server/authStore"
+import { isServerEnabled } from "~/lib/server/config"
+import { requestSync } from "~/lib/server/syncEngine"
+import { createActivityUploadOutboxItem } from "~/lib/server/sync/activityEffects"
 import { activityLibrary, initializeActivityLibrary } from "~/lib/mapStore"
 import { createUuid } from "~/lib/uuid"
 
@@ -15,8 +17,8 @@ interface UseActivityVisibilityResult {
 
 /**
  * Debounced public/private toggle for a single activity. Optimistically updates
- * the local activity object and persists it to IndexedDB; the server patch is
- * delayed so rapid toggles do not fire multiple requests.
+ * the local activity object and queues the full content-addressed upload after
+ * the canonical library commit; rapid toggles coalesce before that commit.
  *
  * No-ops when the user is not signed in for sync or the activity has no content
  * hash (and therefore no server row to update).
@@ -53,20 +55,24 @@ export function useActivityVisibility(
             .getSnapshot()
             .activities.find((item) => item.id === current.activity.id)
           if (!canonical?.contentHash) return
-          await updateActivityVisibility(
-            canonical.contentHash,
-            current.isPublic
+          const operationId = createUuid()
+          const updated = { ...canonical, isPublic: current.isPublic }
+          const outboxItem = isServerEnabled
+            ? createActivityUploadOutboxItem(
+                updated,
+                operationId,
+                activityLibrary.getSnapshot().revision
+              )
+            : null
+          const result = await activityLibrary.dispatch(
+            {
+              type: "applyRemote",
+              operationId,
+              changes: [{ type: "upsert", activity: updated }],
+            },
+            { outbox: outboxItem ? [outboxItem] : [] }
           )
-          const result = await activityLibrary.dispatch({
-            type: "applyRemote",
-            operationId: createUuid(),
-            changes: [
-              {
-                type: "upsert",
-                activity: { ...canonical, isPublic: current.isPublic },
-              },
-            ],
-          })
+          requestSync("activity-visibility-update")
           onUpdated?.(
             result.change.updated[0]?.id ?? canonical.id,
             current.isPublic

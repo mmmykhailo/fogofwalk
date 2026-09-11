@@ -17,6 +17,11 @@ import {
   type SyncRepository,
 } from "./repository"
 import {
+  hasLocalActivityEffectSource,
+  type LocalActivityDeletePayload,
+  type LocalActivityUploadPayload,
+} from "./activityEffects"
+import {
   isCursorIntentReady,
   planActivitySync,
   type LocalActivityMetadata,
@@ -101,6 +106,7 @@ class PermanentSyncEffectError extends Error {
 type ActivityEffectPayload =
   | {
       kind: "upload"
+      source?: "local"
       intentId: string
       contentHash: string
       activityId: string
@@ -127,12 +133,30 @@ type ActivityEffectPayload =
       deletedAt: number
       libraryRevision: number
     }
+  | LocalActivityDeletePayload
 
 interface ExecutedPage {
   completedIntentIds: Set<string>
   completions: { id: string; leaseId: string }[]
   changes: RemoteChange[]
+  appliedTombstones: { contentHash: string; deletedAt: number }[]
+  addedServerHashes: string[]
+  removedServerHashes: string[]
   failures: SyncEffectFailure[]
+}
+
+interface EffectExecution {
+  change: RemoteChange | null
+  appliedTombstone?: { contentHash: string; deletedAt: number }
+  addedServerHash?: string
+  removedServerHash?: string
+}
+
+interface EffectWork {
+  item: SyncOutboxItem
+  intentId: string
+  operation: SyncOutboxOperation
+  contentHash?: string
 }
 
 function clone<T>(value: T): T {
@@ -260,6 +284,11 @@ function intentFromPayload(payload: unknown): ActivityEffectPayload {
         "The queued upload effect is malformed."
       )
     }
+    if (candidate.source !== undefined && candidate.source !== "local") {
+      throw new PermanentSyncEffectError(
+        "The queued upload effect has an invalid source."
+      )
+    }
     return candidate as ActivityEffectPayload
   }
   if (candidate.kind === "download" || candidate.kind === "metadata") {
@@ -275,6 +304,18 @@ function intentFromPayload(payload: unknown): ActivityEffectPayload {
     typeof candidate.deletedAt === "number" &&
     Number.isFinite(candidate.deletedAt)
   ) {
+    return candidate as ActivityEffectPayload
+  }
+  if (candidate.kind === "local-delete") {
+    if (
+      candidate.source !== "local" ||
+      typeof candidate.intentId !== "string" ||
+      typeof candidate.contentHash !== "string"
+    ) {
+      throw new PermanentSyncEffectError(
+        "The queued local deletion effect is malformed."
+      )
+    }
     return candidate as ActivityEffectPayload
   }
   throw new PermanentSyncEffectError("The queued sync effect is malformed.")
@@ -424,6 +465,37 @@ function stateAfterPage(
   }
 }
 
+function applyEffectState(
+  base: SyncState,
+  result: Pick<
+    ExecutedPage,
+    "addedServerHashes" | "removedServerHashes" | "appliedTombstones"
+  >
+): SyncState {
+  const serverHashes = new Set(base.serverHashes)
+  for (const hash of result.removedServerHashes) serverHashes.delete(hash)
+  for (const hash of result.addedServerHashes) serverHashes.add(hash)
+
+  const appliedTombstones = new Map(
+    Object.entries(base.appliedTombstones ?? {})
+  )
+  for (const tombstone of result.appliedTombstones) {
+    const current = appliedTombstones.get(tombstone.contentHash)
+    if (current === undefined || tombstone.deletedAt > current) {
+      appliedTombstones.set(tombstone.contentHash, tombstone.deletedAt)
+    }
+  }
+
+  return {
+    ...base,
+    serverHashes: [...serverHashes].sort(),
+    appliedTombstones: tombstonesWithinBoundary(
+      Object.fromEntries(appliedTombstones),
+      base.cursor
+    ),
+  }
+}
+
 export class ActivitySyncExecutor {
   private readonly now: () => number
   private readonly random: () => number
@@ -454,6 +526,26 @@ export class ActivitySyncExecutor {
     const deletedIds: string[] = []
     const failures: SyncEffectFailure[] = []
 
+    const localResult = await this.executeLocalOutbox()
+    if (
+      localResult.completions.length > 0 ||
+      localResult.appliedTombstones.length > 0 ||
+      localResult.addedServerHashes.length > 0 ||
+      localResult.removedServerHashes.length > 0
+    ) {
+      const committed = await this.options.repository.commitStateAndOutbox({
+        state: applyEffectState(state, localResult),
+        complete: localResult.completions,
+      })
+      if (!committed) {
+        throw new Error(
+          "The sync lease changed before local effects were committed."
+        )
+      }
+      state = applyEffectState(state, localResult)
+    }
+    failures.push(...localResult.failures)
+
     for (;;) {
       if (pages >= this.maxPages) {
         throw new SyncExecutorProtocolError(
@@ -472,7 +564,10 @@ export class ActivitySyncExecutor {
         throw new SyncExecutorProtocolError(plan.diagnostics[0]!.message)
       }
 
-      const pageResult = await this.executePage(plan)
+      const pageResult = await this.executePage(
+        plan,
+        new Set(localResult.addedServerHashes)
+      )
       const required = requiredIntentIds(plan)
       const requiredFailed = [...required].some(
         (intentId) => !pageResult.completedIntentIds.has(intentId)
@@ -498,8 +593,9 @@ export class ActivitySyncExecutor {
         page.deletions,
         this.now()
       )
+      const stateWithEffects = applyEffectState(nextState, pageResult)
       const committed = await this.options.repository.commitStateAndOutbox({
-        state: nextState,
+        state: stateWithEffects,
         complete: pageResult.completions,
       })
       if (!committed) {
@@ -515,9 +611,9 @@ export class ActivitySyncExecutor {
         done: pageResult.completedIntentIds.size,
         total: plan.intents.filter((intent) => effectOperation(intent) !== null)
           .length,
-        cursor: nextState.cursor,
+        cursor: stateWithEffects.cursor,
       })
-      state = nextState
+      state = stateWithEffects
 
       if (requiredFailed || !page.hasMore || plan.cursor.type === "hold") {
         return {
@@ -536,7 +632,8 @@ export class ActivitySyncExecutor {
 
   private async enqueueEffects(
     plan: SyncPlan,
-    libraryRevision: number
+    libraryRevision: number,
+    alreadyUploaded: ReadonlySet<string> = new Set()
   ): Promise<Map<string, SyncOutboxItem>> {
     const existing = new Map(
       (await this.options.repository.loadOutbox()).map((item) => [
@@ -546,6 +643,12 @@ export class ActivitySyncExecutor {
     )
     const items = new Map<string, SyncOutboxItem>()
     for (const intent of plan.intents) {
+      if (
+        intent.type === "upload" &&
+        alreadyUploaded.has(intent.contentHash)
+      ) {
+        continue
+      }
       const operation = effectOperation(intent)
       const payload = effectPayload(intent, libraryRevision)
       if (!operation || !payload) continue
@@ -563,29 +666,84 @@ export class ActivitySyncExecutor {
     return items
   }
 
-  private async executePage(plan: SyncPlan): Promise<ExecutedPage> {
+  private async executePage(
+    plan: SyncPlan,
+    alreadyUploaded: ReadonlySet<string> = new Set()
+  ): Promise<ExecutedPage> {
     const libraryRevision = this.options.library.getSnapshot().revision
-    const items = await this.enqueueEffects(plan, libraryRevision)
-    const completedIntentIds = new Set<string>()
-    const completions: { id: string; leaseId: string }[] = []
-    const changes: RemoteChange[] = []
-    const failures: SyncEffectFailure[] = []
+    const items = await this.enqueueEffects(
+      plan,
+      libraryRevision,
+      alreadyUploaded
+    )
     const effectIntents = plan.intents.filter(
       (intent) => effectOperation(intent) !== null
     )
-
+    const work: EffectWork[] = []
+    const completedWithoutWork: string[] = []
     for (const intent of effectIntents) {
       const item = items.get(intent.intentId)
-      if (!item) continue
+      const operation = effectOperation(intent)
+      if (intent.type === "upload" && alreadyUploaded.has(intent.contentHash)) {
+        completedWithoutWork.push(intent.intentId)
+        continue
+      }
+      if (item && operation) {
+        work.push({
+          item,
+          intentId: intent.intentId,
+          operation,
+          contentHash: "contentHash" in intent ? intent.contentHash : undefined,
+        })
+      }
+    }
+    return this.executeEffects(work, completedWithoutWork)
+  }
+
+  private async executeLocalOutbox(): Promise<ExecutedPage> {
+    const work: EffectWork[] = []
+    for (const item of await this.options.repository.loadOutbox()) {
+      if (!hasLocalActivityEffectSource(item.payload)) continue
+      const payload = item.payload as Partial<
+        LocalActivityUploadPayload | LocalActivityDeletePayload
+      >
+      work.push({
+        item,
+        intentId:
+          typeof payload.intentId === "string" ? payload.intentId : item.id,
+        operation: item.operation,
+        contentHash:
+          typeof payload.contentHash === "string"
+            ? payload.contentHash
+            : undefined,
+      })
+    }
+    return this.executeEffects(work)
+  }
+
+  private async executeEffects(
+    work: readonly EffectWork[],
+    completedWithoutWork: readonly string[] = []
+  ): Promise<ExecutedPage> {
+    const completedIntentIds = new Set(completedWithoutWork)
+    const completions: { id: string; leaseId: string }[] = []
+    const changes: RemoteChange[] = []
+    const appliedTombstones: { contentHash: string; deletedAt: number }[] = []
+    const addedServerHashes: string[] = []
+    const removedServerHashes: string[] = []
+    const failures: SyncEffectFailure[] = []
+
+    for (const entry of work) {
+      const { item, intentId, operation, contentHash } = entry
       if (item.status === "complete") {
-        completedIntentIds.add(intent.intentId)
+        completedIntentIds.add(intentId)
         continue
       }
       if (item.status === "permanent") {
         failures.push({
-          intentId: intent.intentId,
-          operation: intentOperation(intent.intentId, plan.intents),
-          contentHash: "contentHash" in intent ? intent.contentHash : undefined,
+          intentId,
+          operation,
+          contentHash,
           message:
             item.lastFailure?.message ?? "This sync effect was rejected.",
           retryable: false,
@@ -594,9 +752,9 @@ export class ActivitySyncExecutor {
       }
       if (item.status === "in-flight" && (item.leaseUntil ?? 0) > this.now()) {
         failures.push({
-          intentId: intent.intentId,
-          operation: intentOperation(intent.intentId, plan.intents),
-          contentHash: "contentHash" in intent ? intent.contentHash : undefined,
+          intentId,
+          operation,
+          contentHash,
           message: "This sync effect is leased by another tab.",
           retryable: true,
           retryAt: item.leaseUntil,
@@ -605,9 +763,9 @@ export class ActivitySyncExecutor {
       }
       if (item.status === "retryable" && item.availableAt > this.now()) {
         failures.push({
-          intentId: intent.intentId,
-          operation: intentOperation(intent.intentId, plan.intents),
-          contentHash: "contentHash" in intent ? intent.contentHash : undefined,
+          intentId,
+          operation,
+          contentHash,
           message:
             item.lastFailure?.message ??
             "This sync effect is waiting to retry.",
@@ -626,9 +784,9 @@ export class ActivitySyncExecutor {
       })
       if (!claimed || !claimed.leaseId) {
         failures.push({
-          intentId: intent.intentId,
-          operation: intentOperation(intent.intentId, plan.intents),
-          contentHash: "contentHash" in intent ? intent.contentHash : undefined,
+          intentId,
+          operation,
+          contentHash,
           message: "This sync effect could not acquire a lease.",
           retryable: true,
         })
@@ -636,16 +794,22 @@ export class ActivitySyncExecutor {
       }
 
       try {
-        const change = await this.executeEffect(claimed)
-        if (change) changes.push(change)
-        completedIntentIds.add(intent.intentId)
+        const result = await this.executeEffect(claimed)
+        if (result.change) changes.push(result.change)
+        if (result.appliedTombstone)
+          appliedTombstones.push(result.appliedTombstone)
+        if (result.addedServerHash)
+          addedServerHashes.push(result.addedServerHash)
+        if (result.removedServerHash)
+          removedServerHashes.push(result.removedServerHash)
+        completedIntentIds.add(intentId)
         completions.push({ id: claimed.id, leaseId: claimed.leaseId })
       } catch (error) {
         const retryable = retryableError(error)
         const failure: SyncEffectFailure = {
-          intentId: intent.intentId,
+          intentId,
           operation: claimed.operation,
-          contentHash: "contentHash" in intent ? intent.contentHash : undefined,
+          contentHash,
           message: safeErrorMessage(error),
           retryable,
           retryAt: retryAt(error, claimed.attempts, this.now(), this.random),
@@ -668,12 +832,18 @@ export class ActivitySyncExecutor {
       }
     }
 
-    return { completedIntentIds, completions, changes, failures }
+    return {
+      completedIntentIds,
+      completions,
+      changes,
+      appliedTombstones,
+      addedServerHashes,
+      removedServerHashes,
+      failures,
+    }
   }
 
-  private async executeEffect(
-    item: SyncOutboxItem
-  ): Promise<RemoteChange | null> {
+  private async executeEffect(item: SyncOutboxItem): Promise<EffectExecution> {
     const payload = intentFromPayload(item.payload)
     const snapshot = this.options.library.getSnapshot()
     switch (payload.kind) {
@@ -683,7 +853,7 @@ export class ActivitySyncExecutor {
           payload.activityId,
           payload.contentHash
         )
-        if (!activity) return null
+        if (!activity) return { change: null }
         if (activity.contentHash !== payload.contentHash) {
           throw new PermanentSyncEffectError(
             "The queued upload no longer matches the local activity."
@@ -692,11 +862,15 @@ export class ActivitySyncExecutor {
         try {
           await this.options.transport.uploadActivity(activity)
         } catch (error) {
-          if (error instanceof ApiRequestError && error.status === 409)
-            return null
+          if (error instanceof ApiRequestError && error.status === 409) {
+            return {
+              change: null,
+              addedServerHash: payload.contentHash,
+            }
+          }
           throw error
         }
-        return null
+        return { change: null, addedServerHash: payload.contentHash }
       }
       case "download": {
         const result = await this.options.transport.downloadActivity(
@@ -718,28 +892,45 @@ export class ActivitySyncExecutor {
           startSunPhase:
             payload.remote.startSunPhase ?? result.payload.startSunPhase,
         }
-        return { type: "upsert", activity }
+        return { change: { type: "upsert", activity } }
       }
       case "metadata": {
         const local = activityFor(snapshot, undefined, payload.contentHash)
-        if (!local) return null
+        if (!local) return { change: null }
         return {
-          type: "upsert",
-          activity: {
-            ...local,
-            name: payload.remote.name,
-            isPublic: payload.remote.isPublic,
-            activityType: payload.remote.activityType,
-            startSunPhase: payload.remote.startSunPhase,
+          change: {
+            type: "upsert",
+            activity: {
+              ...local,
+              name: payload.remote.name,
+              isPublic: payload.remote.isPublic,
+              activityType: payload.remote.activityType,
+              startSunPhase: payload.remote.startSunPhase,
+            },
           },
         }
       }
       case "tombstone":
         return {
-          type: "delete",
-          contentHash: payload.contentHash,
-          deletedAt: payload.deletedAt,
+          change: {
+            type: "delete",
+            contentHash: payload.contentHash,
+            deletedAt: payload.deletedAt,
+          },
         }
+      case "local-delete": {
+        const deletedAt = await this.options.transport.deleteActivity(
+          payload.contentHash
+        )
+        return {
+          change: null,
+          appliedTombstone: {
+            contentHash: payload.contentHash,
+            deletedAt,
+          },
+          removedServerHash: payload.contentHash,
+        }
+      }
     }
   }
 }

@@ -650,12 +650,122 @@ export interface SyncState {
   outboundSavedPointDeletionIds?: string[]
 }
 
+/** Sync state owned exclusively by the saved-point reconciler. */
+export interface SavedPointSyncState {
+  /** Saved-point manifest cursor, independent from the activity cursor. */
+  cursor: number
+  lastSyncAt: number
+  /** Known remote saved-point ids retained across incremental windows. */
+  serverPointIds: string[]
+  /** Saved-point tombstones already applied locally, id → deletedAt. */
+  appliedTombstones: Record<string, number>
+  /** Local creates/edits awaiting a successful upsert. */
+  outboundIds: string[]
+  /** Local deletions awaiting a successful tombstone. */
+  outboundDeletionIds: string[]
+}
+
+function isSavedPointSyncState(value: unknown): value is SavedPointSyncState {
+  if (!value || typeof value !== "object") return false
+  const candidate = value as Partial<SavedPointSyncState>
+  const isStringArray = (input: unknown): input is string[] =>
+    Array.isArray(input) && input.every((entry) => typeof entry === "string")
+  const isTombstoneMap = (input: unknown): input is Record<string, number> =>
+    typeof input === "object" &&
+    input !== null &&
+    !Array.isArray(input) &&
+    Object.values(input).every(
+      (deletedAt) =>
+        typeof deletedAt === "number" &&
+        Number.isFinite(deletedAt) &&
+        deletedAt >= 0
+    )
+  return (
+    typeof candidate.cursor === "number" &&
+    Number.isFinite(candidate.cursor) &&
+    candidate.cursor >= 0 &&
+    typeof candidate.lastSyncAt === "number" &&
+    Number.isFinite(candidate.lastSyncAt) &&
+    candidate.lastSyncAt >= 0 &&
+    isStringArray(candidate.serverPointIds) &&
+    isTombstoneMap(candidate.appliedTombstones) &&
+    isStringArray(candidate.outboundIds) &&
+    isStringArray(candidate.outboundDeletionIds)
+  )
+}
+
+export function migrateSavedPointSyncState(
+  state: SyncState
+): SavedPointSyncState | null {
+  if (
+    state.savedPointsCursor === undefined &&
+    state.serverSavedPointIds === undefined &&
+    state.appliedSavedPointTombstones === undefined &&
+    state.outboundSavedPointIds === undefined &&
+    state.outboundSavedPointDeletionIds === undefined
+  ) {
+    return null
+  }
+  return {
+    cursor: state.savedPointsCursor ?? 0,
+    lastSyncAt: state.lastSyncAt,
+    serverPointIds: [...(state.serverSavedPointIds ?? [])],
+    appliedTombstones: {
+      ...(state.appliedSavedPointTombstones ?? {}),
+    },
+    outboundIds: [...(state.outboundSavedPointIds ?? [])],
+    outboundDeletionIds: [...(state.outboundSavedPointDeletionIds ?? [])],
+  }
+}
+
+const EMPTY_SAVED_POINT_SYNC_STATE: SavedPointSyncState = {
+  cursor: 0,
+  lastSyncAt: 0,
+  serverPointIds: [],
+  appliedTombstones: {},
+  outboundIds: [],
+  outboundDeletionIds: [],
+}
+
 export async function saveSyncState(state: SyncState): Promise<void> {
   return prefSet("syncState", state)
 }
 
 export async function loadSyncState(): Promise<SyncState | null> {
   return prefGet<SyncState>("syncState")
+}
+
+export async function saveSavedPointSyncState(
+  state: SavedPointSyncState
+): Promise<void> {
+  return prefSet("savedPointSyncState", state)
+}
+
+/**
+ * Load the dedicated saved-point state, migrating the old shared preference
+ * once when necessary. The migration is intentionally one-way: activity sync
+ * never writes this key and saved-point sync never writes `syncState`.
+ */
+export async function loadSavedPointSyncState(): Promise<SavedPointSyncState | null> {
+  const current = await prefGet<SavedPointSyncState>("savedPointSyncState")
+  if (current && isSavedPointSyncState(current)) return current
+
+  const legacy = await prefGet<SyncState>("syncState")
+  if (legacy) {
+    const migrated = migrateSavedPointSyncState(legacy)
+    if (migrated) {
+      await prefSet("savedPointSyncState", migrated)
+      return migrated
+    }
+  }
+  return null
+}
+
+export function emptySavedPointSyncState(): SavedPointSyncState {
+  return {
+    ...EMPTY_SAVED_POINT_SYNC_STATE,
+    appliedTombstones: {},
+  }
 }
 
 export async function clearSyncState(): Promise<void> {
@@ -665,6 +775,7 @@ export async function clearSyncState(): Promise<void> {
     const tx = db.transaction(["sync-state", "prefs"], "readwrite")
     tx.objectStore("sync-state").delete("default")
     tx.objectStore("prefs").delete("syncState")
+    tx.objectStore("prefs").delete("savedPointSyncState")
     await new Promise<void>((resolve, reject) => {
       tx.oncomplete = () => resolve()
       tx.onerror = () => reject(tx.error)
