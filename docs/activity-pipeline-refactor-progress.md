@@ -1,6 +1,6 @@
 # Activity pipeline refactor progress
 
-Status: in progress
+Status: implementation complete; deployment-dependent gates remain
 
 This file is the continuation point for the implementation of
 `activity-pipeline-refactor-plan.md`. Each completed slice is committed on its
@@ -12,12 +12,11 @@ untouched.
 
 - Branch: `refactor/fog-processing`
 - Started: 2026-09-11
-- Current phase: completion audit across Phases 0–8
-- Last completed commit: `359ca9d test saved point account isolation`
-- Current working slice: close the documented implementation audit and handoff
-  with exact verification results
-- Next action: commit this tracker/ADR update, then leave only the explicitly
-  environment-dependent Phase 0 and IndexedDB fault-injection gaps visible
+- Current phase: implementation handoff across Phases 0–8
+- Last completed commit: `f787515 record refactor verification`
+- Current working slice: none; implementation and local verification are complete
+- Next action: if continuing, capture the failing browser console/network trace
+  for the unreproduced blank-body report or run the production rollout gates
 
 ## A1 activity contract slice
 
