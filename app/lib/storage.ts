@@ -44,7 +44,7 @@ const UNIQUE_DISTANCE_VERSION = 1
 // ─── DB singleton ──────────────────────────────────────────────────────────────
 
 const DB_NAME = "fogofwalk"
-const DB_VERSION = 4
+const DB_VERSION = 6
 
 let dbPromise: Promise<IDBDatabase | null> | null = null
 
@@ -93,6 +93,37 @@ function getDb(): Promise<IDBDatabase | null> {
         }
         if (!db.objectStoreNames.contains("library-meta")) {
           db.createObjectStore("library-meta", { keyPath: "key" })
+        }
+        if (!db.objectStoreNames.contains("sync-state")) {
+          db.createObjectStore("sync-state", { keyPath: "id" })
+        }
+        if (!db.objectStoreNames.contains("sync-outbox")) {
+          const outboxStore = db.createObjectStore("sync-outbox", {
+            keyPath: "id",
+          })
+          outboxStore.createIndex("dedupeKey", "dedupeKey", { unique: true })
+          outboxStore.createIndex("statusAvailableAt", [
+            "status",
+            "availableAt",
+          ])
+          outboxStore.createIndex("leaseUntil", "leaseUntil")
+        } else {
+          const outboxStore = tx.objectStore("sync-outbox")
+          if (!outboxStore.indexNames.contains("dedupeKey")) {
+            outboxStore.createIndex("dedupeKey", "dedupeKey", { unique: true })
+          }
+          if (outboxStore.indexNames.contains("stateAvailableAt")) {
+            outboxStore.deleteIndex("stateAvailableAt")
+          }
+          if (!outboxStore.indexNames.contains("statusAvailableAt")) {
+            outboxStore.createIndex("statusAvailableAt", [
+              "status",
+              "availableAt",
+            ])
+          }
+          if (!outboxStore.indexNames.contains("leaseUntil")) {
+            outboxStore.createIndex("leaseUntil", "leaseUntil")
+          }
         }
       }
 
@@ -492,9 +523,9 @@ export async function saveFogCache(cache: FogCache): Promise<void> {
 }
 
 export async function loadFogCache(): Promise<FogCache | null> {
-  const cache = await prefGet<
-    Partial<FogCache> & { trackIds?: string[] }
-  >("fogCache")
+  const cache = await prefGet<Partial<FogCache> & { trackIds?: string[] }>(
+    "fogCache"
+  )
   if (!cache) return null
   const activityIds = cache.activityIds ?? cache.trackIds
   if (
@@ -628,7 +659,20 @@ export async function loadSyncState(): Promise<SyncState | null> {
 }
 
 export async function clearSyncState(): Promise<void> {
-  return prefDelete("syncState")
+  const db = await getDb()
+  if (!db) return
+  try {
+    const tx = db.transaction(["sync-state", "prefs"], "readwrite")
+    tx.objectStore("sync-state").delete("default")
+    tx.objectStore("prefs").delete("syncState")
+    await new Promise<void>((resolve, reject) => {
+      tx.oncomplete = () => resolve()
+      tx.onerror = () => reject(tx.error)
+      tx.onabort = () => reject(tx.error)
+    })
+  } catch (err) {
+    console.warn("[storage] clearSyncState failed:", err)
+  }
 }
 
 // ─── Clear all ────────────────────────────────────────────────────────────────
@@ -651,7 +695,7 @@ export async function clearAll(
     clearPhotos(),
     clearSavedPoints(),
     prefDelete("fogCache"),
-    prefDelete("syncState"),
+    clearSyncState(),
     prefDelete("uniqueDistanceState"),
   ])
 }
