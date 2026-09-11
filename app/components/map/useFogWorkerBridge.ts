@@ -19,6 +19,7 @@ import {
   type FogSnapshot,
 } from "~/lib/fog/protocol"
 import { validateFogRenderData } from "~/lib/fog/engine/validate"
+import { createFogWorkerWatchdog } from "~/lib/fog/watchdog"
 
 type ProcessingComplete = () => void
 
@@ -55,6 +56,35 @@ export function useFogWorkerBridge(onProcessingComplete?: ProcessingComplete): {
   useEffect(() => {
     const worker = mapStore.worker
     if (!worker) return
+
+    const watchdog = createFogWorkerWatchdog({
+      onTimeout: (request) => {
+        const active = fogCoordinator.activeRequest
+        if (
+          !active ||
+          active.request.requestId !== request.requestId ||
+          active.request.generation !== request.generation
+        ) {
+          return
+        }
+        recordDiagnostic({
+          subsystem: "worker",
+          operationId: request.requestId,
+          libraryRevision: active.request.libraryRevision,
+          stage: "timeout",
+          itemCount: active.request.activities.length,
+          result: "failed",
+          errorCode: "worker-timeout",
+          retryability: "retryable",
+        })
+        fogCoordinator.handleWorkerFailure(new Error("Fog worker timed out."))
+      },
+    })
+    const watchdogTimer = window.setInterval(() => {
+      const active = fogCoordinator.activeRequest
+      watchdog.observe(active ? active.request : null)
+      watchdog.check()
+    }, 1_000)
 
     const setSnapshotOnMap = (snapshot: FogSnapshot) => {
       if (!isCurrentSnapshot(snapshot)) return false
@@ -114,6 +144,7 @@ export function useFogWorkerBridge(onProcessingComplete?: ProcessingComplete): {
 
       const result = fogCoordinator.handleReply(message)
       if (!result.accepted) return
+      watchdog.observe(fogCoordinator.activeRequest?.request ?? null)
 
       // Replies from an abandoned generation cannot mutate the map, progress,
       // cache, or completion state.
@@ -203,11 +234,22 @@ export function useFogWorkerBridge(onProcessingComplete?: ProcessingComplete): {
       fogCoordinator.handleWorkerFailure(event.error ?? event.message)
     }
     worker.onerror = handleError
+    const handleMessageError = () => {
+      fogCoordinator.handleWorkerFailure(
+        new Error("Fog worker message could not be decoded.")
+      )
+    }
+    worker.onmessageerror = handleMessageError
 
     return () => {
+      window.clearInterval(watchdogTimer)
+      watchdog.observe(null)
       mapStore.isFogWorkerListenerReady = false
       if (worker.onmessage === handleMessage) worker.onmessage = null
       if (worker.onerror === handleError) worker.onerror = null
+      if (worker.onmessageerror === handleMessageError) {
+        worker.onmessageerror = null
+      }
     }
   }, [])
 
