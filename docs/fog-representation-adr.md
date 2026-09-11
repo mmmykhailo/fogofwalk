@@ -44,6 +44,10 @@ closed loop assembled from multiple activities can therefore be filled without
 depending on tile clipping; corridor mode retains the loop interior as fog.
 Disconnected source paths remain separate from the buffer boundary through the
 custom layer, so this representation cannot invent a bridge between them.
+The fill accumulator keeps a coarse spatial index of positive components and
+unions only components whose projected bounds intersect. Disjoint additions do
+not trigger a global union; touched cells are tracked as dirty for the next
+publication.
 
 The scheme has these safety properties:
 
@@ -88,8 +92,8 @@ and 10,000 activity corpora.
 One local Bun run on 2026-09-11 produced the following historical reference numbers. The
 positive-mask time is the cost of packaging already-buffered masks; the
 stencil layer uploads only those positive triangles. “Valid” means valid for the
-positive-mask validator, so accepted positive rows should be valid and the
-intentionally unsafe global-hole reference remains invalid.
+positive-mask validator; the global-hole row remains a historical semantic
+reference and is not a production positive-mask payload.
 
 | Representation           | Median build | p95 build | Heap after run | Features | Rings | Vertices | JSON bytes | Valid |
 | ------------------------ | -----------: | --------: | -------------: | -------: | ----: | -------: | ---------: | ----- |
