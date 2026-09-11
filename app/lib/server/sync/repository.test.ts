@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import {
   createMemorySyncRepository,
+  createMemorySyncRepositoryStorage,
   type SyncOutboxItemInput,
   type SyncOutboxFailure,
 } from "./repository"
@@ -227,5 +228,77 @@ describe("MemorySyncRepository", () => {
     ).toBe(true)
     expect(await repository.releaseSyncLease("tab-a")).toBe(false)
     expect(await repository.releaseSyncLease("tab-b")).toBe(true)
+  })
+
+  test("isolates account state and adopts legacy outbox work once", async () => {
+    const storage = createMemorySyncRepositoryStorage()
+    const legacy = createMemorySyncRepository({ storage, now: () => 100 })
+    const accountA = createMemorySyncRepository({
+      accountId: "account-a",
+      storage,
+      now: () => 100,
+    })
+    const accountB = createMemorySyncRepository({
+      accountId: "account-b",
+      storage,
+      now: () => 100,
+    })
+    const legacyState: SyncState = {
+      cursor: 12,
+      lastSyncAt: 99,
+      serverHashes: ["a".repeat(64)],
+    }
+
+    await legacy.saveState(legacyState)
+    await legacy.enqueueOutbox(baseItem)
+
+    expect(await accountA.loadOutbox()).toEqual([])
+    expect(await accountA.adoptUnscopedOutbox()).toBe(1)
+    expect(await accountA.loadOutbox()).toMatchObject([
+      {
+        id: baseItem.id,
+        accountId: "account-a",
+        status: "pending",
+      },
+    ])
+    expect(await accountB.loadOutbox()).toEqual([])
+    expect(await accountA.loadState()).toEqual(legacyState)
+    expect(await accountB.loadState()).toBeNull()
+
+    const [claim] = await accountA.claimOutbox({ now: 100, leaseMs: 100 })
+    expect(claim).toBeDefined()
+    expect(
+      await accountB.completeOutbox(claim!.id, claim!.leaseId!)
+    ).toBe(false)
+  })
+
+  test("keeps same logical work separate when two accounts enqueue it", async () => {
+    const storage = createMemorySyncRepositoryStorage()
+    const accountA = createMemorySyncRepository({
+      accountId: "account-a",
+      storage,
+    })
+    const accountB = createMemorySyncRepository({
+      accountId: "account-b",
+      storage,
+    })
+
+    const first = await accountA.enqueueOutbox({
+      ...baseItem,
+      id: "account-a-item",
+    })
+    const second = await accountB.enqueueOutbox({
+      ...baseItem,
+      id: "account-b-item",
+    })
+
+    expect(second.id).not.toBe(first.id)
+    expect(await accountA.loadOutbox()).toHaveLength(1)
+    expect(await accountB.loadOutbox()).toHaveLength(1)
+    expect((await accountA.loadOutbox())[0]?.accountId).toBe("account-a")
+    expect((await accountB.loadOutbox())[0]?.accountId).toBe("account-b")
+    expect((await accountA.loadOutbox())[0]?.dedupeKey).not.toBe(
+      (await accountB.loadOutbox())[0]?.dedupeKey
+    )
   })
 })

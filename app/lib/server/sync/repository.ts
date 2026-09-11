@@ -1,6 +1,8 @@
 import { openStorageDatabase, type SyncState } from "~/lib/storage"
 
 const SYNC_STATE_ID = "default"
+const ACCOUNT_STATE_PREFIX = "account:"
+const ACCOUNT_DEDUPE_PREFIX = "account:"
 
 const EMPTY_SYNC_STATE: SyncState = {
   cursor: 0,
@@ -29,6 +31,8 @@ export interface SyncOutboxFailure {
 export interface SyncOutboxItem {
   /** Stable record key. It may differ from dedupeKey after an upsert. */
   id: string
+  /** Account that owns this durable effect; absent means legacy/unclaimed work. */
+  accountId?: string
   /** Logical operation key. Enqueueing it twice updates one record. */
   dedupeKey: string
   operation: SyncOutboxOperation
@@ -102,6 +106,8 @@ export interface SyncRepository {
     leaseId: string,
     failure: SyncOutboxFailure
   ): Promise<SyncOutboxItem | null>
+  /** Attach legacy unscoped work to this account before it can be processed. */
+  adoptUnscopedOutbox(): Promise<number>
 }
 
 interface StoredSyncState extends SyncState {
@@ -116,6 +122,89 @@ function clone<T>(value: T): T {
 function randomId(prefix: string): string {
   const uuid = globalThis.crypto?.randomUUID?.()
   return `${prefix}:${uuid ?? `${Date.now().toString(36)}:${Math.random().toString(36).slice(2)}`}`
+}
+
+function stateId(accountId?: string): string {
+  return accountId ? `${ACCOUNT_STATE_PREFIX}${accountId}` : SYNC_STATE_ID
+}
+
+function accountDedupePrefix(accountId: string): string {
+  return `${ACCOUNT_DEDUPE_PREFIX}${encodeURIComponent(accountId)}:`
+}
+
+function scopedDedupeKey(dedupeKey: string, accountId?: string): string {
+  if (!accountId) return dedupeKey
+  const prefix = accountDedupePrefix(accountId)
+  return dedupeKey.startsWith(prefix) ? dedupeKey : `${prefix}${dedupeKey}`
+}
+
+function unscopedDedupeKey(dedupeKey: string, accountId?: string): string {
+  if (!accountId) return dedupeKey
+  const prefix = accountDedupePrefix(accountId)
+  return dedupeKey.startsWith(prefix) ? dedupeKey.slice(prefix.length) : dedupeKey
+}
+
+function prepareOutboxInput(
+  item: SyncOutboxItemInput,
+  accountId?: string
+): SyncOutboxItemInput {
+  if (!accountId || item.accountId === accountId) return item
+  if (item.accountId && item.accountId !== accountId) {
+    throw new Error("A sync repository cannot enqueue another account's work")
+  }
+  return { ...item, accountId }
+}
+
+function belongsToScope(item: SyncOutboxItem, accountId?: string): boolean {
+  return accountId === undefined || item.accountId === accountId
+}
+
+function rebindOutboxItem(
+  item: SyncOutboxItem,
+  accountId: string
+): SyncOutboxItem {
+  return {
+    ...item,
+    accountId,
+    dedupeKey: scopedDedupeKey(
+      unscopedDedupeKey(item.dedupeKey, item.accountId),
+      accountId
+    ),
+  }
+}
+
+function matchingOutboxItem(
+  items: readonly SyncOutboxItem[],
+  input: SyncOutboxItemInput,
+  accountId?: string
+): SyncOutboxItem | undefined {
+  const prepared = prepareOutboxInput(input, accountId)
+  const key = scopedDedupeKey(prepared.dedupeKey, prepared.accountId)
+  const exact = items.find(
+    (item) => item.dedupeKey === key && belongsToScope(item, accountId)
+  )
+  if (exact || !accountId) return exact
+  // A signed-in mutation can race the first adoption pass. Reuse its legacy
+  // unscoped row instead of creating a second durable effect.
+  return items.find(
+    (item) =>
+      item.accountId === undefined &&
+      item.dedupeKey === unscopedDedupeKey(prepared.dedupeKey, prepared.accountId)
+  )
+}
+
+function mergeOutboxForScope(
+  existing: SyncOutboxItem,
+  input: SyncOutboxItemInput,
+  now: number,
+  accountId?: string
+): SyncOutboxItem {
+  const prepared = prepareOutboxInput(input, accountId)
+  const current =
+    accountId && existing.accountId === undefined
+      ? rebindOutboxItem(existing, accountId)
+      : existing
+  return mergeSyncOutboxItem(current, prepared, now)
 }
 
 function isSyncState(value: unknown): value is SyncState {
@@ -172,7 +261,8 @@ export function normaliseSyncOutboxItem(
   return {
     ...clone(item),
     id: item.id || randomId("outbox"),
-    dedupeKey: item.dedupeKey,
+    ...(item.accountId ? { accountId: item.accountId } : {}),
+    dedupeKey: scopedDedupeKey(item.dedupeKey, item.accountId),
     operation: item.operation,
     payload: clone(item.payload),
     status,
@@ -239,37 +329,69 @@ function transactionResult(transaction: IDBTransaction): Promise<void> {
   })
 }
 
-async function loadLegacySyncState(db: IDBDatabase): Promise<SyncState | null> {
-  const tx = db.transaction(["sync-state", "prefs"], "readwrite")
+async function readStateInTransaction(
+  transaction: IDBTransaction,
+  accountId?: string
+): Promise<SyncState | null> {
+  const stateStore = transaction.objectStore("sync-state")
+  const id = stateId(accountId)
   const dedicated = await requestResult<StoredSyncState | undefined>(
-    tx.objectStore("sync-state").get(SYNC_STATE_ID)
+    stateStore.get(id)
   )
   if (dedicated) {
-    await transactionResult(tx)
     const { id: _id, ...state } = dedicated
     return isSyncState(state) ? clone(state) : null
   }
 
-  const legacy = await requestResult<
-    { key: string; value: unknown } | undefined
-  >(tx.objectStore("prefs").get("syncState"))
-  if (!legacy || !isSyncState(legacy.value)) {
-    await transactionResult(tx)
+  const prefsStore = transaction.objectStore("prefs")
+  if (accountId) {
+    // State written before account scoping is assigned to the first account
+    // that successfully opens it. Removing the legacy record prevents a later
+    // account from inheriting that cursor or tombstone memory.
+    const legacyDedicated = await requestResult<StoredSyncState | undefined>(
+      stateStore.get(SYNC_STATE_ID)
+    )
+    if (legacyDedicated) {
+      const { id: _legacyId, ...legacyState } = legacyDedicated
+      if (isSyncState(legacyState)) {
+        stateStore.put({ id, ...clone(legacyState) })
+        stateStore.delete(SYNC_STATE_ID)
+        return clone(legacyState)
+      }
+    }
+    const legacy = await requestResult<
+      { key: string; value: unknown } | undefined
+    >(prefsStore.get("syncState"))
+    if (legacy && isSyncState(legacy.value)) {
+      const state = clone(legacy.value)
+      stateStore.put({ id, ...state })
+      prefsStore.delete("syncState")
+      return state
+    }
     return null
   }
+
+  const legacy = await requestResult<
+    { key: string; value: unknown } | undefined
+  >(prefsStore.get("syncState"))
+  if (!legacy || !isSyncState(legacy.value)) return null
   const state = clone(legacy.value)
-  tx.objectStore("sync-state").put({ id: SYNC_STATE_ID, ...state })
-  await transactionResult(tx)
+  stateStore.put({ id, ...state })
   return state
 }
 
 export interface IndexedDbSyncRepository extends SyncRepository {}
 
-export function createIndexedDbSyncRepository(): IndexedDbSyncRepository {
+export function createIndexedDbSyncRepository(
+  accountId?: string
+): IndexedDbSyncRepository {
   async function loadState(): Promise<SyncState | null> {
     const db = await openStorageDatabase()
     if (!db) return null
-    return loadLegacySyncState(db)
+    const transaction = db.transaction(["sync-state", "prefs"], "readwrite")
+    const state = await readStateInTransaction(transaction, accountId)
+    await transactionResult(transaction)
+    return state
   }
 
   async function saveState(state: SyncState): Promise<void> {
@@ -287,7 +409,11 @@ export function createIndexedDbSyncRepository(): IndexedDbSyncRepository {
     const byId = new Map(existing.map((item) => [item.id, item]))
     for (const completion of commit.complete) {
       const item = byId.get(completion.id)
-      if (!item || !sameLease(item, completion.leaseId)) {
+      if (
+        !item ||
+        !belongsToScope(item, accountId) ||
+        !sameLease(item, completion.leaseId)
+      ) {
         await transactionResult(tx)
         return false
       }
@@ -295,10 +421,14 @@ export function createIndexedDbSyncRepository(): IndexedDbSyncRepository {
     const now = Date.now()
     const byDedupeKey = new Map(existing.map((item) => [item.dedupeKey, item]))
     for (const item of commit.enqueue ?? []) {
-      const current = byDedupeKey.get(item.dedupeKey)
+      const prepared = prepareOutboxInput(item, accountId)
+      const current = matchingOutboxItem(existing, prepared, accountId)
       const next = current
-        ? mergeSyncOutboxItem(current, item, now)
-        : normaliseSyncOutboxItem(item, now)
+        ? mergeOutboxForScope(current, prepared, now, accountId)
+        : normaliseSyncOutboxItem(prepared, now)
+      if (current && current.dedupeKey !== next.dedupeKey) {
+        byDedupeKey.delete(current.dedupeKey)
+      }
       byId.set(next.id, next)
       byDedupeKey.set(next.dedupeKey, next)
     }
@@ -314,7 +444,7 @@ export function createIndexedDbSyncRepository(): IndexedDbSyncRepository {
       })
     }
     tx.objectStore("sync-state").put({
-      id: SYNC_STATE_ID,
+      id: stateId(accountId),
       ...clone(commit.state),
     })
     for (const item of byId.values()) outboxStore.put(item)
@@ -326,9 +456,11 @@ export function createIndexedDbSyncRepository(): IndexedDbSyncRepository {
     const db = await openStorageDatabase()
     if (!db) return
     const tx = db.transaction(["sync-state", "prefs"], "readwrite")
-    tx.objectStore("sync-state").delete(SYNC_STATE_ID)
-    // Remove the legacy copy once the dedicated record is explicitly cleared.
-    tx.objectStore("prefs").delete("syncState")
+    tx.objectStore("sync-state").delete(stateId(accountId))
+    if (!accountId) {
+      // Remove the legacy copy once the unscoped record is explicitly cleared.
+      tx.objectStore("prefs").delete("syncState")
+    }
     await transactionResult(tx)
   }
 
@@ -337,26 +469,8 @@ export function createIndexedDbSyncRepository(): IndexedDbSyncRepository {
     if (!db) return false
     const tx = db.transaction(["sync-state", "prefs"], "readwrite")
     const stateStore = tx.objectStore("sync-state")
-    const dedicated = await requestResult<StoredSyncState | undefined>(
-      stateStore.get(SYNC_STATE_ID)
-    )
-    let state: SyncState
-    if (dedicated) {
-      const { id: _id, ...candidate } = dedicated
-      if (!isSyncState(candidate)) {
-        tx.abort()
-        throw new Error("The durable sync state is invalid.")
-      }
-      state = clone(candidate)
-    } else {
-      const legacy = await requestResult<
-        { key: string; value: unknown } | undefined
-      >(tx.objectStore("prefs").get("syncState"))
-      state =
-        legacy && isSyncState(legacy.value)
-          ? clone(legacy.value)
-          : clone(EMPTY_SYNC_STATE)
-    }
+    const loaded = await readStateInTransaction(tx, accountId)
+    const state = loaded ?? clone(EMPTY_SYNC_STATE)
 
     if (
       state.syncLeaseOwner &&
@@ -367,7 +481,7 @@ export function createIndexedDbSyncRepository(): IndexedDbSyncRepository {
       return false
     }
     stateStore.put({
-      id: SYNC_STATE_ID,
+      id: stateId(accountId),
       ...state,
       syncLeaseOwner: options.owner,
       syncLeaseUntil: options.now + Math.max(1, options.leaseMs),
@@ -382,7 +496,7 @@ export function createIndexedDbSyncRepository(): IndexedDbSyncRepository {
     const tx = db.transaction("sync-state", "readwrite")
     const store = tx.objectStore("sync-state")
     const record = await requestResult<StoredSyncState | undefined>(
-      store.get(SYNC_STATE_ID)
+      store.get(stateId(accountId))
     )
     if (!record || record.syncLeaseOwner !== owner) {
       await transactionResult(tx)
@@ -406,12 +520,24 @@ export function createIndexedDbSyncRepository(): IndexedDbSyncRepository {
     const tx = db.transaction("sync-outbox", "readwrite")
     const store = tx.objectStore("sync-outbox")
     const index = store.index("dedupeKey")
-    const existing = await requestResult<SyncOutboxItem | undefined>(
-      index.get(item.dedupeKey)
+    const prepared = prepareOutboxInput(item, accountId)
+    const preparedKey = scopedDedupeKey(
+      prepared.dedupeKey,
+      prepared.accountId
     )
-    const next = existing
-      ? mergeSyncOutboxItem(existing, item, now)
-      : normaliseSyncOutboxItem(item, now)
+    const existing = await requestResult<SyncOutboxItem | undefined>(
+      index.get(preparedKey)
+    )
+    const legacy =
+      !existing && accountId
+        ? await requestResult<SyncOutboxItem | undefined>(
+            index.get(unscopedDedupeKey(prepared.dedupeKey, prepared.accountId))
+          )
+        : undefined
+    const current = existing ?? legacy
+    const next = current
+      ? mergeOutboxForScope(current, prepared, now, accountId)
+      : normaliseSyncOutboxItem(prepared, now)
     store.put(next)
     await transactionResult(tx)
     return clone(next)
@@ -425,7 +551,9 @@ export function createIndexedDbSyncRepository(): IndexedDbSyncRepository {
       tx.objectStore("sync-outbox").getAll()
     )
     await transactionResult(tx)
-    return orderOutbox(items.map(clone))
+    return orderOutbox(
+      items.filter((item) => belongsToScope(item, accountId)).map(clone)
+    )
   }
 
   async function claimOutbox(
@@ -439,6 +567,7 @@ export function createIndexedDbSyncRepository(): IndexedDbSyncRepository {
     const items = orderOutbox(
       (await requestResult<SyncOutboxItem[]>(store.getAll())).filter(
         (item) =>
+          belongsToScope(item, accountId) &&
           canClaim(item, options.now) &&
           (requestedIds === null || requestedIds.has(item.id))
       )
@@ -461,7 +590,7 @@ export function createIndexedDbSyncRepository(): IndexedDbSyncRepository {
     const tx = db.transaction("sync-outbox", "readwrite")
     const store = tx.objectStore("sync-outbox")
     const item = await requestResult<SyncOutboxItem | undefined>(store.get(id))
-    if (!item || !sameLease(item, leaseId)) {
+    if (!item || !belongsToScope(item, accountId) || !sameLease(item, leaseId)) {
       await transactionResult(tx)
       return false
     }
@@ -487,7 +616,7 @@ export function createIndexedDbSyncRepository(): IndexedDbSyncRepository {
     const tx = db.transaction("sync-outbox", "readwrite")
     const store = tx.objectStore("sync-outbox")
     const item = await requestResult<SyncOutboxItem | undefined>(store.get(id))
-    if (!item || !sameLease(item, leaseId)) {
+    if (!item || !belongsToScope(item, accountId) || !sameLease(item, leaseId)) {
       await transactionResult(tx)
       return null
     }
@@ -506,6 +635,38 @@ export function createIndexedDbSyncRepository(): IndexedDbSyncRepository {
     return clone(next)
   }
 
+  async function adoptUnscopedOutbox(): Promise<number> {
+    if (!accountId) return 0
+    const db = await openStorageDatabase()
+    if (!db) return 0
+    const tx = db.transaction("sync-outbox", "readwrite")
+    const store = tx.objectStore("sync-outbox")
+    const existing = await requestResult<SyncOutboxItem[]>(store.getAll())
+    const byDedupeKey = new Map(existing.map((item) => [item.dedupeKey, item]))
+    let adopted = 0
+    for (const item of existing) {
+      if (item.accountId !== undefined) continue
+      const rebound = rebindOutboxItem(item, accountId)
+      const current = byDedupeKey.get(rebound.dedupeKey)
+      if (current && current.id !== item.id) {
+        const merged = mergeSyncOutboxItem(
+          current,
+          { ...item, accountId },
+          Date.now()
+        )
+        store.put(merged)
+        store.delete(item.id)
+        byDedupeKey.set(merged.dedupeKey, merged)
+      } else {
+        store.put(rebound)
+        byDedupeKey.set(rebound.dedupeKey, rebound)
+      }
+      adopted++
+    }
+    await transactionResult(tx)
+    return adopted
+  }
+
   return {
     loadState,
     saveState,
@@ -518,6 +679,7 @@ export function createIndexedDbSyncRepository(): IndexedDbSyncRepository {
     claimOutbox,
     completeOutbox,
     failOutbox,
+    adoptUnscopedOutbox,
   }
 }
 
@@ -532,11 +694,17 @@ export function mergeSyncOutboxItem(
     return clone(existing)
   }
   const incoming = normaliseSyncOutboxItem(input, now)
+  const owner = incoming.accountId ?? existing.accountId
+  const incomingBaseKey = unscopedDedupeKey(
+    incoming.dedupeKey,
+    incoming.accountId
+  )
   return {
     ...existing,
     ...incoming,
     id: existing.id,
-    dedupeKey: existing.dedupeKey,
+    ...(owner ? { accountId: owner } : {}),
+    dedupeKey: scopedDedupeKey(incomingBaseKey, owner),
     attempts: existing.attempts,
     createdAt: existing.createdAt,
     status: incoming.status,
@@ -546,8 +714,19 @@ export function mergeSyncOutboxItem(
 }
 
 export interface MemorySyncRepositoryOptions {
+  accountId?: string
   now?: () => number
   idFactory?: (prefix: string) => string
+  storage?: MemorySyncRepositoryStorage
+}
+
+export interface MemorySyncRepositoryStorage {
+  states: Map<string, SyncState>
+  items: Map<string, SyncOutboxItem>
+}
+
+export function createMemorySyncRepositoryStorage(): MemorySyncRepositoryStorage {
+  return { states: new Map(), items: new Map() }
 }
 
 export interface MemorySyncRepository extends SyncRepository {}
@@ -555,17 +734,31 @@ export interface MemorySyncRepository extends SyncRepository {}
 export function createMemorySyncRepository(
   options: MemorySyncRepositoryOptions = {}
 ): MemorySyncRepository {
-  let state: SyncState | null = null
-  const items = new Map<string, SyncOutboxItem>()
+  const accountId = options.accountId
+  const storage = options.storage ?? createMemorySyncRepositoryStorage()
+  const items = storage.items
   const now = options.now ?? (() => Date.now())
   const idFactory = options.idFactory ?? randomId
 
+  function readState(): SyncState | null {
+    const key = stateId(accountId)
+    const current = storage.states.get(key)
+    if (current) return clone(current)
+    if (!accountId) return null
+    const legacy = storage.states.get(SYNC_STATE_ID)
+    if (!legacy) return null
+    const migrated = clone(legacy)
+    storage.states.set(key, migrated)
+    storage.states.delete(SYNC_STATE_ID)
+    return clone(migrated)
+  }
+
   async function loadState(): Promise<SyncState | null> {
-    return state ? clone(state) : null
+    return readState()
   }
 
   async function saveState(nextState: SyncState): Promise<void> {
-    state = clone(nextState)
+    storage.states.set(stateId(accountId), clone(nextState))
   }
 
   async function commitStateAndOutbox(
@@ -573,18 +766,23 @@ export function createMemorySyncRepository(
   ): Promise<boolean> {
     for (const completion of commit.complete) {
       const item = items.get(completion.id)
-      if (!item || !sameLease(item, completion.leaseId)) return false
+      if (
+        !item ||
+        !belongsToScope(item, accountId) ||
+        !sameLease(item, completion.leaseId)
+      ) {
+        return false
+      }
     }
-    state = clone(commit.state)
+    storage.states.set(stateId(accountId), clone(commit.state))
     for (const input of commit.enqueue ?? []) {
-      const current = [...items.values()].find(
-        (item) => item.dedupeKey === input.dedupeKey
-      )
+      const prepared = prepareOutboxInput(input, accountId)
+      const current = matchingOutboxItem([...items.values()], prepared, accountId)
       const itemNow = input.updatedAt ?? input.createdAt ?? now()
       const next = current
-        ? mergeSyncOutboxItem(current, input, itemNow)
+        ? mergeOutboxForScope(current, prepared, itemNow, accountId)
         : normaliseSyncOutboxItem(
-            { ...input, id: input.id || idFactory("outbox") },
+            { ...prepared, id: prepared.id || idFactory("outbox") },
             itemNow
           )
       items.set(next.id, clone(next))
@@ -604,11 +802,11 @@ export function createMemorySyncRepository(
   }
 
   async function clearState(): Promise<void> {
-    state = null
+    storage.states.delete(stateId(accountId))
   }
 
   async function acquireSyncLease(options: SyncLeaseOptions): Promise<boolean> {
-    const currentState = state ? clone(state) : clone(EMPTY_SYNC_STATE)
+    const currentState = clone(readState() ?? EMPTY_SYNC_STATE)
     if (
       currentState.syncLeaseOwner &&
       currentState.syncLeaseOwner !== options.owner &&
@@ -616,35 +814,35 @@ export function createMemorySyncRepository(
     ) {
       return false
     }
-    state = {
+    storage.states.set(stateId(accountId), {
       ...currentState,
       syncLeaseOwner: options.owner,
       syncLeaseUntil: options.now + Math.max(1, options.leaseMs),
-    }
+    })
     return true
   }
 
   async function releaseSyncLease(owner: string): Promise<boolean> {
+    const state = storage.states.get(stateId(accountId))
     if (!state || state.syncLeaseOwner !== owner) return false
-    state = {
+    storage.states.set(stateId(accountId), {
       ...state,
       syncLeaseOwner: undefined,
       syncLeaseUntil: undefined,
-    }
+    })
     return true
   }
 
   async function enqueueOutbox(
     item: SyncOutboxItemInput
   ): Promise<SyncOutboxItem> {
-    const itemNow = item.updatedAt ?? item.createdAt ?? now()
-    const existing = [...items.values()].find(
-      (candidate) => candidate.dedupeKey === item.dedupeKey
-    )
+    const prepared = prepareOutboxInput(item, accountId)
+    const itemNow = prepared.updatedAt ?? prepared.createdAt ?? now()
+    const existing = matchingOutboxItem([...items.values()], prepared, accountId)
     const next = existing
-      ? mergeSyncOutboxItem(existing, item, itemNow)
+      ? mergeOutboxForScope(existing, prepared, itemNow, accountId)
       : normaliseSyncOutboxItem(
-          { ...item, id: item.id || idFactory("outbox") },
+          { ...prepared, id: prepared.id || idFactory("outbox") },
           itemNow
         )
     items.set(next.id, clone(next))
@@ -652,7 +850,11 @@ export function createMemorySyncRepository(
   }
 
   async function loadOutbox(): Promise<SyncOutboxItem[]> {
-    return orderOutbox([...items.values()].map(clone))
+    return orderOutbox(
+      [...items.values()]
+        .filter((item) => belongsToScope(item, accountId))
+        .map(clone)
+    )
   }
 
   async function claimOutbox(
@@ -662,6 +864,7 @@ export function createMemorySyncRepository(
     const candidates = orderOutbox(
       [...items.values()].filter(
         (item) =>
+          belongsToScope(item, accountId) &&
           canClaim(item, options.now) &&
           (requestedIds === null || requestedIds.has(item.id))
       )
@@ -679,7 +882,9 @@ export function createMemorySyncRepository(
     leaseId: string
   ): Promise<boolean> {
     const item = items.get(id)
-    if (!item || !sameLease(item, leaseId)) return false
+    if (!item || !belongsToScope(item, accountId) || !sameLease(item, leaseId)) {
+      return false
+    }
     items.set(id, {
       ...item,
       status: "complete",
@@ -697,7 +902,9 @@ export function createMemorySyncRepository(
     failure: SyncOutboxFailure
   ): Promise<SyncOutboxItem | null> {
     const item = items.get(id)
-    if (!item || !sameLease(item, leaseId)) return null
+    if (!item || !belongsToScope(item, accountId) || !sameLease(item, leaseId)) {
+      return null
+    }
     const next: SyncOutboxItem = {
       ...item,
       status: failure.retryable ? "retryable" : "permanent",
@@ -712,6 +919,33 @@ export function createMemorySyncRepository(
     return clone(next)
   }
 
+  async function adoptUnscopedOutbox(): Promise<number> {
+    if (!accountId) return 0
+    const existing = [...items.values()]
+    const byDedupeKey = new Map(existing.map((item) => [item.dedupeKey, item]))
+    let adopted = 0
+    for (const item of existing) {
+      if (item.accountId !== undefined) continue
+      const rebound = rebindOutboxItem(item, accountId)
+      const current = byDedupeKey.get(rebound.dedupeKey)
+      if (current && current.id !== item.id) {
+        const merged = mergeSyncOutboxItem(
+          current,
+          { ...item, accountId },
+          now()
+        )
+        items.set(merged.id, clone(merged))
+        items.delete(item.id)
+        byDedupeKey.set(merged.dedupeKey, merged)
+      } else {
+        items.set(rebound.id, clone(rebound))
+        byDedupeKey.set(rebound.dedupeKey, rebound)
+      }
+      adopted++
+    }
+    return adopted
+  }
+
   return {
     loadState,
     saveState,
@@ -724,5 +958,6 @@ export function createMemorySyncRepository(
     claimOutbox,
     completeOutbox,
     failOutbox,
+    adoptUnscopedOutbox,
   }
 }
