@@ -13,9 +13,11 @@ untouched.
 - Branch: `refactor/fog-processing`
 - Started: 2026-09-11
 - Current phase: Phase 1/2 — contracts and activity-library ownership
-- Last completed commit: `7f6c149 add activity library foundations`
-- Next action: wire the committed path-aware contract into the import adapters,
-  then finish migrating restore/import/delete callers
+- Last completed commit: `15eca51 add path-aware activity contract`
+- Current working slices: path-aware parser/render integration and bounded B2
+  fog input sanitizer (both ready for their own commits)
+- Next action: commit the path-aware adapter/render slice, then commit B2 and
+  integrate the sanitizer into the callable fog engine
 
 ## A1 activity contract slice
 
@@ -28,8 +30,33 @@ untouched.
 - Added server payload and upload-route validation for canonical multi-path
   payloads.
 - Focused tests pass; no excluded pipeline files were intentionally changed.
-- This slice is ready to commit independently; legacy flat callers remain
-  readable during the migration.
+- This slice is committed independently; legacy flat callers remain readable
+  during the migration.
+
+## B2 fog input sanitizer slice
+
+- Added pure `app/lib/fog/engine/input.ts` handling legacy flat and canonical
+  path-aware geometry.
+- Invalid/non-finite points split paths; near duplicates coalesce; disconnected
+  source paths remain disconnected; teleports use a configurable 250 km safety
+  threshold; seam crossings are split into local `[-180, 180]` pieces.
+- Pole-adjacent latitudes clamp to the Web Mercator limit, and deterministic
+  per-path/total technical point budgets prevent unbounded engine input.
+- Input simplification uses `ACTIVITY_SIMPLIFY_TOLERANCE` only; emission
+  simplification remains a separate downstream concern.
+- Focused tests pass; this working-tree slice is intentionally uncommitted.
+
+## Path-aware adapter and render slice
+
+- GPX tracks remain one activity and their track segments remain disconnected
+  paths; routes remain separate activities. FIT exposes its normal single path.
+- Multi-path statistics sum per-path distances/elevation/moving time without
+  inventing a segment between path endpoints.
+- Map GeoJSON emits a single-path `LineString` or a multi-path `MultiLineString`;
+  the transitional fog worker buffers each path independently.
+- Legacy flat coordinates remain readable while new parser output carries
+  path-aligned timestamps and a compatibility alias.
+- Focused tests and client typecheck pass; this slice is ready to commit.
 
 ## Commit log
 
@@ -38,7 +65,9 @@ untouched.
 | —         | Baseline before implementation                                 | Client: 78 tests pass; client typecheck passes                   |
 | `fa8e423` | Add the continuation tracker                                   | Client baseline recorded                                         |
 | `7f6c149` | Add revisioned activity-library repository/service foundations | 5 focused tests pass; client typecheck passes                    |
-| pending   | Add A1 path-aware activity contract                            | Shared/client/server focused tests pass; server typecheck passes |
+| `15eca51` | Add A1 path-aware activity contract                            | Shared/client/server focused tests pass; server typecheck passes |
+| pending   | Preserve disconnected paths through adapters, stats, map, and worker    | 21 focused tests pass; client typecheck passes                   |
+| pending   | Add B2 fog input sanitizer                                     | 10 focused tests pass; full typecheck has unrelated baseline errors |
 
 ## Phase checklist
 

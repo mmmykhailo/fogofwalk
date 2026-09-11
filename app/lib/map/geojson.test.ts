@@ -29,6 +29,43 @@ describe("map GeoJSON builders", () => {
     ])
   })
 
+  test("emits disconnected activity paths as one MultiLineString", () => {
+    const result = activitiesFeatureCollection([
+      {
+        id: "activity-1",
+        name: "Two segments",
+        coordinates: [
+          [14, 50],
+          [14.01, 50.01],
+          [15, 51],
+          [15.01, 51.01],
+        ],
+        paths: [
+          [
+            [14, 50],
+            [14.01, 50.01],
+          ],
+          [
+            [15, 51],
+            [15.01, 51.01],
+          ],
+        ],
+      },
+    ])
+
+    expect(result.features[0]?.geometry.type).toBe("MultiLineString")
+    expect(result.features[0]?.geometry.coordinates).toEqual([
+      [
+        [14, 50],
+        [14.01, 50.01],
+      ],
+      [
+        [15, 51],
+        [15.01, 51.01],
+      ],
+    ])
+  })
+
   test("omits an invalid lap and emits a usable lap", () => {
     expect(lapFeatureCollection([[14, 50]]).features).toEqual([])
     expect(

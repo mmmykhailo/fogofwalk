@@ -20,6 +20,7 @@ import {
   worldFogFeature,
   type FogFeature,
 } from "~/lib/fogGeometry"
+import { pathsForActivity } from "~shared/activityContract"
 
 // Corridor mode: fog maintained incrementally via difference
 let fogPolygon: FogFeature = worldFogFeature()
@@ -150,27 +151,45 @@ async function processActivities(
       return
     }
 
-    let activityBuffer: FogFeature | null = null
-    try {
-      activityBuffer = createActivityFogBuffer(activity.coordinates)
-    } catch (error) {
-      postActivityError(activity.name, error, runId)
+    const paths = pathsForActivity(activity)
+    const activityBuffers: FogFeature[] = []
+    for (let pathIndex = 0; pathIndex < paths.length; pathIndex++) {
+      try {
+        const activityBuffer = createActivityFogBuffer(paths[pathIndex]!)
+        if (activityBuffer) activityBuffers.push(activityBuffer)
+      } catch (error) {
+        postActivityError(
+          `${activity.name}#path-${pathIndex + 1}`,
+          error,
+          runId
+        )
+      }
     }
 
-    if (!activityBuffer) {
+    if (activityBuffers.length === 0) {
       console.debug(
         "[worker] skipping activity with < 2 valid coords",
         activity.name
       )
-    } else if (mode === "corridor") {
-      pendingBuffers.push({ feature: activityBuffer, file: activity.name })
     } else {
-      // Accumulate without stripping — inner rings are preserved so the full
-      // union can detect loops formed across multiple files. mergeFogMasks has
-      // a non-lossy fallback: a failed union keeps both activity buffers.
-      accumulated = accumulated
-        ? mergeFogMasks(accumulated, activityBuffer)
-        : activityBuffer
+      for (let pathIndex = 0; pathIndex < activityBuffers.length; pathIndex++) {
+        const activityBuffer = activityBuffers[pathIndex]!
+        if (mode === "corridor") {
+          pendingBuffers.push({
+            feature: activityBuffer,
+            file:
+              paths.length > 1
+                ? `${activity.name}#path-${pathIndex + 1}`
+                : activity.name,
+          })
+        } else {
+          // Accumulate without stripping — inner rings are preserved so the full
+          // union can detect loops formed across any paths/files/batches.
+          accumulated = accumulated
+            ? mergeFogMasks(accumulated, activityBuffer)
+            : activityBuffer
+        }
+      }
     }
 
     processedCount++

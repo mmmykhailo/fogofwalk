@@ -19,7 +19,7 @@ export type MapMode = "flat" | "relief"
 /** The only activity fields the fog worker needs to build and report geometry. */
 export type FogWorkerActivity = Pick<
   ParsedActivity,
-  "id" | "name" | "coordinates"
+  "id" | "name" | "coordinates" | "paths"
 >
 
 /**

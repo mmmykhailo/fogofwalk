@@ -4,6 +4,7 @@ import type {
   ActivityGeometryDraft,
   ActivityPathTimestamps,
   ActivityPaths,
+  ParsedActivity,
 } from "./activities"
 
 export type ActivityNormalizationErrorCode =
@@ -254,4 +255,28 @@ export function normalizeActivityGeometry(
 
 export function flattenActivityPaths(paths: ActivityPaths): ActivityCoords {
   return paths.flatMap((path) => path)
+}
+
+/** Read canonical paths while keeping legacy flat records usable. */
+export function pathsForActivity(
+  activity: Pick<ParsedActivity, "coordinates" | "paths">
+): ActivityPaths {
+  return activity.paths && activity.paths.length > 0
+    ? activity.paths
+    : [activity.coordinates]
+}
+
+/** Read path-aligned timestamps while keeping legacy records usable. */
+export function pathTimestampsForActivity(
+  activity: Pick<ParsedActivity, "pointTimestamps" | "pathTimestamps" | "paths">
+): ActivityPathTimestamps[] | undefined {
+  if (activity.pathTimestamps) return activity.pathTimestamps
+  if (activity.pointTimestamps) {
+    return [
+      activity.pointTimestamps.map((timestamp) =>
+        timestamp < 0 ? null : timestamp
+      ),
+    ]
+  }
+  return undefined
 }

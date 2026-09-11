@@ -40,7 +40,7 @@ export async function computeContentHashCandidates(
   activity: ParsedActivity | CanonicalActivity
 ): Promise<string[]> {
   const inputs: ActivityIdentityInput[] = [activity]
-  if ("paths" in activity && activity.paths.length === 1) {
+  if (activity.paths?.length === 1) {
     inputs.push({
       format: activity.format,
       startedAtMs: activity.startedAtMs,

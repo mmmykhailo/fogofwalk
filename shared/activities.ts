@@ -122,7 +122,15 @@ export interface ParsedActivity {
   /** Ms timestamp of the first coordinate point. Null when the file has no timestamps. */
   startedAtMs: number | null
   coordinates: ActivityCoords
+  /**
+   * Canonical disconnected geometry during the migration window. New imports
+   * populate this field; `coordinates` remains a compatibility projection for
+   * older map/stat consumers until they migrate to paths.
+   */
+  paths?: ActivityPaths
   pointTimestamps?: number[]
+  /** Timestamp arrays aligned one-for-one with `paths`, when present. */
+  pathTimestamps?: ActivityPathTimestamps[]
   format: ActivityFormat
   /** Normalized activity category. Absent when the imported file had no type metadata. */
   activityType?: ActivityType
