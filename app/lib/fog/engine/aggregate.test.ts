@@ -72,4 +72,53 @@ describe("bounded fog aggregation", () => {
     // is represented by fewer triangles than corridor mode.
     expect(fill.featureCount).toBeLessThan(corridor.featureCount)
   })
+
+  test("keeps crossing routes and loops inside bounded partitions", () => {
+    const crossingRoute = bufferFogActivity(
+      activity("crossing-route", [
+        ...Array.from(
+          { length: 96 },
+          (_, index) =>
+            [-30.4 + (60.8 * index) / 95, 20 + Math.sin(index / 8) * 0.2] as [
+              number,
+              number,
+            ]
+        ),
+      ])
+    )
+    const crossingLoop = bufferFogActivity(
+      activity("crossing-loop", [
+        [29.4, 20],
+        [30.6, 20],
+        [30.6, 21.2],
+        [29.4, 21.2],
+        [29.4, 20],
+      ])
+    )
+    expect(crossingRoute.rejected).toBe(false)
+    expect(crossingLoop.rejected).toBe(false)
+
+    const masks = [...crossingRoute.masks, ...crossingLoop.masks]
+    const corridor = buildBoundedFog(masks, "corridor")
+    const fill = buildBoundedFog(masks, "fill")
+    expect(corridor.degraded).toBe(false)
+    expect(fill.degraded).toBe(false)
+    expect(validateFogRenderData(corridor.fogData).ok).toBe(true)
+    expect(validateFogRenderData(fill.fogData).ok).toBe(true)
+    expect(
+      corridor.fogData.features.every(
+        (feature) =>
+          feature.geometry.type === "Polygon" &&
+          feature.geometry.coordinates.length === 1
+      )
+    ).toBe(true)
+    expect(
+      fill.fogData.features.every(
+        (feature) =>
+          feature.geometry.type === "Polygon" &&
+          feature.geometry.coordinates.length === 1
+      )
+    ).toBe(true)
+    expect(fill.featureCount).toBeLessThan(corridor.featureCount)
+  })
 })
