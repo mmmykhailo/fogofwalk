@@ -3,7 +3,7 @@ import type { ParsedActivity } from "~/types/activities"
 import type { LibrarySnapshot } from "~/lib/activities/libraryEvents"
 import { areUniqueDistancesCurrent } from "~/lib/storage"
 import {
-  UniqueDistanceProjection,
+  createUniqueDistanceProjection,
   type UniqueDistanceProjectionStatus,
 } from "./uniqueDistanceProjection"
 
@@ -80,7 +80,7 @@ describe("UniqueDistanceProjection", () => {
     const computedIds: string[][] = []
     const saved: Array<{ revision: number; activities: ParsedActivity[] }> = []
     let computeCount = 0
-    const projection = new UniqueDistanceProjection({
+    const projection = createUniqueDistanceProjection({
       compute: async (activities) => {
         computedIds.push(activities.map(({ id }) => id))
         computeCount++
@@ -123,7 +123,7 @@ describe("UniqueDistanceProjection", () => {
 
   test("does not treat a stale atomic save as a projection failure", async () => {
     const errors: unknown[] = []
-    const projection = new UniqueDistanceProjection(
+    const projection = createUniqueDistanceProjection(
       {
         compute: async () => new Map([["one", 2]]),
         save: async (_, options) => ({
@@ -148,7 +148,7 @@ describe("UniqueDistanceProjection", () => {
 
   test("keeps a recoverable failure status and reports the revision", async () => {
     const failures: Array<{ revision: number; error: unknown }> = []
-    const projection = new UniqueDistanceProjection(
+    const projection = createUniqueDistanceProjection(
       {
         compute: async () => {
           throw new Error("worker unavailable")

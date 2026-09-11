@@ -76,19 +76,28 @@ function errorFromSaveResult(result: UniqueDistanceSaveResult): unknown {
  * the revision they were computed from; storage performs the final atomic
  * library-meta check so a projection can never backdate a newer commit.
  */
-export class UniqueDistanceProjection {
-  private readonly compute: (
-    activities: ParsedActivity[]
-  ) => Promise<Map<string, number>>
-  private readonly save: (
-    activities: ParsedActivity[],
-    options: SaveUniqueDistancesOptions
-  ) => Promise<UniqueDistanceSaveResult>
-  private readonly events: UniqueDistanceProjectionEvents
-  private readonly listeners = new Set<StatusListener>()
-  private pending: LibrarySnapshot | null = null
-  private running: Promise<void> | null = null
-  private status: UniqueDistanceProjectionStatus = {
+export interface UniqueDistanceProjection {
+  getStatus(): UniqueDistanceProjectionStatus
+  subscribe(listener: StatusListener): () => void
+  schedule(snapshot: LibrarySnapshot): void
+  waitForIdle(): Promise<void>
+}
+
+export function createUniqueDistanceProjection(
+  dependencies: UniqueDistanceProjectionDependencies = {},
+  events: UniqueDistanceProjectionEvents = {}
+): UniqueDistanceProjection {
+  const compute =
+    dependencies.compute ??
+    ((activities: ParsedActivity[]) => computeUniqueDistancesInWorker(activities))
+  const save =
+    dependencies.save ??
+    ((activities: ParsedActivity[], options: SaveUniqueDistancesOptions) =>
+      saveUniqueDistances(activities, options))
+  const listeners = new Set<StatusListener>()
+  let pending: LibrarySnapshot | null = null
+  let running: Promise<void> | null = null
+  let status: UniqueDistanceProjectionStatus = {
     state: "idle",
     activeRevision: null,
     queuedRevision: null,
@@ -96,87 +105,56 @@ export class UniqueDistanceProjection {
     error: null,
   }
 
-  constructor(
-    dependencies: UniqueDistanceProjectionDependencies = {},
-    events: UniqueDistanceProjectionEvents = {}
-  ) {
-    this.compute =
-      dependencies.compute ??
-      ((activities) => computeUniqueDistancesInWorker(activities))
-    this.save =
-      dependencies.save ??
-      ((activities, options) => saveUniqueDistances(activities, options))
-    this.events = events
+  function getStatus(): UniqueDistanceProjectionStatus {
+    return cloneStatus(status)
   }
 
-  getStatus(): UniqueDistanceProjectionStatus {
-    return cloneStatus(this.status)
-  }
-
-  subscribe(listener: StatusListener): () => void {
-    this.listeners.add(listener)
-    listener(this.getStatus())
-    return () => this.listeners.delete(listener)
-  }
-
-  /** Queue the newest committed library snapshot without blocking its caller. */
-  schedule(snapshot: LibrarySnapshot): void {
-    if (
-      (this.status.activeRevision !== null &&
-        snapshot.revision <= this.status.activeRevision) ||
-      (this.pending !== null && snapshot.revision <= this.pending.revision) ||
-      (this.status.state !== "failed" &&
-        this.status.completedRevision !== null &&
-        snapshot.revision <= this.status.completedRevision)
-    )
-      return
-    this.pending = cloneSnapshot(snapshot)
-    this.status.queuedRevision = snapshot.revision
-    this.status.error = null
-    this.emitStatus()
-    this.startDrain()
-  }
-
-  /** Resolve once all currently queued projection work has settled. */
-  async waitForIdle(): Promise<void> {
-    while (this.running) await this.running
-  }
-
-  private startDrain(): void {
-    if (this.running || !this.pending) return
-    this.running = this.drain().finally(() => {
-      this.running = null
-      if (this.pending) {
-        this.status.queuedRevision = this.pending.revision
-        this.emitStatus()
-        this.startDrain()
-      } else {
-        if (this.status.state !== "failed") this.status.state = "idle"
-        this.status.activeRevision = null
-        this.status.queuedRevision = null
-        this.emitStatus()
+  function emitStatus(): void {
+    const next = getStatus()
+    for (const listener of listeners) {
+      try {
+        listener(next)
+      } catch {
+        // One status consumer cannot strand projection work for the others.
       }
-    })
-    void this.running.catch(() => {})
+    }
   }
 
-  private async drain(): Promise<void> {
-    while (this.pending) {
-      const snapshot = this.pending
-      this.pending = null
-      this.status.state = "running"
-      this.status.activeRevision = snapshot.revision
-      this.status.queuedRevision = null
-      this.emitStatus()
+  function subscribe(listener: StatusListener): () => void {
+    listeners.add(listener)
+    listener(getStatus())
+    return () => listeners.delete(listener)
+  }
+
+  function fail(revision: number, error: unknown): void {
+    status = { ...status, state: "failed", error }
+    const failure = { revision, error }
+    try {
+      events.onError?.(failure)
+    } catch {
+      // Observability must not stop the projection queue.
+    }
+    emitStatus()
+  }
+
+  async function drain(): Promise<void> {
+    while (pending) {
+      const snapshot = pending
+      pending = null
+      status = {
+        ...status,
+        state: "running",
+        activeRevision: snapshot.revision,
+        queuedRevision: null,
+      }
+      emitStatus()
 
       try {
-        const distances = await this.compute(
-          cloneActivities(snapshot.activities)
-        )
+        const distances = await compute(cloneActivities(snapshot.activities))
 
         // A newer commit arrived while the worker was running. Do not spend
         // an IDB write on a result that is already obsolete.
-        const queued = this.pending as LibrarySnapshot | null
+        const queued = pending as LibrarySnapshot | null
         if (queued && queued.revision > snapshot.revision) continue
 
         const projected = snapshot.activities.map((activity) => ({
@@ -187,18 +165,21 @@ export class UniqueDistanceProjection {
               distances.get(activity.id) ?? activity.stats.distanceKm,
           },
         }))
-        const result = await this.save(projected, {
+        const result = await save(projected, {
           libraryRevision: snapshot.revision,
         })
         if (result.status === "stale") continue
         if (result.status !== "saved") {
-          this.fail(snapshot.revision, errorFromSaveResult(result))
+          fail(snapshot.revision, errorFromSaveResult(result))
           continue
         }
-        this.status.completedRevision = result.libraryRevision
-        this.status.error = null
+        status = {
+          ...status,
+          completedRevision: result.libraryRevision,
+          error: null,
+        }
         try {
-          this.events.onComplete?.({
+          events.onComplete?.({
             revision: snapshot.revision,
             activities: cloneActivities(projected),
           })
@@ -206,34 +187,58 @@ export class UniqueDistanceProjection {
           // A render projection consumer cannot invalidate a durable save.
         }
       } catch (error) {
-        this.fail(snapshot.revision, error)
+        fail(snapshot.revision, error)
       } finally {
-        this.status.activeRevision = null
-        this.emitStatus()
+        status = { ...status, activeRevision: null }
+        emitStatus()
       }
     }
   }
 
-  private fail(revision: number, error: unknown): void {
-    this.status.state = "failed"
-    this.status.error = error
-    const failure = { revision, error }
-    try {
-      this.events.onError?.(failure)
-    } catch {
-      // Observability must not stop the projection queue.
-    }
-    this.emitStatus()
+  function startDrain(): void {
+    if (running || !pending) return
+    running = drain().finally(() => {
+      running = null
+      if (pending) {
+        status = { ...status, queuedRevision: pending.revision }
+        emitStatus()
+        startDrain()
+      } else {
+        status = {
+          ...status,
+          state: status.state === "failed" ? "failed" : "idle",
+          activeRevision: null,
+          queuedRevision: null,
+        }
+        emitStatus()
+      }
+    })
+    void running.catch(() => {})
   }
 
-  private emitStatus(): void {
-    const next = this.getStatus()
-    for (const listener of this.listeners) {
-      try {
-        listener(next)
-      } catch {
-        // One status consumer cannot strand projection work for the others.
-      }
+  function schedule(snapshot: LibrarySnapshot): void {
+    if (
+      (status.activeRevision !== null &&
+        snapshot.revision <= status.activeRevision) ||
+      (pending !== null && snapshot.revision <= pending.revision) ||
+      (status.state !== "failed" &&
+        status.completedRevision !== null &&
+        snapshot.revision <= status.completedRevision)
+    )
+      return
+    pending = cloneSnapshot(snapshot)
+    status = {
+      ...status,
+      queuedRevision: snapshot.revision,
+      error: null,
     }
+    emitStatus()
+    startDrain()
   }
+
+  async function waitForIdle(): Promise<void> {
+    while (running) await running
+  }
+
+  return { getStatus, subscribe, schedule, waitForIdle }
 }

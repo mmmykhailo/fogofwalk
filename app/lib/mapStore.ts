@@ -19,7 +19,7 @@ import type {
 import { createUuid } from "~/lib/uuid"
 import { isServerEnabled } from "~/lib/server/config"
 import { createActivityUploadOutboxItem } from "~/lib/server/sync/activityEffects"
-import { UniqueDistanceProjection } from "~/lib/uniqueDistanceProjection"
+import { createUniqueDistanceProjection } from "~/lib/uniqueDistanceProjection"
 import type { FogSnapshot } from "~/lib/fog/protocol"
 import { recordDiagnostic } from "~/lib/diagnostics"
 
@@ -243,7 +243,7 @@ export const activityLibrary = new ActivityLibrary()
 let activityLibrarySubscription: (() => void) | null = null
 
 /** Revision-keyed derived-stat projection; canonical activity commits do not wait for it. */
-export const uniqueDistanceProjection = new UniqueDistanceProjection(
+export const uniqueDistanceProjection = createUniqueDistanceProjection(
   {},
   {
     onError: ({ revision, error }) =>
