@@ -20,20 +20,35 @@ export type SyncTransportErrorCode =
   | "invalid-payload"
   | "payload-too-large"
 
-export class SyncTransportError extends Error {
+export type SyncTransportError = Error & {
+  readonly name: "SyncTransportError"
   readonly code: SyncTransportErrorCode
   readonly retryable: boolean
+}
 
-  constructor(
-    code: SyncTransportErrorCode,
-    message: string,
-    options: { retryable?: boolean } = {}
-  ) {
-    super(message)
-    this.name = "SyncTransportError"
-    this.code = code
-    this.retryable = options.retryable ?? false
-  }
+export function createSyncTransportError(
+  code: SyncTransportErrorCode,
+  message: string,
+  options: { retryable?: boolean } = {}
+): SyncTransportError {
+  const error = new Error(message) as SyncTransportError
+  Object.assign(error, {
+    name: "SyncTransportError",
+    code,
+    retryable: options.retryable ?? false,
+  })
+  return error
+}
+
+export function isSyncTransportError(
+  error: unknown
+): error is SyncTransportError {
+  return (
+    error instanceof Error &&
+    error.name === "SyncTransportError" &&
+    typeof (error as Partial<SyncTransportError>).code === "string" &&
+    typeof (error as Partial<SyncTransportError>).retryable === "boolean"
+  )
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -200,7 +215,7 @@ function isValidTombstone(value: unknown): value is ActivityTombstone {
 
 export function parseManifestPage(value: unknown): ManifestPage {
   if (!isObject(value)) {
-    throw new SyncTransportError(
+    throw createSyncTransportError(
       "invalid-manifest",
       "The server returned an invalid activity manifest."
     )
@@ -217,7 +232,7 @@ export function parseManifestPage(value: unknown): ManifestPage {
     value.cursor < 0 ||
     typeof value.hasMore !== "boolean"
   ) {
-    throw new SyncTransportError(
+    throw createSyncTransportError(
       "invalid-manifest",
       "The server returned an invalid activity manifest."
     )
@@ -244,13 +259,13 @@ export function parseActivityPayload(value: unknown): ActivityUploadPayload {
   const geometry = object && hasValidGeometry(value)
   const stats = object && hasValidStats(value.stats)
   if (!basic || !geometry || !stats) {
-    throw new SyncTransportError(
+    throw createSyncTransportError(
       "invalid-payload",
       "The server returned an invalid activity payload."
     )
   }
   if (value.laps !== undefined && !Array.isArray(value.laps)) {
-    throw new SyncTransportError(
+    throw createSyncTransportError(
       "invalid-payload",
       "The server returned invalid activity lap data."
     )
@@ -277,7 +292,7 @@ export async function validateActivityPayloadHash(
   payload: ActivityUploadPayload
 ): Promise<void> {
   if (!isHash(contentHash)) {
-    throw new SyncTransportError(
+    throw createSyncTransportError(
       "invalid-payload",
       "The downloaded activity has an invalid content hash."
     )
@@ -286,7 +301,7 @@ export async function validateActivityPayloadHash(
     payloadAsParsedActivity(payload)
   )
   if (!candidates.includes(contentHash)) {
-    throw new SyncTransportError(
+    throw createSyncTransportError(
       "invalid-payload",
       "The downloaded activity does not match its content hash."
     )
@@ -300,7 +315,7 @@ async function readJsonResponse(
 ): Promise<unknown> {
   const bytes = new Uint8Array(await response.arrayBuffer())
   if (bytes.byteLength > maxBytes) {
-    throw new SyncTransportError(
+    throw createSyncTransportError(
       "payload-too-large",
       invalidCode === "invalid-manifest"
         ? "The activity manifest is too large to process."
@@ -310,7 +325,7 @@ async function readJsonResponse(
   try {
     return JSON.parse(new TextDecoder().decode(bytes)) as unknown
   } catch {
-    throw new SyncTransportError(
+    throw createSyncTransportError(
       invalidCode,
       invalidCode === "invalid-manifest"
         ? "The server returned invalid manifest JSON."
@@ -330,7 +345,7 @@ export interface SyncTransport {
 
 async function gzipJson(value: unknown): Promise<Blob> {
   if (typeof CompressionStream === "undefined") {
-    throw new SyncTransportError(
+    throw createSyncTransportError(
       "invalid-payload",
       "This browser cannot compress activity uploads.",
       { retryable: true }
@@ -380,7 +395,7 @@ export function createApiSyncTransport(): SyncTransport {
       }
       const body = await gzipJson(payload)
       if (body.size > MAX_ACTIVITY_BYTES) {
-        throw new SyncTransportError(
+        throw createSyncTransportError(
           "payload-too-large",
           "That activity is too large to upload."
         )
@@ -409,7 +424,7 @@ export function createApiSyncTransport(): SyncTransport {
         !isFiniteNumber(value.deletedAt) ||
         value.deletedAt < 0
       ) {
-        throw new SyncTransportError(
+        throw createSyncTransportError(
           "invalid-payload",
           "The server returned an invalid deletion response."
         )

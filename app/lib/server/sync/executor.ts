@@ -29,7 +29,10 @@ import {
   type SyncPlan,
   type UploadActivityIntent,
 } from "./planner"
-import { SyncTransportError, type SyncTransport } from "./transport"
+import {
+  isSyncTransportError,
+  type SyncTransport,
+} from "./transport"
 
 const DEFAULT_LEASE_MS = 60_000
 const DEFAULT_MAX_PAGES = 10_000
@@ -358,7 +361,7 @@ function intentOperation(
 
 function retryableError(error: unknown): boolean {
   if (error instanceof PermanentSyncEffectError) return false
-  if (error instanceof SyncTransportError) return error.retryable
+  if (isSyncTransportError(error)) return error.retryable
   if (error instanceof ApiRequestError) {
     return (
       error.status === 0 ||
@@ -371,7 +374,7 @@ function retryableError(error: unknown): boolean {
 }
 
 function safeErrorMessage(error: unknown): string {
-  if (error instanceof SyncTransportError || error instanceof ApiRequestError) {
+  if (isSyncTransportError(error) || error instanceof ApiRequestError) {
     return error.message
   }
   if (error instanceof PermanentSyncEffectError) return error.message
@@ -816,7 +819,7 @@ export class ActivitySyncExecutor {
         }
         await this.options.repository.failOutbox(claimed.id, claimed.leaseId, {
           code:
-            error instanceof SyncTransportError ||
+            isSyncTransportError(error) ||
             error instanceof ApiRequestError
               ? error.code
               : "sync-effect-failed",

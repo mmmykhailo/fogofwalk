@@ -3,7 +3,7 @@ import type { ActivityMeta, ActivityUploadPayload } from "~shared/api"
 import {
   parseActivityPayload,
   parseManifestPage,
-  SyncTransportError,
+  isSyncTransportError,
   validateActivityPayloadHash,
 } from "./transport"
 import { computeContentHash } from "~/lib/activityHash"
@@ -53,6 +53,16 @@ function meta(contentHash: string): ActivityMeta {
 }
 
 describe("sync transport validation", () => {
+  function expectSyncTransportError(action: () => unknown): void {
+    try {
+      action()
+    } catch (error) {
+      expect(isSyncTransportError(error)).toBe(true)
+      return
+    }
+    throw new Error("Expected a sync transport error")
+  }
+
   test("accepts a valid manifest and rejects malformed rows", () => {
     const hash = "a".repeat(64)
     expect(
@@ -64,24 +74,24 @@ describe("sync transport validation", () => {
       }).activities[0]
     ).toEqual(meta(hash))
 
-    expect(() =>
+    expectSyncTransportError(() =>
       parseManifestPage({
         activities: [{ ...meta(hash), pointCount: -1 }],
         deletions: [],
         cursor: 4,
         hasMore: false,
       })
-    ).toThrow(SyncTransportError)
+    )
   })
 
   test("validates path/timestamp relationships before returning payloads", () => {
     expect(parseActivityPayload(payload())).toEqual(payload())
-    expect(() =>
+    expectSyncTransportError(() =>
       parseActivityPayload({
         ...payload(),
         pointTimestamps: [1],
       })
-    ).toThrow(SyncTransportError)
+    )
   })
 
   test("rejects a downloaded body whose geometry does not match the hash", async () => {
@@ -93,8 +103,10 @@ describe("sync transport validation", () => {
     await expect(
       validateActivityPayloadHash(validHash, validPayload)
     ).resolves.toBeUndefined()
-    await expect(
-      validateActivityPayloadHash("b".repeat(64), validPayload)
-    ).rejects.toBeInstanceOf(SyncTransportError)
+    const failure = await validateActivityPayloadHash(
+      "b".repeat(64),
+      validPayload
+    ).catch((error: unknown) => error)
+    expect(isSyncTransportError(failure)).toBe(true)
   })
 })

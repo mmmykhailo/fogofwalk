@@ -10,7 +10,10 @@ import type { SyncState } from "~/lib/storage"
 import type { ParsedActivity } from "~/types/activities"
 import { MemorySyncRepository } from "./repository"
 import { ActivitySyncExecutor, SyncExecutorProtocolError } from "./executor"
-import { SyncTransportError, type SyncTransport } from "./transport"
+import {
+  createSyncTransportError,
+  type SyncTransport,
+} from "./transport"
 import {
   createActivityDeleteOutboxItem,
   createActivityUploadOutboxItem,
@@ -351,7 +354,7 @@ describe("ActivitySyncExecutor", () => {
         ]),
         {
           upload: async () => {
-            throw new SyncTransportError(
+            throw createSyncTransportError(
               "payload-too-large",
               "That activity is too large to upload."
             )
