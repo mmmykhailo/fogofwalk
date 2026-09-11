@@ -12,7 +12,11 @@ export interface FogWorkerWatchdogOptions {
 }
 
 export interface FogWorkerWatchdog {
-  observe(request: FogWorkerWatchdogRequest | null): void
+  /**
+   * Observe the active request. Repeated observations refresh the deadline by
+   * default; polling can pass false when it is only checking for a timeout.
+   */
+  observe(request: FogWorkerWatchdogRequest | null, refresh?: boolean): void
   check(now?: number): boolean
   readonly activeRequest: FogWorkerWatchdogRequest | null
 }
@@ -36,7 +40,10 @@ export function createFogWorkerWatchdog(
     startedAt: number
   } | null = null
 
-  function observe(request: FogWorkerWatchdogRequest | null): void {
+  function observe(
+    request: FogWorkerWatchdogRequest | null,
+    refresh = true
+  ): void {
     if (!request) {
       active = null
       return
@@ -45,6 +52,7 @@ export function createFogWorkerWatchdog(
       active?.request.requestId === request.requestId &&
       active.request.generation === request.generation
     ) {
+      if (refresh) active.startedAt = now()
       return
     }
     active = { request, startedAt: now() }

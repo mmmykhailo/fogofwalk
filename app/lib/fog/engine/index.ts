@@ -20,11 +20,16 @@ export interface FogEngineHooks {
 
 export interface FogEngineOptions {
   hooks?: FogEngineHooks
+  /** Test/diagnostic override for deterministic update cadence. */
   snapshotEvery?: number
+  /** Maximum time between intermediate snapshots. */
+  emitIntervalMs?: number
+  now?: () => number
 }
 
 export type FogEngineResult =
   | { status: "complete"; snapshot: FogSnapshot }
+  | { status: "partial"; snapshot: FogSnapshot }
   | { status: "cancelled"; snapshot: null }
   | { status: "rejected"; snapshot: null; message: string }
 
@@ -34,6 +39,8 @@ interface EngineState {
   mode: FogMode
   masks: FogMask[]
   processedActivityIds: Set<string>
+  diagnostics: FogDiagnostics
+  completeness: "partial" | "complete"
 }
 
 function safeMessage(error: unknown): string {
@@ -51,6 +58,31 @@ function emptyDiagnostics(total: number): FogDiagnostics {
     warnings: [],
     errors: [],
     degraded: false,
+    warningCounts: {},
+    errorCounts: {},
+    repairedActivityCount: 0,
+    rejectedActivityCount: 0,
+    geometryFallbackCount: 0,
+  }
+}
+
+function incrementCount(
+  counts: Record<string, number> | undefined,
+  key: string
+): Record<string, number> {
+  return {
+    ...(counts ?? {}),
+    [key]: (counts?.[key] ?? 0) + 1,
+  }
+}
+
+function cloneDiagnostics(diagnostics: FogDiagnostics): FogDiagnostics {
+  return {
+    ...diagnostics,
+    warnings: [...diagnostics.warnings],
+    errors: [...diagnostics.errors],
+    warningCounts: { ...(diagnostics.warningCounts ?? {}) },
+    errorCounts: { ...(diagnostics.errorCounts ?? {}) },
   }
 }
 
@@ -67,6 +99,7 @@ export interface FogEngine {
     libraryRevision: number
     mode: FogMode
     activityCount: number
+    completeness: "partial" | "complete"
   }> | null
   process(request: FogRequest): Promise<FogEngineResult>
 }
@@ -75,7 +108,12 @@ export function createFogEngine(options: FogEngineOptions = {}): FogEngine {
   let state: EngineState | null = null
   const cancelledGenerations = new Set<number>()
   const hooks = options.hooks ?? {}
-  const snapshotEvery = Math.max(1, Math.floor(options.snapshotEvery ?? 5))
+  const snapshotEvery =
+    options.snapshotEvery == null
+      ? null
+      : Math.max(1, Math.floor(options.snapshotEvery))
+  const emitIntervalMs = Math.max(50, Math.floor(options.emitIntervalMs ?? 250))
+  const now = options.now ?? (() => Date.now())
 
   function reset(
     generation: number,
@@ -89,6 +127,8 @@ export function createFogEngine(options: FogEngineOptions = {}): FogEngine {
       mode,
       masks: [],
       processedActivityIds: new Set(),
+      diagnostics: emptyDiagnostics(0),
+      completeness: "complete",
     }
   }
 
@@ -101,6 +141,7 @@ export function createFogEngine(options: FogEngineOptions = {}): FogEngine {
     libraryRevision: number
     mode: FogMode
     activityCount: number
+    completeness: "partial" | "complete"
   }> | null {
     if (!state) return null
     return {
@@ -108,6 +149,7 @@ export function createFogEngine(options: FogEngineOptions = {}): FogEngine {
       libraryRevision: state.libraryRevision,
       mode: state.mode,
       activityCount: state.processedActivityIds.size,
+      completeness: state.completeness,
     }
   }
 
@@ -131,6 +173,9 @@ export function createFogEngine(options: FogEngineOptions = {}): FogEngine {
       if (request.baseLibraryRevision !== state.libraryRevision) {
         return "Fog append rejected because its base revision does not match."
       }
+      if (state.completeness !== "complete") {
+        return "Fog append rejected because the current base is partial; rebuild is required."
+      }
       if (request.libraryRevision < state.libraryRevision) {
         return "Fog append rejected because its revision is older than the base."
       }
@@ -140,17 +185,19 @@ export function createFogEngine(options: FogEngineOptions = {}): FogEngine {
 
   function makeSnapshot(
     request: FogRequest,
-    diagnostics: FogDiagnostics,
     stage: "aggregating" | "complete"
   ): FogSnapshot {
     const currentState = state!
+    const diagnostics = cloneDiagnostics(currentState.diagnostics)
     const aggregate = buildBoundedFog(currentState.masks, currentState.mode)
     diagnostics.featureCount = aggregate.featureCount
     diagnostics.vertexCount = aggregate.vertexCount
     const warnings = [
       ...new Set([...diagnostics.warnings, ...aggregate.warnings]),
     ]
-    diagnostics.degraded = diagnostics.errors.length > 0 || aggregate.degraded
+    if (aggregate.degraded) currentState.completeness = "partial"
+    diagnostics.degraded =
+      currentState.completeness === "partial" || aggregate.degraded
     return {
       generation: request.generation,
       libraryRevision: currentState.libraryRevision,
@@ -159,6 +206,7 @@ export function createFogEngine(options: FogEngineOptions = {}): FogEngine {
       partitionSchemeVersion: FOG_PARTITION_SCHEME_VERSION,
       completeness:
         stage === "complete" &&
+        currentState.completeness === "complete" &&
         diagnostics.errors.length === 0 &&
         !aggregate.degraded
           ? "complete"
@@ -198,7 +246,7 @@ export function createFogEngine(options: FogEngineOptions = {}): FogEngine {
   ): void {
     hooks.onError?.({
       type: "ERROR",
-      protocolVersion: 1,
+      protocolVersion: FOG_PROTOCOL_VERSION,
       requestId: request.requestId,
       generation: request.generation,
       libraryRevision: request.libraryRevision,
@@ -233,6 +281,17 @@ export function createFogEngine(options: FogEngineOptions = {}): FogEngine {
 
     const currentState = state!
     const diagnostics = emptyDiagnostics(request.activities.length)
+    const unseenActivityCount = request.activities.filter(
+      (activity) => !currentState.processedActivityIds.has(activity.id)
+    ).length
+    currentState.diagnostics.total =
+      request.kind === "rebuild"
+        ? request.activities.length
+        : Math.max(
+            currentState.diagnostics.total,
+            currentState.processedActivityIds.size + unseenActivityCount
+          )
+    let lastPublishedAt = now()
     for (let index = 0; index < request.activities.length; index += 1) {
       await (hooks.yieldToScheduler ?? (() => Promise.resolve()))()
       if (cancelledGenerations.has(request.generation)) {
@@ -248,35 +307,61 @@ export function createFogEngine(options: FogEngineOptions = {}): FogEngine {
       const result = bufferFogActivity(activity)
       diagnostics.inputPoints += result.inputPointCount
       diagnostics.outputPoints += result.outputPointCount
+      currentState.processedActivityIds.add(activity.id)
+      currentState.diagnostics.processed += 1
+      currentState.diagnostics.inputPoints += result.inputPointCount
+      currentState.diagnostics.outputPoints += result.outputPointCount
       if (result.rejected) {
-        diagnostics.errors.push(
-          `${activity.id}: ${result.reason ?? "activity geometry was rejected"}`
+        const reason = result.reason ?? "activity geometry was rejected"
+        const message = `${activity.id}: ${reason}`
+        diagnostics.errors.push(message)
+        currentState.diagnostics.errors.push(message)
+        currentState.diagnostics.errorCounts = incrementCount(
+          currentState.diagnostics.errorCounts,
+          `activity:${reason}`
         )
-        emitError(request, diagnostics.errors.at(-1)!, false, activity.id)
+        currentState.diagnostics.rejectedActivityCount =
+          (currentState.diagnostics.rejectedActivityCount ?? 0) + 1
+        currentState.completeness = "partial"
+        emitError(request, message, false, activity.id)
       } else {
         currentState.masks.push(...result.masks)
-        currentState.processedActivityIds.add(activity.id)
-        diagnostics.warnings.push(
-          ...result.warnings.map(
-            (warning) => `${activity.id}: ${warning.message}`
+        if (result.warnings.length > 0) {
+          currentState.diagnostics.repairedActivityCount =
+            (currentState.diagnostics.repairedActivityCount ?? 0) + 1
+        }
+        for (const warning of result.warnings) {
+          const message = `${activity.id}: ${warning.message}`
+          diagnostics.warnings.push(message)
+          currentState.diagnostics.warnings.push(message)
+          currentState.diagnostics.warningCounts = incrementCount(
+            currentState.diagnostics.warningCounts,
+            warning.code
           )
-        )
+        }
       }
       diagnostics.processed += 1
       emitProgress(request, diagnostics, "buffering")
-      if (
-        diagnostics.processed % snapshotEvery === 0 ||
-        diagnostics.processed === request.activities.length
-      ) {
-        const snapshot = makeSnapshot(request, diagnostics, "aggregating")
+      const cadenceReached =
+        snapshotEvery !== null && diagnostics.processed % snapshotEvery === 0
+      const timeReached = now() - lastPublishedAt >= emitIntervalMs
+      if (cadenceReached || timeReached) {
+        const snapshot = makeSnapshot(request, "aggregating")
         hooks.onUpdate?.(snapshot, request)
+        lastPublishedAt = now()
       }
     }
 
-    const snapshot = makeSnapshot(request, diagnostics, "complete")
+    currentState.diagnostics.total = Math.max(
+      currentState.diagnostics.total,
+      currentState.processedActivityIds.size
+    )
+    const snapshot = makeSnapshot(request, "complete")
     hooks.onUpdate?.(snapshot, request)
     emitProgress(request, diagnostics, "complete")
-    return { status: "complete", snapshot }
+    return snapshot.completeness === "complete"
+      ? { status: "complete", snapshot }
+      : { status: "partial", snapshot }
   }
 
   return { reset, cancel, getState, process }

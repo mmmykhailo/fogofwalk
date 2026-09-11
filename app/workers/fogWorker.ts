@@ -145,7 +145,7 @@ self.onmessage = (event: MessageEvent<unknown>) => {
           postCancelled(request)
           return
         }
-        if (result.status === "complete") {
+        if (result.status === "complete" || result.status === "partial") {
           postDone(request, result.snapshot)
         } else if (result.status === "cancelled") {
           postCancelled(request)

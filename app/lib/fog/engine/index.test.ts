@@ -14,6 +14,10 @@ function activity(id: string): FogWorkerActivity {
   }
 }
 
+function rejectedActivity(id: string): FogWorkerActivity {
+  return { id, name: id, coordinates: [] }
+}
+
 function request(overrides: Partial<FogRequest> = {}): FogRequest {
   return {
     protocolVersion: FOG_PROTOCOL_VERSION,
@@ -91,5 +95,55 @@ describe("FogEngine", () => {
     release?.()
 
     expect(await pending).toEqual({ status: "cancelled", snapshot: null })
+  })
+
+  test("keeps rejected activities in cumulative partial state", async () => {
+    const engine = createFogEngine()
+    const rebuilt = await engine.process(
+      request({ activities: [activity("one"), rejectedActivity("bad")] })
+    )
+
+    expect(rebuilt.status).toBe("partial")
+    if (rebuilt.status !== "partial") return
+    expect(rebuilt.snapshot.completeness).toBe("partial")
+    expect(rebuilt.snapshot.diagnostics).toMatchObject({
+      processed: 2,
+      total: 2,
+      rejectedActivityCount: 1,
+    })
+
+    const append = await engine.process(
+      request({
+        requestId: "append-after-partial",
+        kind: "append",
+        libraryRevision: 2,
+        baseLibraryRevision: 1,
+        activities: [activity("two")],
+      })
+    )
+    expect(append.status).toBe("rejected")
+    if (append.status === "rejected") {
+      expect(append.message).toContain("current base is partial")
+    }
+  })
+
+  test("publishes intermediate updates by time when no item cadence is set", async () => {
+    let clock = 0
+    const updates: number[] = []
+    const engine = createFogEngine({
+      now: () => clock,
+      emitIntervalMs: 50,
+      hooks: {
+        onUpdate: (snapshot) => updates.push(snapshot.diagnostics.processed),
+        yieldToScheduler: async () => {
+          clock += 60
+        },
+      },
+    })
+
+    await engine.process(
+      request({ activities: [activity("one"), activity("two")] })
+    )
+    expect(updates).toEqual([1, 2, 2])
   })
 })

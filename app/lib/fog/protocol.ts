@@ -2,8 +2,12 @@ import type { FeatureCollection, MultiPolygon, Polygon } from "geojson"
 import type { FogMode, FogWorkerActivity } from "~/types/activities"
 
 export const FOG_PROTOCOL_VERSION = 1
-export const FOG_ALGORITHM_VERSION = 1
-export const FOG_PARTITION_SCHEME_VERSION = 1
+// The algorithm and render representation changed from world-minus-route
+// polygons to positive explored masks rendered through the fog custom layer.
+// Keep these values in this protocol module so cache, worker, and coordinator
+// identity checks cannot drift apart.
+export const FOG_ALGORITHM_VERSION = 2
+export const FOG_PARTITION_SCHEME_VERSION = 3
 
 export type FogRequestKind = "rebuild" | "append" | "cancel"
 
@@ -31,6 +35,12 @@ export interface FogDiagnostics {
   warnings: string[]
   errors: string[]
   degraded: boolean
+  /** Stable aggregate counts used by the status UI and support diagnostics. */
+  warningCounts?: Record<string, number>
+  errorCounts?: Record<string, number>
+  repairedActivityCount?: number
+  rejectedActivityCount?: number
+  geometryFallbackCount?: number
 }
 
 export interface FogSnapshot {

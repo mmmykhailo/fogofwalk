@@ -36,4 +36,36 @@ describe("fog worker watchdog", () => {
     expect(watchdog.check(100)).toBe(false)
     expect(timedOut).toEqual([])
   })
+
+  test("refreshes the deadline when the active request makes progress", () => {
+    let clock = 0
+    const timedOut: string[] = []
+    const watchdog = createFogWorkerWatchdog({
+      timeoutMs: 10,
+      now: () => clock,
+      onTimeout: (request) => timedOut.push(request.requestId),
+    })
+
+    watchdog.observe({ requestId: "active", generation: 1 })
+    clock = 9
+    watchdog.observe({ requestId: "active", generation: 1 })
+    expect(watchdog.check(10)).toBe(false)
+    expect(watchdog.check(18)).toBe(false)
+    expect(watchdog.check(19)).toBe(true)
+    expect(timedOut).toEqual(["active"])
+  })
+
+  test("does not refresh the deadline during passive polling", () => {
+    let clock = 0
+    const watchdog = createFogWorkerWatchdog({
+      timeoutMs: 10,
+      now: () => clock,
+      onTimeout: () => undefined,
+    })
+
+    watchdog.observe({ requestId: "active", generation: 1 })
+    clock = 9
+    watchdog.observe({ requestId: "active", generation: 1 }, false)
+    expect(watchdog.check(10)).toBe(true)
+  })
 })

@@ -206,4 +206,36 @@ describe("FogCoordinator", () => {
     coordinator.handleReply(reply(first))
     expect(terminals).toHaveLength(2)
   })
+
+  test("does not advertise a partial snapshot as an appendable base", () => {
+    const { coordinator, requests, terminals, snapshots } = setup()
+    coordinator.schedule(input(10, 40), { forceRebuild: true })
+    const rebuild = requests[0]!
+    coordinator.handleReply(
+      reply(rebuild, {
+        snapshot: {
+          ...snapshot(rebuild),
+          completeness: "partial",
+          diagnostics: {
+            ...snapshot(rebuild).diagnostics,
+            degraded: true,
+            errors: ["one: invalid geometry"],
+          },
+        },
+      })
+    )
+
+    expect(terminals.map(({ status }) => status)).toEqual(["partial"])
+    expect(snapshots).toHaveLength(1)
+    expect(coordinator.completedSnapshot).toBeNull()
+
+    coordinator.schedule(
+      input(10, 41, "corridor", [activity("one"), activity("two")]),
+      { appendActivities: [activity("two")] }
+    )
+    expect(requests[1]).toMatchObject({
+      kind: "rebuild",
+      libraryRevision: 41,
+    })
+  })
 })

@@ -31,7 +31,11 @@ export interface FogCoordinatorRequestContext {
   recovery: boolean
 }
 
-export type FogCoordinatorTerminalStatus = "complete" | "cancelled" | "failed"
+export type FogCoordinatorTerminalStatus =
+  | "complete"
+  | "partial"
+  | "cancelled"
+  | "failed"
 
 export interface FogCoordinatorTerminal {
   context: FogCoordinatorRequestContext
@@ -408,7 +412,11 @@ export function createFogCoordinator(
       return { accepted: true, terminal: true, snapshot: null }
     }
 
-    finish(current, "complete", reply.snapshot)
+    finish(
+      current,
+      reply.snapshot.completeness === "complete" ? "complete" : "partial",
+      reply.snapshot
+    )
     return { accepted: true, terminal: true, snapshot: reply.snapshot }
   }
 
@@ -508,12 +516,16 @@ export function createFogCoordinator(
   ): void {
     if (active !== candidate) return
     active = null
-    if (status === "complete" && snapshot) {
+    if (status === "complete" && snapshot?.completeness === "complete") {
       completed = { input: candidate.context.input }
       recoveryRebuilds = 0
-      if (!hasSupersedingQueue(candidate.context.input)) {
-        events.onSnapshot?.(snapshot, candidate.context)
-      }
+    }
+    if (
+      (status === "complete" || status === "partial") &&
+      snapshot &&
+      !hasSupersedingQueue(candidate.context.input)
+    ) {
+      events.onSnapshot?.(snapshot, candidate.context)
     }
     events.onTerminal?.({
       context: candidate.context,
