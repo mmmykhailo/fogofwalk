@@ -21,6 +21,7 @@ import { isServerEnabled } from "~/lib/server/config"
 import { createActivityUploadOutboxItem } from "~/lib/server/sync/activityEffects"
 import { UniqueDistanceProjection } from "~/lib/uniqueDistanceProjection"
 import type { FogSnapshot } from "~/lib/fog/protocol"
+import { recordDiagnostic } from "~/lib/diagnostics"
 
 // ─── Map position persistence (localStorage — synchronous, survives page unload) ──
 
@@ -273,6 +274,15 @@ export const fogCoordinator = new FogCoordinator(
       mapStore.fogWorkerLibraryRevision = request.libraryRevision
       mapStore.pendingFogJobs++
       mapStore.isFogRunInFlight = true
+      recordDiagnostic({
+        subsystem: "fog",
+        operationId: request.requestId,
+        libraryRevision: request.libraryRevision,
+        stage: request.kind,
+        itemCount: request.activities.length,
+        pointCount: workerPointCount(request.activities),
+        result: "started",
+      })
       updateFogStatus({
         phase: "processing",
         generation: request.generation,
@@ -286,6 +296,14 @@ export const fogCoordinator = new FogCoordinator(
     },
     onProgress: (progress, context) => {
       setFogProcessedCount(progress.processed)
+      recordDiagnostic({
+        subsystem: "fog",
+        operationId: context.request.requestId,
+        libraryRevision: context.request.libraryRevision,
+        stage: progress.stage,
+        itemCount: progress.total,
+        result: "progress",
+      })
       updateFogStatus({
         phase: fogStatus.phase === "degraded" ? "degraded" : "processing",
         generation: context.request.generation,
@@ -296,6 +314,21 @@ export const fogCoordinator = new FogCoordinator(
       })
     },
     onError: (error) => {
+      recordDiagnostic({
+        subsystem: "fog",
+        operationId: error.context?.request.requestId,
+        libraryRevision: error.context?.request.libraryRevision,
+        stage: "error",
+        itemCount: error.context?.request.activities.length,
+        result: error.kind === "protocol" ? "degraded" : "failed",
+        errorCode:
+          error.kind === "worker"
+            ? "worker-failed"
+            : error.kind === "engine"
+              ? "engine-failed"
+              : "protocol-error",
+        retryability: error.kind === "protocol" ? "permanent" : "retryable",
+      })
       updateFogStatus((current) => ({
         ...current,
         phase:
@@ -306,6 +339,15 @@ export const fogCoordinator = new FogCoordinator(
       }))
     },
     onRecovery: (context) => {
+      recordDiagnostic({
+        subsystem: "fog",
+        operationId: context.request.requestId,
+        libraryRevision: context.request.libraryRevision,
+        stage: "recovery",
+        itemCount: context.request.activities.length,
+        result: "started",
+        retryability: "retryable",
+      })
       updateFogStatus({
         phase: "recovering",
         generation: context.request.generation,
@@ -319,6 +361,28 @@ export const fogCoordinator = new FogCoordinator(
     onTerminal: (terminal) => {
       finishFogJob()
       mapStore.isRestoreReprocess = false
+      recordDiagnostic({
+        subsystem: "fog",
+        operationId: terminal.context.request.requestId,
+        libraryRevision: terminal.context.request.libraryRevision,
+        stage: "complete",
+        itemCount: terminal.context.request.activities.length,
+        ...(terminal.snapshot
+          ? {
+              pointCount: terminal.snapshot.diagnostics.outputPoints,
+              geometry: snapshotGeometryMetrics(terminal.snapshot),
+            }
+          : {}),
+        result:
+          terminal.status === "complete"
+            ? terminal.snapshot?.completeness === "complete"
+              ? "success"
+              : "degraded"
+            : terminal.status,
+        ...(terminal.status === "failed"
+          ? { errorCode: "fog-processing-failed", retryability: "retryable" }
+          : {}),
+      })
       if (terminal.status === "failed") {
         updateFogStatus({
           phase: "failed",
@@ -348,6 +412,26 @@ function cloneActivities(
       ? structuredClone([...activities])
       : JSON.parse(JSON.stringify(activities))
   return sortActivities(copy as ParsedActivity[])
+}
+
+function workerPointCount(activities: readonly FogWorkerActivity[]): number {
+  return activities.reduce(
+    (count, activity) =>
+      count +
+      (activity.paths
+        ? activity.paths.reduce((pathCount, path) => pathCount + path.length, 0)
+        : activity.coordinates.length),
+    0
+  )
+}
+
+function snapshotGeometryMetrics(snapshot: FogSnapshot) {
+  return {
+    inputPoints: snapshot.diagnostics.inputPoints,
+    outputPoints: snapshot.diagnostics.outputPoints,
+    featureCount: snapshot.diagnostics.featureCount,
+    vertexCount: snapshot.diagnostics.vertexCount,
+  }
 }
 
 function toFogWorkerActivity(activity: FogWorkerActivity): FogWorkerActivity {

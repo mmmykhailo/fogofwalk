@@ -36,6 +36,7 @@ import {
 } from "~/lib/mapStore"
 import { backfillContentHashes } from "~/lib/activityHash"
 import { createUuid } from "~/lib/uuid"
+import { recordDiagnostic } from "~/lib/diagnostics"
 import { apiRaw, friendlyMessage } from "./apiClient"
 import { canSync } from "./authStore"
 import { isServerEnabled } from "./config"
@@ -297,6 +298,8 @@ async function syncOnce(reason: string): Promise<void> {
   const lastSyncAt =
     previousStatus.phase === "syncing" ? null : previousStatus.lastSyncAt
   const runId = ++nextSyncRunId
+  const operationId = `sync-${runId}`
+  const startedAt = Date.now()
   setStatus({
     phase: "syncing",
     runId,
@@ -305,6 +308,12 @@ async function syncOnce(reason: string): Promise<void> {
     total: 0,
     cursorHeld: false,
     message: null,
+  })
+  recordDiagnostic({
+    subsystem: "sync",
+    operationId,
+    stage: "run",
+    result: "started",
   })
   console.debug("[sync] start", reason)
 
@@ -330,10 +339,19 @@ async function syncOnce(reason: string): Promise<void> {
       })
     }
 
-    await runActivitySync(lastSyncAt)
+    await runActivitySync(lastSyncAt, operationId, startedAt)
     return
   } catch (err) {
     console.warn("[sync] failed:", err)
+    recordDiagnostic({
+      subsystem: "sync",
+      operationId,
+      stage: "run",
+      durationMs: Date.now() - startedAt,
+      result: "failed",
+      errorCode: "sync-failed",
+      retryability: "retryable",
+    })
     await publishOutboxStatus({
       phase: "error",
       message: friendlyMessage(err),
@@ -343,15 +361,27 @@ async function syncOnce(reason: string): Promise<void> {
   }
 }
 
-async function runActivitySync(lastSyncAt: number | null): Promise<void> {
+async function runActivitySync(
+  lastSyncAt: number | null,
+  operationId: string,
+  startedAt: number
+): Promise<void> {
   if (!activitySyncRepository || !syncTransport) return
   setStatus({ phase: "syncing", done: 0, total: 0 })
   const result = await new ActivitySyncExecutor({
     repository: activitySyncRepository,
     library: activityLibrary,
     transport: syncTransport,
-    onProgress: ({ done, total }) =>
-      setStatus({ phase: "syncing", done, total }),
+    onProgress: ({ done, total }) => {
+      setStatus({ phase: "syncing", done, total })
+      recordDiagnostic({
+        subsystem: "sync",
+        operationId,
+        stage: "page",
+        itemCount: total,
+        result: "progress",
+      })
+    },
   }).run()
 
   if (
@@ -383,6 +413,17 @@ async function runActivitySync(lastSyncAt: number | null): Promise<void> {
     if (permanent || summary?.permanentCount) {
       setStatus({ phase: "permanent" })
     }
+    recordDiagnostic({
+      subsystem: "sync",
+      operationId,
+      stage: "complete",
+      durationMs: Date.now() - startedAt,
+      itemCount:
+        result.downloadedCount + result.updatedCount + result.deletedIds.length,
+      result: permanent || summary?.permanentCount ? "failed" : "partial",
+      errorCode: permanent ? "permanent-sync-failure" : "sync-effects-pending",
+      retryability: permanent ? "permanent" : "retryable",
+    })
     return
   }
 
@@ -398,6 +439,18 @@ async function runActivitySync(lastSyncAt: number | null): Promise<void> {
       message: "Some local changes cannot be synced.",
     })
   }
+  recordDiagnostic({
+    subsystem: "sync",
+    operationId,
+    stage: "complete",
+    durationMs: Date.now() - startedAt,
+    itemCount:
+      result.downloadedCount + result.updatedCount + result.deletedIds.length,
+    result: summary?.permanentCount ? "failed" : "success",
+    ...(summary?.permanentCount
+      ? { errorCode: "permanent-sync-failure", retryability: "permanent" }
+      : {}),
+  })
   console.debug("[sync] done")
 }
 

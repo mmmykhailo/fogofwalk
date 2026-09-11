@@ -9,6 +9,7 @@ import {
   setFogProcessedCount,
 } from "~/lib/mapStore"
 import { saveFogCache } from "~/lib/storage"
+import { recordDiagnostic } from "~/lib/diagnostics"
 import {
   FOG_ALGORITHM_VERSION,
   FOG_PARTITION_SCHEME_VERSION,
@@ -56,6 +57,22 @@ export function useFogWorkerBridge(onProcessingComplete?: ProcessingComplete): {
 
     const setSnapshotOnMap = (snapshot: FogSnapshot) => {
       if (!isCurrentSnapshot(snapshot)) return false
+      const operationId = `fog-${snapshot.generation}-${snapshot.libraryRevision}`
+      recordDiagnostic({
+        subsystem: "render",
+        operationId,
+        libraryRevision: snapshot.libraryRevision,
+        stage: "snapshot",
+        itemCount: mapStore.activities.length,
+        pointCount: snapshot.diagnostics.outputPoints,
+        result: snapshot.completeness === "complete" ? "success" : "degraded",
+        geometry: {
+          inputPoints: snapshot.diagnostics.inputPoints,
+          outputPoints: snapshot.diagnostics.outputPoints,
+          featureCount: snapshot.diagnostics.featureCount,
+          vertexCount: snapshot.diagnostics.vertexCount,
+        },
+      })
       recordFogSnapshot(snapshot)
       mapStore.fogSnapshot = {
         generation: snapshot.generation,
@@ -129,24 +146,52 @@ export function useFogWorkerBridge(onProcessingComplete?: ProcessingComplete): {
       if (result.snapshot) setSnapshotOnMap(result.snapshot)
       if (!result.terminal || mapStore.isFogRunInFlight) return
 
+      const snapshot = result.snapshot
       if (
-        result.snapshot?.completeness === "complete" &&
+        snapshot?.completeness === "complete" &&
         mapStore.activities.length > 0 &&
         mapStore.fogData &&
-        isCurrentSnapshot(result.snapshot)
+        isCurrentSnapshot(snapshot)
       ) {
+        const cacheOperationId = `fog-cache-${snapshot.generation}-${snapshot.libraryRevision}`
         void saveFogCache({
           activityIds: mapStore.activities
             .map((activity) => activity.id)
             .sort(),
-          libraryRevision: result.snapshot.libraryRevision,
-          fogMode: result.snapshot.mode,
-          algorithmVersion: result.snapshot.algorithmVersion,
-          partitionSchemeVersion: result.snapshot.partitionSchemeVersion,
-          fogData: result.snapshot.geometry,
-        }).catch((error) =>
-          console.warn("[storage] fog cache save failed:", error)
-        )
+          libraryRevision: snapshot.libraryRevision,
+          fogMode: snapshot.mode,
+          algorithmVersion: snapshot.algorithmVersion,
+          partitionSchemeVersion: snapshot.partitionSchemeVersion,
+          fogData: snapshot.geometry,
+        })
+          .then(() => {
+            recordDiagnostic({
+              subsystem: "storage",
+              operationId: cacheOperationId,
+              libraryRevision: snapshot.libraryRevision,
+              stage: "fog-cache-write",
+              itemCount: mapStore.activities.length,
+              pointCount: snapshot.diagnostics.outputPoints,
+              result: "success",
+              geometry: {
+                featureCount: snapshot.diagnostics.featureCount,
+                vertexCount: snapshot.diagnostics.vertexCount,
+              },
+            })
+          })
+          .catch(() => {
+            recordDiagnostic({
+              subsystem: "storage",
+              operationId: cacheOperationId,
+              libraryRevision: snapshot.libraryRevision,
+              stage: "fog-cache-write",
+              itemCount: mapStore.activities.length,
+              pointCount: snapshot.diagnostics.outputPoints,
+              result: "failed",
+              errorCode: "fog-cache-write-failed",
+              retryability: "retryable",
+            })
+          })
       }
 
       mapStore.isRestoreReprocess = false

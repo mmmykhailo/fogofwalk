@@ -50,6 +50,7 @@ import {
 } from "~/lib/activities/import/status"
 import type { ImportFailureSummary } from "~/lib/activities/import/service"
 import { createUuid } from "~/lib/uuid"
+import { recordDiagnostic } from "~/lib/diagnostics"
 import { createActivityUploadOutboxItem } from "~/lib/server/sync/activityEffects"
 import { createActivityDeleteOutboxItem } from "~/lib/server/sync/activityEffects"
 import { buildLapActivity, lapSubtitle } from "~/lib/laps"
@@ -231,16 +232,32 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
 
   if (intent === "add-files") {
     const files = formData.getAll("files") as File[]
-    console.debug("[clientAction] add-files", {
-      fileCount: files.length,
-      files: files.map((f) => f.name),
-    })
     const operationId = createUuid()
+    const startedAt = Date.now()
     beginImport(operationId, files.length)
+    recordDiagnostic({
+      subsystem: "import",
+      operationId,
+      libraryRevision: mapStore.libraryRevision,
+      stage: "accepted",
+      itemCount: files.length,
+      result: "started",
+    })
     const commitState: { value: LibraryCommit | null } = { value: null }
     const importService = new ActivityImportService({
       signal: request.signal,
-      onProgress: reportImportProgress,
+      onProgress: (progress) => {
+        reportImportProgress(progress)
+        recordDiagnostic({
+          subsystem: "import",
+          operationId: progress.operationId,
+          libraryRevision: mapStore.libraryRevision,
+          stage: progress.stage,
+          durationMs: Date.now() - startedAt,
+          itemCount: progress.totalFiles,
+          result: "progress",
+        })
+      },
       commit: (operationId, activities) =>
         activityLibrary
           .dispatch(
@@ -269,6 +286,17 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
       completeImport(batch)
     } catch (error) {
       failImport(operationId, error)
+      recordDiagnostic({
+        subsystem: "import",
+        operationId,
+        libraryRevision: mapStore.libraryRevision,
+        stage: "complete",
+        durationMs: Date.now() - startedAt,
+        itemCount: files.length,
+        result: "failed",
+        errorCode: "import-failed",
+        retryability: "retryable",
+      })
       const failure =
         error instanceof Error
           ? error.message
@@ -290,6 +318,35 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
       }
     }
     const added = commitState.value?.change.added ?? []
+    const failedOutcomes = batch.files.filter((file) =>
+      ["failed", "rejected", "cancelled"].includes(file.status)
+    )
+    const importResult = batch.cancelled
+      ? ("cancelled" as const)
+      : failedOutcomes.length === 0
+        ? ("success" as const)
+        : added.length > 0 ||
+            batch.activities.some((activity) => activity.status === "duplicate")
+          ? ("partial" as const)
+          : ("failed" as const)
+    const firstErrorCode = failedOutcomes.find(
+      (file) => file.errorCode
+    )?.errorCode
+    recordDiagnostic({
+      subsystem: "import",
+      operationId,
+      libraryRevision: mapStore.libraryRevision,
+      stage: "complete",
+      durationMs: Date.now() - startedAt,
+      itemCount: batch.files.length,
+      pointCount: added.reduce(
+        (count, activity) => count + activity.coordinates.length,
+        0
+      ),
+      result: importResult,
+      ...(firstErrorCode ? { errorCode: firstErrorCode } : {}),
+      retryability: failedOutcomes.length > 0 ? "retryable" : null,
+    })
     if (added.length > 0) {
       void requestSync("add-files")
     }

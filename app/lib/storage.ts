@@ -517,9 +517,18 @@ export async function clearSavedPoints(): Promise<void> {
 
 // ─── Prefs helpers ─────────────────────────────────────────────────────────────
 
-async function prefSet(key: string, value: unknown): Promise<void> {
+async function prefSet(
+  key: string,
+  value: unknown,
+  options: { throwOnError?: boolean } = {}
+): Promise<void> {
   const db = await getDb()
-  if (!db) return
+  if (!db) {
+    if (options.throwOnError) {
+      throw new Error("Local storage is unavailable.")
+    }
+    return
+  }
   try {
     const entry: PrefEntry = { key, value }
     const tx = db.transaction("prefs", "readwrite")
@@ -530,6 +539,7 @@ async function prefSet(key: string, value: unknown): Promise<void> {
     })
   } catch (err) {
     console.warn(`[storage] prefSet(${key}) failed:`, err)
+    if (options.throwOnError) throw err
   }
 }
 
@@ -576,7 +586,11 @@ export async function loadFogMode(): Promise<FogMode | null> {
 // ─── Fog cache ─────────────────────────────────────────────────────────────────
 
 export async function saveFogCache(cache: FogCache): Promise<void> {
-  return prefSet("fogCache", cache)
+  const validation = validateFogRenderData(cache.fogData)
+  if (!validation.ok) {
+    throw new Error("Fog cache geometry is invalid.")
+  }
+  return prefSet("fogCache", cache, { throwOnError: true })
 }
 
 export async function loadFogCache(): Promise<FogCache | null> {
