@@ -9,7 +9,7 @@ import type {
   RemoteChange,
 } from "~/lib/activities/libraryEvents"
 import { createUuid } from "~/lib/uuid"
-import { ApiRequestError } from "../apiClient"
+import { isApiRequestError } from "../apiClient"
 import {
   type SyncOutboxItem,
   type SyncOutboxItemInput,
@@ -391,7 +391,7 @@ function intentOperation(
 function retryableError(error: unknown): boolean {
   if (isPermanentSyncEffectError(error)) return false
   if (isSyncTransportError(error)) return error.retryable
-  if (error instanceof ApiRequestError) {
+  if (isApiRequestError(error)) {
     return (
       error.status === 0 ||
       error.status === 408 ||
@@ -403,7 +403,7 @@ function retryableError(error: unknown): boolean {
 }
 
 function safeErrorMessage(error: unknown): string {
-  if (isSyncTransportError(error) || error instanceof ApiRequestError) {
+  if (isSyncTransportError(error) || isApiRequestError(error)) {
     return error.message
   }
   if (isPermanentSyncEffectError(error)) return error.message
@@ -418,7 +418,7 @@ function retryAt(
 ): number | undefined {
   if (!retryableError(error)) return undefined
   const retryAfter =
-    error instanceof ApiRequestError ? error.retryAfterMs : null
+    isApiRequestError(error) ? error.retryAfterMs : null
   const base = Math.min(
     MAX_RETRY_DELAY_MS,
     1_000 * 2 ** Math.max(0, Math.min(attempts - 1, 14))
@@ -842,7 +842,7 @@ export function createActivitySyncExecutor(
         await options.repository.failOutbox(claimed.id, claimed.leaseId, {
           code:
             isSyncTransportError(error) ||
-            error instanceof ApiRequestError
+            isApiRequestError(error)
               ? error.code
               : "sync-effect-failed",
           message: failure.message,
@@ -850,7 +850,7 @@ export function createActivitySyncExecutor(
           ...(failure.retryAt !== undefined
             ? { retryAt: failure.retryAt }
             : {}),
-          ...(error instanceof ApiRequestError ? { status: error.status } : {}),
+          ...(isApiRequestError(error) ? { status: error.status } : {}),
           failedAt: now(),
         })
         failures.push(failure)
@@ -887,7 +887,7 @@ export function createActivitySyncExecutor(
         try {
           await options.transport.uploadActivity(activity)
         } catch (error) {
-          if (error instanceof ApiRequestError && error.status === 409) {
+          if (isApiRequestError(error) && error.status === 409) {
             return {
               change: null,
               addedServerHash: payload.contentHash,
