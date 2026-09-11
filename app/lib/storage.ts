@@ -872,12 +872,20 @@ export function emptySavedPointSyncState(): SavedPointSyncState {
   }
 }
 
-export async function clearSyncState(): Promise<void> {
+export async function clearSyncState(
+  options: { allAccounts?: boolean } = {}
+): Promise<void> {
   const db = await getDb()
   if (!db) return
   try {
     const tx = db.transaction(["sync-state", "prefs"], "readwrite")
-    tx.objectStore("sync-state").delete("default")
+    const stateStore = tx.objectStore("sync-state")
+    if (options.allAccounts) {
+      const keys = await promisifyRequest<IDBValidKey[]>(stateStore.getAllKeys())
+      for (const key of keys) stateStore.delete(key)
+    } else {
+      stateStore.delete("default")
+    }
     tx.objectStore("prefs").delete("syncState")
     tx.objectStore("prefs").delete("savedPointSyncState")
     await new Promise<void>((resolve, reject) => {
@@ -910,7 +918,7 @@ export async function clearAll(
     clearPhotos(),
     clearSavedPoints(),
     prefDelete("fogCache"),
-    clearSyncState(),
+    clearSyncState({ allAccounts: true }),
     prefDelete("uniqueDistanceState"),
   ])
 }
