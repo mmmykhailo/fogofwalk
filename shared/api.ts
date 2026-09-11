@@ -9,6 +9,7 @@
 import type {
   ActivityFormat,
   ActivityType,
+  CanonicalActivity,
   ParsedActivity,
   StartSunPhase,
 } from "./activities"
@@ -237,7 +238,19 @@ export interface ManifestPage {
  * `stats.uniqueDistanceKm` is zeroed on upload: it is relative to whichever
  * library computed it, so the receiving device recomputes rather than trusts.
  */
-export type ActivityUploadPayload = Omit<ParsedActivity, "id">
+export type LegacyActivityUploadPayload = Omit<ParsedActivity, "id">
+export type CanonicalActivityUploadPayload = Omit<CanonicalActivity, "id">
+
+/** Existing callers continue to use the legacy flat upload payload. */
+export type ActivityUploadPayload = LegacyActivityUploadPayload
+
+/**
+ * Uploads remain readable by old clients while new clients can send the
+ * path-aware model. The server validates exactly one geometry representation.
+ */
+export type ActivityUploadRequestPayload =
+  | LegacyActivityUploadPayload
+  | CanonicalActivityUploadPayload
 
 // ─── Data Export (GDPR Right of Access) ────────────────────────────────────────
 

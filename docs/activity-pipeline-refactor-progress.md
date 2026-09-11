@@ -13,17 +13,32 @@ untouched.
 - Branch: `refactor/fog-processing`
 - Started: 2026-09-11
 - Current phase: Phase 1/2 — contracts and activity-library ownership
-- Last completed commit: `fa8e423 track refactor progress`
-- Next action: integrate the bounded path-aware model/hash slice, then wire the
-  service into restore/import/delete callers
+- Last completed commit: `7f6c149 add activity library foundations`
+- Next action: wire the committed path-aware contract into the import adapters,
+  then finish migrating restore/import/delete callers
+
+## A1 activity contract slice
+
+- Added shared `ActivityGeometry`, `ActivityDraft`, and `CanonicalActivity`
+  types while retaining legacy `ParsedActivity.coordinates`.
+- Added shared geometry normalization with typed rejection reasons, timestamp
+  alignment checks, duplicate coalescing, and discontinuity-preserving splits.
+- Added v2 path-aware identity serialization and client/server legacy-hash
+  compatibility for single-path activities.
+- Added server payload and upload-route validation for canonical multi-path
+  payloads.
+- Focused tests pass; no excluded pipeline files were intentionally changed.
+- This slice is ready to commit independently; legacy flat callers remain
+  readable during the migration.
 
 ## Commit log
 
-| Commit | Slice | Verification |
-| ------ | ----- | ------------ |
-| — | Baseline before implementation | Client: 78 tests pass; client typecheck passes |
-| `fa8e423` | Add the continuation tracker | Client baseline recorded |
-| pending | Add revisioned activity-library repository/service foundations | 5 focused tests pass; client typecheck passes |
+| Commit    | Slice                                                          | Verification                                                     |
+| --------- | -------------------------------------------------------------- | ---------------------------------------------------------------- |
+| —         | Baseline before implementation                                 | Client: 78 tests pass; client typecheck passes                   |
+| `fa8e423` | Add the continuation tracker                                   | Client baseline recorded                                         |
+| `7f6c149` | Add revisioned activity-library repository/service foundations | 5 focused tests pass; client typecheck passes                    |
+| pending   | Add A1 path-aware activity contract                            | Shared/client/server focused tests pass; server typecheck passes |
 
 ## Phase checklist
 
@@ -42,8 +57,9 @@ untouched.
 
 ## Working decisions
 
-- Preserve the existing shared activity wire identity until a coordinated
-  client/server path-aware hash migration is implemented and tested.
+- Preserve legacy flat activity identity while the coordinated client/server
+  path-aware hash migration is rolled out; canonical v2 payloads are now
+  accepted alongside v1.
 - Preserve the four existing deletion semantics and render-only FIT laps.
 - Keep all user-authored changes that predate this implementation isolated from
   refactor commits unless a later migration explicitly requires them.

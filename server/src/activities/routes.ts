@@ -29,7 +29,7 @@ import {
   looksGzipped,
   readCappedBody,
 } from "./body"
-import { computeContentHash, isContentHash } from "./contentHash"
+import { contentHashMatches, isContentHash } from "./contentHash"
 import { parseActivityUpload } from "./payload"
 import { checkRateLimit } from "./rateLimit"
 
@@ -109,12 +109,24 @@ export function createActivityRoutes(store: ServerStore) {
     if (!parsed.ok) return jsonError(c, "bad_request", parsed.message)
 
     const activity = parsed.activity
-    const actual = await computeContentHash({
-      format: activity.format,
-      startedAtMs: activity.startedAtMs,
-      coordinates: activity.coordinates,
-    })
-    if (actual !== contentHash) {
+    // The payload schema has already validated one geometry representation and
+    // its timestamp alignment. Preserve the exact point sequence for hash
+    // verification; normalization happens before a new client creates v2.
+    const paths =
+      "paths" in activity && activity.paths
+        ? activity.paths
+        : "coordinates" in activity
+          ? [activity.coordinates]
+          : []
+    const matches = await contentHashMatches(
+      {
+        format: activity.format,
+        startedAtMs: activity.startedAtMs,
+        paths,
+      },
+      contentHash
+    )
+    if (!matches) {
       // The hash is the primary key; accepting a declared one would let any
       // client overwrite another device's activity with unrelated geometry.
       return jsonError(
@@ -142,7 +154,7 @@ export function createActivityRoutes(store: ServerStore) {
       startSunPhase: activity.startSunPhase,
       startedAtMs: activity.startedAtMs,
       distanceKm: activity.stats.distanceKm,
-      pointCount: activity.coordinates.length,
+      pointCount: paths.reduce((count, path) => count + path.length, 0),
       sizeBytes: stored.byteLength,
       updatedAt: existing && isUnchanged ? existing.updatedAt : Date.now(),
       durationMs: activity.stats.durationMs,

@@ -10,6 +10,37 @@
 
 export type ActivityCoords = [number, number][]
 
+/**
+ * A route is allowed to contain disconnected paths.  Keep this alias mutable
+ * because the current map/statistics callers still pass ordinary arrays.
+ */
+export type ActivityPaths = ActivityCoords[]
+
+/** A timestamp aligned with one coordinate; null means that point was undated. */
+export type ActivityTimestamp = number | null
+
+export type ActivityPathTimestamps = ActivityTimestamp[]
+
+/**
+ * The geometry portion of the next activity contract.  `paths` is the
+ * canonical representation; the flat `coordinates` field below remains on
+ * ParsedActivity during the compatibility window for existing callers and
+ * legacy persisted/sync payloads.
+ */
+export interface ActivityGeometry {
+  paths: ActivityPaths
+  pathTimestamps?: ActivityPathTimestamps[]
+}
+
+export interface ActivityGeometryDraft {
+  /** Legacy one-path input. */
+  coordinates?: ActivityCoords
+  pointTimestamps?: Array<number | null>
+  /** Canonical path-aware input. */
+  paths?: ActivityPaths
+  pathTimestamps?: ActivityPathTimestamps[]
+}
+
 export type RawPoint = {
   lng: number
   lat: number
@@ -117,3 +148,24 @@ export interface ParsedActivity {
    */
   isPublic?: boolean
 }
+
+/**
+ * Canonical activity shape used by the new normalization boundary.  The old
+ * ParsedActivity shape is intentionally left intact so storage, map, and sync
+ * migrations can land independently.
+ */
+export type CanonicalActivity = Omit<
+  ParsedActivity,
+  "coordinates" | "pointTimestamps"
+> &
+  ActivityGeometry
+
+/** Parser output accepted by the normalization boundary. */
+export type ActivityDraft = Omit<
+  ParsedActivity,
+  "id" | "coordinates" | "pointTimestamps" | "contentHash"
+> &
+  ActivityGeometryDraft & {
+    id?: string
+    contentHash?: string
+  }

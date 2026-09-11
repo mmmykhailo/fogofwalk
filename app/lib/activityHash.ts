@@ -1,5 +1,9 @@
-import { HASH_COORD_PRECISION } from "~shared/constants"
-import type { ParsedActivity } from "~/types/activities"
+import type { CanonicalActivity, ParsedActivity } from "~shared/activities"
+import {
+  canonicalActivityIdentityString,
+  isContentHash,
+  type ActivityIdentityInput,
+} from "~shared/activityIdentity"
 
 /**
  * Content hash — the sync server's identity for an activity, and the thing that
@@ -15,19 +19,14 @@ import type { ParsedActivity } from "~/types/activities"
  * recomputes it to verify the hash a client claims. **Any change here is a
  * wire-format change and must be made on both sides at once.**
  */
-export function canonicalActivityString(activity: ParsedActivity): string {
-  const head = `${activity.format}|${activity.startedAtMs ?? ""}|${activity.coordinates.length}|`
-  const body = activity.coordinates
-    .map(
-      ([lng, lat]) =>
-        `${lng.toFixed(HASH_COORD_PRECISION)},${lat.toFixed(HASH_COORD_PRECISION)}`
-    )
-    .join(";")
-  return head + body
+export function canonicalActivityString(
+  activity: ParsedActivity | CanonicalActivity
+): string {
+  return canonicalActivityIdentityString(activity)
 }
 
 export async function computeContentHash(
-  activity: ParsedActivity
+  activity: ParsedActivity | CanonicalActivity
 ): Promise<string> {
   const bytes = new TextEncoder().encode(canonicalActivityString(activity))
   const digest = await crypto.subtle.digest("SHA-256", bytes)
@@ -35,6 +34,33 @@ export async function computeContentHash(
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("")
 }
+
+/** Return both identity versions accepted during the path migration. */
+export async function computeContentHashCandidates(
+  activity: ParsedActivity | CanonicalActivity
+): Promise<string[]> {
+  const inputs: ActivityIdentityInput[] = [activity]
+  if ("paths" in activity && activity.paths.length === 1) {
+    inputs.push({
+      format: activity.format,
+      startedAtMs: activity.startedAtMs,
+      coordinates: activity.paths[0],
+    })
+  }
+  return Promise.all(
+    inputs.map(async (input) => {
+      const bytes = new TextEncoder().encode(
+        canonicalActivityIdentityString(input)
+      )
+      const digest = await crypto.subtle.digest("SHA-256", bytes)
+      return Array.from(new Uint8Array(digest))
+        .map((b) => b.toString(16).padStart(2, "0"))
+        .join("")
+    })
+  )
+}
+
+export { isContentHash }
 
 /**
  * Fill in `contentHash` on any activity that lacks one — activities imported before
