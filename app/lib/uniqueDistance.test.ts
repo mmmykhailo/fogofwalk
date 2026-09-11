@@ -99,7 +99,7 @@ describe("computePerActivityUniqueDistances", () => {
     expect(result.get("dense")).toBeCloseTo(expected, 12)
   })
 
-  test("does not invent a segment between disconnected paths", () => {
+  test("[I-037] does not invent a segment between disconnected paths", () => {
     const paths: [number, number][][] = [
       [
         [0, 0],

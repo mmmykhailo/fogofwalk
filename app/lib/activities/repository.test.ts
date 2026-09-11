@@ -122,7 +122,7 @@ describe("activity library command repository", () => {
     library.close()
   })
 
-  test("derives activity effects from the committed change and revision", async () => {
+  test("[L-014] derives activity effects from the committed change and revision", async () => {
     const repository = createMemoryActivityLibraryRepository()
     const library = createActivityLibrary(repository)
     const first = activity("first", "hash-first")
@@ -181,7 +181,7 @@ describe("activity library command repository", () => {
     library.close()
   })
 
-  test("does not persist a delete effect for a delete no-op", async () => {
+  test("[L-014] does not persist a delete effect for a delete no-op", async () => {
     const repository = createMemoryActivityLibraryRepository()
     const library = createActivityLibrary(repository)
     const missing = activity("missing")

@@ -42,7 +42,7 @@ function activity(): ParsedActivity {
 }
 
 describe("photo activity matching", () => {
-  test("matches timestamps and coordinates within each disconnected path", () => {
+  test("[I-037] matches timestamps and coordinates within each disconnected path", () => {
     expect(matchPhotoToActivity(3_600, [activity()])).toEqual({
       lng: -122.01,
       lat: 37.01,

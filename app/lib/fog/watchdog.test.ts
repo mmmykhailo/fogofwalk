@@ -37,7 +37,7 @@ describe("fog worker watchdog", () => {
     expect(timedOut).toEqual([])
   })
 
-  test("refreshes the deadline when the active request makes progress", () => {
+  test("[F-041] refreshes the deadline when the active request makes progress", () => {
     let clock = 0
     const timedOut: string[] = []
     const watchdog = createFogWorkerWatchdog({

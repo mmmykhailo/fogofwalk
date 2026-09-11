@@ -232,6 +232,7 @@ export function useFogWorkerBridge(onProcessingComplete?: ProcessingComplete): {
           fogMode: snapshot.mode,
           algorithmVersion: snapshot.algorithmVersion,
           partitionSchemeVersion: snapshot.partitionSchemeVersion,
+          completeness: "complete",
           fogData: snapshot.geometry,
         })
           .then(() => {

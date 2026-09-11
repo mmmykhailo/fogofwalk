@@ -54,6 +54,46 @@ export function makeGpxSet(count: number, seedOffset = 0): GpxFixture[] {
   )
 }
 
+/** One activity with two deliberately distant track segments. */
+export function makeDisconnectedGpx(): GpxFixture {
+  const segments = [
+    [
+      [0, 0],
+      [0.01, 0.01],
+    ],
+    [
+      [1, 1],
+      [1.01, 1.01],
+    ],
+  ] as const
+  const trkSegments = segments
+    .map(
+      (segment) => `
+    <trkseg>
+${segment
+  .map(
+    ([lng, lat], index) =>
+      `      <trkpt lat="${lat}" lon="${lng}"><ele>${index}</ele></trkpt>`
+  )
+  .join("\n")}
+    </trkseg>`
+    )
+    .join("")
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="fogofwalk-e2e" xmlns="http://www.topografix.com/GPX/1/1">
+  <trk>
+    <name>disconnected visual fixture</name>
+    <type>Walking</type>${trkSegments}
+  </trk>
+</gpx>
+`
+  return {
+    name: "disconnected-visual.gpx",
+    buffer: Buffer.from(xml, "utf8"),
+    mimeType: "application/gpx+xml",
+  }
+}
+
 /** A dense, closed multi-segment route for real-browser fog rendering checks. */
 export function makeFogVisualGpx(): GpxFixture {
   const rectangle: [number, number][] = []

@@ -29,7 +29,7 @@ describe("map GeoJSON builders", () => {
     ])
   })
 
-  test("emits disconnected activity paths as one MultiLineString", () => {
+  test("[I-037] emits disconnected activity paths as one MultiLineString", () => {
     const result = activitiesFeatureCollection([
       {
         id: "activity-1",

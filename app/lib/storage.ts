@@ -26,6 +26,8 @@ export interface FogCache {
   fogMode: FogMode
   algorithmVersion: typeof FOG_ALGORITHM_VERSION
   partitionSchemeVersion: typeof FOG_PARTITION_SCHEME_VERSION
+  /** Only complete positive projections are safe to restore as a base. */
+  completeness: "complete"
   fogData: FogRenderData
 }
 
@@ -636,6 +638,7 @@ export async function loadFogCache(): Promise<FogCache | null> {
     typeof cache.libraryRevision !== "number" ||
     cache.algorithmVersion !== FOG_ALGORITHM_VERSION ||
     cache.partitionSchemeVersion !== FOG_PARTITION_SCHEME_VERSION ||
+    cache.completeness !== "complete" ||
     (cache.fogMode !== "corridor" && cache.fogMode !== "fill")
   ) {
     return null
@@ -651,6 +654,7 @@ export async function loadFogCache(): Promise<FogCache | null> {
     fogMode: cache.fogMode,
     algorithmVersion: FOG_ALGORITHM_VERSION,
     partitionSchemeVersion: FOG_PARTITION_SCHEME_VERSION,
+    completeness: "complete",
     fogData: cache.fogData,
   }
 }
@@ -678,7 +682,8 @@ export function isFogCacheValid(
   }
   if (
     cache.algorithmVersion !== FOG_ALGORITHM_VERSION ||
-    cache.partitionSchemeVersion !== FOG_PARTITION_SCHEME_VERSION
+    cache.partitionSchemeVersion !== FOG_PARTITION_SCHEME_VERSION ||
+    cache.completeness !== "complete"
   ) {
     return false
   }

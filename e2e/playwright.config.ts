@@ -46,7 +46,7 @@ export default defineConfig({
   projects: [
     {
       name: "synced",
-      testIgnore: /(?:serverless|fog-visual)\.spec\.ts/,
+      testIgnore: /(?:serverless|fog-visual|fog-worker|paths)\.spec\.ts/,
       use: { ...devices["Desktop Chrome"], baseURL: WEB_URL },
     },
     {
@@ -57,6 +57,16 @@ export default defineConfig({
     {
       name: "fog-visual",
       testMatch: /fog-visual\.spec\.ts/,
+      use: { ...devices["Desktop Chrome"], baseURL: WEB_URL_SERVERLESS },
+    },
+    {
+      name: "fog-worker",
+      testMatch: /fog-worker\.spec\.ts/,
+      use: { ...devices["Desktop Chrome"], baseURL: WEB_URL_SERVERLESS },
+    },
+    {
+      name: "paths",
+      testMatch: /paths\.spec\.ts/,
       use: { ...devices["Desktop Chrome"], baseURL: WEB_URL_SERVERLESS },
     },
   ],

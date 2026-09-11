@@ -1,4 +1,5 @@
 import type { FogWorkerActivity, FogMode } from "~/types/activities"
+import { FOG_EMIT_INTERVAL_MS } from "~/constants/fog"
 import {
   FOG_ALGORITHM_VERSION,
   FOG_PARTITION_SCHEME_VERSION,
@@ -117,7 +118,10 @@ export function createFogEngine(options: FogEngineOptions = {}): FogEngine {
     options.snapshotEvery == null
       ? null
       : Math.max(1, Math.floor(options.snapshotEvery))
-  const emitIntervalMs = Math.max(50, Math.floor(options.emitIntervalMs ?? 250))
+  const emitIntervalMs = Math.max(
+    50,
+    Math.floor(options.emitIntervalMs ?? FOG_EMIT_INTERVAL_MS)
+  )
   const now = options.now ?? (() => Date.now())
 
   function reset(

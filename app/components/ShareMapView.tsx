@@ -5,6 +5,12 @@ import { MAP_STYLE_URL, ACTIVITY_COLOR } from "~/constants/fog"
 import { CARD_WIDTH, CARD_HEIGHT } from "~/lib/shareCard"
 import { pathsForActivity } from "~shared/activityContract"
 
+declare global {
+  interface Window {
+    __fogofwalkE2eShareGeometry?: unknown
+  }
+}
+
 type ProjectedPath = { x: number; y: number }[]
 type ProjectedPathsPerActivity = ProjectedPath[]
 
@@ -51,6 +57,9 @@ export function ShareMapView({ activities, onReady }: ShareMapViewProps) {
       canvasContextAttributes: { preserveDrawingBuffer: true },
       attributionControl: false,
     })
+    if (import.meta.env.VITE_E2E === "1") {
+      window.__fogofwalkE2eShareGeometry = undefined
+    }
 
     let captured = false
 
@@ -112,20 +121,24 @@ export function ShareMapView({ activities, onReady }: ShareMapViewProps) {
         activities.forEach((t, i) => {
           const paths = pathsForActivity(t).filter((path) => path.length >= 2)
           if (paths.length === 0) return
+          const geometry =
+            paths.length === 1
+              ? {
+                  type: "LineString" as const,
+                  coordinates: paths[0] as [number, number][],
+                }
+              : {
+                  type: "MultiLineString" as const,
+                  coordinates: paths as [number, number][][],
+                }
+          if (import.meta.env.VITE_E2E === "1" && i === 0) {
+            window.__fogofwalkE2eShareGeometry = geometry
+          }
           map.addSource(`share-activity-${i}`, {
             type: "geojson",
             data: {
               type: "Feature",
-              geometry:
-                paths.length === 1
-                  ? {
-                      type: "LineString",
-                      coordinates: paths[0] as [number, number][],
-                    }
-                  : {
-                      type: "MultiLineString",
-                      coordinates: paths as [number, number][][],
-                    },
+              geometry,
               properties: {},
             },
           })

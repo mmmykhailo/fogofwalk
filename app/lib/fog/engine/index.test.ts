@@ -97,7 +97,7 @@ describe("FogEngine", () => {
     expect(await pending).toEqual({ status: "cancelled", snapshot: null })
   })
 
-  test("keeps rejected activities in cumulative partial state", async () => {
+  test("[F-040] keeps rejected activities in cumulative partial state", async () => {
     const engine = createFogEngine()
     const rebuilt = await engine.process(
       request({ activities: [activity("one"), rejectedActivity("bad")] })

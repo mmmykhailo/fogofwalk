@@ -302,7 +302,9 @@ describe("fog worker run state", () => {
       kind: "append",
       mode: "fill",
       baseLibraryRevision: 1,
-      activities: [{ id: second.id, name: second.name, coordinates: second.coordinates }],
+      activities: [
+        { id: second.id, name: second.name, coordinates: second.coordinates },
+      ],
     })
   })
 
@@ -345,11 +347,29 @@ describe("fog cache validity", () => {
     fogMode: "corridor",
     algorithmVersion: FOG_ALGORITHM_VERSION,
     partitionSchemeVersion: FOG_PARTITION_SCHEME_VERSION,
+    completeness: "complete",
     fogData: worldFogGeoJSON(),
   }
 
   test("accepts the same activity set in any order", () => {
     expect(isFogCacheValid(cache, ["b", "a"], "corridor")).toBe(true)
+  })
+
+  test("[F-039] rejects partial or legacy cache completeness markers", () => {
+    expect(
+      isFogCacheValid(
+        { ...cache, completeness: "partial" as never },
+        ["a", "b"],
+        "corridor"
+      )
+    ).toBe(false)
+    expect(
+      isFogCacheValid(
+        { ...cache, completeness: undefined as never },
+        ["a", "b"],
+        "corridor"
+      )
+    ).toBe(false)
   })
 
   test("rejects missing, additional, or differently-modeled activities", () => {

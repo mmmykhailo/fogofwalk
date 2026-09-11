@@ -207,7 +207,7 @@ describe("FogCoordinator", () => {
     expect(terminals).toHaveLength(2)
   })
 
-  test("does not advertise a partial snapshot as an appendable base", () => {
+  test("[F-040] does not advertise a partial snapshot as an appendable base", () => {
     const { coordinator, requests, terminals, snapshots } = setup()
     coordinator.schedule(input(10, 40), { forceRebuild: true })
     const rebuild = requests[0]!

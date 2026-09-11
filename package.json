@@ -8,6 +8,7 @@
     "dev": "react-router dev",
     "typecheck": "react-router typegen && tsc",
     "test": "bun test",
+    "test:activity-pipeline-gate": "bun scripts/test-activity-pipeline-gate.ts",
     "bench:fog": "bun scripts/bench-fog-representations.ts",
     "test:fog-tiles": "bun scripts/test-fog-tiles.ts",
     "release": "bun scripts/generate-release.js minor",

@@ -342,6 +342,9 @@ export function createAppPage(
       activityIds: string[]
       fogMode: "corridor" | "fill"
       ringCount: number
+      algorithmVersion: number
+      partitionSchemeVersion: number
+      completeness: "complete" | string | undefined
     } | null> {
       return page.evaluate(async () => {
         const db = await new Promise<IDBDatabase>((resolve, reject) => {
@@ -378,6 +381,9 @@ export function createAppPage(
           activityIds: entry.activityIds,
           fogMode: entry.fogMode,
           ringCount,
+          algorithmVersion: entry.algorithmVersion,
+          partitionSchemeVersion: entry.partitionSchemeVersion,
+          completeness: entry.completeness,
         }
       })
     },

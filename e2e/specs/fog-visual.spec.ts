@@ -124,7 +124,7 @@ async function runFogVisualCheck(app: AppPage, testInfo: TestInfo) {
 test.describe("positive fog mask rendering at DPR 1", () => {
   test.use({ deviceScaleFactor: 1 })
 
-  test("has stable explored samples without internal triangle seams", async ({
+  test("[F-038] has stable explored samples without internal triangle seams", async ({
     app,
   }, testInfo) => {
     await runFogVisualCheck(app, testInfo)
@@ -134,7 +134,7 @@ test.describe("positive fog mask rendering at DPR 1", () => {
 test.describe("positive fog mask rendering at DPR 2", () => {
   test.use({ deviceScaleFactor: 2 })
 
-  test("has stable explored samples without internal triangle seams", async ({
+  test("[F-038] has stable explored samples without internal triangle seams", async ({
     app,
   }, testInfo) => {
     await runFogVisualCheck(app, testInfo)

@@ -345,6 +345,7 @@ export function ShareDialog({
         <div className="flex justify-center py-1">
           <canvas
             ref={previewRef}
+            data-testid="share-card-preview"
             style={{
               width: PREVIEW_W,
               height: PREVIEW_H,
