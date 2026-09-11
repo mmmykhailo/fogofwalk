@@ -144,41 +144,40 @@ function validInput(input: FogCoordinatorInput): void {
  * A request remains the active base until its terminal reply; newer library
  * snapshots replace one coalesced queue entry and are scheduled afterward.
  */
-export class FogCoordinator {
-  private readonly transport: FogCoordinatorTransport
-  private readonly events: FogCoordinatorEvents
-  private active: ActiveRequest | null = null
-  private queued: QueuedSnapshot | null = null
-  private completed: CompletedRequest | null = null
-  private recoveryRebuilds = 0
+export interface FogCoordinator {
+  readonly activeRequest: FogCoordinatorRequestContext | null
+  readonly queuedSnapshot: FogCoordinatorInput | null
+  readonly completedSnapshot: FogCoordinatorInput | null
+  schedule(
+    input: FogCoordinatorInput,
+    options?: FogCoordinatorScheduleOptions
+  ): FogCoordinatorRequestContext | null
+  cancel(): FogCoordinatorRequestContext | null
+  reset(input: {
+    generation: number
+    libraryRevision: number
+    mode: FogMode
+  }): FogCoordinatorRequestContext
+  handleWorkerFailure(reason?: unknown): void
+  handleReply(reply: FogReply): FogCoordinatorReplyResult
+}
 
-  constructor(
-    transport: FogCoordinatorTransport,
-    events: FogCoordinatorEvents = {}
-  ) {
-    this.transport = transport
-    this.events = events
-  }
-
-  get activeRequest(): FogCoordinatorRequestContext | null {
-    return this.active?.context ?? null
-  }
-
-  get queuedSnapshot(): FogCoordinatorInput | null {
-    return this.queued?.input ?? null
-  }
-
-  get completedSnapshot(): FogCoordinatorInput | null {
-    return this.completed?.input ?? null
-  }
+export function createFogCoordinator(
+  transport: FogCoordinatorTransport,
+  events: FogCoordinatorEvents = {}
+): FogCoordinator {
+  let active: ActiveRequest | null = null
+  let queued: QueuedSnapshot | null = null
+  let completed: CompletedRequest | null = null
+  let recoveryRebuilds = 0
 
   /** Queue the newest committed library snapshot and start work if idle. */
-  schedule(
+  function schedule(
     input: FogCoordinatorInput,
     options: FogCoordinatorScheduleOptions = {}
   ): FogCoordinatorRequestContext | null {
     validInput(input)
-    const queued: QueuedSnapshot = {
+    const next: QueuedSnapshot = {
       input: {
         ...input,
         activities: cloneActivities(input.activities),
@@ -187,32 +186,32 @@ export class FogCoordinator {
       forceRebuild: options.forceRebuild === true,
     }
 
-    if (this.active) {
-      this.queued = this.coalesce(this.queued, queued)
+    if (active) {
+      queued = coalesce(queued, next)
       return null
     }
 
     if (
-      this.completed &&
-      sameSchedule(this.completed.input, queued.input) &&
-      !queued.forceRebuild
+      completed &&
+      sameSchedule(completed.input, next.input) &&
+      !next.forceRebuild
     ) {
       return null
     }
 
-    this.queued = queued
-    return this.startQueued()
+    queued = next
+    return startQueued()
   }
 
   /** Ask the worker to stop the active generation. */
-  cancel(): FogCoordinatorRequestContext | null {
-    if (!this.active) {
-      this.queued = null
+  function cancel(): FogCoordinatorRequestContext | null {
+    if (!active) {
+      queued = null
       return null
     }
 
-    const previous = this.active
-    this.queued = null
+    const previous = active
+    queued = null
     const request: FogRequest = {
       protocolVersion: FOG_PROTOCOL_VERSION,
       requestId: requestId(),
@@ -227,8 +226,8 @@ export class FogCoordinator {
       input: previous.context.input,
       recovery: false,
     }
-    this.active = { context, cancel: true }
-    this.send(context)
+    active = { context, cancel: true }
+    send(context)
     return context
   }
 
@@ -237,17 +236,17 @@ export class FogCoordinator {
    * The reset request is stamped with the caller's generation so a worker that
    * is still finishing an older job cannot keep publishing into the new run.
    */
-  reset(input: {
+  function reset(input: {
     generation: number
     libraryRevision: number
     mode: FogMode
   }): FogCoordinatorRequestContext {
     validInput({ ...input, activities: [] })
-    const previous = this.active
-    this.active = null
-    this.queued = null
-    this.completed = null
-    this.recoveryRebuilds = 0
+    const previous = active
+    active = null
+    queued = null
+    completed = null
+    recoveryRebuilds = 0
     const request: FogRequest = {
       protocolVersion: FOG_PROTOCOL_VERSION,
       requestId: requestId(),
@@ -266,13 +265,13 @@ export class FogCoordinator {
       recovery: false,
     }
     if (previous) {
-      this.events.onTerminal?.({
+      events.onTerminal?.({
         context: previous.context,
         status: "cancelled",
         snapshot: null,
       })
     }
-    this.send(context)
+    send(context)
     return context
   }
 
@@ -280,35 +279,35 @@ export class FogCoordinator {
    * Mark the transport/worker unusable. One rebuild is attempted from the
    * newest known snapshot; a second failure is terminal and cannot loop.
    */
-  handleWorkerFailure(reason: unknown = "Fog worker failed"): void {
-    const failed = this.active
+  function handleWorkerFailure(reason: unknown = "Fog worker failed"): void {
+    const failed = active
     const fallback =
-      this.queued ??
+      queued ??
       (failed
         ? {
             input: failed.context.input,
             appendActivities: [],
             forceRebuild: true,
           }
-        : this.completed
+        : completed
           ? {
-              input: this.completed.input,
+              input: completed.input,
               appendActivities: [],
               forceRebuild: true,
             }
           : null)
-    this.active = null
-    this.queued = null
-    this.completed = null
+    active = null
+    queued = null
+    completed = null
 
     const message = reason instanceof Error ? reason.message : String(reason)
-    this.events.onError?.({
+    events.onError?.({
       kind: "worker",
       message: message || "Fog worker failed",
       ...(failed ? { context: failed.context } : {}),
     })
     if (failed) {
-      this.events.onTerminal?.({
+      events.onTerminal?.({
         context: failed.context,
         status: "failed",
         snapshot: null,
@@ -317,108 +316,103 @@ export class FogCoordinator {
     }
 
     if (!fallback) return
-    if (this.recoveryRebuilds >= MAX_RECOVERY_REBUILDS) {
-      this.events.onError?.({
+    if (recoveryRebuilds >= MAX_RECOVERY_REBUILDS) {
+      events.onError?.({
         kind: "worker",
         message: "Fog worker recovery limit reached",
       })
       return
     }
 
-    this.recoveryRebuilds++
-    this.queued = {
+    recoveryRebuilds++
+    queued = {
       input: fallback.input,
       appendActivities: [],
       forceRebuild: true,
     }
-    const context = this.startQueued()
-    if (context) this.events.onRecovery?.(context)
+    const context = startQueued()
+    if (context) events.onRecovery?.(context)
   }
 
   /** Handle a reply; replies for any other request/generation are ignored. */
-  handleReply(reply: FogReply): FogCoordinatorReplyResult {
+  function handleReply(reply: FogReply): FogCoordinatorReplyResult {
     const ignored: FogCoordinatorReplyResult = {
       accepted: false,
       terminal: false,
       snapshot: null,
     }
-    const active = this.active
-    if (!active || reply.protocolVersion !== FOG_PROTOCOL_VERSION)
+    const current = active
+    if (!current || reply.protocolVersion !== FOG_PROTOCOL_VERSION)
       return ignored
     if (
-      reply.requestId !== active.context.request.requestId ||
-      reply.generation !== active.context.request.generation
+      reply.requestId !== current.context.request.requestId ||
+      reply.generation !== current.context.request.generation
     ) {
       return ignored
     }
 
     if (reply.type === "PROGRESS") {
       if (
-        reply.libraryRevision !== active.context.request.libraryRevision ||
-        reply.mode !== active.context.request.mode
+        reply.libraryRevision !== current.context.request.libraryRevision ||
+        reply.mode !== current.context.request.mode
       ) {
         return ignored
       }
-      this.events.onProgress?.(reply, active.context)
+      events.onProgress?.(reply, current.context)
       return { accepted: true, terminal: false, snapshot: null }
     }
 
     if (reply.type === "UPDATE") {
-      if (!this.matchesSnapshot(reply.snapshot, active.context.request)) {
+      if (!matchesSnapshot(reply.snapshot, current.context.request)) {
         return ignored
       }
-      if (!this.hasSupersedingQueue(active.context.input)) {
-        this.events.onSnapshot?.(reply.snapshot, active.context)
+      if (!hasSupersedingQueue(current.context.input)) {
+        events.onSnapshot?.(reply.snapshot, current.context)
         return { accepted: true, terminal: false, snapshot: reply.snapshot }
       }
       return { accepted: true, terminal: false, snapshot: null }
     }
 
     if (reply.type === "ERROR") {
-      this.events.onError?.({
+      events.onError?.({
         kind: reply.fatal ? "engine" : "protocol",
         message: reply.message,
-        context: active.context,
+        context: current.context,
       })
       return { accepted: true, terminal: false, snapshot: null }
     }
 
     if (reply.type === "CANCELLED") {
       if (
-        reply.libraryRevision !== active.context.request.libraryRevision ||
-        reply.mode !== active.context.request.mode
+        reply.libraryRevision !== current.context.request.libraryRevision ||
+        reply.mode !== current.context.request.mode
       ) {
         return ignored
       }
-      this.finish(active, "cancelled", null)
+      finish(current, "cancelled", null)
       return { accepted: true, terminal: true, snapshot: null }
     }
 
     if (
       reply.snapshot &&
-      !this.matchesSnapshot(reply.snapshot, active.context.request)
+      !matchesSnapshot(reply.snapshot, current.context.request)
     ) {
       return ignored
     }
-    if (active.cancel) {
-      this.finish(active, "cancelled", null)
+    if (current.cancel) {
+      finish(current, "cancelled", null)
       return { accepted: true, terminal: true, snapshot: null }
     }
     if (!reply.snapshot) {
-      this.finish(
-        active,
-        "failed",
-        null,
-        "Fog worker completed without a snapshot"
-      )
+      finish(current, "failed", null, "Fog worker completed without a snapshot")
       return { accepted: true, terminal: true, snapshot: null }
     }
 
-    this.finish(active, "complete", reply.snapshot)
+    finish(current, "complete", reply.snapshot)
     return { accepted: true, terminal: true, snapshot: reply.snapshot }
   }
 
-  private coalesce(
+  function coalesce(
     previous: QueuedSnapshot | null,
     next: QueuedSnapshot
   ): QueuedSnapshot {
@@ -443,57 +437,60 @@ export class FogCoordinator {
     }
   }
 
-  private startQueued(): FogCoordinatorRequestContext | null {
-    const queued = this.queued
-    if (!queued) return null
-    this.queued = null
+  function startQueued(): FogCoordinatorRequestContext | null {
+    const next = queued
+    if (!next) return null
+    queued = null
 
     const append =
-      !queued.forceRebuild &&
-      queued.appendActivities.length > 0 &&
-      this.completed !== null &&
-      this.completed.input.generation === queued.input.generation &&
-      this.completed.input.mode === queued.input.mode &&
-      queued.input.libraryRevision > this.completed.input.libraryRevision
+      !next.forceRebuild &&
+      next.appendActivities.length > 0 &&
+      completed !== null &&
+      completed.input.generation === next.input.generation &&
+      completed.input.mode === next.input.mode &&
+      next.input.libraryRevision > completed.input.libraryRevision
 
     const request: FogRequest = {
       protocolVersion: FOG_PROTOCOL_VERSION,
       requestId: requestId(),
-      generation: queued.input.generation,
-      libraryRevision: queued.input.libraryRevision,
-      ...(append && this.completed
-        ? { baseLibraryRevision: this.completed.input.libraryRevision }
+      generation: next.input.generation,
+      libraryRevision: next.input.libraryRevision,
+      ...(append && completed
+        ? { baseLibraryRevision: completed.input.libraryRevision }
         : {}),
-      mode: queued.input.mode,
+      mode: next.input.mode,
       kind: append ? "append" : "rebuild",
       activities: cloneActivities(
-        append ? queued.appendActivities : queued.input.activities
+        append ? next.appendActivities : next.input.activities
       ),
     }
     const context: FogCoordinatorRequestContext = {
       request,
-      input: queued.input,
-      recovery: this.recoveryRebuilds > 0,
+      input: next.input,
+      recovery: recoveryRebuilds > 0,
     }
-    this.active = { context, cancel: false }
-    this.events.onRequest?.(context)
-    this.send(context)
+    active = { context, cancel: false }
+    events.onRequest?.(context)
+    send(context)
     return context
   }
 
-  private send(context: FogCoordinatorRequestContext): void {
+  function send(context: FogCoordinatorRequestContext): void {
     try {
-      this.transport.send(context.request)
+      transport.send(context.request)
     } catch (error) {
-      this.handleWorkerFailure(error)
+      handleWorkerFailure(error)
     }
   }
 
-  private hasSupersedingQueue(input: FogCoordinatorInput): boolean {
-    return this.queued !== null && !sameSchedule(this.queued.input, input)
+  function hasSupersedingQueue(input: FogCoordinatorInput): boolean {
+    return queued !== null && !sameSchedule(queued.input, input)
   }
 
-  private matchesSnapshot(snapshot: FogSnapshot, request: FogRequest): boolean {
+  function matchesSnapshot(
+    snapshot: FogSnapshot,
+    request: FogRequest
+  ): boolean {
     return (
       snapshot.generation === request.generation &&
       snapshot.libraryRevision === request.libraryRevision &&
@@ -503,27 +500,44 @@ export class FogCoordinator {
     )
   }
 
-  private finish(
-    active: ActiveRequest,
+  function finish(
+    candidate: ActiveRequest,
     status: FogCoordinatorTerminalStatus,
     snapshot: FogSnapshot | null,
     error?: string
   ): void {
-    if (this.active !== active) return
-    this.active = null
+    if (active !== candidate) return
+    active = null
     if (status === "complete" && snapshot) {
-      this.completed = { input: active.context.input }
-      this.recoveryRebuilds = 0
-      if (!this.hasSupersedingQueue(active.context.input)) {
-        this.events.onSnapshot?.(snapshot, active.context)
+      completed = { input: candidate.context.input }
+      recoveryRebuilds = 0
+      if (!hasSupersedingQueue(candidate.context.input)) {
+        events.onSnapshot?.(snapshot, candidate.context)
       }
     }
-    this.events.onTerminal?.({
-      context: active.context,
+    events.onTerminal?.({
+      context: candidate.context,
       status,
       snapshot,
       ...(error ? { error } : {}),
     })
-    if (this.queued) this.startQueued()
+    if (queued) startQueued()
+  }
+
+  return {
+    get activeRequest() {
+      return active?.context ?? null
+    },
+    get queuedSnapshot() {
+      return queued?.input ?? null
+    },
+    get completedSnapshot() {
+      return completed?.input ?? null
+    },
+    schedule,
+    cancel,
+    reset,
+    handleWorkerFailure,
+    handleReply,
   }
 }

@@ -9,7 +9,7 @@ import type {
 import { sortActivities } from "~/lib/statsAggregator"
 import { emptyBoundedFog } from "~/lib/fog/engine/aggregate"
 import type { FogRenderData } from "~/lib/fog/protocol"
-import { FogCoordinator } from "~/lib/fog/coordinator"
+import { createFogCoordinator } from "~/lib/fog/coordinator"
 import { pathsForActivity } from "~shared/activityContract"
 import { ActivityLibrary } from "~/lib/activities/library"
 import type {
@@ -261,7 +261,7 @@ export const uniqueDistanceProjection = new UniqueDistanceProjection(
 )
 
 /** Revision-aware owner of fog requests; mapStore keeps only its UI projection. */
-export const fogCoordinator = new FogCoordinator(
+export const fogCoordinator = createFogCoordinator(
   {
     send: (request) => {
       if (!mapStore.worker) throw new Error("Fog worker is unavailable")

@@ -7,7 +7,10 @@ import {
   type FogRequest,
   type FogSnapshot,
 } from "./protocol"
-import { FogCoordinator, type FogCoordinatorTerminal } from "./coordinator"
+import {
+  createFogCoordinator,
+  type FogCoordinatorTerminal,
+} from "./coordinator"
 import type { FogWorkerActivity } from "~/types/activities"
 
 function activity(id: string): FogWorkerActivity {
@@ -71,7 +74,7 @@ function setup() {
   const requests: FogRequest[] = []
   const terminals: FogCoordinatorTerminal[] = []
   const snapshots: FogSnapshot[] = []
-  const coordinator = new FogCoordinator(
+  const coordinator = createFogCoordinator(
     { send: (request) => requests.push(request) },
     {
       onSnapshot: (value) => snapshots.push(value),
