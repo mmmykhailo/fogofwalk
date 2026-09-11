@@ -12,12 +12,11 @@ untouched.
 
 - Branch: `refactor/fog-processing`
 - Started: 2026-09-11
-- Current phase: Phase 1/2 — contracts and activity-library ownership
-- Last completed commit: `84ba4b5 add fog input sanitizer`
-- Current working slice: revisioned library/import route integration (ready to
-  commit)
-- Next action: commit the library/import integration, then build the revisioned
-  fog protocol and coordinator around the sanitized engine input
+- Current phase: Phase 4/5/6 — projections, bounded fog, and sync effects
+- Last completed commit: `2378a7f add bounded fog worker engine`
+- Current working slice: pure sync reconciliation planner (focused tests pass)
+- Next action: add the durable sync repository/outbox and validated transport,
+  then connect the planner to the existing sync executor
 
 ## A1 activity contract slice
 
@@ -59,7 +58,33 @@ untouched.
   directly. Cross-tab refreshes publish projection changes.
 - The canonical commit remains independent of unique-distance, fog-cache, and
   sync side effects; those projections are scheduled after the commit.
-- Focused tests and client typecheck pass; this slice is ready to commit.
+- Focused tests and client typecheck pass; this slice is committed as
+  `60e9047`.
+
+## B1/B3/B4/B5 fog protocol and representation slice
+
+- Added a versioned worker protocol with request-relative progress, generation
+  and library-revision checks, append-base validation, terminal replies, and
+  malformed-request rejection.
+- Extracted `FogEngine` from worker globals with injected scheduler yielding,
+  per-activity diagnostics, cancellation checkpoints, and authoritative
+  revisioned snapshots.
+- Sanitized and buffered each disconnected path independently, then converted
+  the inverse into bounded world partitions with hole-free triangulation and a
+  validated world fallback. Fill-mode loop behavior remains covered.
+- Versioned fog cache identity by library revision, mode, algorithm, and
+  partition scheme; the map bridge accepts only current validated snapshots and
+  keeps the latest snapshot through source/style gaps.
+- Focused fog, protocol, state, and client typecheck checks pass; this slice is
+  committed as `2378a7f`.
+
+## C1 pure sync planner slice
+
+- Added a transport-free, deterministic planner for local/remote metadata,
+  uploads/downloads, ignored hashes, resurrection, tombstones, conflicts, and
+  guarded cursor advancement.
+- Added focused table/race tests; 22 planner tests pass. The planner is not yet
+  wired to durable outbox execution.
 
 ## Path-aware adapter and render slice
 
@@ -75,23 +100,25 @@ untouched.
 
 ## Commit log
 
-| Commit    | Slice                                                          | Verification                                                     |
-| --------- | -------------------------------------------------------------- | ---------------------------------------------------------------- |
-| —         | Baseline before implementation                                 | Client: 78 tests pass; client typecheck passes                   |
-| `fa8e423` | Add the continuation tracker                                   | Client baseline recorded                                         |
-| `7f6c149` | Add revisioned activity-library repository/service foundations | 5 focused tests pass; client typecheck passes                    |
-| `15eca51` | Add A1 path-aware activity contract                            | Shared/client/server focused tests pass; server typecheck passes |
-| `e977389` | Preserve disconnected paths through adapters, stats, map, and worker | 21 focused tests pass; client typecheck passes                 |
-| `84ba4b5` | Add B2 fog input sanitizer                                     | 10 focused tests pass; client typecheck passes                 |
-| pending   | Add bounded import and revisioned route integration             | 30 focused tests pass; client typecheck passes                 |
+| Commit    | Slice                                                                | Verification                                                     |
+| --------- | -------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| —         | Baseline before implementation                                       | Client: 78 tests pass; client typecheck passes                   |
+| `fa8e423` | Add the continuation tracker                                         | Client baseline recorded                                         |
+| `7f6c149` | Add revisioned activity-library repository/service foundations       | 5 focused tests pass; client typecheck passes                    |
+| `15eca51` | Add A1 path-aware activity contract                                  | Shared/client/server focused tests pass; server typecheck passes |
+| `e977389` | Preserve disconnected paths through adapters, stats, map, and worker | 21 focused tests pass; client typecheck passes                   |
+| `84ba4b5` | Add B2 fog input sanitizer                                           | 10 focused tests pass; client typecheck passes                   |
+| `60e9047` | Route activity changes through the serialized library                | 30 focused tests pass; client typecheck passes                   |
+| `2378a7f` | Add bounded fog worker engine, protocol, and cache handoff           | 48 focused tests pass; client typecheck passes                   |
+| pending   | Add pure sync planner                                                | 22 focused tests pass                                            |
 
 ## Phase checklist
 
 - [ ] Phase 0 — baseline diagnostics, safe reproducer/geometry ADR, and
       performance measurements
-- [ ] Phase 1 — characterization tests, fault seams, callable fog engine and
+- [x] Phase 1 — characterization tests, fault seams, callable fog engine and
       planner façade
-- [ ] Phase 2 — versioned activity repository and serialized library service
+- [x] Phase 2 — versioned activity repository and serialized library service
 - [ ] Phase 3 — normalized, bounded import batch service and share queue
 - [ ] Phase 4 — revision-keyed projection scheduling and fog recovery
 - [ ] Phase 5 — bounded fog representation, validation, and cache handoff
