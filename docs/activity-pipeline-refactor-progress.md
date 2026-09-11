@@ -13,11 +13,11 @@ untouched.
 - Branch: `refactor/fog-processing`
 - Started: 2026-09-11
 - Current phase: Phase 4/5/6 — projections, bounded fog, and sync effects
-- Last completed commit: `b446f7d coordinate sync leadership`
-- Current working slice: move derived statistics and fog scheduling behind
-  revision-keyed projection services, then add route-level recovery states
-- Next action: extract unique-distance projection scheduling and integrate the
-  existing FogCoordinator with map-store/worker projections
+- Last completed commit: `89370fa integrate fog coordinator with worker bridge`
+- Current working slice: move derived statistics behind a revision-keyed
+  projection service, then add route-level recovery states
+- Next action: extract unique-distance projection scheduling and remove its
+  blocking waits from restore/delete routes
 
 ## A1 activity contract slice
 
@@ -191,6 +191,17 @@ untouched.
 - Focused scheduler/repository tests and client typecheck pass; this slice is
   committed as `b446f7d`.
 
+## Fog coordinator integration slice
+
+- Routed map-store fog requests through the revision-aware coordinator so the
+  worker, progress bookkeeping, and cache handoff share one request identity.
+- The bridge now accepts only replies validated by the coordinator, suppresses
+  superseded intermediate snapshots, and reports worker failures to the bounded
+  recovery path. Reset clears coordinator state before the next generation.
+- Updated state tests for request coalescing and added reset/stale-reply
+  coverage; typecheck and focused fog tests pass. This slice is committed as
+  `89370fa`.
+
 ## Path-aware adapter and render slice
 
 - GPX tracks remain one activity and their track segments remain disconnected
@@ -225,6 +236,7 @@ untouched.
 | `e002ce4` | Commit library mutations with durable outbox effects                  | 8 repository tests pass; client typecheck passes                 |
 | `0960111` | Queue local activity sync effects and split saved-point state            | 20 focused tests pass; client typecheck passes                   |
 | `b446f7d` | Coordinate sync leadership and trigger coalescing                       | 11 focused tests pass; client typecheck passes                   |
+| `89370fa` | Integrate fog coordinator with worker bridge                         | 19 focused fog tests pass; client typecheck passes                 |
 
 ## Phase checklist
 
