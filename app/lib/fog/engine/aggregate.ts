@@ -36,6 +36,67 @@ const DEFAULT_MAX_PARTITIONS = 10_000
 
 type PolygonFeature = Feature<Polygon | MultiPolygon>
 
+type Coordinate = [number, number]
+
+function projectCoordinate(position: number[]): Coordinate {
+  const longitude = position[0]!
+  const latitude = Math.max(WORLD_SOUTH, Math.min(WORLD_NORTH, position[1]!))
+  const radians = (latitude * Math.PI) / 180
+  const sine = Math.sin(radians)
+  return [
+    (longitude - WORLD_WEST) / (WORLD_EAST - WORLD_WEST),
+    0.5 - Math.log((1 + sine) / (1 - sine)) / (4 * Math.PI),
+  ]
+}
+
+function unprojectCoordinate(position: number[]): Coordinate {
+  const longitude =
+    WORLD_WEST +
+    Math.max(0, Math.min(1, position[0]!)) * (WORLD_EAST - WORLD_WEST)
+  const latitude = Math.max(
+    WORLD_SOUTH,
+    Math.min(
+      WORLD_NORTH,
+      (180 / Math.PI) * Math.atan(Math.sinh(Math.PI * (1 - 2 * position[1]!)))
+    )
+  )
+  return [longitude, latitude]
+}
+
+function transformFeature(
+  feature: PolygonFeature,
+  transform: (position: number[]) => Coordinate
+): PolygonFeature {
+  if (feature.geometry.type === "Polygon") {
+    return {
+      ...feature,
+      geometry: {
+        type: "Polygon",
+        coordinates: feature.geometry.coordinates.map((ring) =>
+          ring.map(transform)
+        ),
+      },
+    }
+  }
+  return {
+    ...feature,
+    geometry: {
+      type: "MultiPolygon",
+      coordinates: feature.geometry.coordinates.map((polygonCoordinates) =>
+        polygonCoordinates.map((ring) => ring.map(transform))
+      ),
+    },
+  }
+}
+
+function projectFeature(feature: PolygonFeature): PolygonFeature {
+  return transformFeature(feature, projectCoordinate)
+}
+
+function unprojectFeature(feature: PolygonFeature): PolygonFeature {
+  return transformFeature(feature, unprojectCoordinate)
+}
+
 function stripInteriorRings(feature: PolygonFeature): PolygonFeature {
   if (feature.geometry.type === "Polygon") {
     return {
@@ -218,19 +279,22 @@ function hasInteriorRings(feature: PolygonFeature): boolean {
 function aggregateExploredMasks(
   masks: FogMask[],
   mode: FogMode
-): { masks: FogMask[]; degraded: boolean; warnings: string[] } {
+): { masks: PolygonFeature[]; degraded: boolean; warnings: string[] } {
   const usable = maskFeatures(masks)
   if (usable.length === 0) return { masks: [], degraded: false, warnings: [] }
-  if (usable.length === 1) {
+  const projected = usable.map(projectFeature)
+  if (projected.length === 1) {
     return {
-      masks: [mode === "fill" ? stripInteriorRings(usable[0]!) : usable[0]!],
+      masks: [
+        mode === "fill" ? stripInteriorRings(projected[0]!) : projected[0]!,
+      ],
       degraded: false,
       warnings: [],
     }
   }
 
   try {
-    const merged = union(featureCollection(usable)) as PolygonFeature | null
+    const merged = union(featureCollection(projected)) as PolygonFeature | null
     if (!merged) return { masks: [], degraded: false, warnings: [] }
     return {
       masks: [mode === "fill" ? stripInteriorRings(merged) : merged],
@@ -242,7 +306,7 @@ function aggregateExploredMasks(
     // Keeping independent positive masks preserves corridor work; fill mode
     // strips each mask as a conservative degraded fallback.
     return {
-      masks: mode === "fill" ? usable.map(stripInteriorRings) : usable,
+      masks: mode === "fill" ? projected.map(stripInteriorRings) : projected,
       degraded: true,
       warnings: [
         `explored-mask union failed: ${error instanceof Error ? error.message : String(error)}`,
@@ -263,21 +327,26 @@ export function buildBoundedFog(
   suppliedOptions: FogPartitionOptions = {}
 ): FogAggregationResult {
   const partitions = buildPartitions(suppliedOptions)
+  const projectedPartitions = partitions.map(projectFeature)
   const explored = aggregateExploredMasks(masks, mode)
   const features: Feature<Polygon, { partitionId: string }>[] = []
   const warnings = [...explored.warnings]
   let degraded = explored.degraded
   const maskBounds = explored.masks.map((mask) => [mask, bbox(mask)] as const)
 
-  for (let index = 0; index < partitions.length; index += 1) {
-    const partition = partitions[index]!
+  for (let index = 0; index < projectedPartitions.length; index += 1) {
+    const partition = projectedPartitions[index]!
     const partitionBounds = bbox(partition)
     const candidates = maskBounds
       .filter(([, bounds]) => boundsOverlap(partitionBounds, bounds))
       .map(([mask]) => mask)
     const partitionId = String(partition.properties?.partitionId ?? index)
     if (candidates.length === 0) {
-      features.push(partition as Feature<Polygon, { partitionId: string }>)
+      features.push(
+        unprojectFeature(
+          partition as Feature<Polygon, { partitionId: string }>
+        ) as Feature<Polygon, { partitionId: string }>
+      )
       continue
     }
 
@@ -293,7 +362,11 @@ export function buildBoundedFog(
       )
       // Safe fallback: this partition remains fogged rather than publishing
       // an unchecked partial geometry.
-      features.push(partition as Feature<Polygon, { partitionId: string }>)
+      features.push(
+        unprojectFeature(
+          partition as Feature<Polygon, { partitionId: string }>
+        ) as Feature<Polygon, { partitionId: string }>
+      )
       continue
     }
     if (!remainder) continue
@@ -313,10 +386,19 @@ export function buildBoundedFog(
     if (pieces.length === 0) {
       degraded = true
       warnings.push(`partition ${partitionId} produced no valid inverse pieces`)
-      features.push(partition as Feature<Polygon, { partitionId: string }>)
+      features.push(
+        unprojectFeature(
+          partition as Feature<Polygon, { partitionId: string }>
+        ) as Feature<Polygon, { partitionId: string }>
+      )
       continue
     }
-    features.push(...pieces)
+    features.push(
+      ...pieces.map(
+        (piece) =>
+          unprojectFeature(piece) as Feature<Polygon, { partitionId: string }>
+      )
+    )
   }
 
   const fogData: FogRenderData = featureCollection(features)
