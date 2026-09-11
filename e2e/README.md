@@ -28,7 +28,7 @@ Nine specs covering local, map, profile, and sync behaviour:
 | `suspension.spec.ts`        | auto-sync suspension after a local-only delete, and that only a manual sync clears it                                       |
 | `serverless.spec.ts`        | the `VITE_API_URL`-unset build, fog-cache/worker convergence, and fog updates during map-style changes                      |
 | `rate-limit.spec.ts`        | a 429 upload is retried inside the same sync run, the retry is bounded, and both account surfaces count an upload hold down |
-| `sync-cancellation.spec.ts` | sign-out and account switching abort an active run without uploading or applying the previous account's effects             |
+| `sync-cancellation.spec.ts` | sign-out/account switching abort active effects; saved-point cursors, outboxes, and ownership stay isolated                 |
 | `public-profile.spec.ts`    | public activity visibility, profile rendering, and publishing changes                                                       |
 | `saved-points.spec.ts`      | saved-point editing controls and the owner's public saved-point link                                                        |
 
@@ -82,3 +82,4 @@ and check the matching spec fails — every case below has been verified to do s
 | `isFromScratch = false`                                               | an activity re-imported after a clear-all survives its old tombstone |
 | `setIsProcessing(activityCount > 0)` without `isFogRunInFlight`       | deleting with the server switch on                                   |
 | missing account ownership on local outbox effects                     | switching accounts does not upload the previous account's activity   |
+| shared saved-point cursor or ownership state                          | saved-point cursors and ownership stay isolated across accounts      |

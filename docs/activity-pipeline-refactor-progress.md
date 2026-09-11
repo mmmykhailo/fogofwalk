@@ -13,11 +13,11 @@ untouched.
 - Branch: `refactor/fog-processing`
 - Started: 2026-09-11
 - Current phase: completion audit across Phases 0–8
-- Last completed commit: `772ff96 update visibility sync browser test`
-- Current working slice: close remaining acceptance gaps, add deterministic
-  boundary tests, and verify the full client/server/build matrix
-- Next action: rerun the complete browser matrix after the audit fixes, then
-  audit the remaining Phase 0 and browser IndexedDB gaps
+- Last completed commit: `359ca9d test saved point account isolation`
+- Current working slice: close the documented implementation audit and handoff
+  with exact verification results
+- Next action: commit this tracker/ADR update, then leave only the explicitly
+  environment-dependent Phase 0 and IndexedDB fault-injection gaps visible
 
 ## A1 activity contract slice
 
@@ -368,6 +368,41 @@ untouched.
   the migrated visibility flow instead of the removed direct visibility PATCH.
   The publishing case passes; committed as `772ff96`.
 
+## Fog tiler safety and representation audit slices
+
+- Projected fog boolean operations and triangulation into normalized Web Mercator
+  before unprojecting the validated GeoJSON output. Bumped the partition scheme
+  version so older render caches rebuild safely; committed as `99c69d8` and
+  `96904c5`.
+- Added a deterministic `@maplibre/geojson-vt` harness with the anonymized
+  wavy-path fixture, historical unsafe source, positive control, Earcut-style
+  deviation, and pixel overdraw assertions. The unsafe source measures
+  deviations `0.1403` at z12 and `0.6447` at z13 with overdraw; the bounded
+  replacement measures zero deviation and zero overdraw at all three checked
+  tiles. Committed as `1cb9576`.
+- Extended the representation benchmark to report median/p95, post-run heap
+  observations, and deterministic 100/1,000/10,000-mask tiers. The 100 and
+  1,000 tiers remain non-degraded; 10,000 masks take about 20.87 s and use the
+  validated world-fog fallback after the 8 MB output budget, with degraded
+  status and two warnings. Committed as `1eef831`; exact numbers are in the
+  ADR.
+
+## Saved-point account-isolation audit slices
+
+- Account-keyed saved-point sync state now survives sign-out without being
+  inherited by another account. Legacy saved-point fields are copied before
+  activity-state migration can remove the old shared record, and clear-all
+  removes every account namespace. State transforms use one IndexedDB
+  read-modify-write transaction; committed as `bf7f792`.
+- Saved-point sync captures the account, serializes network/state transitions
+  with a Web Lock plus in-tab queue, filters local points owned by another
+  account, and aborts account-changed effects. Committed as `8980c62`.
+- Added a two-account browser regression proving B starts at cursor zero,
+  cannot upload A's pending point, and A later resumes from cursor 123 and
+  clears only its own pending ID. Committed as `359ca9d`.
+- The full Playwright matrix now contains 42 tests; all 42 passed on
+  2026-09-11.
+
 ## Commit log
 
 | Commit    | Slice                                                                | Verification                                                     |
@@ -383,63 +418,95 @@ untouched.
 | `ce7255d` | Add the revisioned fog coordinator                                   | 4 focused tests pass                                             |
 | `8c09534` | Close share-queue acknowledgement and visibility mutation seams      | Client typecheck passes                                          |
 | `db6eeec` | Add pure sync planner and validated transport                        | 29 focused tests pass; client typecheck passes                   |
-| `43c7b6f` | Add durable sync repository and outbox                                | 6 repository tests pass; client typecheck passes                 |
-| `af7b9cc` | Route sync through the revisioned library and validated transport     | 152 client tests pass; client typecheck passes                    |
+| `43c7b6f` | Add durable sync repository and outbox                               | 6 repository tests pass; client typecheck passes                 |
+| `af7b9cc` | Route sync through the revisioned library and validated transport    | 152 client tests pass; client typecheck passes                   |
 | `ed8bc4e` | Add page-wise resumable sync executor                                | 14 sync executor/repository tests pass; client typecheck passes  |
-| `37adff0` | Wire the page-wise executor into the sync scheduler                   | Client tests and typecheck pass                                 |
-| `e002ce4` | Commit library mutations with durable outbox effects                  | 8 repository tests pass; client typecheck passes                 |
-| `0960111` | Queue local activity sync effects and split saved-point state            | 20 focused tests pass; client typecheck passes                   |
-| `b446f7d` | Coordinate sync leadership and trigger coalescing                       | 11 focused tests pass; client typecheck passes                   |
-| `89370fa` | Integrate fog coordinator with worker bridge                         | 19 focused fog tests pass; client typecheck passes                 |
-| `bf53061` | Decouple unique distance projection                           | 175 client tests pass; client typecheck passes                   |
-| `86894c8` | Route fog work through library changes                    | 175 client tests pass; client typecheck passes                   |
-| `051b683` | Surface import and fog recovery status                         | Focused import/fog tests pass; client typecheck passes                 |
-| `843a17c` | Surface durable sync status                                      | Focused sync tests pass; client typecheck passes                       |
-| `44bc05c` | Add local diagnostics buffer                                | Diagnostics tests and typecheck pass                                  |
-| `cf52394` | Document bounded fog representation                         | Fog regression, benchmark, and typecheck pass                         |
-| `675ff77` | Instrument activity pipeline diagnostics                    | Focused tests and typecheck pass                                      |
-| `8f70558` | Guard fog style handoff by revision                         | Map/fog tests and typecheck pass                                      |
-| `bef6127` | Bound fog worker recovery                                   | Watchdog/fog tests and typecheck pass                                 |
-| `6d1a812` | Make fog coordinator functional                             | Fog coordinator/state tests and typecheck pass                        |
-| `bd675c8` | Make fog engine functional                                  | Fog engine tests and typecheck pass                                   |
-| `20c395a` | Make distance projection functional                          | Projection tests and typecheck pass                                   |
-| `8cc3644` | Make activity import functional                              | Import tests and typecheck pass                                       |
-| `af9e551` | Replace activity errors with factories                       | Activity/import tests and typecheck pass                              |
-| `c0b4cf9` | Make activity repositories functional                        | Activity/repository/sync tests and typecheck pass                     |
-| `10a88be` | Make activity library functional                             | Activity/repository/sync tests and typecheck pass                     |
-| `a886031` | Replace sync transport errors                                | Sync transport/executor tests and typecheck pass                      |
-| `a2a1c49` | Make sync scheduler functional                               | Scheduler/repository/status tests and typecheck pass                  |
-| `2ba7f0c` | Make sync repositories functional                             | Sync repository/executor tests and typecheck pass                     |
-| `7c67c57` | Make sync executor functional                                | Sync executor/repository/transport tests and typecheck pass            |
-| `8b77b6f` | Replace API request errors                                   | Sync tests and typecheck pass                                         |
-| `c47b918` | Remove fog state shadow                                      | Fog state tests and client typecheck pass                              |
-| `bed3e1f` | Cover storage migration boundaries                           | Storage migration tests and client typecheck pass                      |
-| `984fad4` | Abort sync effects safely                                    | Sync executor/transport tests and client typecheck pass                 |
-| `3ddfcd6` | Cancel sync when auth changes                                | 49 sync tests and client typecheck pass                                 |
-| `6af6aed` | Bound fog validation work                                      | Aggregation safety tests and client typecheck pass                       |
-| `8d529f9` | Normalize GPX elevation geometry                              | Serverless import E2E and client typecheck pass                          |
-| `d5fb501` | Make E2E page fixture functional                              | E2E typecheck passes                                                     |
-| `4dbb21e` | Serialize one activity geometry                              | Sync tests, client typecheck, and six activity E2E tests pass             |
-| `466c89a` | Abort sync before sign-out request                           | Focused cancellation E2E, client/e2e typecheck pass                      |
-| `9876758` | Pace and retry activity uploads                             | Four rate-limit E2E cases pass; client typecheck pass                    |
-| `e9ecde6` | Align bounded fog browser assertions                        | Serverless cache/style and suspension E2E cases pass                    |
-| `772ff96` | Update visibility sync browser test                         | Public-profile publishing E2E case passes                               |
+| `37adff0` | Wire the page-wise executor into the sync scheduler                  | Client tests and typecheck pass                                  |
+| `e002ce4` | Commit library mutations with durable outbox effects                 | 8 repository tests pass; client typecheck passes                 |
+| `0960111` | Queue local activity sync effects and split saved-point state        | 20 focused tests pass; client typecheck passes                   |
+| `b446f7d` | Coordinate sync leadership and trigger coalescing                    | 11 focused tests pass; client typecheck passes                   |
+| `89370fa` | Integrate fog coordinator with worker bridge                         | 19 focused fog tests pass; client typecheck passes               |
+| `bf53061` | Decouple unique distance projection                                  | 175 client tests pass; client typecheck passes                   |
+| `86894c8` | Route fog work through library changes                               | 175 client tests pass; client typecheck passes                   |
+| `051b683` | Surface import and fog recovery status                               | Focused import/fog tests pass; client typecheck passes           |
+| `843a17c` | Surface durable sync status                                          | Focused sync tests pass; client typecheck passes                 |
+| `44bc05c` | Add local diagnostics buffer                                         | Diagnostics tests and typecheck pass                             |
+| `cf52394` | Document bounded fog representation                                  | Fog regression, benchmark, and typecheck pass                    |
+| `675ff77` | Instrument activity pipeline diagnostics                             | Focused tests and typecheck pass                                 |
+| `8f70558` | Guard fog style handoff by revision                                  | Map/fog tests and typecheck pass                                 |
+| `bef6127` | Bound fog worker recovery                                            | Watchdog/fog tests and typecheck pass                            |
+| `6d1a812` | Make fog coordinator functional                                      | Fog coordinator/state tests and typecheck pass                   |
+| `bd675c8` | Make fog engine functional                                           | Fog engine tests and typecheck pass                              |
+| `20c395a` | Make distance projection functional                                  | Projection tests and typecheck pass                              |
+| `8cc3644` | Make activity import functional                                      | Import tests and typecheck pass                                  |
+| `af9e551` | Replace activity errors with factories                               | Activity/import tests and typecheck pass                         |
+| `c0b4cf9` | Make activity repositories functional                                | Activity/repository/sync tests and typecheck pass                |
+| `10a88be` | Make activity library functional                                     | Activity/repository/sync tests and typecheck pass                |
+| `a886031` | Replace sync transport errors                                        | Sync transport/executor tests and typecheck pass                 |
+| `a2a1c49` | Make sync scheduler functional                                       | Scheduler/repository/status tests and typecheck pass             |
+| `2ba7f0c` | Make sync repositories functional                                    | Sync repository/executor tests and typecheck pass                |
+| `7c67c57` | Make sync executor functional                                        | Sync executor/repository/transport tests and typecheck pass      |
+| `8b77b6f` | Replace API request errors                                           | Sync tests and typecheck pass                                    |
+| `c47b918` | Remove fog state shadow                                              | Fog state tests and client typecheck pass                        |
+| `bed3e1f` | Cover storage migration boundaries                                   | Storage migration tests and client typecheck pass                |
+| `984fad4` | Abort sync effects safely                                            | Sync executor/transport tests and client typecheck pass          |
+| `3ddfcd6` | Cancel sync when auth changes                                        | 49 sync tests and client typecheck pass                          |
+| `6af6aed` | Bound fog validation work                                            | Aggregation safety tests and client typecheck pass               |
+| `8d529f9` | Normalize GPX elevation geometry                                     | Serverless import E2E and client typecheck pass                  |
+| `d5fb501` | Make E2E page fixture functional                                     | E2E typecheck passes                                             |
+| `4dbb21e` | Serialize one activity geometry                                      | Sync tests, client typecheck, and six activity E2E tests pass    |
+| `466c89a` | Abort sync before sign-out request                                   | Focused cancellation E2E, client/e2e typecheck pass              |
+| `9876758` | Pace and retry activity uploads                                      | Four rate-limit E2E cases pass; client typecheck pass            |
+| `e9ecde6` | Align bounded fog browser assertions                                 | Serverless cache/style and suspension E2E cases pass             |
+| `772ff96` | Update visibility sync browser test                                  | Public-profile publishing E2E case passes                        |
+| `99c69d8` | Project fog booleans in Mercator | Focused fog suite and typecheck pass |
+| `1cb9576` | Add fog tile regression harness | Historical/positive tile checks pass; typecheck pass |
+| `1eef831` | Measure fog representation scales | Baseline and 100/1k/10k benchmark pass |
+| `96904c5` | Version projected fog snapshots | 50 focused fog/storage tests and typecheck pass |
+| `f6779d6` | Document sync cancellation coverage | E2E documentation updated |
+| `f0aee35` | List all E2E specs | Nine-spec E2E documentation corrected |
+| `bf7f792` | Scope saved-point state by account | Saved-point state tests and typecheck pass |
+| `8980c62` | Serialize saved-point sync | Server sync tests and typecheck pass |
+| `359ca9d` | Test saved-point account isolation | Focused regression passes; full 42-test E2E matrix passes |
 
 ## Phase checklist
 
 - [ ] Phase 0 — baseline diagnostics, safe reproducer/geometry ADR, and
-      performance measurements (diagnostics/ADR/benchmark landed; tile fixture
-      and pixel-overdraw harness remain)
+      performance measurements (diagnostics, ADR, benchmark, and tile/pixel
+      harness landed; the reported blank/idle import case was not reproducible
+      in a clean dev server/browser run)
 - [x] Phase 1 — characterization tests, fault seams, callable fog engine and
       planner façade
 - [x] Phase 2 — versioned activity repository and serialized library service
-- [ ] Phase 3 — normalized, bounded import batch service and share queue
-- [ ] Phase 4 — revision-keyed projection scheduling and fog recovery
-- [ ] Phase 5 — bounded fog representation, validation, and cache handoff
-- [ ] Phase 6 — pure sync planner, durable outbox, validated transport, and
+- [x] Phase 3 — normalized, bounded import batch service and share queue
+- [x] Phase 4 — revision-keyed projection scheduling and fog recovery
+- [x] Phase 5 — bounded fog representation, validation, and cache handoff
+- [x] Phase 6 — pure sync planner, durable outbox, validated transport, and
       page-wise executor
-- [ ] Phase 7 — route/UI cleanup and terminal recovery states
+- [x] Phase 7 — route/UI cleanup and terminal recovery states
 - [ ] Phase 8 — rollout gates, cache invalidation, and removal of old paths
+      (cache invalidation and old-path removal are covered; production cohort,
+      rollback, and dual-run gates require deployment-equivalent infrastructure)
+
+## Final verification
+
+- `bun test`: 202 tests passed across 36 files, with 783 expectations.
+- `bun run typecheck`: passed.
+- `bun run build`: passed; the existing large-chunk warning remains non-fatal.
+- `bun run test:fog-tiles`: passed for the historical unsafe fixture, bounded
+  output, positive control, and inverse pixel-coverage control.
+- `bun run bench:fog`: passed for the baseline and 100/1,000/10,000-mask
+  scale runs; the 10,000-mask run intentionally reported degraded safe-fallback
+  status after exceeding the output budget.
+- `bun run test:e2e`: 42 tests passed across all nine specs, including the
+  saved-point account-isolation and sign-out/account-switch cancellation cases.
+- The class scan found only the pre-existing framework-required
+  `app/components/ErrorBoundary.tsx` class; refactor-owned code remains
+  functional and class-free.
+- A clean dev-server, Playwright, and in-app browser check rendered `/map` and
+  did not reproduce the reported empty body. The remaining Phase 0 work is to
+  capture the failing browser console/network trace or reproduce it in the
+  deployment-equivalent environment.
 
 ## Working decisions
 

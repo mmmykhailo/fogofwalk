@@ -91,22 +91,25 @@ stencil renderer would add its own GPU upload cost. “Valid” means valid for 
 hole-free inverse-source validator, so `false` is expected for the positive
 mask and the intentionally unsafe global-hole reference.
 
-| Representation           | Median build | Features | Rings | Vertices | JSON bytes | Valid |
-| ------------------------ | -----------: | -------: | ----: | -------: | ---------: | ----- |
-| Positive explored mask   |         0 ms |       24 |    27 |    6,191 |    244,333 | n/a   |
-| Regional bounded inverse |    645.89 ms |    5,463 | 5,463 |   22,759 |  1,566,472 | yes   |
-| Global-hole reference    |     86.72 ms |        1 |    28 |    6,196 |    242,586 | no    |
+| Representation           | Median build | p95 build | Heap after run | Features | Rings | Vertices | JSON bytes | Valid |
+| ------------------------ | -----------: | --------: | -------------: | -------: | ----: | -------: | ---------: | ----- |
+| Positive explored mask   |         0 ms |      0 ms |        1.76 MB |       24 |    27 |    6,191 |    244,333 | n/a   |
+| Regional bounded inverse |    667.96 ms | 853.48 ms |       29.78 MB |    5,463 | 5,463 |   22,759 |  1,566,472 | yes   |
+| Global-hole reference    |     87.03 ms |  88.91 ms |       47.69 MB |        1 |    28 |    6,196 |    242,586 | no    |
 
 These values are a baseline for the synthetic fixture, not a product budget.
 They show the deliberate trade: bounded inverse output is larger and more
 expensive to construct, while the global reference's apparent efficiency is
 not an acceptable substitute for valid tile topology. The scale run remained
-non-degraded at 100 masks (632 features, 155,013 bytes) and 1,000 masks (5,022
-features, 1,212,633 bytes). At 10,000 masks it took 20.88 s and exceeded the
+non-degraded at 100 masks (224.31 ms median, 269.25 ms p95, 60.74 MB observed
+heap, 632 features, 155,013 bytes) and 1,000 masks (2,360.47 ms median,
+2,390.94 ms p95, 42.53 MB observed heap, 5,022 features, 1,212,633 bytes). At
+10,000 masks it took 20,874.06 ms, observed 138.81 MB heap, and exceeded the
 8 MB output safety budget, so the implementation published its validated
-world-fog fallback with degraded status instead of unchecked geometry. These
-numbers are diagnostic observations, not product limits; re-run the command
-when the geometry implementation or supported browser/device matrix changes.
+world-fog fallback with degraded status and two warnings instead of unchecked
+geometry. These numbers are diagnostic observations, not product limits;
+re-run the command when the geometry implementation or supported
+browser/device matrix changes.
 
 ## Consequences
 
