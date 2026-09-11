@@ -143,12 +143,16 @@ export function createAppPage(
 
     /** Creates a local test account through the same sign-in UI as a developer. */
     async signIn() {
+      await app.signInAs(login)
+    },
+
+    async signInAs(accountLogin: string) {
       await app.openDrawer()
       await signInRow.click()
       await expect(drawer).toBeHidden()
       const dialog = page.getByRole("dialog", { name: "Sign in" })
       await expect(dialog).toBeVisible()
-      await dialog.getByLabel("Local test-user name").fill(login)
+      await dialog.getByLabel("Local test-user name").fill(accountLogin)
       await dialog.getByRole("button", { name: "Create" }).click()
       await app.waitUntilReady()
       await app.openDrawer()
@@ -161,7 +165,7 @@ export function createAppPage(
         const account = await app.openAccountDialog()
         await account.getByRole("button", { name: "Request access" }).click()
         await expect(account.getByText("Access request pending")).toBeVisible()
-        await approveAccess(login)
+        await approveAccess(accountLogin)
         await app.reload()
         await app.openDrawer()
         await expect(accountRow).not.toContainText("Not enabled for sync")
