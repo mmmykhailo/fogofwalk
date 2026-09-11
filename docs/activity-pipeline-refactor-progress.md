@@ -13,11 +13,11 @@ untouched.
 - Branch: `refactor/fog-processing`
 - Started: 2026-09-11
 - Current phase: Phase 4/5/6 — projections, bounded fog, and sync effects
-- Last completed commit: `43c7b6f add durable sync repository`
-- Current working slice: connect the pure planner and validated transport to a
+- Last completed commit: `af7b9cc route sync through validated transport`
+- Current working slice: connect the pure planner and durable outbox to a
   page-wise resumable executor
-- Next action: replace inline activity reconciliation in `syncEngine` with the
-  planner/transport seam, then add executor fault-boundary tests
+- Next action: add an executor that plans one validated manifest page, leases
+  its effects, commits only safe cursor state, and resumes after faults
 
 ## A1 activity contract slice
 
@@ -116,6 +116,17 @@ untouched.
   both cursor copies.
 - Added six focused repository tests; this slice is committed as `43c7b6f`.
 
+## Sync engine transport/library seam
+
+- Activity hash backfill, remote downloads, remote metadata, and tombstone
+  deletes now use the revisioned `ActivityLibrary` instead of direct canonical
+  array or IndexedDB mutation.
+- Activity manifest and payload parsing, hash verification, compression, and
+  oversize rejection now run through the validated sync transport.
+- The existing inline reconciliation still remains as a compatibility façade;
+  the page-wise executor is the next ownership boundary.
+- Client tests and typecheck pass; this slice is committed as `af7b9cc`.
+
 ## Path-aware adapter and render slice
 
 - GPX tracks remain one activity and their track segments remain disconnected
@@ -144,6 +155,7 @@ untouched.
 | `8c09534` | Close share-queue acknowledgement and visibility mutation seams      | Client typecheck passes                                          |
 | `db6eeec` | Add pure sync planner and validated transport                        | 29 focused tests pass; client typecheck passes                   |
 | `43c7b6f` | Add durable sync repository and outbox                                | 6 repository tests pass; client typecheck passes                 |
+| `af7b9cc` | Route sync through the revisioned library and validated transport     | 152 client tests pass; client typecheck passes                    |
 
 ## Phase checklist
 
