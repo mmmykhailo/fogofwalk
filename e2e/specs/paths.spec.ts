@@ -9,20 +9,6 @@ interface GeometrySource {
   }>
 }
 
-interface E2eMap {
-  getSource(id: string): unknown
-}
-
-declare global {
-  interface Window {
-    __fogofwalkE2eMap?: E2eMap
-    __fogofwalkE2eShareGeometry?: {
-      type?: string
-      coordinates?: unknown
-    }
-  }
-}
-
 test("[I-037] keeps disconnected paths separate in map and share rendering", async ({
   app,
 }) => {
@@ -91,7 +77,7 @@ test("[I-037] keeps disconnected paths separate in map and share rendering", asy
     .poll(
       () =>
         preview.evaluate((canvas) => {
-          const context = canvas.getContext("2d")
+          const context = (canvas as HTMLCanvasElement).getContext("2d")
           if (!context) return null
           const pixel = context.getImageData(540, 472, 1, 1).data
           return [pixel[0], pixel[1], pixel[2]]

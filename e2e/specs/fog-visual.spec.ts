@@ -14,18 +14,6 @@ const VISUAL_STYLE = {
 
 type Pixel = [number, number, number, number]
 
-interface FogVisualMap {
-  project(coordinate: [number, number]): { x: number; y: number }
-  getCanvas(): HTMLCanvasElement
-  jumpTo(options: { center: [number, number]; zoom: number }): void
-}
-
-declare global {
-  interface Window {
-    __fogofwalkE2eMap?: FogVisualMap
-  }
-}
-
 async function readPixel(
   page: Page,
   coordinate: [number, number]
