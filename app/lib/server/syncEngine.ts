@@ -22,8 +22,9 @@ import type { SavedPoint } from "~shared/saved-points"
 import type { ParsedActivity } from "~/types/activities"
 import {
   emptySavedPointSyncState,
+  loadAccountSavedPointSyncStates,
   loadSavedPointSyncState,
-  saveSavedPointSyncState,
+  updateSavedPointSyncState,
   deleteSavedPoint as deleteSavedPointFromIdb,
   loadSavedPoints,
   saveSavedPoint,
@@ -181,6 +182,70 @@ function repositoryForCurrentAccount(): IndexedDbSyncRepository | null {
     : activitySyncRepository
 }
 
+function isCurrentSignedInAccount(accountId: string): boolean {
+  const auth = getAuthState()
+  return auth.status === "signedIn" && auth.user.id === accountId
+}
+
+function throwIfSavedPointAccountChanged(accountId: string): void {
+  if (isCurrentSignedInAccount(accountId)) return
+  const error = new Error("Saved-point sync account changed")
+  error.name = "AbortError"
+  throw error
+}
+
+let savedPointOperationTail: Promise<void> = Promise.resolve()
+
+/**
+ * Serialize saved-point network work with local state transitions. Web Locks
+ * covers separate tabs; the promise tail keeps operations in this tab ordered
+ * even in browsers without that API. IndexedDB updates remain transactional as
+ * the final safety net for a legacy browser.
+ */
+async function withSavedPointSyncLock<T>(
+  operation: () => Promise<T>
+): Promise<T> {
+  let release!: () => void
+  const previous = savedPointOperationTail
+  savedPointOperationTail = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  try {
+    await previous
+    if (typeof navigator !== "undefined" && navigator.locks) {
+      return await navigator.locks.request(
+        "fogofwalk:saved-points",
+        { mode: "exclusive" },
+        operation
+      )
+    }
+    return await operation()
+  } finally {
+    release()
+  }
+}
+
+function savedPointStateIds(
+  state: Awaited<ReturnType<typeof loadSavedPointSyncState>>
+): Set<string> {
+  return new Set([
+    ...(state?.ownedIds ?? []),
+    ...(state?.serverPointIds ?? []),
+    ...(state?.outboundIds ?? []),
+    ...(state?.outboundDeletionIds ?? []),
+  ])
+}
+
+async function foreignSavedPointIds(accountId: string): Promise<Set<string>> {
+  const states = await loadAccountSavedPointSyncStates()
+  const ids = new Set<string>()
+  for (const [ownerId, state] of states) {
+    if (ownerId === accountId) continue
+    for (const id of savedPointStateIds(state)) ids.add(id)
+  }
+  return ids
+}
+
 async function foreignActivityHashes(accountId: string): Promise<Set<string>> {
   if (!activitySyncRepository) return new Set()
   const hashes = new Set<string>()
@@ -202,9 +267,7 @@ async function publishOutboxStatus(
     return null
   }
   try {
-    const summary = summarizeSyncOutbox(
-      await repository.loadOutbox()
-    )
+    const summary = summarizeSyncOutbox(await repository.loadOutbox())
     applySyncOutboxSummary(summary, update)
     return summary
   } catch {
@@ -223,9 +286,15 @@ async function acquireSyncLeadership(
       ? repositoryForAccount(auth.user.id)
       : null
   if (!repository || !syncOwner) return false
+  if (auth.status !== "signedIn") return false
+  const accountId = auth.user.id
+  await withSavedPointSyncLock(async () => {
+    await loadSavedPointSyncState(accountId)
+  })
+  if (!isCurrentSignedInAccount(accountId)) return false
   if (typeof navigator !== "undefined" && navigator.locks) {
     return navigator.locks.request(
-      `fogofwalk:sync:${auth.status === "signedIn" ? auth.user.id : "none"}`,
+      `fogofwalk:sync:${accountId}`,
       { mode: "exclusive", ifAvailable: true },
       async (lock) => {
         if (!lock) return false
@@ -405,7 +474,7 @@ async function syncOnce(reason: string): Promise<void> {
     throwIfSyncAborted(signal)
     // Saved points have their own manifest cursor and are intentionally kept
     // outside activity upload pacing. Reconcile them before activities.
-    await syncSavedPoints(signal)
+    await withSavedPointSyncLock(() => syncSavedPoints(signal, auth.user.id))
     throwIfSyncAborted(signal)
     await initializeActivityLibrary()
     throwIfSyncAborted(signal)
@@ -461,12 +530,15 @@ async function syncOnce(reason: string): Promise<void> {
       errorCode: "sync-failed",
       retryability: "retryable",
     })
-    await publishOutboxStatus({
-      phase: "error",
-      message: friendlyMessage(err),
-      lastSyncAt,
-      cursorHeld: false,
-    }, repository)
+    await publishOutboxStatus(
+      {
+        phase: "error",
+        message: friendlyMessage(err),
+        lastSyncAt,
+        cursorHeld: false,
+      },
+      repository
+    )
   } finally {
     if (activeSyncRun === active) activeSyncRun = null
   }
@@ -521,13 +593,16 @@ async function runActivitySync(
       (result.cursorHeld
         ? "Some activities couldn't be received"
         : "Some activities couldn't be uploaded")
-    const summary = await publishOutboxStatus({
-      phase: result.cursorHeld ? "partial" : "waiting",
-      message,
-      lastSyncAt:
-        result.state.lastSyncAt > 0 ? result.state.lastSyncAt : lastSyncAt,
-      cursorHeld: result.cursorHeld,
-    }, repository)
+    const summary = await publishOutboxStatus(
+      {
+        phase: result.cursorHeld ? "partial" : "waiting",
+        message,
+        lastSyncAt:
+          result.state.lastSyncAt > 0 ? result.state.lastSyncAt : lastSyncAt,
+        cursorHeld: result.cursorHeld,
+      },
+      repository
+    )
     if (permanent || summary?.permanentCount) {
       setStatus({ phase: "permanent" })
     }
@@ -545,12 +620,15 @@ async function runActivitySync(
     return
   }
 
-  const summary = await publishOutboxStatus({
-    phase: "idle",
-    lastSyncAt: result.state.lastSyncAt,
-    cursorHeld: false,
-    message: null,
-  }, repository)
+  const summary = await publishOutboxStatus(
+    {
+      phase: "idle",
+      lastSyncAt: result.state.lastSyncAt,
+      cursorHeld: false,
+      message: null,
+    },
+    repository
+  )
   if (summary?.permanentCount) {
     setStatus({
       phase: "permanent",
@@ -573,19 +651,34 @@ async function runActivitySync(
 }
 
 /** Reconcile remote point changes/deletions, then upload local outbound edits. */
-async function syncSavedPoints(signal?: AbortSignal): Promise<void> {
+async function syncSavedPoints(
+  signal: AbortSignal | undefined,
+  accountId: string
+): Promise<void> {
   throwIfSyncAborted(signal)
-  const state = await loadSavedPointSyncState()
+  throwIfSavedPointAccountChanged(accountId)
+  const state = await loadSavedPointSyncState(accountId)
   throwIfSyncAborted(signal)
+  throwIfSavedPointAccountChanged(accountId)
+  const foreignOwnedIds = await foreignSavedPointIds(accountId)
+  throwIfSyncAborted(signal)
+  throwIfSavedPointAccountChanged(accountId)
   const since = state?.cursor ?? 0
   const isFromScratch = since === 0
-  const { serverPoints, deletions, cursor } =
-    await fetchSavedPointsManifest(since, signal)
+  const { serverPoints, deletions, cursor } = await fetchSavedPointsManifest(
+    since,
+    signal
+  )
   throwIfSyncAborted(signal)
   const localById = new Map(
     (await loadSavedPoints()).map((point) => [point.id, point])
   )
   throwIfSyncAborted(signal)
+  throwIfSavedPointAccountChanged(accountId)
+  const ownedIds = savedPointStateIds(state)
+  for (const point of localById.values()) {
+    if (!foreignOwnedIds.has(point.id)) ownedIds.add(point.id)
+  }
   const serverIds = new Set(isFromScratch ? [] : (state?.serverPointIds ?? []))
   for (const point of serverPoints) serverIds.add(point.id)
   for (const tombstone of deletions) serverIds.delete(tombstone.id)
@@ -624,14 +717,16 @@ async function syncSavedPoints(signal?: AbortSignal): Promise<void> {
     throwIfSyncAborted(signal)
     await saveSavedPoints(remoteUpdates)
     throwIfSyncAborted(signal)
+    throwIfSavedPointAccountChanged(accountId)
     for (const point of remoteUpdates) localById.set(point.id, point)
+    for (const point of remoteUpdates) ownedIds.add(point.id)
   }
 
   const deletedThisWindow = new Set(freshTombstones.map((tomb) => tomb.id))
   const deletionFailures = await pooled(
     [...outboundDeletionIds],
     async (id) => {
-      const deletedAt = await deleteSavedPointOnServer(id, signal)
+      const deletedAt = await deleteSavedPointOnServer(id, signal, accountId)
       throwIfSyncAborted(signal)
       serverIds.delete(id)
       dirtyIds.delete(id)
@@ -643,17 +738,26 @@ async function syncSavedPoints(signal?: AbortSignal): Promise<void> {
   throwIfSyncAborted(signal)
   const toUpload = [...localById.values()].filter(
     (point) =>
+      !foreignOwnedIds.has(point.id) &&
       !outboundDeletionIds.has(point.id) &&
       (dirtyIds.has(point.id) || !serverIds.has(point.id)) &&
       (isFromScratch || !deletedThisWindow.has(point.id))
   )
-  const failures = await pooled(toUpload, async (point) => {
-    const saved = await uploadSavedPoint(point, signal)
-    throwIfSyncAborted(signal)
-    localById.set(saved.id, saved)
-    serverIds.add(saved.id)
-    dirtyIds.delete(saved.id)
-  }, signal)
+  for (const point of toUpload) ownedIds.add(point.id)
+  const uploadedIds = new Set<string>()
+  const failures = await pooled(
+    toUpload,
+    async (point) => {
+      const saved = await uploadSavedPoint(point, signal, accountId)
+      throwIfSyncAborted(signal)
+      throwIfSavedPointAccountChanged(accountId)
+      localById.set(saved.id, saved)
+      serverIds.add(saved.id)
+      dirtyIds.delete(saved.id)
+      uploadedIds.add(saved.id)
+    },
+    signal
+  )
   throwIfSyncAborted(signal)
 
   const cutoff = cursor - TOMBSTONE_MEMORY_MS
@@ -661,15 +765,42 @@ async function syncSavedPoints(signal?: AbortSignal): Promise<void> {
   for (const [id, deletedAt] of applied) {
     if (deletedAt >= cutoff) appliedSavedPointTombstones[id] = deletedAt
   }
-  await saveSavedPointSyncState({
-    cursor,
-    lastSyncAt: state?.lastSyncAt ?? 0,
-    serverPointIds: [...serverIds],
-    appliedTombstones: appliedSavedPointTombstones,
-    outboundIds: [...dirtyIds],
-    outboundDeletionIds: [...outboundDeletionIds],
+  await updateSavedPointSyncState(accountId, (latest) => {
+    const current = latest ?? emptySavedPointSyncState()
+    const initialOutboundIds = new Set(state?.outboundIds ?? [])
+    const initialDeletionIds = new Set(state?.outboundDeletionIds ?? [])
+    const outboundIds = new Set(
+      (current.outboundIds ?? []).filter((id) => !initialOutboundIds.has(id))
+    )
+    const outboundDeletionIdsToSave = new Set(
+      (current.outboundDeletionIds ?? []).filter(
+        (id) => !initialDeletionIds.has(id)
+      )
+    )
+    for (const id of dirtyIds) outboundIds.add(id)
+    for (const id of outboundDeletionIds) outboundDeletionIdsToSave.add(id)
+    for (const id of uploadedIds) outboundIds.delete(id)
+
+    const mergedTombstones: Record<string, number> = {
+      ...current.appliedTombstones,
+    }
+    for (const [id, deletedAt] of Object.entries(appliedSavedPointTombstones)) {
+      if ((mergedTombstones[id] ?? 0) < deletedAt) {
+        mergedTombstones[id] = deletedAt
+      }
+    }
+    return {
+      cursor: Math.max(current.cursor, cursor),
+      lastSyncAt: Math.max(current.lastSyncAt, state?.lastSyncAt ?? 0),
+      serverPointIds: [...serverIds],
+      ownedIds: [...new Set([...current.ownedIds, ...ownedIds])],
+      appliedTombstones: mergedTombstones,
+      outboundIds: [...outboundIds],
+      outboundDeletionIds: [...outboundDeletionIdsToSave],
+    }
   })
   throwIfSyncAborted(signal)
+  throwIfSavedPointAccountChanged(accountId)
   if (remoteUpdates.length > 0 || deletedIds.length > 0) {
     onChanged?.({
       downloadedCount: 0,
@@ -755,9 +886,11 @@ async function fetchSavedPointsManifest(
 
 async function uploadSavedPoint(
   point: SavedPoint,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  accountId?: string
 ): Promise<SavedPoint> {
   throwIfSyncAborted(signal)
+  if (accountId) throwIfSavedPointAccountChanged(accountId)
   const input: SavedPointUpsertInput = {
     id: point.id,
     lng: point.lng,
@@ -773,19 +906,24 @@ async function uploadSavedPoint(
   })
   const { savedPoint } = (await res.json()) as SavedPointUpsertResponse
   throwIfSyncAborted(signal)
+  if (accountId) throwIfSavedPointAccountChanged(accountId)
   await saveSavedPoint(savedPoint)
   throwIfSyncAborted(signal)
+  if (accountId) throwIfSavedPointAccountChanged(accountId)
   return savedPoint
 }
 
 async function deleteSavedPointOnServer(
   id: string,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  accountId?: string
 ): Promise<number> {
   throwIfSyncAborted(signal)
+  if (accountId) throwIfSavedPointAccountChanged(accountId)
   const res = await apiRaw("DELETE", `/api/saved-points/${id}`, { signal })
   const { deletedAt } = (await res.json()) as SavedPointDeleteResponse
   throwIfSyncAborted(signal)
+  if (accountId) throwIfSavedPointAccountChanged(accountId)
   return deletedAt
 }
 
@@ -796,62 +934,83 @@ async function deleteSavedPointOnServer(
 export async function pushSavedPointUpdate(
   point: SavedPoint
 ): Promise<SavedPoint> {
-  const state = (await loadSavedPointSyncState()) ?? emptySavedPointSyncState()
-  const outbound = new Set(state.outboundIds)
-  outbound.add(point.id)
-  const outboundDeletions = new Set(state.outboundDeletionIds)
-  outboundDeletions.delete(point.id)
-  await saveSavedPointSyncState({
-    ...state,
-    outboundIds: [...outbound],
-    outboundDeletionIds: [...outboundDeletions],
-  })
-  if (!canSync()) return point
-  try {
-    const saved = await uploadSavedPoint(point)
-    outbound.delete(point.id)
-    await saveSavedPointSyncState({
-      ...state,
-      outboundIds: [...outbound],
-      outboundDeletionIds: [...outboundDeletions],
+  const auth = getAuthState()
+  const accountId = auth.status === "signedIn" ? auth.user.id : undefined
+  return withSavedPointSyncLock(async () => {
+    const queued = await updateSavedPointSyncState(accountId, (current) => {
+      const state = current ?? emptySavedPointSyncState()
+      const outbound = new Set(state.outboundIds)
+      outbound.add(point.id)
+      const outboundDeletions = new Set(state.outboundDeletionIds)
+      outboundDeletions.delete(point.id)
+      return {
+        ...state,
+        ownedIds: [...new Set([...state.ownedIds, point.id])],
+        outboundIds: [...outbound],
+        outboundDeletionIds: [...outboundDeletions],
+      }
     })
-    requestSync("saved-point-update")
-    return saved
-  } catch (err) {
-    console.warn("[sync] failed to propagate saved-point update:", err)
-    return point
-  }
+    if (!queued || !canSync() || !accountId) return point
+    try {
+      const saved = await uploadSavedPoint(point, undefined, accountId)
+      await updateSavedPointSyncState(accountId, (current) => {
+        const state = current ?? emptySavedPointSyncState()
+        const outbound = new Set(state.outboundIds)
+        outbound.delete(point.id)
+        return { ...state, outboundIds: [...outbound] }
+      })
+      requestSync("saved-point-update")
+      return saved
+    } catch (err) {
+      if (!isSyncCancellationError(err)) {
+        console.warn("[sync] failed to propagate saved-point update:", err)
+      }
+      return point
+    }
+  })
 }
 
 /** Queue a local deletion and try to propagate its tombstone immediately. */
 export async function pushSavedPointDeletion(id: string): Promise<void> {
-  const state = (await loadSavedPointSyncState()) ?? emptySavedPointSyncState()
-  const outbound = new Set(state.outboundIds)
-  const outboundDeletions = new Set(state.outboundDeletionIds)
-  outbound.delete(id)
-  outboundDeletions.add(id)
-  await saveSavedPointSyncState({
-    ...state,
-    outboundIds: [...outbound],
-    outboundDeletionIds: [...outboundDeletions],
-  })
-  if (!canSync()) return
-  try {
-    const deletedAt = await deleteSavedPointOnServer(id)
-    outboundDeletions.delete(id)
-    await saveSavedPointSyncState({
-      ...state,
-      outboundIds: [...outbound],
-      outboundDeletionIds: [...outboundDeletions],
-      appliedTombstones: {
-        ...state.appliedTombstones,
-        [id]: deletedAt,
-      },
+  const auth = getAuthState()
+  const accountId = auth.status === "signedIn" ? auth.user.id : undefined
+  await withSavedPointSyncLock(async () => {
+    const queued = await updateSavedPointSyncState(accountId, (current) => {
+      const state = current ?? emptySavedPointSyncState()
+      const outbound = new Set(state.outboundIds)
+      const outboundDeletions = new Set(state.outboundDeletionIds)
+      outbound.delete(id)
+      outboundDeletions.add(id)
+      return {
+        ...state,
+        ownedIds: [...new Set([...state.ownedIds, id])],
+        outboundIds: [...outbound],
+        outboundDeletionIds: [...outboundDeletions],
+      }
     })
-    requestSync("saved-point-deletion")
-  } catch (err) {
-    console.warn("[sync] failed to propagate saved-point deletion:", err)
-  }
+    if (!queued || !canSync() || !accountId) return
+    try {
+      const deletedAt = await deleteSavedPointOnServer(id, undefined, accountId)
+      await updateSavedPointSyncState(accountId, (current) => {
+        const state = current ?? emptySavedPointSyncState()
+        const outboundDeletions = new Set(state.outboundDeletionIds)
+        outboundDeletions.delete(id)
+        return {
+          ...state,
+          outboundDeletionIds: [...outboundDeletions],
+          appliedTombstones: {
+            ...state.appliedTombstones,
+            [id]: deletedAt,
+          },
+        }
+      })
+      requestSync("saved-point-deletion")
+    } catch (err) {
+      if (!isSyncCancellationError(err)) {
+        console.warn("[sync] failed to propagate saved-point deletion:", err)
+      }
+    }
+  })
 }
 
 /** Compatibility facade for callers that already committed a local update. */
