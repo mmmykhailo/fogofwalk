@@ -84,9 +84,16 @@ function buildParsedActivity(
       (timestamp): timestamp is number =>
         timestamp != null && isFinite(timestamp)
     )
-  const coordinates = paths.flatMap((path) => path) as ActivityCoords
+  // togeojson keeps GPX elevation as a third coordinate ordinate. The
+  // canonical activity geometry is deliberately two-dimensional; elevation is
+  // already captured in the raw stats above. Strip the ordinate before the
+  // draft reaches normalizeActivityGeometry, which rejects non-2D points.
+  const canonicalPaths = paths.map(
+    (path) =>
+      path.map(([lng, lat]) => [lng, lat] as [number, number]) as ActivityCoords
+  )
+  const coordinates = canonicalPaths.flatMap((path) => path) as ActivityCoords
   const stats = computeActivityStatsForPaths(usableSegments)
-  const canonicalPaths = paths as ActivityPaths
   const canonicalTimestamps = hasTimestamp
     ? timestamps.map((path) => path as ActivityPathTimestamps)
     : undefined
