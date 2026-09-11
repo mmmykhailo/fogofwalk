@@ -13,11 +13,12 @@ untouched.
 - Branch: `refactor/fog-processing`
 - Started: 2026-09-11
 - Current phase: Phase 7 — route/UI cleanup and terminal recovery states
-- Last completed commit: `051b683 surface import and fog recovery status`
-- Current working slice: expose durable sync operation status and local
-  diagnostics, then finish cache/style cleanup and rollout checks
-- Next action: add durable outbox summaries/retry timing to the sync status
-  surface without making network state part of canonical activity commits
+- Last completed commit: `843a17c surface durable sync status`
+- Current working slice: add local structured diagnostics and a safe fog
+  representation decision record, then finish cache/style cleanup and rollout
+  checks
+- Next action: instrument import, fog, render, and sync boundaries with
+  redacted operation events and provide a local export action
 
 ## A1 activity contract slice
 
@@ -248,6 +249,20 @@ untouched.
 - Focused import/fog tests and typecheck pass. This slice is committed as
   `051b683`.
 
+## Durable sync status slice
+
+- Moved sync status into app/lib/server/sync/status.ts as a dedicated
+  observable boundary. Existing account surfaces continue to consume the
+  compatibility exports from syncEngine.
+- Status now distinguishes disabled, syncing, waiting-to-retry, cursor-held
+  partial receive, permanent failure, intentional suspension, generic error,
+  and fully idle states.
+- Each sync completion reads the durable outbox and publishes pending,
+  retryable, leased, permanent, retry-at, and attempt-count summaries. Error
+  messages remain operation-level and never include payload bodies.
+- Focused sync status, executor, repository tests and typecheck pass. This
+  slice is committed as `843a17c`.
+
 ## Path-aware adapter and render slice
 
 - GPX tracks remain one activity and their track segments remain disconnected
@@ -286,6 +301,7 @@ untouched.
 | `bf53061` | Decouple unique distance projection                           | 175 client tests pass; client typecheck passes                   |
 | `86894c8` | Route fog work through library changes                    | 175 client tests pass; client typecheck passes                   |
 | `051b683` | Surface import and fog recovery status                         | Focused import/fog tests pass; client typecheck passes                 |
+| `843a17c` | Surface durable sync status                                      | Focused sync tests pass; client typecheck passes                       |
 
 ## Phase checklist
 
