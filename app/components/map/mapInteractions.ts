@@ -97,7 +97,7 @@ export function attachMapInteractions(
   }
   const onContextMenu = (event: maplibregl.MapMouseEvent) => {
     event.preventDefault()
-    if (!isProtectedCreateGesture(event.point, event.originalEvent.target)) {
+    if (!isProtectedCreateGesture(event.point, event.originalEvent?.target)) {
       createSavedPoint(event.lngLat, event.point)
     }
   }
@@ -133,7 +133,7 @@ export function attachMapInteractions(
 
     if (
       interactiveFeatures.some(isInteractiveFeature) ||
-      isInteractiveDomTarget(event.originalEvent.target)
+      isInteractiveDomTarget(event.originalEvent?.target)
     )
       return
 
@@ -172,11 +172,7 @@ export function attachMapInteractions(
       event.clientX - bounds.left,
       event.clientY - bounds.top
     )
-    if (
-      isInteractiveDomTarget(event.target) ||
-      isProtectedCreateGesture(point, event.target)
-    )
-      return
+    if (isProtectedCreateGesture(point, event.target)) return
     longPressPointerId = event.pointerId
     longPressStart = point
     isLongPressCancelled = false
