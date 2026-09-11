@@ -13,11 +13,11 @@ untouched.
 - Branch: `refactor/fog-processing`
 - Started: 2026-09-11
 - Current phase: completion audit across Phases 0–8
-- Last completed commit: `466c89a abort sync before sign-out request`
+- Last completed commit: `772ff96 update visibility sync browser test`
 - Current working slice: close remaining acceptance gaps, add deterministic
   boundary tests, and verify the full client/server/build matrix
-- Next action: run the full client/server/build matrix, then audit the remaining
-  Phase 0 and browser IndexedDB gaps
+- Next action: rerun the complete browser matrix after the audit fixes, then
+  audit the remaining Phase 0 and browser IndexedDB gaps
 
 ## A1 activity contract slice
 
@@ -354,6 +354,20 @@ untouched.
   manifest, signs out, and verifies no activity upload is issued and the local
   activity remains present. The focused test passes; committed as `466c89a`.
 
+## Completion audit fixes
+
+- Reconnected the page-wise API transport to the existing upload pacing and
+  bounded 429 retry gate. Pacing waits are abortable, so cancellation cannot
+  strand a sync run behind a full upload window. The four rate-limit E2E cases
+  pass; committed as `9876758`.
+- Updated the browser fog-cache helper for the current FeatureCollection
+  representation and replaced obsolete global-hole ring-count expectations
+  with bounded-fog semantic assertions. The two serverless cache/style cases
+  and Fill-loop suspension case pass; committed as `e9ecde6`.
+- Updated the public-profile E2E to await the canonical activity upload used by
+  the migrated visibility flow instead of the removed direct visibility PATCH.
+  The publishing case passes; committed as `772ff96`.
+
 ## Commit log
 
 | Commit    | Slice                                                                | Verification                                                     |
@@ -407,6 +421,9 @@ untouched.
 | `d5fb501` | Make E2E page fixture functional                              | E2E typecheck passes                                                     |
 | `4dbb21e` | Serialize one activity geometry                              | Sync tests, client typecheck, and six activity E2E tests pass             |
 | `466c89a` | Abort sync before sign-out request                           | Focused cancellation E2E, client/e2e typecheck pass                      |
+| `9876758` | Pace and retry activity uploads                             | Four rate-limit E2E cases pass; client typecheck pass                    |
+| `e9ecde6` | Align bounded fog browser assertions                        | Serverless cache/style and suspension E2E cases pass                    |
+| `772ff96` | Update visibility sync browser test                         | Public-profile publishing E2E case passes                               |
 
 ## Phase checklist
 
