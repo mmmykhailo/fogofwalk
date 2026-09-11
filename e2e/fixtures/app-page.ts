@@ -172,6 +172,86 @@ export function createAppPage(
       }
     },
 
+    /** Reads the stable server user id from the cached session. */
+    async sessionUserId(): Promise<string> {
+      const userId = await page.evaluate(async () => {
+        const db = await new Promise<IDBDatabase>((resolve, reject) => {
+          const request = indexedDB.open("fogofwalk")
+          request.onsuccess = () => resolve(request.result)
+          request.onerror = () => reject(request.error)
+        })
+        const session = await new Promise<any>((resolve) => {
+          const transaction = db.transaction("prefs", "readonly")
+          const request = transaction.objectStore("prefs").get("session")
+          request.onsuccess = () => resolve(request.result?.value ?? null)
+          request.onerror = () => resolve(null)
+        })
+        db.close()
+        return session?.user?.id ?? null
+      })
+      if (typeof userId !== "string") {
+        throw new Error("no signed-in user id in IndexedDB")
+      }
+      return userId
+    },
+
+    /** Seeds account-scoped saved-point state for an isolation regression. */
+    async seedSavedPointSyncState(
+      accountId: string,
+      state: {
+        cursor: number
+        lastSyncAt: number
+        serverPointIds: string[]
+        ownedIds: string[]
+        appliedTombstones: Record<string, number>
+        outboundIds: string[]
+        outboundDeletionIds: string[]
+      }
+    ): Promise<void> {
+      await page.evaluate(
+        async ({ accountId: id, state: value }) => {
+          const db = await new Promise<IDBDatabase>((resolve, reject) => {
+            const request = indexedDB.open("fogofwalk")
+            request.onsuccess = () => resolve(request.result)
+            request.onerror = () => reject(request.error)
+          })
+          await new Promise<void>((resolve, reject) => {
+            const transaction = db.transaction("prefs", "readwrite")
+            transaction.objectStore("prefs").put({
+              key: `savedPointSyncState:${encodeURIComponent(id)}`,
+              value,
+            })
+            transaction.oncomplete = () => resolve()
+            transaction.onerror = () => reject(transaction.error)
+            transaction.onabort = () => reject(transaction.error)
+          })
+          db.close()
+        },
+        { accountId, state }
+      )
+    },
+
+    /** Reads one account's saved-point state from the browser database. */
+    async savedPointSyncState(accountId: string): Promise<unknown | null> {
+      return page.evaluate(async (id) => {
+        const db = await new Promise<IDBDatabase>((resolve, reject) => {
+          const request = indexedDB.open("fogofwalk")
+          request.onsuccess = () => resolve(request.result)
+          request.onerror = () => reject(request.error)
+        })
+        const entry = await new Promise<any>((resolve) => {
+          const transaction = db.transaction("prefs", "readonly")
+          const request = transaction
+            .objectStore("prefs")
+            .get(`savedPointSyncState:${encodeURIComponent(id)}`)
+          request.onsuccess = () => resolve(request.result?.value ?? null)
+          request.onerror = () => resolve(null)
+        })
+        db.close()
+        return entry
+      }, accountId)
+    },
+
     async openAccountDialog(): Promise<Locator> {
       await app.openDrawer()
       await accountRow.click()
