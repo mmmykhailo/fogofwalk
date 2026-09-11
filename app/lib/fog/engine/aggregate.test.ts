@@ -146,6 +146,28 @@ describe("bounded fog aggregation", () => {
     }
   })
 
+  test("keeps disjoint fill components out of one global union", () => {
+    const first = bufferFogActivity(
+      activity("first", [
+        [0, 0],
+        [0.01, 0],
+      ])
+    )
+    const second = bufferFogActivity(
+      activity("second", [
+        [30, 0],
+        [30.01, 0],
+      ])
+    )
+    expect(first.rejected).toBe(false)
+    expect(second.rejected).toBe(false)
+
+    const result = buildBoundedFog([...first.masks, ...second.masks], "fill")
+
+    expect(result.degraded).toBe(false)
+    expect(result.fogData.features).toHaveLength(2)
+  })
+
   test("keeps crossing routes and loops as positive explored geometry", () => {
     const crossingRoute = bufferFogActivity(
       activity("crossing-route", [

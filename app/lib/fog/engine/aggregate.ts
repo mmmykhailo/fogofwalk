@@ -1,3 +1,4 @@
+import bbox from "@turf/bbox"
 import { featureCollection } from "@turf/helpers"
 import union from "@turf/union"
 import type { Feature, MultiPolygon, Polygon } from "geojson"
@@ -38,6 +39,15 @@ const DEFAULT_MAX_PARTITIONS = 10_000
 
 type PolygonFeature = Feature<Polygon | MultiPolygon>
 type Coordinate = [number, number]
+type Bounds = [number, number, number, number]
+
+const POSITIVE_INDEX_COLUMNS = 36
+const POSITIVE_INDEX_ROWS = 18
+
+export interface FogFillComponent {
+  features: PolygonFeature[]
+  bounds: Bounds
+}
 
 function validateLegacyPartitionOptions(options: FogPartitionOptions): void {
   const longitudeSpan = options.longitudeSpanDegrees ?? DEFAULT_LONGITUDE_SPAN
@@ -158,9 +168,71 @@ function maskFeatures(masks: FogMask[]): PolygonFeature[] {
   return masks.filter((mask): mask is PolygonFeature => Boolean(mask.geometry))
 }
 
+function featureBounds(feature: PolygonFeature): Bounds {
+  const bounds = bbox(feature)
+  return [bounds[0]!, bounds[1]!, bounds[2]!, bounds[3]!]
+}
+
+function boundsOverlap(first: Bounds, second: Bounds): boolean {
+  return !(
+    first[2] < second[0] ||
+    first[0] > second[2] ||
+    first[3] < second[1] ||
+    first[1] > second[3]
+  )
+}
+
+/**
+ * Return coarse spatial cells for a projected mask. One-cell padding keeps
+ * masks that meet exactly on a cell boundary in the same candidate search.
+ */
+function partitionKeys(bounds: Bounds): string[] {
+  const minColumn = Math.max(
+    0,
+    Math.min(
+      POSITIVE_INDEX_COLUMNS - 1,
+      Math.floor(Math.max(0, Math.min(1, bounds[0])) * POSITIVE_INDEX_COLUMNS) -
+        1
+    )
+  )
+  const maxColumn = Math.max(
+    0,
+    Math.min(
+      POSITIVE_INDEX_COLUMNS - 1,
+      Math.floor(Math.max(0, Math.min(1, bounds[2])) * POSITIVE_INDEX_COLUMNS) +
+        1
+    )
+  )
+  const minRow = Math.max(
+    0,
+    Math.min(
+      POSITIVE_INDEX_ROWS - 1,
+      Math.floor(Math.max(0, Math.min(1, bounds[1])) * POSITIVE_INDEX_ROWS) - 1
+    )
+  )
+  const maxRow = Math.max(
+    0,
+    Math.min(
+      POSITIVE_INDEX_ROWS - 1,
+      Math.floor(Math.max(0, Math.min(1, bounds[3])) * POSITIVE_INDEX_ROWS) + 1
+    )
+  )
+  const keys: string[] = []
+  for (let column = minColumn; column <= maxColumn; column += 1) {
+    for (let row = minRow; row <= maxRow; row += 1) {
+      keys.push(`${column}:${row}`)
+    }
+  }
+  return keys
+}
+
 export interface FogMaskAccumulator {
   mode: FogMode
   projectedMasks: PolygonFeature[]
+  /** Spatially indexed positive components used by fill-mode union. */
+  fillComponents: FogFillComponent[]
+  fillComponentsByPartition: Map<string, Set<FogFillComponent>>
+  dirtyPartitions: Set<string>
   degraded: boolean
   warnings: string[]
 }
@@ -228,13 +300,136 @@ function aggregationResult(
 }
 
 export function createFogMaskAccumulator(mode: FogMode): FogMaskAccumulator {
-  return { mode, projectedMasks: [], degraded: false, warnings: [] }
+  return {
+    mode,
+    projectedMasks: [],
+    fillComponents: [],
+    fillComponentsByPartition: new Map(),
+    dirtyPartitions: new Set(),
+    degraded: false,
+    warnings: [],
+  }
+}
+
+function removeProjectedMask(
+  accumulator: FogMaskAccumulator,
+  feature: PolygonFeature
+): void {
+  const index = accumulator.projectedMasks.indexOf(feature)
+  if (index < 0) return
+  const last = accumulator.projectedMasks.pop()
+  if (last && index < accumulator.projectedMasks.length) {
+    accumulator.projectedMasks[index] = last
+  }
+}
+
+function indexFillComponent(
+  accumulator: FogMaskAccumulator,
+  component: FogFillComponent
+): void {
+  for (const key of partitionKeys(component.bounds)) {
+    accumulator.dirtyPartitions.add(key)
+    const components = accumulator.fillComponentsByPartition.get(key)
+    if (components) components.add(component)
+    else accumulator.fillComponentsByPartition.set(key, new Set([component]))
+  }
+}
+
+function unindexFillComponent(
+  accumulator: FogMaskAccumulator,
+  component: FogFillComponent
+): void {
+  for (const key of partitionKeys(component.bounds)) {
+    accumulator.dirtyPartitions.add(key)
+    const components = accumulator.fillComponentsByPartition.get(key)
+    components?.delete(component)
+    if (components?.size === 0) {
+      accumulator.fillComponentsByPartition.delete(key)
+    }
+  }
+}
+
+function addFillComponent(
+  accumulator: FogMaskAccumulator,
+  feature: PolygonFeature
+): void {
+  const component: FogFillComponent = {
+    features: [feature],
+    bounds: featureBounds(feature),
+  }
+  accumulator.fillComponents.push(component)
+  accumulator.projectedMasks.push(feature)
+  indexFillComponent(accumulator, component)
+}
+
+function removeFillComponent(
+  accumulator: FogMaskAccumulator,
+  component: FogFillComponent
+): void {
+  const index = accumulator.fillComponents.indexOf(component)
+  if (index >= 0) accumulator.fillComponents.splice(index, 1)
+  for (const feature of component.features) {
+    removeProjectedMask(accumulator, feature)
+  }
+  unindexFillComponent(accumulator, component)
+}
+
+function overlappingFillComponents(
+  accumulator: FogMaskAccumulator,
+  feature: PolygonFeature
+): FogFillComponent[] {
+  const bounds = featureBounds(feature)
+  const candidates = new Set<FogFillComponent>()
+  for (const key of partitionKeys(bounds)) {
+    for (const component of accumulator.fillComponentsByPartition.get(key) ??
+      []) {
+      if (boundsOverlap(bounds, component.bounds)) candidates.add(component)
+    }
+  }
+  return [...candidates]
+}
+
+function appendFillMask(
+  accumulator: FogMaskAccumulator,
+  incoming: PolygonFeature
+): void {
+  const components = overlappingFillComponents(accumulator, incoming)
+  if (components.length === 0) {
+    addFillComponent(accumulator, incoming)
+    return
+  }
+
+  const candidates = [
+    ...components.flatMap((component) => component.features),
+    incoming,
+  ]
+  try {
+    const merged = union(featureCollection(candidates)) as PolygonFeature | null
+    if (!merged) throw new Error("union returned no geometry")
+    for (const component of components) {
+      removeFillComponent(accumulator, component)
+    }
+    addFillComponent(accumulator, stripInteriorRings(merged))
+  } catch (error) {
+    // Retain the already-published positive components and isolate the new
+    // difficult geometry. Future appends remain incremental but stop trying to
+    // merge every component after one deterministic union failure.
+    accumulator.degraded = true
+    accumulator.projectedMasks.push(incoming)
+    accumulator.fillComponents = []
+    accumulator.fillComponentsByPartition.clear()
+    accumulator.dirtyPartitions = new Set()
+    accumulator.warnings.push(
+      `explored-mask union failed: ${error instanceof Error ? error.message : String(error)}`
+    )
+  }
 }
 
 /**
- * Add one activity's masks to the accumulator. Fill mode unions only the
- * existing positive accumulator with the new masks; it never re-unions the
- * entire activity library for every progress snapshot.
+ * Add one activity's masks to the accumulator. Corridor mode appends positive
+ * masks directly. Fill mode uses a coarse spatial index so a disjoint append
+ * does not re-union the entire library; only intersecting positive components
+ * become dirty and are merged.
  */
 export function appendFogMasks(
   accumulator: FogMaskAccumulator,
@@ -251,22 +446,8 @@ export function appendFogMasks(
     return
   }
 
-  const incoming = projected.map(stripInteriorRings)
-  const candidates = [...accumulator.projectedMasks, ...incoming]
-  if (candidates.length === 1) {
-    accumulator.projectedMasks = candidates
-    return
-  }
-  try {
-    const merged = union(featureCollection(candidates)) as PolygonFeature | null
-    if (!merged) throw new Error("union returned no geometry")
-    accumulator.projectedMasks = [stripInteriorRings(merged)]
-  } catch (error) {
-    accumulator.degraded = true
-    accumulator.projectedMasks = candidates
-    accumulator.warnings.push(
-      `explored-mask union failed: ${error instanceof Error ? error.message : String(error)}`
-    )
+  for (const incoming of projected.map(stripInteriorRings)) {
+    appendFillMask(accumulator, incoming)
   }
 }
 
