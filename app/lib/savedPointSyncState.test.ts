@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 import {
   emptySavedPointSyncState,
   migrateSavedPointSyncState,
+  savedPointSyncStateKey,
   type SyncState,
 } from "./storage"
 
@@ -22,6 +23,7 @@ describe("saved-point sync state", () => {
       cursor: 7,
       lastSyncAt: 99,
       serverPointIds: ["point-a"],
+      ownedIds: ["point-a", "point-b", "point-c"],
       appliedTombstones: { "point-old": 6 },
       outboundIds: ["point-b"],
       outboundDeletionIds: ["point-c"],
@@ -44,9 +46,20 @@ describe("saved-point sync state", () => {
       cursor: 0,
       lastSyncAt: 0,
       serverPointIds: [],
+      ownedIds: [],
       appliedTombstones: {},
       outboundIds: [],
       outboundDeletionIds: [],
     })
+  })
+
+  test("separates unscoped and account-scoped keys", () => {
+    expect(savedPointSyncStateKey()).toBe("savedPointSyncState")
+    expect(savedPointSyncStateKey("account/a")).toBe(
+      "savedPointSyncState:account%2Fa"
+    )
+    expect(savedPointSyncStateKey("account-b")).not.toBe(
+      savedPointSyncStateKey("account-a")
+    )
   })
 })

@@ -761,12 +761,38 @@ export interface SavedPointSyncState {
   lastSyncAt: number
   /** Known remote saved-point ids retained across incremental windows. */
   serverPointIds: string[]
+  /** Point ids first associated with this account on this device. */
+  ownedIds: string[]
   /** Saved-point tombstones already applied locally, id → deletedAt. */
   appliedTombstones: Record<string, number>
   /** Local creates/edits awaiting a successful upsert. */
   outboundIds: string[]
   /** Local deletions awaiting a successful tombstone. */
   outboundDeletionIds: string[]
+}
+
+const SAVED_POINT_SYNC_STATE_KEY = "savedPointSyncState"
+const SAVED_POINT_SYNC_STATE_ACCOUNT_PREFIX = `${SAVED_POINT_SYNC_STATE_KEY}:`
+
+export function savedPointSyncStateKey(accountId?: string): string {
+  return accountId === undefined
+    ? SAVED_POINT_SYNC_STATE_KEY
+    : `${SAVED_POINT_SYNC_STATE_ACCOUNT_PREFIX}${encodeURIComponent(accountId)}`
+}
+
+function accountIdFromSavedPointSyncStateKey(key: string): string | null {
+  if (!key.startsWith(SAVED_POINT_SYNC_STATE_ACCOUNT_PREFIX)) return null
+  try {
+    return decodeURIComponent(
+      key.slice(SAVED_POINT_SYNC_STATE_ACCOUNT_PREFIX.length)
+    )
+  } catch {
+    return null
+  }
+}
+
+function uniqueIds(...groups: (readonly string[] | undefined)[]): string[] {
+  return [...new Set(groups.flatMap((group) => group ?? []))]
 }
 
 function isSavedPointSyncState(value: unknown): value is SavedPointSyncState {
@@ -792,10 +818,31 @@ function isSavedPointSyncState(value: unknown): value is SavedPointSyncState {
     Number.isFinite(candidate.lastSyncAt) &&
     candidate.lastSyncAt >= 0 &&
     isStringArray(candidate.serverPointIds) &&
+    (candidate.ownedIds === undefined || isStringArray(candidate.ownedIds)) &&
     isTombstoneMap(candidate.appliedTombstones) &&
     isStringArray(candidate.outboundIds) &&
     isStringArray(candidate.outboundDeletionIds)
   )
+}
+
+function normalizeSavedPointSyncState(
+  value: unknown
+): SavedPointSyncState | null {
+  if (!isSavedPointSyncState(value)) return null
+  return {
+    cursor: value.cursor,
+    lastSyncAt: value.lastSyncAt,
+    serverPointIds: [...value.serverPointIds],
+    ownedIds: uniqueIds(
+      value.ownedIds,
+      value.serverPointIds,
+      value.outboundIds,
+      value.outboundDeletionIds
+    ),
+    appliedTombstones: { ...value.appliedTombstones },
+    outboundIds: [...value.outboundIds],
+    outboundDeletionIds: [...value.outboundDeletionIds],
+  }
 }
 
 export function migrateSavedPointSyncState(
@@ -814,6 +861,11 @@ export function migrateSavedPointSyncState(
     cursor: state.savedPointsCursor ?? 0,
     lastSyncAt: state.lastSyncAt,
     serverPointIds: [...(state.serverSavedPointIds ?? [])],
+    ownedIds: uniqueIds(
+      state.serverSavedPointIds,
+      state.outboundSavedPointIds,
+      state.outboundSavedPointDeletionIds
+    ),
     appliedTombstones: {
       ...(state.appliedSavedPointTombstones ?? {}),
     },
@@ -826,6 +878,7 @@ const EMPTY_SAVED_POINT_SYNC_STATE: SavedPointSyncState = {
   cursor: 0,
   lastSyncAt: 0,
   serverPointIds: [],
+  ownedIds: [],
   appliedTombstones: {},
   outboundIds: [],
   outboundDeletionIds: [],
@@ -840,29 +893,168 @@ export async function loadSyncState(): Promise<SyncState | null> {
 }
 
 export async function saveSavedPointSyncState(
-  state: SavedPointSyncState
+  state: SavedPointSyncState,
+  accountId?: string
 ): Promise<void> {
-  return prefSet("savedPointSyncState", state)
+  return prefSet(savedPointSyncStateKey(accountId), state)
 }
 
 /**
- * Load the dedicated saved-point state, migrating the old shared preference
- * once when necessary. The migration is intentionally one-way: activity sync
- * never writes this key and saved-point sync never writes `syncState`.
+ * Read the saved-point state in the same transaction used for any one-time
+ * namespace migration. Keeping this operation transactional prevents two tabs
+ * from both adopting the unscoped record or interleaving a state update.
  */
-export async function loadSavedPointSyncState(): Promise<SavedPointSyncState | null> {
-  const current = await prefGet<SavedPointSyncState>("savedPointSyncState")
-  if (current && isSavedPointSyncState(current)) return current
+async function readSavedPointSyncStateInTransaction(
+  store: IDBObjectStore,
+  accountId?: string
+): Promise<SavedPointSyncState | null> {
+  const key = savedPointSyncStateKey(accountId)
+  const current = await promisifyRequest<PrefEntry | undefined>(store.get(key))
+  const normalized = normalizeSavedPointSyncState(current?.value)
+  if (normalized) {
+    // Older dedicated records did not carry ownership metadata. Persist the
+    // derived value once, while still returning a defensive copy to callers.
+    if (
+      !current?.value ||
+      !Array.isArray((current.value as Partial<SavedPointSyncState>).ownedIds)
+    ) {
+      store.put({ key, value: normalized })
+    }
+    return normalized
+  }
 
-  const legacy = await prefGet<SyncState>("syncState")
-  if (legacy) {
-    const migrated = migrateSavedPointSyncState(legacy)
+  // A signed-in account adopts the unscoped saved-point state only once. The
+  // sign-out path removes this base key, while account-scoped records survive
+  // so another account cannot inherit its cursor or pending work.
+  if (accountId !== undefined) {
+    const unscoped = await promisifyRequest<PrefEntry | undefined>(
+      store.get(SAVED_POINT_SYNC_STATE_KEY)
+    )
+    const unscopedState = normalizeSavedPointSyncState(unscoped?.value)
+    if (unscopedState) {
+      store.put({ key, value: unscopedState })
+      store.delete(SAVED_POINT_SYNC_STATE_KEY)
+      return unscopedState
+    }
+  }
+
+  // The activity repository may still need this legacy record to migrate its
+  // own fields. Copy saved-point fields before that repository can remove it;
+  // deliberately leave `syncState` in place for the activity migration.
+  const legacy = await promisifyRequest<PrefEntry | undefined>(
+    store.get("syncState")
+  )
+  if (
+    legacy &&
+    typeof legacy.value === "object" &&
+    legacy.value !== null &&
+    !Array.isArray(legacy.value)
+  ) {
+    const migrated = normalizeSavedPointSyncState(
+      migrateSavedPointSyncState(legacy.value as SyncState)
+    )
     if (migrated) {
-      await prefSet("savedPointSyncState", migrated)
+      store.put({ key, value: migrated })
       return migrated
     }
   }
   return null
+}
+
+export async function loadSavedPointSyncState(
+  accountId?: string
+): Promise<SavedPointSyncState | null> {
+  const db = await getDb()
+  if (!db) return null
+  try {
+    const tx = db.transaction("prefs", "readwrite")
+    const state = await readSavedPointSyncStateInTransaction(
+      tx.objectStore("prefs"),
+      accountId
+    )
+    await new Promise<void>((resolve, reject) => {
+      tx.oncomplete = () => resolve()
+      tx.onerror = () => reject(tx.error)
+      tx.onabort = () => reject(tx.error)
+    })
+    return state
+  } catch (err) {
+    console.warn(
+      `[storage] loadSavedPointSyncState(${accountId ?? "unscoped"}) failed:`,
+      err
+    )
+    return null
+  }
+}
+
+/**
+ * Atomically read, transform, and persist one account's saved-point state.
+ * This is the only API used for queued point mutations so cursor and outbox
+ * fields cannot be lost to a stale read-modify-write from another tab.
+ */
+export async function updateSavedPointSyncState(
+  accountId: string | undefined,
+  update: (state: SavedPointSyncState | null) => SavedPointSyncState | null
+): Promise<SavedPointSyncState | null> {
+  const db = await getDb()
+  if (!db) return null
+  try {
+    const tx = db.transaction("prefs", "readwrite")
+    const store = tx.objectStore("prefs")
+    const current = await readSavedPointSyncStateInTransaction(store, accountId)
+    const next = update(current)
+    const key = savedPointSyncStateKey(accountId)
+    if (next === null) {
+      store.delete(key)
+    } else {
+      const normalized = normalizeSavedPointSyncState(next)
+      if (!normalized) throw new Error("Invalid saved-point sync state")
+      store.put({ key, value: normalized })
+    }
+    await new Promise<void>((resolve, reject) => {
+      tx.oncomplete = () => resolve()
+      tx.onerror = () => reject(tx.error)
+      tx.onabort = () => reject(tx.error)
+    })
+    return next === null ? null : normalizeSavedPointSyncState(next)
+  } catch (err) {
+    console.warn(
+      `[storage] updateSavedPointSyncState(${accountId ?? "unscoped"}) failed:`,
+      err
+    )
+    return null
+  }
+}
+
+/** Load valid account-scoped point state for cross-account ownership checks. */
+export async function loadAccountSavedPointSyncStates(): Promise<
+  Map<string, SavedPointSyncState>
+> {
+  const db = await getDb()
+  if (!db) return new Map()
+  try {
+    const tx = db.transaction("prefs", "readonly")
+    const entries = await promisifyRequest<PrefEntry[]>(
+      tx.objectStore("prefs").getAll()
+    )
+    await new Promise<void>((resolve, reject) => {
+      tx.oncomplete = () => resolve()
+      tx.onerror = () => reject(tx.error)
+      tx.onabort = () => reject(tx.error)
+    })
+    const states = new Map<string, SavedPointSyncState>()
+    for (const entry of entries) {
+      if (typeof entry.key !== "string") continue
+      const accountId = accountIdFromSavedPointSyncStateKey(entry.key)
+      if (accountId === null) continue
+      const state = normalizeSavedPointSyncState(entry.value)
+      if (state) states.set(accountId, state)
+    }
+    return states
+  } catch (err) {
+    console.warn("[storage] loadAccountSavedPointSyncStates failed:", err)
+    return new Map()
+  }
 }
 
 export function emptySavedPointSyncState(): SavedPointSyncState {
@@ -880,14 +1072,30 @@ export async function clearSyncState(
   try {
     const tx = db.transaction(["sync-state", "prefs"], "readwrite")
     const stateStore = tx.objectStore("sync-state")
+    const prefsStore = tx.objectStore("prefs")
     if (options.allAccounts) {
-      const keys = await promisifyRequest<IDBValidKey[]>(stateStore.getAllKeys())
+      const keys = await promisifyRequest<IDBValidKey[]>(
+        stateStore.getAllKeys()
+      )
       for (const key of keys) stateStore.delete(key)
+      const prefKeys = await promisifyRequest<IDBValidKey[]>(
+        prefsStore.getAllKeys()
+      )
+      for (const key of prefKeys) {
+        if (
+          typeof key === "string" &&
+          (key === "syncState" ||
+            key === SAVED_POINT_SYNC_STATE_KEY ||
+            key.startsWith(SAVED_POINT_SYNC_STATE_ACCOUNT_PREFIX))
+        ) {
+          prefsStore.delete(key)
+        }
+      }
     } else {
       stateStore.delete("default")
+      prefsStore.delete("syncState")
+      prefsStore.delete(SAVED_POINT_SYNC_STATE_KEY)
     }
-    tx.objectStore("prefs").delete("syncState")
-    tx.objectStore("prefs").delete("savedPointSyncState")
     await new Promise<void>((resolve, reject) => {
       tx.oncomplete = () => resolve()
       tx.onerror = () => reject(tx.error)
