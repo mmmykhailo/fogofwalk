@@ -13,11 +13,11 @@ untouched.
 - Branch: `refactor/fog-processing`
 - Started: 2026-09-11
 - Current phase: Phase 4/5/6 — projections, bounded fog, and sync effects
-- Last completed commit: `bf53061 decouple unique distance projection`
+- Last completed commit: `86894c8 route fog work through library changes`
 - Current working slice: route projection and fog failures into observable
-  recovery states, then finish serverless/scheduler cleanup
-- Next action: add map-store projection subscriptions and a retry path for
-  failed derived/fog work without reintroducing route-level awaits
+  recovery states, then finish cache/style and sync status cleanup
+- Next action: add subscriptions and retry actions for failed derived/fog work
+  without reintroducing route-level awaits
 
 ## A1 activity contract slice
 
@@ -214,6 +214,18 @@ untouched.
   a durable save. Full client tests (175) and typecheck pass. This slice is
   committed as `bf53061`.
 
+## Library-owned fog scheduling and serverless sync slice
+
+- Activity-library changes now drive fog scheduling from one subscription: pure
+  additions request coordinator-managed appends, while removals or revisioned
+  updates reset and rebuild the latest committed snapshot.
+- Import, remote sync, delete, and clear routes no longer duplicate fog worker
+  scheduling or cache invalidation. The versioned cache identity makes stale
+  cache data safe to retain until replacement.
+- Server-disabled builds construct no sync transport, repository, scheduler, or
+  sync owner, and the scheduler entry point is a no-op. Full client tests (175)
+  and typecheck pass. This slice is committed as `86894c8`.
+
 ## Path-aware adapter and render slice
 
 - GPX tracks remain one activity and their track segments remain disconnected
@@ -250,6 +262,7 @@ untouched.
 | `b446f7d` | Coordinate sync leadership and trigger coalescing                       | 11 focused tests pass; client typecheck passes                   |
 | `89370fa` | Integrate fog coordinator with worker bridge                         | 19 focused fog tests pass; client typecheck passes                 |
 | `bf53061` | Decouple unique distance projection                           | 175 client tests pass; client typecheck passes                   |
+| `86894c8` | Route fog work through library changes                    | 175 client tests pass; client typecheck passes                   |
 
 ## Phase checklist
 
