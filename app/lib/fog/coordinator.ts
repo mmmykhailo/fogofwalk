@@ -46,7 +46,17 @@ export interface FogCoordinatorWorkerError {
   context?: FogCoordinatorRequestContext
 }
 
+export interface FogCoordinatorReplyResult {
+  /** True when the reply belongs to the currently active request. */
+  accepted: boolean
+  /** True when this reply completed or cancelled the active request. */
+  terminal: boolean
+  /** A snapshot that passed coordinator identity checks and may be rendered. */
+  snapshot: FogSnapshot | null
+}
+
 export interface FogCoordinatorEvents {
+  onRequest?: (context: FogCoordinatorRequestContext) => void
   onProgress?: (
     progress: Extract<FogReply, { type: "PROGRESS" }>,
     context: FogCoordinatorRequestContext
@@ -223,6 +233,50 @@ export class FogCoordinator {
   }
 
   /**
+   * Abandon every known revision and tell the worker about a new generation.
+   * The reset request is stamped with the caller's generation so a worker that
+   * is still finishing an older job cannot keep publishing into the new run.
+   */
+  reset(input: {
+    generation: number
+    libraryRevision: number
+    mode: FogMode
+  }): FogCoordinatorRequestContext {
+    validInput({ ...input, activities: [] })
+    const previous = this.active
+    this.active = null
+    this.queued = null
+    this.completed = null
+    this.recoveryRebuilds = 0
+    const request: FogRequest = {
+      protocolVersion: FOG_PROTOCOL_VERSION,
+      requestId: requestId(),
+      generation: input.generation,
+      libraryRevision: input.libraryRevision,
+      mode: input.mode,
+      kind: "cancel",
+      activities: [],
+    }
+    const context: FogCoordinatorRequestContext = {
+      request,
+      input: {
+        ...input,
+        activities: [],
+      },
+      recovery: false,
+    }
+    if (previous) {
+      this.events.onTerminal?.({
+        context: previous.context,
+        status: "cancelled",
+        snapshot: null,
+      })
+    }
+    this.send(context)
+    return context
+  }
+
+  /**
    * Mark the transport/worker unusable. One rebuild is attempted from the
    * newest known snapshot; a second failure is terminal and cannot loop.
    */
@@ -282,14 +336,20 @@ export class FogCoordinator {
   }
 
   /** Handle a reply; replies for any other request/generation are ignored. */
-  handleReply(reply: FogReply): void {
+  handleReply(reply: FogReply): FogCoordinatorReplyResult {
+    const ignored: FogCoordinatorReplyResult = {
+      accepted: false,
+      terminal: false,
+      snapshot: null,
+    }
     const active = this.active
-    if (!active || reply.protocolVersion !== FOG_PROTOCOL_VERSION) return
+    if (!active || reply.protocolVersion !== FOG_PROTOCOL_VERSION)
+      return ignored
     if (
       reply.requestId !== active.context.request.requestId ||
       reply.generation !== active.context.request.generation
     ) {
-      return
+      return ignored
     }
 
     if (reply.type === "PROGRESS") {
@@ -297,18 +357,21 @@ export class FogCoordinator {
         reply.libraryRevision !== active.context.request.libraryRevision ||
         reply.mode !== active.context.request.mode
       ) {
-        return
+        return ignored
       }
       this.events.onProgress?.(reply, active.context)
-      return
+      return { accepted: true, terminal: false, snapshot: null }
     }
 
     if (reply.type === "UPDATE") {
-      if (!this.matchesSnapshot(reply.snapshot, active.context.request)) return
+      if (!this.matchesSnapshot(reply.snapshot, active.context.request)) {
+        return ignored
+      }
       if (!this.hasSupersedingQueue(active.context.input)) {
         this.events.onSnapshot?.(reply.snapshot, active.context)
+        return { accepted: true, terminal: false, snapshot: reply.snapshot }
       }
-      return
+      return { accepted: true, terminal: false, snapshot: null }
     }
 
     if (reply.type === "ERROR") {
@@ -317,7 +380,7 @@ export class FogCoordinator {
         message: reply.message,
         context: active.context,
       })
-      return
+      return { accepted: true, terminal: false, snapshot: null }
     }
 
     if (reply.type === "CANCELLED") {
@@ -325,21 +388,21 @@ export class FogCoordinator {
         reply.libraryRevision !== active.context.request.libraryRevision ||
         reply.mode !== active.context.request.mode
       ) {
-        return
+        return ignored
       }
       this.finish(active, "cancelled", null)
-      return
+      return { accepted: true, terminal: true, snapshot: null }
     }
 
     if (
       reply.snapshot &&
       !this.matchesSnapshot(reply.snapshot, active.context.request)
     ) {
-      return
+      return ignored
     }
     if (active.cancel) {
       this.finish(active, "cancelled", null)
-      return
+      return { accepted: true, terminal: true, snapshot: null }
     }
     if (!reply.snapshot) {
       this.finish(
@@ -348,10 +411,11 @@ export class FogCoordinator {
         null,
         "Fog worker completed without a snapshot"
       )
-      return
+      return { accepted: true, terminal: true, snapshot: null }
     }
 
     this.finish(active, "complete", reply.snapshot)
+    return { accepted: true, terminal: true, snapshot: reply.snapshot }
   }
 
   private coalesce(
@@ -412,6 +476,7 @@ export class FogCoordinator {
       recovery: this.recoveryRebuilds > 0,
     }
     this.active = { context, cancel: false }
+    this.events.onRequest?.(context)
     this.send(context)
     return context
   }

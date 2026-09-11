@@ -2,11 +2,7 @@ import { useCallback, useEffect, useRef } from "react"
 import type maplibregl from "maplibre-gl"
 import { activitiesFeatureCollection } from "~/lib/map/geojson"
 import { MAP_SOURCE_IDS } from "~/lib/map/layers"
-import {
-  finishFogJob,
-  mapStore,
-  setFogProcessedCount,
-} from "~/lib/mapStore"
+import { fogCoordinator, mapStore, setFogProcessedCount } from "~/lib/mapStore"
 import { saveFogCache } from "~/lib/storage"
 import {
   FOG_ALGORITHM_VERSION,
@@ -72,7 +68,8 @@ export function useFogWorkerBridge(onProcessingComplete?: ProcessingComplete): {
         | undefined
       fogSource?.setData(snapshot.geometry)
 
-      const activitiesKey = `${mapStore.libraryRevision}:` +
+      const activitiesKey =
+        `${mapStore.libraryRevision}:` +
         mapStore.activities.map((activity) => activity.id).join("\0")
       if (
         activitiesKey !== cachedActivitiesKey.current ||
@@ -94,6 +91,9 @@ export function useFogWorkerBridge(onProcessingComplete?: ProcessingComplete): {
       const message = event.data
       if (!message || message.protocolVersion !== FOG_PROTOCOL_VERSION) return
 
+      const result = fogCoordinator.handleReply(message)
+      if (!result.accepted) return
+
       // Replies from an abandoned generation cannot mutate the map, progress,
       // cache, or completion state.
       if (message.generation !== mapStore.runId) return
@@ -111,7 +111,7 @@ export function useFogWorkerBridge(onProcessingComplete?: ProcessingComplete): {
       }
 
       if (message.type === "UPDATE") {
-        setSnapshotOnMap(message.snapshot)
+        if (result.snapshot) setSnapshotOnMap(result.snapshot)
         return
       }
 
@@ -120,23 +120,24 @@ export function useFogWorkerBridge(onProcessingComplete?: ProcessingComplete): {
         return
       }
 
-      if (message.snapshot) setSnapshotOnMap(message.snapshot)
-      const isRunDone = finishFogJob()
-      if (!isRunDone) return
+      if (result.snapshot) setSnapshotOnMap(result.snapshot)
+      if (!result.terminal || mapStore.isFogRunInFlight) return
 
       if (
-        message.snapshot?.completeness === "complete" &&
+        result.snapshot?.completeness === "complete" &&
         mapStore.activities.length > 0 &&
         mapStore.fogData &&
-        isCurrentSnapshot(message.snapshot)
+        isCurrentSnapshot(result.snapshot)
       ) {
         void saveFogCache({
-          activityIds: mapStore.activities.map((activity) => activity.id).sort(),
-          libraryRevision: message.snapshot.libraryRevision,
-          fogMode: message.snapshot.mode,
-          algorithmVersion: message.snapshot.algorithmVersion,
-          partitionSchemeVersion: message.snapshot.partitionSchemeVersion,
-          fogData: message.snapshot.geometry,
+          activityIds: mapStore.activities
+            .map((activity) => activity.id)
+            .sort(),
+          libraryRevision: result.snapshot.libraryRevision,
+          fogMode: result.snapshot.mode,
+          algorithmVersion: result.snapshot.algorithmVersion,
+          partitionSchemeVersion: result.snapshot.partitionSchemeVersion,
+          fogData: result.snapshot.geometry,
         }).catch((error) =>
           console.warn("[storage] fog cache save failed:", error)
         )
@@ -148,10 +149,16 @@ export function useFogWorkerBridge(onProcessingComplete?: ProcessingComplete): {
 
     mapStore.isFogWorkerListenerReady = true
     worker.onmessage = handleMessage
+    const handleError = (event: ErrorEvent) => {
+      console.warn("[worker] fog worker failed", event.error ?? event.message)
+      fogCoordinator.handleWorkerFailure(event.error ?? event.message)
+    }
+    worker.onerror = handleError
 
     return () => {
       mapStore.isFogWorkerListenerReady = false
       if (worker.onmessage === handleMessage) worker.onmessage = null
+      if (worker.onerror === handleError) worker.onerror = null
     }
   }, [])
 

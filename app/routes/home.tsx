@@ -33,6 +33,7 @@ import {
 } from "~/components/ui/dialog"
 import { Button } from "~/components/ui/button"
 import {
+  fogCoordinator,
   mapStore,
   activityLibrary,
   initializeActivityLibrary,
@@ -134,7 +135,10 @@ export async function clientLoader({
       new URL("../workers/fogWorker.ts", import.meta.url),
       { type: "module" }
     )
-    mapStore.worker.onerror = (e) => console.error("[worker] uncaught error", e)
+    mapStore.worker.onerror = (e) => {
+      console.error("[worker] uncaught error", e)
+      fogCoordinator.handleWorkerFailure(e.error ?? e.message)
+    }
     didCreateWorker = true
     console.debug("[clientLoader] worker created", mapStore.worker)
   }

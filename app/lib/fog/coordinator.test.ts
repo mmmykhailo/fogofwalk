@@ -156,6 +156,32 @@ describe("FogCoordinator", () => {
     expect(snapshots).toHaveLength(0)
   })
 
+  test("resets the coordinator before a new generation starts", () => {
+    const { coordinator, requests, terminals, snapshots } = setup()
+    coordinator.schedule(input(2, 5), { forceRebuild: true })
+    const abandoned = requests[0]!
+
+    const reset = coordinator.reset({
+      generation: 3,
+      libraryRevision: 6,
+      mode: "fill",
+    })
+
+    expect(reset.request).toMatchObject({
+      kind: "cancel",
+      generation: 3,
+      libraryRevision: 6,
+      mode: "fill",
+    })
+    expect(coordinator.activeRequest).toBeNull()
+    expect(coordinator.queuedSnapshot).toBeNull()
+    expect(terminals.map(({ status }) => status)).toEqual(["cancelled"])
+
+    coordinator.handleReply(reply(abandoned))
+    expect(terminals).toHaveLength(1)
+    expect(snapshots).toHaveLength(0)
+  })
+
   test("recovers once after a worker failure, then bounds repeated failures", () => {
     const { coordinator, requests, terminals } = setup()
     coordinator.schedule(input(9, 30), { forceRebuild: true })

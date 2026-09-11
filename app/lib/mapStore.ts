@@ -3,15 +3,13 @@ import type {
   ParsedActivity,
   FogMode,
   FogWorkerCommand,
+  FogWorkerActivity,
 } from "~/types/activities"
 import { sortActivities } from "~/lib/statsAggregator"
 import { clearFogCache } from "~/lib/storage"
 import { emptyBoundedFog } from "~/lib/fog/engine/aggregate"
-import {
-  FOG_PROTOCOL_VERSION,
-  type FogRequest,
-  type FogRenderData,
-} from "~/lib/fog/protocol"
+import type { FogRenderData } from "~/lib/fog/protocol"
+import { FogCoordinator } from "~/lib/fog/coordinator"
 import { pathsForActivity } from "~shared/activityContract"
 import { ActivityLibrary } from "~/lib/activities/library"
 import type { LibrarySnapshot } from "~/lib/activities/libraryEvents"
@@ -168,6 +166,32 @@ const fogProgressListeners = new Set<() => void>()
 export const activityLibrary = new ActivityLibrary()
 let activityLibrarySubscription: (() => void) | null = null
 
+/** Revision-aware owner of fog requests; mapStore keeps only its UI projection. */
+export const fogCoordinator = new FogCoordinator(
+  {
+    send: (request) => {
+      if (!mapStore.worker) throw new Error("Fog worker is unavailable")
+      mapStore.worker.postMessage(request)
+    },
+  },
+  {
+    onRequest: ({ request }) => {
+      if (request.kind === "rebuild") mapStore.fogWorkerActivityIds.clear()
+      for (const activity of request.activities)
+        mapStore.fogWorkerActivityIds.add(activity.id)
+      mapStore.fogWorkerMode = request.mode
+      mapStore.fogWorkerLibraryRevision = request.libraryRevision
+      mapStore.pendingFogJobs++
+      mapStore.isFogRunInFlight = true
+    },
+    onProgress: (progress) => setFogProcessedCount(progress.processed),
+    onTerminal: () => {
+      finishFogJob()
+      mapStore.isRestoreReprocess = false
+    },
+  }
+)
+
 function cloneActivities(
   activities: readonly ParsedActivity[]
 ): ParsedActivity[] {
@@ -176,6 +200,15 @@ function cloneActivities(
       ? structuredClone([...activities])
       : JSON.parse(JSON.stringify(activities))
   return sortActivities(copy as ParsedActivity[])
+}
+
+function toFogWorkerActivity(activity: FogWorkerActivity): FogWorkerActivity {
+  return {
+    id: activity.id,
+    name: activity.name,
+    coordinates: activity.coordinates,
+    ...(activity.paths ? { paths: pathsForActivity(activity) } : {}),
+  }
 }
 
 function applyLibrarySnapshot(snapshot: LibrarySnapshot): void {
@@ -250,43 +283,29 @@ export function postToFogWorker(msg: FogWorkerCommand): boolean {
         ? "append"
         : "rebuild")
     const libraryRevision = msg.libraryRevision ?? mapStore.libraryRevision
-    const baseLibraryRevision =
-      msg.baseLibraryRevision ?? mapStore.fogWorkerLibraryRevision
-
     // ParsedActivity contains timestamps, laps, statistics, and other metadata.
     // Project at the worker boundary so structured cloning only copies what fog
     // processing needs, including when the full library is replayed.
-    const workerMessage: FogRequest = {
-      protocolVersion: FOG_PROTOCOL_VERSION,
-      requestId: createUuid(),
-      generation: mapStore.runId,
-      libraryRevision,
-      ...(kind === "append" ? { baseLibraryRevision } : {}),
-      mode: msg.mode,
-      kind,
-      activities: msg.activities.map((activity) => ({
-        id: activity.id,
-        name: activity.name,
-        coordinates: activity.coordinates,
-        ...(activity.paths ? { paths: pathsForActivity(activity) } : {}),
-      })),
-    }
+    const activities = msg.activities.map(toFogWorkerActivity)
+    const allActivities = mapStore.activities.map(toFogWorkerActivity)
     try {
-      worker.postMessage(workerMessage)
+      const context = fogCoordinator.schedule(
+        {
+          generation: mapStore.runId,
+          libraryRevision,
+          mode: msg.mode,
+          activities: allActivities,
+        },
+        {
+          appendActivities: kind === "append" ? activities : [],
+          forceRebuild: kind === "rebuild",
+        }
+      )
+      if (!context && !fogCoordinator.queuedSnapshot) return false
+      return true
     } catch {
-      // Bookkeeping is updated only after postMessage succeeds. Callers can
-      // surface an unavailable worker instead of showing a false queued state.
       return false
     }
-
-    if (mapStore.fogWorkerMode === null) mapStore.fogWorkerMode = msg.mode
-    mapStore.fogWorkerLibraryRevision = libraryRevision
-    mapStore.pendingFogJobs++
-    mapStore.isFogRunInFlight = true
-    for (const activity of msg.activities) {
-      mapStore.fogWorkerActivityIds.add(activity.id)
-    }
-    return true
   }
   if (msg.type === "RESET") {
     mapStore.pendingFogJobs = 0
@@ -298,16 +317,11 @@ export function postToFogWorker(msg: FogWorkerCommand): boolean {
   }
   if (!mapStore.worker) return false
   try {
-    const cancelRequest: FogRequest = {
-      protocolVersion: FOG_PROTOCOL_VERSION,
-      requestId: createUuid(),
+    fogCoordinator.reset({
       generation: mapStore.runId,
       libraryRevision: mapStore.libraryRevision,
       mode: mapStore.fogMode,
-      kind: "cancel",
-      activities: [],
-    }
-    mapStore.worker.postMessage(cancelRequest)
+    })
     return true
   } catch {
     return false

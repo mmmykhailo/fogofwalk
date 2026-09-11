@@ -30,6 +30,11 @@ const originalLibraryRevision = mapStore.libraryRevision
 const originalProcessedCount = mapStore.processedCount
 
 afterEach(() => {
+  // The production map store owns one coordinator for the lifetime of the
+  // module. Clear it between tests so an active/queued request from one test
+  // cannot be mistaken for the worker state of the next test.
+  mapStore.worker = { postMessage() {} } as unknown as Worker
+  postToFogWorker({ type: "RESET" })
   mapStore.worker = originalWorker
   mapStore.runId = originalRunId
   mapStore.pendingFogJobs = originalPendingFogJobs
@@ -100,7 +105,7 @@ describe("fog worker run state", () => {
     expect(getFogProcessedCount()).toBe(13)
   })
 
-  test("stays in flight until every overlapping batch is done", () => {
+  test("coalesces overlapping batches and stays in flight", () => {
     const messages: unknown[] = []
     mapStore.worker = {
       postMessage(message: unknown) {
@@ -123,22 +128,15 @@ describe("fog worker run state", () => {
       mode: "corridor",
     })
 
-    expect(mapStore.pendingFogJobs).toBe(2)
+    expect(mapStore.pendingFogJobs).toBe(1)
     expect(mapStore.isFogRunInFlight).toBe(true)
-    expect(messages).toHaveLength(2)
+    expect(messages).toHaveLength(1)
     expectFogRequest(messages[0], {
       generation: 7,
       kind: "rebuild",
       mode: "corridor",
     })
-    expectFogRequest(messages[1], {
-      generation: 7,
-      kind: "rebuild",
-      mode: "corridor",
-    })
 
-    expect(finishFogJob()).toBe(false)
-    expect(mapStore.isFogRunInFlight).toBe(true)
     expect(finishFogJob()).toBe(true)
     expect(mapStore.isFogRunInFlight).toBe(false)
   })
@@ -222,7 +220,7 @@ describe("fog worker run state", () => {
     expect(mapStore.pendingFogJobs).toBe(1)
   })
 
-  test("queues only missing additions when the worker holds the previous library", () => {
+  test("rebuilds when legacy worker bookkeeping has no coordinator base", () => {
     const messages: unknown[] = []
     const first = activity("first")
     const second = activity("second")
@@ -241,10 +239,14 @@ describe("fog worker run state", () => {
 
     expectFogRequest(messages[0], {
       generation: 4,
-      kind: "append",
-      baseLibraryRevision: 0,
+      kind: "rebuild",
       mode: "fill",
       activities: [
+        {
+          id: first.id,
+          name: first.name,
+          coordinates: first.coordinates,
+        },
         {
           id: second.id,
           name: second.name,
