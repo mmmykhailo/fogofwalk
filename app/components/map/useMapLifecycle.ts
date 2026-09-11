@@ -23,6 +23,7 @@ interface MapLifecycleOptions extends MapPresentationState {
   mapMode: MapMode
   onMapReady?: () => void
   onActivitySelect: (id: string | null) => void
+  onMapBackgroundClick: () => void
   onSavedPointSelect: (id: string) => void
   onSavedPointCreate?: (location: {
     lng: number
@@ -142,6 +143,7 @@ export function useMapLifecycle(
       isShowingSavedPoints: () => optionsRef.current.showSavedPoints,
       getSavedPoints: () => optionsRef.current.savedPoints,
       onActivitySelect: (id) => optionsRef.current.onActivitySelect(id),
+      onMapBackgroundClick: () => optionsRef.current.onMapBackgroundClick(),
       onSavedPointSelect: (id) => optionsRef.current.onSavedPointSelect(id),
       onSavedPointCreate: (location) =>
         optionsRef.current.onSavedPointCreate?.(location),

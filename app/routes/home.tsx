@@ -596,6 +596,13 @@ export default function Home() {
     )
   }
 
+  function closeActivityDialog() {
+    setSelectedActivityIds([])
+    setSelectedLap(null)
+    setPendingActivityId(null)
+    clearSearchParam("activity")
+  }
+
   function closeSavedPointDialog() {
     setEditingSavedPointId(null)
     setNewSavedPointCoordinate(null)
@@ -609,6 +616,26 @@ export default function Home() {
     toggle: handleShowMyLocationChange,
   } = useMyLocation()
   const [selectedGroup, setSelectedGroup] = useState<PhotoGroup | null>(null)
+
+  function handleMapBackgroundClick() {
+    setSelectedActivityIds([])
+    setSelectedLap(null)
+    setPendingActivityId(null)
+    setSelectedGroup(null)
+    setEditingSavedPointId(null)
+    setNewSavedPointCoordinate(null)
+    setViewingSavedPoint(null)
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev)
+        next.delete("activity")
+        next.delete("savedPoint")
+        return next
+      },
+      { replace: true }
+    )
+  }
+
   const [photoErrorOpen, setPhotoErrorOpen] = useState(false)
   const [parseFailedFiles, setParseFailedFiles] = useState<string[]>([])
   const [parseFailureDetails, setParseFailureDetails] = useState<
@@ -1152,6 +1179,7 @@ export default function Home() {
               onProcessingComplete={handleProcessingComplete}
               selectedActivityIds={selectedActivityIds}
               onActivitySelect={handleActivitySelect}
+              onMapBackgroundClick={handleMapBackgroundClick}
               mapMode={mapMode}
               photos={photos}
               showPhotos={showPhotos}
@@ -1298,12 +1326,7 @@ export default function Home() {
                         prev.filter((x) => x !== id)
                       )
                     }
-                    onClose={() => {
-                      setSelectedActivityIds([])
-                      setSelectedLap(null)
-                      setPendingActivityId(null)
-                      clearSearchParam("activity")
-                    }}
+                    onClose={closeActivityDialog}
                     onShare={() => setShowShareDialog(true)}
                     onDelete={
                       selectedActivities.length === 1

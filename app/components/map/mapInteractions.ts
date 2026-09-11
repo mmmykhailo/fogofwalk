@@ -21,7 +21,7 @@ interface MapInteractionOptions {
   onSavedPointSelect: (id: string) => void
   onSavedPointCreate?: (location: SavedPointCreateLocation) => void
   onSavedPointTooltipChange: (tooltip: SavedPointTooltipState | null) => void
-  onMapBackgroundClick?: () => void
+  onMapBackgroundClick: () => void
   /** Test-only registry override; production uses the shared default registry. */
   interactiveTargetLayerIds?: readonly string[]
 }
@@ -137,7 +137,7 @@ export function attachMapInteractions(
     )
       return
 
-    options.onMapBackgroundClick?.()
+    options.onMapBackgroundClick()
   }
 
   map.on("mouseenter", MAP_LAYER_IDS.activityHit, onActivityEnter)

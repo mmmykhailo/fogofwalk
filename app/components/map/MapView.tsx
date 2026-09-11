@@ -18,6 +18,7 @@ interface MapViewProps {
   showFog: boolean
   selectedActivityIds: string[]
   onActivitySelect: (id: string | null) => void
+  onMapBackgroundClick: () => void
   mapMode: MapMode
   photos: PhotoEntry[]
   showPhotos: boolean
@@ -48,6 +49,7 @@ export function MapView({
   showFog,
   selectedActivityIds,
   onActivitySelect,
+  onMapBackgroundClick,
   mapMode,
   photos,
   showPhotos,
@@ -80,6 +82,7 @@ export function MapView({
       showSavedPoints,
       onMapReady,
       onActivitySelect,
+      onMapBackgroundClick,
       onSavedPointSelect,
       onSavedPointCreate,
       onSavedPointTooltipChange: setSavedPointTooltip,
