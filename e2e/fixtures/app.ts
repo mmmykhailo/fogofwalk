@@ -13,7 +13,7 @@ import {
   LOGINS_PER_WORKER,
   WEB_URL,
 } from "./ports"
-import { AppPage } from "./app-page"
+import { createAppPage, type AppPage } from "./app-page"
 
 export { expect }
 
@@ -142,7 +142,7 @@ export const test = base.extend<Fixtures>({
     await stubMapTiles(context)
     await page.emulateMedia({ reducedMotion: "reduce" })
     await use(
-      new AppPage(page, login, (name) => approveLocalAccess(request, name))
+      createAppPage(page, login, (name) => approveLocalAccess(request, name))
     )
   },
 
@@ -154,7 +154,7 @@ export const test = base.extend<Fixtures>({
       await stubMapTiles(context)
       const page = await context.newPage()
       await page.emulateMedia({ reducedMotion: "reduce" })
-      return new AppPage(page, login)
+      return createAppPage(page, login)
     })
     for (const context of opened) await context.close()
   },
