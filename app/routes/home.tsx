@@ -177,7 +177,15 @@ export async function clientLoader({
       await saveUniqueDistances(mapStore.activities)
     }
     const activityIds = activities.map((t) => t.id).sort()
-    if (fogCache && isFogCacheValid(fogCache, activityIds, restoredFogMode)) {
+    if (
+      fogCache &&
+      isFogCacheValid(
+        fogCache,
+        activityIds,
+        restoredFogMode,
+        mapStore.libraryRevision
+      )
+    ) {
       // Cache hit: restore fog directly — setupMapLayers will use mapStore.fogData
       mapStore.fogData = fogCache.fogData
       console.debug(

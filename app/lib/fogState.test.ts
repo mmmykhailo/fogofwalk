@@ -10,6 +10,11 @@ import {
   worldFogGeoJSON,
 } from "./mapStore"
 import { isFogCacheValid, type FogCache } from "./storage"
+import {
+  FOG_ALGORITHM_VERSION,
+  FOG_PARTITION_SCHEME_VERSION,
+  FOG_PROTOCOL_VERSION,
+} from "~/lib/fog/protocol"
 import type { ParsedActivity } from "~/types/activities"
 
 const originalWorker = mapStore.worker
@@ -18,7 +23,10 @@ const originalPendingFogJobs = mapStore.pendingFogJobs
 const originalIsFogRunInFlight = mapStore.isFogRunInFlight
 const originalFogWorkerActivityIds = mapStore.fogWorkerActivityIds
 const originalFogWorkerMode = mapStore.fogWorkerMode
+const originalFogWorkerLibraryRevision = mapStore.fogWorkerLibraryRevision
+const originalFogSnapshot = mapStore.fogSnapshot
 const originalActivities = mapStore.activities
+const originalLibraryRevision = mapStore.libraryRevision
 const originalProcessedCount = mapStore.processedCount
 
 afterEach(() => {
@@ -28,9 +36,26 @@ afterEach(() => {
   mapStore.isFogRunInFlight = originalIsFogRunInFlight
   mapStore.fogWorkerActivityIds = originalFogWorkerActivityIds
   mapStore.fogWorkerMode = originalFogWorkerMode
+  mapStore.fogWorkerLibraryRevision = originalFogWorkerLibraryRevision
+  mapStore.fogSnapshot = originalFogSnapshot
   mapStore.activities = originalActivities
+  mapStore.libraryRevision = originalLibraryRevision
   mapStore.processedCount = originalProcessedCount
 })
+
+function expectFogRequest(
+  message: unknown,
+  expected: Record<string, unknown>
+): void {
+  expect(message).toMatchObject({
+    protocolVersion: FOG_PROTOCOL_VERSION,
+    requestId: expect.any(String),
+    generation: expect.any(Number),
+    libraryRevision: expect.any(Number),
+    activities: expect.any(Array),
+    ...expected,
+  })
+}
 
 function activity(id: string): ParsedActivity {
   return {
@@ -101,20 +126,16 @@ describe("fog worker run state", () => {
     expect(mapStore.pendingFogJobs).toBe(2)
     expect(mapStore.isFogRunInFlight).toBe(true)
     expect(messages).toHaveLength(2)
-    expect(messages).toEqual([
-      {
-        type: "PROCESS_ACTIVITIES",
-        activities: [],
-        mode: "corridor",
-        runId: 7,
-      },
-      {
-        type: "PROCESS_ACTIVITIES",
-        activities: [],
-        mode: "corridor",
-        runId: 7,
-      },
-    ])
+    expectFogRequest(messages[0], {
+      generation: 7,
+      kind: "rebuild",
+      mode: "corridor",
+    })
+    expectFogRequest(messages[1], {
+      generation: 7,
+      kind: "rebuild",
+      mode: "corridor",
+    })
 
     expect(finishFogJob()).toBe(false)
     expect(mapStore.isFogRunInFlight).toBe(true)
@@ -175,26 +196,28 @@ describe("fog worker run state", () => {
 
     queueAddedActivitiesForFog([second], "corridor")
 
-    expect(messages).toEqual([
-      { type: "RESET", runId: 11 },
-      {
-        type: "PROCESS_ACTIVITIES",
-        activities: [
-          {
-            id: first.id,
-            name: first.name,
-            coordinates: first.coordinates,
-          },
-          {
-            id: second.id,
-            name: second.name,
-            coordinates: second.coordinates,
-          },
-        ],
-        mode: "corridor",
-        runId: 11,
-      },
-    ])
+    expectFogRequest(messages[0], {
+      generation: 11,
+      kind: "cancel",
+      mode: "corridor",
+    })
+    expectFogRequest(messages[1], {
+      generation: 11,
+      kind: "rebuild",
+      mode: "corridor",
+      activities: [
+        {
+          id: first.id,
+          name: first.name,
+          coordinates: first.coordinates,
+        },
+        {
+          id: second.id,
+          name: second.name,
+          coordinates: second.coordinates,
+        },
+      ],
+    })
     expect([...mapStore.fogWorkerActivityIds]).toEqual(["first", "second"])
     expect(mapStore.pendingFogJobs).toBe(1)
   })
@@ -216,20 +239,19 @@ describe("fog worker run state", () => {
 
     queueAddedActivitiesForFog([second], "fill")
 
-    expect(messages).toEqual([
-      {
-        type: "PROCESS_ACTIVITIES",
-        activities: [
-          {
-            id: second.id,
-            name: second.name,
-            coordinates: second.coordinates,
-          },
-        ],
-        mode: "fill",
-        runId: 4,
-      },
-    ])
+    expectFogRequest(messages[0], {
+      generation: 4,
+      kind: "append",
+      baseLibraryRevision: 0,
+      mode: "fill",
+      activities: [
+        {
+          id: second.id,
+          name: second.name,
+          coordinates: second.coordinates,
+        },
+      ],
+    })
   })
 
   test("does not duplicate an addition already covered by a concurrent rebuild", () => {
@@ -269,33 +291,38 @@ describe("fog worker run state", () => {
 
     queueAddedActivitiesForFog([second], "corridor")
 
-    expect(messages).toEqual([
-      { type: "RESET", runId: 5 },
-      {
-        type: "PROCESS_ACTIVITIES",
-        activities: [
-          {
-            id: first.id,
-            name: first.name,
-            coordinates: first.coordinates,
-          },
-          {
-            id: second.id,
-            name: second.name,
-            coordinates: second.coordinates,
-          },
-        ],
-        mode: "corridor",
-        runId: 5,
-      },
-    ])
+    expectFogRequest(messages[0], {
+      generation: 5,
+      kind: "cancel",
+      mode: "corridor",
+    })
+    expectFogRequest(messages[1], {
+      generation: 5,
+      kind: "rebuild",
+      mode: "corridor",
+      activities: [
+        {
+          id: first.id,
+          name: first.name,
+          coordinates: first.coordinates,
+        },
+        {
+          id: second.id,
+          name: second.name,
+          coordinates: second.coordinates,
+        },
+      ],
+    })
   })
 })
 
 describe("fog cache validity", () => {
   const cache: FogCache = {
     activityIds: ["a", "b"],
+    libraryRevision: 2,
     fogMode: "corridor",
+    algorithmVersion: FOG_ALGORITHM_VERSION,
+    partitionSchemeVersion: FOG_PARTITION_SCHEME_VERSION,
     fogData: worldFogGeoJSON(),
   }
 

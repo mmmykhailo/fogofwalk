@@ -1,4 +1,10 @@
 import type { ParsedActivity, FogMode } from "~/types/activities"
+import {
+  FOG_ALGORITHM_VERSION,
+  FOG_PARTITION_SCHEME_VERSION,
+  type FogRenderData,
+} from "~/lib/fog/protocol"
+import { validateFogRenderData } from "~/lib/fog/engine/validate"
 import type { ServerUser, UserCapabilities } from "~shared/api"
 import type { PhotoEntry } from "~/types/photos"
 import type { SavedPoint } from "~shared/saved-points"
@@ -16,8 +22,11 @@ interface StoredPhoto {
 
 export interface FogCache {
   activityIds: string[]
+  libraryRevision: number
   fogMode: FogMode
-  fogData: GeoJSON.Feature<GeoJSON.Polygon | GeoJSON.MultiPolygon>
+  algorithmVersion: typeof FOG_ALGORITHM_VERSION
+  partitionSchemeVersion: typeof FOG_PARTITION_SCHEME_VERSION
+  fogData: FogRenderData
 }
 
 interface PrefEntry {
@@ -483,12 +492,31 @@ export async function saveFogCache(cache: FogCache): Promise<void> {
 }
 
 export async function loadFogCache(): Promise<FogCache | null> {
-  const cache = await prefGet<FogCache & { trackIds?: string[] }>("fogCache")
+  const cache = await prefGet<
+    Partial<FogCache> & { trackIds?: string[] }
+  >("fogCache")
   if (!cache) return null
-  if (!cache.activityIds && cache.trackIds) {
-    return { ...cache, activityIds: cache.trackIds }
+  const activityIds = cache.activityIds ?? cache.trackIds
+  if (
+    !activityIds ||
+    typeof cache.libraryRevision !== "number" ||
+    cache.algorithmVersion !== FOG_ALGORITHM_VERSION ||
+    cache.partitionSchemeVersion !== FOG_PARTITION_SCHEME_VERSION ||
+    (cache.fogMode !== "corridor" && cache.fogMode !== "fill")
+  ) {
+    return null
   }
-  return cache
+  if (!cache.fogData) return null
+  const validation = validateFogRenderData(cache.fogData)
+  if (!validation.ok) return null
+  return {
+    activityIds,
+    libraryRevision: cache.libraryRevision,
+    fogMode: cache.fogMode,
+    algorithmVersion: FOG_ALGORITHM_VERSION,
+    partitionSchemeVersion: FOG_PARTITION_SCHEME_VERSION,
+    fogData: cache.fogData,
+  }
 }
 
 export async function clearFogCache(): Promise<void> {
@@ -502,9 +530,22 @@ export async function clearFogCache(): Promise<void> {
 export function isFogCacheValid(
   cache: FogCache,
   currentActivityIds: string[],
-  currentFogMode: FogMode
+  currentFogMode: FogMode,
+  currentLibraryRevision?: number
 ): boolean {
   if (cache.fogMode !== currentFogMode) return false
+  if (
+    currentLibraryRevision !== undefined &&
+    cache.libraryRevision !== currentLibraryRevision
+  ) {
+    return false
+  }
+  if (
+    cache.algorithmVersion !== FOG_ALGORITHM_VERSION ||
+    cache.partitionSchemeVersion !== FOG_PARTITION_SCHEME_VERSION
+  ) {
+    return false
+  }
   if (cache.activityIds.length !== currentActivityIds.length) return false
   const cacheSet = new Set(cache.activityIds)
   return currentActivityIds.every((id) => cacheSet.has(id))

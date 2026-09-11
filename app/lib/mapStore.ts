@@ -2,11 +2,16 @@ import type maplibregl from "maplibre-gl"
 import type {
   ParsedActivity,
   FogMode,
-  WorkerInboundMessage,
+  FogWorkerCommand,
 } from "~/types/activities"
 import { sortActivities } from "~/lib/statsAggregator"
 import { clearFogCache } from "~/lib/storage"
-import { worldFogFeature } from "~/lib/fogGeometry"
+import { emptyBoundedFog } from "~/lib/fog/engine/aggregate"
+import {
+  FOG_PROTOCOL_VERSION,
+  type FogRequest,
+  type FogRenderData,
+} from "~/lib/fog/protocol"
 import { pathsForActivity } from "~shared/activityContract"
 import { ActivityLibrary } from "~/lib/activities/library"
 import type { LibrarySnapshot } from "~/lib/activities/libraryEvents"
@@ -65,7 +70,7 @@ const _savedPosition =
 interface MapStore {
   map: maplibregl.Map | null
   worker: Worker | null
-  fogData: GeoJSON.Feature<GeoJSON.Polygon | GeoJSON.MultiPolygon> | null
+  fogData: FogRenderData | null
   activities: ParsedActivity[]
   isProcessing: boolean
   processedCount: number
@@ -105,6 +110,16 @@ interface MapStore {
   fogWorkerActivityIds: Set<string>
   /** Fog mode used to build the current worker run's internal accumulators. */
   fogWorkerMode: FogMode | null
+  /** Library revision represented by the worker's incremental accumulator. */
+  fogWorkerLibraryRevision: number
+  /** Identity of the latest accepted complete/in-progress fog snapshot. */
+  fogSnapshot: {
+    generation: number
+    libraryRevision: number
+    mode: FogMode
+    algorithmVersion: number
+    partitionSchemeVersion: number
+  } | null
   /** Revision of the canonical activity snapshot projected into this store. */
   libraryRevision: number
   /** True once MapView is ready to receive fog-worker replies. */
@@ -138,6 +153,8 @@ export const mapStore: MapStore = {
   pendingFogJobs: 0,
   fogWorkerActivityIds: new Set(),
   fogWorkerMode: null,
+  fogWorkerLibraryRevision: 0,
+  fogSnapshot: null,
   libraryRevision: 0,
   isFogWorkerListenerReady: false,
   shareCardCache: null,
@@ -198,10 +215,6 @@ export function setFogProcessedCount(processedCount: number): void {
   for (const listener of fogProgressListeners) listener()
 }
 
-type DistributiveOmit<T, K extends keyof T> = T extends unknown
-  ? Omit<T, K>
-  : never
-
 /**
  * Begins a new fog-worker generation, abandoning whatever is in flight.
  *
@@ -217,22 +230,40 @@ export function startFogRun(): number {
   mapStore.runId++
   mapStore.isRestoreReprocess = false
   mapStore.fogWorkerMode = null
+  mapStore.fogWorkerLibraryRevision = 0
+  mapStore.fogSnapshot = null
   return mapStore.runId
 }
 
-/** Posts to the fog worker, stamping the current run id. */
+/** Posts a versioned request to the fog worker, stamping the current run id. */
 export function postToFogWorker(
-  msg: DistributiveOmit<WorkerInboundMessage, "runId">
+  msg: FogWorkerCommand
 ): boolean {
   if (msg.type === "PROCESS_ACTIVITIES") {
     const worker = mapStore.worker
     if (!worker) return false
 
+    const kind =
+      msg.kind ??
+      (mapStore.fogWorkerActivityIds.size > 0 &&
+      mapStore.fogWorkerMode === msg.mode
+        ? "append"
+        : "rebuild")
+    const libraryRevision = msg.libraryRevision ?? mapStore.libraryRevision
+    const baseLibraryRevision =
+      msg.baseLibraryRevision ?? mapStore.fogWorkerLibraryRevision
+
     // ParsedActivity contains timestamps, laps, statistics, and other metadata.
     // Project at the worker boundary so structured cloning only copies what fog
     // processing needs, including when the full library is replayed.
-    const workerMessage = {
-      ...msg,
+    const workerMessage: FogRequest = {
+      protocolVersion: FOG_PROTOCOL_VERSION,
+      requestId: createUuid(),
+      generation: mapStore.runId,
+      libraryRevision,
+      ...(kind === "append" ? { baseLibraryRevision } : {}),
+      mode: msg.mode,
+      kind,
       activities: msg.activities.map((activity) => ({
         id: activity.id,
         name: activity.name,
@@ -241,8 +272,7 @@ export function postToFogWorker(
           ? { paths: pathsForActivity(activity) }
           : {}),
       })),
-      runId: mapStore.runId,
-    } satisfies WorkerInboundMessage
+    }
     try {
       worker.postMessage(workerMessage)
     } catch {
@@ -252,6 +282,7 @@ export function postToFogWorker(
     }
 
     if (mapStore.fogWorkerMode === null) mapStore.fogWorkerMode = msg.mode
+    mapStore.fogWorkerLibraryRevision = libraryRevision
     mapStore.pendingFogJobs++
     mapStore.isFogRunInFlight = true
     for (const activity of msg.activities) {
@@ -264,10 +295,21 @@ export function postToFogWorker(
     mapStore.isFogRunInFlight = false
     mapStore.fogWorkerActivityIds.clear()
     mapStore.fogWorkerMode = null
+    mapStore.fogWorkerLibraryRevision = 0
+    mapStore.fogSnapshot = null
   }
   if (!mapStore.worker) return false
   try {
-    mapStore.worker.postMessage({ ...msg, runId: mapStore.runId })
+    const cancelRequest: FogRequest = {
+      protocolVersion: FOG_PROTOCOL_VERSION,
+      requestId: createUuid(),
+      generation: mapStore.runId,
+      libraryRevision: mapStore.libraryRevision,
+      mode: mapStore.fogMode,
+      kind: "cancel",
+      activities: [],
+    }
+    mapStore.worker.postMessage(cancelRequest)
     return true
   } catch {
     return false
@@ -351,6 +393,6 @@ export async function ingestActivities(
   return added
 }
 
-export function worldFogGeoJSON(): GeoJSON.Feature<GeoJSON.Polygon> {
-  return worldFogFeature()
+export function worldFogGeoJSON(): FogRenderData {
+  return emptyBoundedFog().fogData
 }

@@ -1,50 +1,18 @@
 /// <reference lib="webworker" />
 
-import type {
-  FogWorkerActivity,
-  FogMode,
-  WorkerInboundMessage,
-  WorkerOutboundMessage,
-} from "~/types/activities"
 import {
-  FOG_CORRIDOR_BATCH_SIZE,
-  FOG_EMIT_INTERVAL_MS,
-  FOG_PROGRESS_BATCH_SIZE,
-} from "~/constants/fog"
-import {
-  createActivityFogBuffer,
-  mergeFogMasks,
-  simplifyFogForEmission,
-  stripInnerRings,
-  subtractFogMasks,
-  worldFogFeature,
-  type FogFeature,
-} from "~/lib/fogGeometry"
-import { pathsForActivity } from "~shared/activityContract"
+  FOG_PROTOCOL_VERSION,
+  isFogRequest,
+  type FogReply,
+  type FogRequest,
+  type FogSnapshot,
+} from "~/lib/fog/protocol"
+import { FogEngine } from "~/lib/fog/engine"
 
-// Corridor mode: fog maintained incrementally via difference
-let fogPolygon: FogFeature = worldFogFeature()
-// Corridor mode: activity buffers batched since last emit, applied once per flush
-let pendingBuffers: { feature: FogFeature; file: string }[] = []
-// Fill mode: cumulative union of ALL activity buffers since last RESET.
-// Never cleared between emits so loops formed across any number of files are detected.
-let accumulated: FogFeature | null = null
+// The worker is deliberately a thin transport adapter. All mutable geometry
+// state and cancellation checkpoints live in FogEngine, which is testable
+// without constructing a Worker.
 
-let processedCount = 0
-let lastProgressCount = 0
-let lastEmitTime = 0
-
-// Generation token of the run that owns the state above. Set from every inbound
-// message; a running loop bails as soon as it no longer matches.
-let currentRunId = -1
-// Serialises PROCESS_ACTIVITIES batches. The loop yields now, so two batches of the
-// same run must not interleave over the shared accumulators above.
-let jobChain: Promise<void> = Promise.resolve()
-
-// Yields to the worker's *task* queue so pending postMessage events get
-// delivered. Must be a macrotask: `await Promise.resolve()` only drains
-// microtasks and would never surface a queued RESET. MessageChannel rather than
-// setTimeout(0), which browsers clamp to 4ms once nested past depth 5.
 const yieldChannel = new MessageChannel()
 yieldChannel.port1.start()
 function yieldToTaskQueue(): Promise<void> {
@@ -56,206 +24,146 @@ function yieldToTaskQueue(): Promise<void> {
   })
 }
 
-function resetState(): void {
-  fogPolygon = worldFogFeature()
-  pendingBuffers = []
-  accumulated = null
-  processedCount = 0
-  lastProgressCount = 0
-  lastEmitTime = 0
-}
+const engine = new FogEngine({
+  hooks: {
+    yieldToScheduler: yieldToTaskQueue,
+    onProgress: (progress) => self.postMessage(progress satisfies FogReply),
+    onUpdate: (snapshot, request) =>
+      self.postMessage({
+        type: "UPDATE",
+        protocolVersion: FOG_PROTOCOL_VERSION,
+        requestId: request.requestId,
+        generation: request.generation,
+        snapshot,
+      } satisfies FogReply),
+    onError: (error) => self.postMessage(error satisfies FogReply),
+  },
+})
 
-function emitProgress(runId: number, force = false): void {
-  if (processedCount === lastProgressCount) return
-  if (!force && processedCount - lastProgressCount < FOG_PROGRESS_BATCH_SIZE) {
-    return
-  }
+let currentGeneration = -1
+let jobChain: Promise<void> = Promise.resolve()
 
+function postCancelled(request: FogRequest): void {
   self.postMessage({
-    type: "PROGRESS",
-    processedCount,
-    runId,
-  } satisfies WorkerOutboundMessage)
-  lastProgressCount = processedCount
+    type: "CANCELLED",
+    protocolVersion: FOG_PROTOCOL_VERSION,
+    requestId: request.requestId,
+    generation: request.generation,
+    libraryRevision: request.libraryRevision,
+    mode: request.mode,
+  } satisfies FogReply)
 }
 
-function flushAndEmit(mode: FogMode, runId: number) {
-  if (mode === "corridor") {
-    if (pendingBuffers.length > 0) {
-      const batch = pendingBuffers
-      pendingBuffers = []
-      fogPolygon = subtractFogMasks(
-        fogPolygon,
-        batch.map(({ feature }) => feature),
-        (index, error) => postActivityError(batch[index].file, error, runId)
-      )
-    }
-  } else {
-    // Recompute fog from the full accumulated union each time, stripping inner rings
-    // at the last moment. This catches loops formed by any combination of files/batches.
-    fogPolygon = accumulated
-      ? subtractFogMasks(
-          worldFogFeature(),
-          [stripInnerRings(accumulated)],
-          (_index, error) => postActivityError("fill mode", error, runId)
-        )
-      : worldFogFeature()
-  }
-
-  // Simplify the output before sending to reduce postMessage payload size and the
-  // vertex count that MapLibre must index and render. We do NOT mutate fogPolygon
-  // itself — it is used as the base polygon for the next difference() call.
-  const fogToEmit = simplifyFogForEmission(fogPolygon)
-
-  const msg: WorkerOutboundMessage = {
-    type: "FOG_UPDATE",
-    fogData: fogToEmit,
-    processedCount,
-    runId,
-  }
-  self.postMessage(msg)
-  lastEmitTime = performance.now()
+function postDone(request: FogRequest, snapshot: FogSnapshot | null): void {
+  self.postMessage({
+    type: "DONE",
+    protocolVersion: FOG_PROTOCOL_VERSION,
+    requestId: request.requestId,
+    generation: request.generation,
+    snapshot,
+  } satisfies FogReply)
 }
 
-function postActivityError(file: string, error: unknown, runId: number): void {
-  const message = error instanceof Error ? error.message : String(error)
+function postFatal(request: FogRequest, error: unknown): void {
   self.postMessage({
     type: "ERROR",
-    file,
-    message,
-    runId,
-  } satisfies WorkerOutboundMessage)
+    protocolVersion: FOG_PROTOCOL_VERSION,
+    requestId: request.requestId,
+    generation: request.generation,
+    libraryRevision: request.libraryRevision,
+    mode: request.mode,
+    fatal: true,
+    message: error instanceof Error ? error.message : String(error),
+  } satisfies FogReply)
 }
 
-async function processActivities(
-  activities: FogWorkerActivity[],
-  mode: FogMode,
-  runId: number
-): Promise<void> {
-  // Abandoned while queued behind an earlier batch.
-  if (runId !== currentRunId) return
-  console.debug("[worker] PROCESS_ACTIVITIES", {
-    count: activities.length,
-    mode,
-    runId,
-  })
-
-  for (const activity of activities) {
-    // Cancellation checkpoint. Yield first so any RESET the main thread posted
-    // is actually dispatched, then re-read currentRunId. The loop is parked
-    // exactly here whenever the message handler runs, so RESET's resetState()
-    // can never land mid-activity.
-    await yieldToTaskQueue()
-    if (runId !== currentRunId) {
-      console.debug("[worker] run abandoned", { runId, currentRunId })
-      return
-    }
-
-    const paths = pathsForActivity(activity)
-    const activityBuffers: FogFeature[] = []
-    for (let pathIndex = 0; pathIndex < paths.length; pathIndex++) {
-      try {
-        const activityBuffer = createActivityFogBuffer(paths[pathIndex]!)
-        if (activityBuffer) activityBuffers.push(activityBuffer)
-      } catch (error) {
-        postActivityError(
-          `${activity.name}#path-${pathIndex + 1}`,
-          error,
-          runId
-        )
-      }
-    }
-
-    if (activityBuffers.length === 0) {
-      console.debug(
-        "[worker] skipping activity with < 2 valid coords",
-        activity.name
-      )
-    } else {
-      for (let pathIndex = 0; pathIndex < activityBuffers.length; pathIndex++) {
-        const activityBuffer = activityBuffers[pathIndex]!
-        if (mode === "corridor") {
-          pendingBuffers.push({
-            feature: activityBuffer,
-            file:
-              paths.length > 1
-                ? `${activity.name}#path-${pathIndex + 1}`
-                : activity.name,
-          })
-        } else {
-          // Accumulate without stripping — inner rings are preserved so the full
-          // union can detect loops formed across any paths/files/batches.
-          accumulated = accumulated
-            ? mergeFogMasks(accumulated, activityBuffer)
-            : activityBuffer
-        }
-      }
-    }
-
-    processedCount++
-    const isEmitDue =
-      performance.now() - lastEmitTime >= FOG_EMIT_INTERVAL_MS ||
-      (mode === "corridor" && pendingBuffers.length >= FOG_CORRIDOR_BATCH_SIZE)
-    if (isEmitDue) {
-      flushAndEmit(mode, runId)
-    }
-    // A corridor flush can be the expensive part of processing. Report progress
-    // only after it completes so the bar never reaches the end while the visible
-    // mask is still waiting on a final clipping batch.
-    emitProgress(runId)
+function invalidRequestEnvelope(value: unknown): FogRequest {
+  const candidate =
+    value && typeof value === "object"
+      ? (value as Partial<FogRequest>)
+      : ({} as Partial<FogRequest>)
+  const generation =
+    typeof candidate.generation === "number" &&
+    Number.isSafeInteger(candidate.generation) &&
+    candidate.generation >= 0
+      ? candidate.generation
+      : 0
+  const libraryRevision =
+    typeof candidate.libraryRevision === "number" &&
+    Number.isSafeInteger(candidate.libraryRevision) &&
+    candidate.libraryRevision >= 0
+      ? candidate.libraryRevision
+      : 0
+  return {
+    protocolVersion: FOG_PROTOCOL_VERSION,
+    requestId:
+      typeof candidate.requestId === "string" && candidate.requestId.length > 0
+        ? candidate.requestId
+        : "invalid-request",
+    generation,
+    libraryRevision,
+    mode: candidate.mode === "fill" ? "fill" : "corridor",
+    kind: "cancel",
+    activities: [],
   }
-
-  if (runId !== currentRunId) return
-  flushAndEmit(mode, runId)
-  emitProgress(runId, true)
 }
 
-self.onmessage = (e: MessageEvent<WorkerInboundMessage>) => {
-  const msg = e.data
-  // Every inbound message stamps the current generation. A running loop stops
-  // at its next checkpoint once this no longer matches its captured id.
-  const isNewRun = msg.runId !== currentRunId
-  currentRunId = msg.runId
+self.onmessage = (event: MessageEvent<unknown>) => {
+  if (!isFogRequest(event.data)) {
+    console.warn("[fog-worker] ignored malformed request")
+    const request = invalidRequestEnvelope(event.data)
+    postFatal(request, new Error("Fog request is invalid."))
+    postDone(request, null)
+    return
+  }
+  const request = event.data
 
-  if (msg.type === "RESET") {
-    resetState()
-    self.postMessage({
-      type: "FOG_UPDATE",
-      fogData: worldFogFeature(),
-      processedCount: 0,
-      runId: msg.runId,
-    } as WorkerOutboundMessage)
+  if (request.kind === "cancel") {
+    if (currentGeneration >= 0 && currentGeneration !== request.generation) {
+      engine.cancel(currentGeneration)
+    }
+    engine.cancel(request.generation)
+    currentGeneration = request.generation
+    postCancelled(request)
     return
   }
 
-  if (msg.type === "PROCESS_ACTIVITIES") {
-    // Defensive: a new generation always arrives via RESET in app code, but if
-    // it ever didn't, the accumulators would still hold the abandoned run's
-    // geometry and leak it into the new fog.
-    if (isNewRun) resetState()
-    const { activities, mode, runId } = msg
-    jobChain = jobChain
-      .then(async () => {
-        try {
-          await processActivities(activities, mode, runId)
-        } catch (error) {
-          if (runId === currentRunId) {
-            postActivityError("fog worker", error, runId)
-          }
-        } finally {
-          // Every accepted batch gets a matching DONE, even if an unexpected
-          // geometry/runtime error escaped the per-activity recovery paths.
-          if (runId === currentRunId) {
-            const doneMsg: WorkerOutboundMessage = {
-              type: "DONE",
-              processedCount,
-              runId,
-            }
-            console.debug("[worker] DONE", { processedCount, runId })
-            self.postMessage(doneMsg)
-          }
-        }
-      })
-      .catch((err) => console.debug("[worker] job failed", err))
+  if (request.generation !== currentGeneration) {
+    if (currentGeneration >= 0) engine.cancel(currentGeneration)
+    currentGeneration = request.generation
   }
+
+  jobChain = jobChain
+    .then(async () => {
+      if (request.generation !== currentGeneration) {
+        postCancelled(request)
+        return
+      }
+      try {
+        const result = await engine.process(request)
+        if (request.generation !== currentGeneration) {
+          postCancelled(request)
+          return
+        }
+        if (result.status === "complete") {
+          postDone(request, result.snapshot)
+        } else if (result.status === "cancelled") {
+          postCancelled(request)
+        } else {
+          postDone(request, null)
+        }
+      } catch (error) {
+        if (request.generation !== currentGeneration) {
+          postCancelled(request)
+          return
+        }
+        postFatal(request, error)
+        postDone(request, null)
+      }
+    })
+    .catch((error) => {
+      // Keep the chain alive for the next request. A terminal reply was already
+      // attempted by the inner handler for normal engine failures.
+      console.error("[fog-worker] job chain failed", error)
+    })
 }
