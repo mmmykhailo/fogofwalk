@@ -9,7 +9,7 @@ import { FOG_INPUT_DEFAULTS } from "./input"
 import type { FogMask } from "./buffer"
 import { validateFogRenderData, type FogRenderData } from "./validate"
 
-export const FOG_PARTITION_SCHEME_VERSION = 1
+export const FOG_PARTITION_SCHEME_VERSION = 2
 
 export interface FogPartitionOptions {
   longitudeSpanDegrees?: number
