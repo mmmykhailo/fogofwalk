@@ -9,12 +9,17 @@ export const FOG_OUTPUT_DEFAULTS = {
   maxFeatures: 50_000,
   maxVertices: 500_000,
   maxBytes: 8_000_000,
+  // A ring with roughly 700 segments reaches this budget before the
+  // quadratic segment-pair scan can become an unbounded worker task.
+  maxIntersectionChecks: 250_000,
 } as const
 
 export interface FogValidationOptions {
   maxFeatures?: number
   maxVertices?: number
   maxBytes?: number
+  /** Maximum non-adjacent segment-pair checks permitted for one ring. */
+  maxIntersectionChecks?: number
 }
 
 export interface FogValidationReport {
@@ -94,12 +99,22 @@ function segmentsIntersect(
   )
 }
 
-function ringIsSimple(ring: [number, number][]): boolean {
+type RingCheckResult = "simple" | "self-intersects" | "budget-exceeded"
+
+function ringIsSimple(
+  ring: [number, number][],
+  maxIntersectionChecks: number
+): RingCheckResult {
   const segmentCount = ring.length - 1
+  let intersectionChecks = 0
   for (let first = 0; first < segmentCount; first += 1) {
     for (let second = first + 1; second < segmentCount; second += 1) {
       if (second === first + 1) continue
       if (first === 0 && second === segmentCount - 1) continue
+      if (intersectionChecks >= maxIntersectionChecks) {
+        return "budget-exceeded"
+      }
+      intersectionChecks += 1
       if (
         segmentsIntersect(
           ring[first]!,
@@ -108,11 +123,11 @@ function ringIsSimple(ring: [number, number][]): boolean {
           ring[second + 1]!
         )
       ) {
-        return false
+        return "self-intersects"
       }
     }
   }
-  return true
+  return "simple"
 }
 
 function ringArea(ring: [number, number][]): number {
@@ -129,7 +144,8 @@ function validateRing(
   ring: unknown,
   featureIndex: number,
   ringIndex: number,
-  errors: string[]
+  errors: string[],
+  maxIntersectionChecks: number
 ): number {
   if (!Array.isArray(ring) || ring.length < 4) {
     errors.push(`feature ${featureIndex} ring ${ringIndex} is undersized`)
@@ -151,7 +167,12 @@ function validateRing(
   if (Math.abs(ringArea(points)) <= 1e-14) {
     errors.push(`feature ${featureIndex} ring ${ringIndex} has zero area`)
   }
-  if (!ringIsSimple(points)) {
+  const ringCheck = ringIsSimple(points, maxIntersectionChecks)
+  if (ringCheck === "budget-exceeded") {
+    errors.push(
+      `feature ${featureIndex} ring ${ringIndex} self-intersection check exceeded its technical budget`
+    )
+  } else if (ringCheck === "self-intersects") {
     errors.push(`feature ${featureIndex} ring ${ringIndex} self-intersects`)
   }
   return points.length
@@ -160,7 +181,8 @@ function validateRing(
 function validateGeometry(
   geometry: FogRenderGeometry,
   featureIndex: number,
-  errors: string[]
+  errors: string[],
+  maxIntersectionChecks: number
 ): number {
   let vertices = 0
   const polygons =
@@ -184,7 +206,8 @@ function validateGeometry(
         polygon[ringIndex],
         featureIndex,
         ringIndex,
-        errors
+        errors,
+        maxIntersectionChecks
       )
     }
   }
@@ -196,6 +219,11 @@ export function validateFogRenderData(
   suppliedOptions: FogValidationOptions = {}
 ): FogValidationReport {
   const options = { ...FOG_OUTPUT_DEFAULTS, ...suppliedOptions }
+  const maxIntersectionChecks =
+    Number.isSafeInteger(options.maxIntersectionChecks) &&
+    options.maxIntersectionChecks >= 0
+      ? options.maxIntersectionChecks
+      : FOG_OUTPUT_DEFAULTS.maxIntersectionChecks
   const errors: string[] = []
   if (
     !data ||
@@ -220,7 +248,12 @@ export function validateFogRenderData(
       errors.push(`feature ${index} is missing geometry`)
       continue
     }
-    vertexCount += validateGeometry(feature.geometry, index, errors)
+    vertexCount += validateGeometry(
+      feature.geometry,
+      index,
+      errors,
+      maxIntersectionChecks
+    )
   }
   let byteLength = 0
   try {

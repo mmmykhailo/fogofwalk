@@ -89,11 +89,35 @@ function buildPartitions(options: FogPartitionOptions): Feature<Polygon>[] {
   ) {
     throw new Error("Fog partition spans must be positive finite numbers.")
   }
+  const maxPartitions = options.maxPartitions ?? DEFAULT_MAX_PARTITIONS
+  const longitudePartitionCount = Math.ceil(
+    (WORLD_EAST - WORLD_WEST) / longitudeSpan
+  )
+  const latitudePartitionCount = Math.ceil(
+    (WORLD_NORTH - WORLD_SOUTH) / latitudeSpan
+  )
+  const expectedPartitionCount =
+    longitudePartitionCount * latitudePartitionCount
+  if (
+    !Number.isSafeInteger(maxPartitions) ||
+    maxPartitions < 0 ||
+    !Number.isSafeInteger(expectedPartitionCount) ||
+    expectedPartitionCount > maxPartitions
+  ) {
+    throw new Error(
+      "Fog partition scheme exceeds its technical partition budget."
+    )
+  }
   const partitions: Feature<Polygon>[] = []
   for (let west = WORLD_WEST; west < WORLD_EAST; west += longitudeSpan) {
     const east = Math.min(WORLD_EAST, west + longitudeSpan)
     for (let south = WORLD_SOUTH; south < WORLD_NORTH; south += latitudeSpan) {
       const north = Math.min(WORLD_NORTH, south + latitudeSpan)
+      if (partitions.length >= maxPartitions) {
+        throw new Error(
+          "Fog partition scheme exceeds its technical partition budget."
+        )
+      }
       partitions.push(
         partitionFeature(
           west,
@@ -105,7 +129,6 @@ function buildPartitions(options: FogPartitionOptions): Feature<Polygon>[] {
       )
     }
   }
-  const maxPartitions = options.maxPartitions ?? DEFAULT_MAX_PARTITIONS
   if (partitions.length > maxPartitions) {
     throw new Error(
       "Fog partition scheme exceeds its technical partition budget."

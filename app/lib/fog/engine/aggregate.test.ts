@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { bufferFogActivity } from "./buffer"
 import { buildBoundedFog, emptyBoundedFog } from "./aggregate"
-import { validateFogRenderData } from "./validate"
+import { FOG_OUTPUT_DEFAULTS, validateFogRenderData } from "./validate"
 import type { FogWorkerActivity } from "~/types/activities"
 
 function activity(
@@ -12,6 +12,79 @@ function activity(
 }
 
 describe("bounded fog aggregation", () => {
+  test("bounds the quadratic ring self-intersection check", () => {
+    const report = validateFogRenderData(
+      {
+        type: "FeatureCollection",
+        features: [
+          {
+            type: "Feature",
+            properties: null,
+            geometry: {
+              type: "Polygon",
+              coordinates: [
+                [
+                  [0, 0],
+                  [3, 0],
+                  [4, 2],
+                  [2, 4],
+                  [0, 2],
+                  [0, 0],
+                ],
+              ],
+            },
+          },
+        ],
+      },
+      { maxIntersectionChecks: 0 }
+    )
+
+    expect(Number.isFinite(FOG_OUTPUT_DEFAULTS.maxIntersectionChecks)).toBe(
+      true
+    )
+    expect(report.ok).toBe(false)
+    expect(report.errors).toContain(
+      "feature 0 ring 0 self-intersection check exceeded its technical budget"
+    )
+  })
+
+  test("preserves the self-intersection error when the check completes", () => {
+    const report = validateFogRenderData({
+      type: "FeatureCollection",
+      features: [
+        {
+          type: "Feature",
+          properties: null,
+          geometry: {
+            type: "Polygon",
+            coordinates: [
+              [
+                [0, 0],
+                [3, 3],
+                [0, 3],
+                [3, 0],
+                [0, 0],
+              ],
+            ],
+          },
+        },
+      ],
+    })
+
+    expect(report.ok).toBe(false)
+    expect(report.errors).toContain("feature 0 ring 0 self-intersects")
+  })
+
+  test("rejects an oversized partition grid before constructing it", () => {
+    expect(() =>
+      emptyBoundedFog({
+        longitudeSpanDegrees: 0.000001,
+        latitudeSpanDegrees: 0.000001,
+        maxPartitions: 10,
+      })
+    ).toThrow("Fog partition scheme exceeds its technical partition budget.")
+  })
+
   test("represents an empty world as bounded hole-free partitions", () => {
     const result = emptyBoundedFog()
 
