@@ -13,11 +13,12 @@ untouched.
 - Branch: `refactor/fog-processing`
 - Started: 2026-09-11
 - Current phase: Phase 4/5/6 — projections, bounded fog, and sync effects
-- Last completed commit: `af7b9cc route sync through validated transport`
-- Current working slice: connect the pure planner and durable outbox to a
-  page-wise resumable executor
-- Next action: add an executor that plans one validated manifest page, leases
-  its effects, commits only safe cursor state, and resumes after faults
+- Last completed commit: `ed8bc4e add page-wise sync executor`
+- Current working slice: wire page-wise activity execution into the existing
+  sync scheduler and migrate activity-side sync state helpers
+- Next action: replace the inline activity reconciliation path in
+  `syncEngine` with `ActivitySyncExecutor`, preserving saved-point sync as a
+  separate state path
 
 ## A1 activity contract slice
 
@@ -127,6 +128,20 @@ untouched.
   the page-wise executor is the next ownership boundary.
 - Client tests and typecheck pass; this slice is committed as `af7b9cc`.
 
+## C4 page-wise sync executor slice
+
+- Added an injectable executor that fetches one validated manifest page at a
+  time, plans it purely, leases durable effects, stages remote changes, and
+  commits only a safe cursor plus completed leases.
+- Remote downloads, metadata updates, and tombstones publish one
+  `ActivityLibrary` command per page; failed remote effects keep the cursor at
+  the last committed boundary while safe siblings remain durable.
+- Retryable failures receive bounded exponential retry times with jitter;
+  permanent failures remain visible in the outbox and never become known server
+  hashes. Non-advancing pages fail before effects are created.
+- Added seven executor tests and a targeted-claim repository test; this slice
+  is committed as `ed8bc4e`.
+
 ## Path-aware adapter and render slice
 
 - GPX tracks remain one activity and their track segments remain disconnected
@@ -156,6 +171,7 @@ untouched.
 | `db6eeec` | Add pure sync planner and validated transport                        | 29 focused tests pass; client typecheck passes                   |
 | `43c7b6f` | Add durable sync repository and outbox                                | 6 repository tests pass; client typecheck passes                 |
 | `af7b9cc` | Route sync through the revisioned library and validated transport     | 152 client tests pass; client typecheck passes                    |
+| `ed8bc4e` | Add page-wise resumable sync executor                                | 14 sync executor/repository tests pass; client typecheck passes  |
 
 ## Phase checklist
 
