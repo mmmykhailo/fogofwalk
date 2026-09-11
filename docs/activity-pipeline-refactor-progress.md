@@ -13,10 +13,11 @@ untouched.
 - Branch: `refactor/fog-processing`
 - Started: 2026-09-11
 - Current phase: Phase 4/5/6 — projections, bounded fog, and sync effects
-- Last completed commit: `2378a7f add bounded fog worker engine`
-- Current working slice: pure sync reconciliation planner (focused tests pass)
-- Next action: add the durable sync repository/outbox and validated transport,
-  then connect the planner to the existing sync executor
+- Last completed commit: `ce7255d add fog coordinator`
+- Current working slice: sync planner and transport validation (focused tests
+  pass)
+- Next action: add the durable sync repository/outbox and connect the planner
+  to a resumable executor
 
 ## A1 activity contract slice
 
@@ -86,6 +87,21 @@ untouched.
 - Added focused table/race tests; 22 planner tests pass. The planner is not yet
   wired to durable outbox execution.
 
+## Fog coordinator slice
+
+- Added a transport-free coordinator that coalesces newer library revisions,
+  chooses exact-base appends versus rebuilds, drops stale replies, acknowledges
+  cancellation, and bounds worker recovery to one rebuild attempt.
+- Added four focused coordinator tests; this slice is committed as `ce7255d`.
+
+## C3 sync transport validation slice
+
+- Added runtime validation for manifest metadata, tombstones, path/timestamp
+  relationships, activity statistics, payload hashes, response sizes, and
+  idempotent upload/delete transport effects.
+- Added three focused transport tests; this slice is ready to commit with the
+  planner.
+
 ## Path-aware adapter and render slice
 
 - GPX tracks remain one activity and their track segments remain disconnected
@@ -110,7 +126,8 @@ untouched.
 | `84ba4b5` | Add B2 fog input sanitizer                                           | 10 focused tests pass; client typecheck passes                   |
 | `60e9047` | Route activity changes through the serialized library                | 30 focused tests pass; client typecheck passes                   |
 | `2378a7f` | Add bounded fog worker engine, protocol, and cache handoff           | 48 focused tests pass; client typecheck passes                   |
-| pending   | Add pure sync planner                                                | 22 focused tests pass                                            |
+| `ce7255d` | Add the revisioned fog coordinator                                   | 4 focused tests pass                                             |
+| pending   | Add pure sync planner and validated transport                        | 29 focused tests pass; client typecheck passes                   |
 
 ## Phase checklist
 
