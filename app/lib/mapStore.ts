@@ -4,9 +4,13 @@ import type {
   FogMode,
   WorkerInboundMessage,
 } from "~/types/activities"
-import { sortActivities, populateUniqueDistances } from "~/lib/statsAggregator"
-import { saveUniqueDistances, clearFogCache } from "~/lib/storage"
+import { sortActivities } from "~/lib/statsAggregator"
+import { clearFogCache } from "~/lib/storage"
 import { worldFogFeature } from "~/lib/fogGeometry"
+import { pathsForActivity } from "~shared/activityContract"
+import { ActivityLibrary } from "~/lib/activities/library"
+import type { LibrarySnapshot } from "~/lib/activities/libraryEvents"
+import { createUuid } from "~/lib/uuid"
 
 // ─── Map position persistence (localStorage — synchronous, survives page unload) ──
 
@@ -101,6 +105,8 @@ interface MapStore {
   fogWorkerActivityIds: Set<string>
   /** Fog mode used to build the current worker run's internal accumulators. */
   fogWorkerMode: FogMode | null
+  /** Revision of the canonical activity snapshot projected into this store. */
+  libraryRevision: number
   /** True once MapView is ready to receive fog-worker replies. */
   isFogWorkerListenerReady: boolean
   /**
@@ -132,11 +138,48 @@ export const mapStore: MapStore = {
   pendingFogJobs: 0,
   fogWorkerActivityIds: new Set(),
   fogWorkerMode: null,
+  libraryRevision: 0,
   isFogWorkerListenerReady: false,
   shareCardCache: null,
 }
 
 const fogProgressListeners = new Set<() => void>()
+
+/** Canonical activity ownership lives in ActivityLibrary; this is its map projection. */
+export const activityLibrary = new ActivityLibrary()
+let activityLibrarySubscription: (() => void) | null = null
+
+function cloneActivities(
+  activities: readonly ParsedActivity[]
+): ParsedActivity[] {
+  const copy =
+    typeof structuredClone === "function"
+      ? structuredClone([...activities])
+      : JSON.parse(JSON.stringify(activities))
+  return sortActivities(copy as ParsedActivity[])
+}
+
+function applyLibrarySnapshot(snapshot: LibrarySnapshot): void {
+  mapStore.activities = cloneActivities(snapshot.activities)
+  mapStore.libraryRevision = snapshot.revision
+}
+
+/** Load and bind the canonical activity library to the map render projection. */
+export async function initializeActivityLibrary(): Promise<ParsedActivity[]> {
+  if (!activityLibrarySubscription) {
+    activityLibrarySubscription = activityLibrary.subscribe((snapshot) => {
+      applyLibrarySnapshot(snapshot)
+    })
+  }
+  const snapshot = await activityLibrary.initialize()
+  applyLibrarySnapshot(snapshot)
+  return cloneActivities(snapshot.activities)
+}
+
+/** Apply a canonical snapshot from another route/service to the render store. */
+export function setActivityProjection(snapshot: LibrarySnapshot): void {
+  applyLibrarySnapshot(snapshot)
+}
 
 /** Subscribe narrowly to worker progress without rerendering the home route. */
 export function subscribeFogProgress(listener: () => void): () => void {
@@ -180,28 +223,41 @@ export function startFogRun(): number {
 /** Posts to the fog worker, stamping the current run id. */
 export function postToFogWorker(
   msg: DistributiveOmit<WorkerInboundMessage, "runId">
-): void {
+): boolean {
   if (msg.type === "PROCESS_ACTIVITIES") {
+    const worker = mapStore.worker
+    if (!worker) return false
+
+    // ParsedActivity contains timestamps, laps, statistics, and other metadata.
+    // Project at the worker boundary so structured cloning only copies what fog
+    // processing needs, including when the full library is replayed.
+    const workerMessage = {
+      ...msg,
+      activities: msg.activities.map((activity) => ({
+        id: activity.id,
+        name: activity.name,
+        coordinates: activity.coordinates,
+        ...(activity.paths
+          ? { paths: pathsForActivity(activity) }
+          : {}),
+      })),
+      runId: mapStore.runId,
+    } satisfies WorkerInboundMessage
+    try {
+      worker.postMessage(workerMessage)
+    } catch {
+      // Bookkeeping is updated only after postMessage succeeds. Callers can
+      // surface an unavailable worker instead of showing a false queued state.
+      return false
+    }
+
     if (mapStore.fogWorkerMode === null) mapStore.fogWorkerMode = msg.mode
     mapStore.pendingFogJobs++
     mapStore.isFogRunInFlight = true
     for (const activity of msg.activities) {
       mapStore.fogWorkerActivityIds.add(activity.id)
     }
-
-    // ParsedActivity contains timestamps, laps, statistics, and other metadata.
-    // Project at the worker boundary so structured cloning only copies what fog
-    // processing needs, including when the full library is replayed.
-    mapStore.worker?.postMessage({
-      ...msg,
-      activities: msg.activities.map(({ id, name, coordinates }) => ({
-        id,
-        name,
-        coordinates,
-      })),
-      runId: mapStore.runId,
-    } satisfies WorkerInboundMessage)
-    return
+    return true
   }
   if (msg.type === "RESET") {
     mapStore.pendingFogJobs = 0
@@ -209,7 +265,13 @@ export function postToFogWorker(
     mapStore.fogWorkerActivityIds.clear()
     mapStore.fogWorkerMode = null
   }
-  mapStore.worker?.postMessage({ ...msg, runId: mapStore.runId })
+  if (!mapStore.worker) return false
+  try {
+    mapStore.worker.postMessage({ ...msg, runId: mapStore.runId })
+    return true
+  } catch {
+    return false
+  }
 }
 
 /** Records one batch completion. Returns true only when the whole run is idle. */
@@ -271,36 +333,21 @@ export function queueAddedActivitiesForFog(
 export async function ingestActivities(
   newActivities: ParsedActivity[]
 ): Promise<ParsedActivity[]> {
-  // Drop anything already held under the same content hash. Re-importing a
-  // file, or importing one the server had just restored, must not produce two
-  // identical activities — content-addressing is what makes that detectable.
-  // Activities with no hash (imported before sync existed) are always kept.
-  const present = new Set(
-    mapStore.activities.map((t) => t.contentHash).filter(Boolean)
-  )
-  const added = newActivities.filter((t) => {
-    if (!t.contentHash) return true
-    if (present.has(t.contentHash)) return false
-    present.add(t.contentHash)
-    return true
+  await initializeActivityLibrary()
+  const result = await activityLibrary.dispatch({
+    type: "import",
+    operationId: createUuid(),
+    activities: newActivities,
   })
-
-  // Returns what was actually taken, never what was offered. Callers drive the
-  // progress UI off this: reporting the offered count when everything was a
-  // duplicate leaves "Processing 0 of N…" on screen forever, because no
-  // PROCESS_ACTIVITIES was posted and so no DONE ever comes back.
+  const added = result.change.added
   if (added.length === 0) return added
 
-  mapStore.activities = sortActivities([...mapStore.activities, ...added])
-  await populateUniqueDistances(mapStore.activities)
-  // A backdated addition can change every later activity's unique distance.
-  await saveUniqueDistances(mapStore.activities)
-  await clearFogCache()
-  // Start processing only after invalidation finishes. A small worker batch can
-  // otherwise save its fresh cache first and have this call erase it afterward.
-  // Read the mode at queue time. Parsing and IDB writes are asynchronous, and
-  // the user may have changed the control since the import was submitted.
+  // The canonical commit has completed. Fog starts immediately and derived
+  // work/cache invalidation are independent projections of that revision.
   queueAddedActivitiesForFog(added, mapStore.fogMode)
+  void clearFogCache().catch((error) =>
+    console.warn("[storage] fog cache invalidation failed:", error)
+  )
   return added
 }
 

@@ -13,10 +13,11 @@ untouched.
 - Branch: `refactor/fog-processing`
 - Started: 2026-09-11
 - Current phase: Phase 1/2 — contracts and activity-library ownership
-- Last completed commit: `e977389 preserve disconnected activity paths`
-- Current working slice: bounded B2 fog input sanitizer (ready to commit)
-- Next action: commit B2, then integrate the sanitizer into the callable fog
-  engine and add geometry buffering/validation behind the same boundary
+- Last completed commit: `84ba4b5 add fog input sanitizer`
+- Current working slice: revisioned library/import route integration (ready to
+  commit)
+- Next action: commit the library/import integration, then build the revisioned
+  fog protocol and coordinator around the sanitized engine input
 
 ## A1 activity contract slice
 
@@ -43,7 +44,22 @@ untouched.
   per-path/total technical point budgets prevent unbounded engine input.
 - Input simplification uses `ACTIVITY_SIMPLIFY_TOLERANCE` only; emission
   simplification remains a separate downstream concern.
-- Focused tests pass; this working-tree slice is ready to commit.
+- Focused tests pass; this slice is committed independently.
+
+## A2/A3 import and library integration slice
+
+- Added a format registry with extension and MIME classification and routed the
+  parser entry point through it.
+- Added bounded, transport-independent import processing with per-file and
+  per-activity terminal outcomes, cancellation before commit, deterministic
+  commit ordering, normalization/hash validation, and one operation id per
+  accepted batch.
+- Home, activities, and stats routes now read through the revisioned library;
+  clear/delete/import commands no longer assign the canonical activity array
+  directly. Cross-tab refreshes publish projection changes.
+- The canonical commit remains independent of unique-distance, fog-cache, and
+  sync side effects; those projections are scheduled after the commit.
+- Focused tests and client typecheck pass; this slice is ready to commit.
 
 ## Path-aware adapter and render slice
 
@@ -66,7 +82,8 @@ untouched.
 | `7f6c149` | Add revisioned activity-library repository/service foundations | 5 focused tests pass; client typecheck passes                    |
 | `15eca51` | Add A1 path-aware activity contract                            | Shared/client/server focused tests pass; server typecheck passes |
 | `e977389` | Preserve disconnected paths through adapters, stats, map, and worker | 21 focused tests pass; client typecheck passes                 |
-| pending   | Add B2 fog input sanitizer                                     | 10 focused tests pass; client typecheck passes                    |
+| `84ba4b5` | Add B2 fog input sanitizer                                     | 10 focused tests pass; client typecheck passes                 |
+| pending   | Add bounded import and revisioned route integration             | 30 focused tests pass; client typecheck passes                 |
 
 ## Phase checklist
 

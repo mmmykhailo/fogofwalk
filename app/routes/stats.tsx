@@ -4,11 +4,14 @@ import { PageShell } from "~/components/PageShell"
 import type { Route } from "./+types/stats"
 import {
   areUniqueDistancesCurrent,
-  loadActivities,
   loadUniqueDistanceState,
   saveUniqueDistances,
 } from "~/lib/storage"
-import { mapStore } from "~/lib/mapStore"
+import {
+  initializeActivityLibrary,
+  mapStore,
+  setActivityProjection,
+} from "~/lib/mapStore"
 import {
   sortActivities,
   computeLifetimeTotals,
@@ -43,20 +46,17 @@ export async function clientLoader(): Promise<StatsLoaderData> {
   // Prefer in-memory activities (always current — updated before the IDB write in
   // clientAction). Fall back to IDB only when navigating directly to /stats on
   // a fresh page load before the home clientLoader has run.
-  let raw = mapStore.activities
-  if (raw.length === 0) {
-    const [storedActivities, uniqueDistanceState] = await Promise.all([
-      loadActivities(),
-      loadUniqueDistanceState(),
-    ])
-    raw = storedActivities
-    const sorted = sortActivities(raw)
-    if (!areUniqueDistancesCurrent(sorted, uniqueDistanceState)) {
-      await populateUniqueDistances(sorted)
-      await saveUniqueDistances(sorted)
-    }
-    mapStore.activities = sorted
+  const raw = await initializeActivityLibrary()
+  const uniqueDistanceState = await loadUniqueDistanceState()
+  const sorted = sortActivities(raw)
+  if (!areUniqueDistancesCurrent(sorted, uniqueDistanceState)) {
+    await populateUniqueDistances(sorted)
+    await saveUniqueDistances(sorted)
   }
+  setActivityProjection({
+    revision: mapStore.libraryRevision,
+    activities: sorted,
+  })
   const activities = sortActivities(raw)
   const now = Date.now()
   return {

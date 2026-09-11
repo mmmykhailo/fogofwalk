@@ -35,20 +35,22 @@ import {
 import { Button } from "~/components/ui/button"
 import {
   mapStore,
+  activityLibrary,
+  initializeActivityLibrary,
+  queueAddedActivitiesForFog,
   startFogRun,
   postToFogWorker,
-  ingestActivities,
   setFogProcessedCount,
 } from "~/lib/mapStore"
-import { parseFile } from "~/lib/parsers"
+import { ActivityImportService } from "~/lib/activities/import/service"
+import type { LibraryCommit } from "~/lib/activities/libraryEvents"
+import { createUuid } from "~/lib/uuid"
 import { buildLapActivity, lapSubtitle } from "~/lib/laps"
 import { processPhotoFiles } from "~/lib/photos"
 import {
-  loadActivities,
   loadUniqueDistanceState,
   areUniqueDistancesCurrent,
   saveUniqueDistances,
-  saveActivities,
   savePhotos,
   loadPhotos,
   saveFogMode,
@@ -75,7 +77,7 @@ import {
   pushSavedPointDeletion,
   pushSavedPointUpdate,
 } from "~/lib/server/syncEngine"
-import { sortActivities, populateUniqueDistances } from "~/lib/statsAggregator"
+import { populateUniqueDistances } from "~/lib/statsAggregator"
 import { useMyLocation } from "~/lib/useMyLocation"
 import { useActivityVisibility } from "~/lib/useActivityVisibility"
 import { socialMeta } from "~/lib/socialMeta"
@@ -151,7 +153,7 @@ export async function clientLoader({
     fogMode,
     fogCache,
   ] = await Promise.all([
-    loadActivities(),
+    initializeActivityLibrary(),
     loadUniqueDistanceState(),
     loadPhotos(),
     loadSavedPoints(),
@@ -170,7 +172,6 @@ export async function clientLoader({
       : null
 
   if (activities.length > 0) {
-    mapStore.activities = sortActivities(activities)
     if (!areUniqueDistancesCurrent(mapStore.activities, uniqueDistanceState)) {
       await populateUniqueDistances(mapStore.activities)
       await saveUniqueDistances(mapStore.activities)
@@ -228,51 +229,40 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
 
   if (intent === "add-files") {
     const files = formData.getAll("files") as File[]
-    const mode = formData.get("mode") as FogMode
+    const modeValue = formData.get("mode")
+    const mode: FogMode = modeValue === "fill" ? "fill" : "corridor"
     console.debug("[clientAction] add-files", {
       fileCount: files.length,
       mode,
       files: files.map((f) => f.name),
     })
-    const allActivities: ParsedActivity[] = []
-    const failedFiles: string[] = []
-    const results = await Promise.allSettled(files.map((f) => parseFile(f)))
-    for (let i = 0; i < results.length; i++) {
-      const r = results[i]
-      if (r.status === "fulfilled" && r.value.length > 0) {
-        console.debug(
-          "[clientAction] parsed",
-          files[i].name,
-          "→",
-          r.value.length,
-          "activities, first activity coords:",
-          r.value[0]?.coordinates.length
-        )
-        allActivities.push(...r.value)
-      } else {
-        if (r.status === "rejected") {
-          console.warn(
-            `[clientAction] failed to parse ${files[i].name}:`,
-            r.reason
-          )
-        } else {
-          console.warn(`[clientAction] no activities found in ${files[i].name}`)
-        }
-        failedFiles.push(files[i].name)
-      }
+    const commitState: { value: LibraryCommit | null } = { value: null }
+    const importService = new ActivityImportService({
+      commit: (operationId, activities) =>
+        activityLibrary
+          .dispatch({ type: "import", operationId, activities })
+          .then((result) => {
+            commitState.value = result
+            return result
+          }),
+    })
+    const batch = await importService.importFiles(files)
+    const added = commitState.value?.change.added ?? []
+    if (added.length > 0) {
+      queueAddedActivitiesForFog(added, mode)
+      void clearFogCache().catch((error) =>
+        console.warn("[storage] fog cache invalidation failed:", error)
+      )
+      void requestSync("add-files")
     }
-    console.debug(
-      "[clientAction] total activities parsed:",
-      allActivities.length,
-      "worker ready:",
-      !!mapStore.worker
-    )
-    // Shared with the sync engine's downloads — merge, recompute, post to the
-    // worker (joining the current run), persist, invalidate the fog cache.
-    // Returns only the activities that were genuinely new.
-    const added = await ingestActivities(allActivities)
-    if (added.length > 0) void requestSync("add-files")
-
+    const failedFiles = batch.files
+      .filter((file) =>
+        ["failed", "rejected", "cancelled"].includes(file.status)
+      )
+      .map((file) => file.name)
+    const duplicateCount = batch.activities.filter(
+      (activity) => activity.status === "duplicate"
+    ).length
     return {
       intent: "add-files" as const,
       count: files.length,
@@ -280,7 +270,7 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
       // Must be what was ingested, not what was parsed — the progress UI waits
       // on a worker DONE that only arrives if something was actually posted.
       newActivitiesCount: added.length,
-      duplicateCount: allActivities.length - added.length,
+      duplicateCount,
       missingActivityTypeCount: added.filter(
         (activity) => activity.activityType == null
       ).length,
@@ -292,8 +282,12 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
     // Local only, deliberately. This resets *this device*; the server copies
     // are left alone and sync pulls them back. Deleting them is a separate,
     // explicit action — "Remove all" in the account dialog.
+    await initializeActivityLibrary()
+    await activityLibrary.dispatch({
+      type: "clearLocal",
+      operationId: createUuid(),
+    })
     mapStore.fogData = null
-    mapStore.activities = []
     setFogProcessedCount(0)
     // Abandons the in-flight run so its FOG_UPDATEs cannot repaint the map
     // we just cleared, and its DONE cannot save a stale fog cache.
@@ -301,7 +295,7 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
     postToFogWorker({ type: "RESET" })
     // Runs synchronously before the fetcher effect resets React selection state.
     clearRenderedActivityState()
-    await clearAll()
+    await clearAll({ includeActivities: false })
     clearMapPosition()
     // Pause automatic syncing. `clearAll` dropped syncState, so the next sync
     // walks from scratch and would download everything straight back — the
@@ -314,11 +308,18 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
   if (intent === "delete-activity") {
     const activityId = formData.get("activityId") as string
 
+    await initializeActivityLibrary()
+
     // Captured before the filter — the content hash is what the server keys on.
     const deletedActivity = mapStore.activities.find((t) => t.id === activityId)
 
-    // Remove from in-memory store and recompute unique distances for remaining activities
-    mapStore.activities = mapStore.activities.filter((t) => t.id !== activityId)
+    await activityLibrary.dispatch({
+      type: "delete",
+      operationId: createUuid(),
+      activityId,
+    })
+    // Recompute derived values for the committed survivor set. This projection
+    // is intentionally separate from the canonical delete transaction.
     await populateUniqueDistances(mapStore.activities)
     setFogProcessedCount(0)
 
@@ -330,7 +331,7 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
     clearRenderedActivityState()
 
     // Persist and invalidate fog cache
-    await saveUniqueDistances(mapStore.activities, activityId)
+    await saveUniqueDistances(mapStore.activities)
     await clearFogCache()
 
     // Replay only after invalidation finishes. Otherwise a fast worker can save

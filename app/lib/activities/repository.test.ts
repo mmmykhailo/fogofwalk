@@ -1,19 +1,13 @@
 import { describe, expect, test } from "bun:test"
 import type { ParsedActivity } from "~/types/activities"
 import { ActivityLibrary } from "./library"
-import {
-  ActivityLibraryConflictError,
-  ActivityStorageError,
-} from "./errors"
+import { ActivityLibraryConflictError, ActivityStorageError } from "./errors"
 import {
   MemoryActivityLibraryRepository,
   applyLibraryCommand,
 } from "./repository"
 
-function activity(
-  id: string,
-  contentHash = `hash-${id}`
-): ParsedActivity {
+function activity(id: string, contentHash = `hash-${id}`): ParsedActivity {
   return {
     id,
     name: `${id}.gpx`,
@@ -92,7 +86,10 @@ describe("activity library command repository", () => {
   })
 
   test("retries a concurrent revision conflict without dropping the command", async () => {
-    const repository = new MemoryActivityLibraryRepository([activity("first")], 1)
+    const repository = new MemoryActivityLibraryRepository(
+      [activity("first")],
+      1
+    )
     const library = new ActivityLibrary(repository)
     await library.initialize()
     // Simulate another tab committing after this tab loaded its snapshot.
@@ -141,7 +138,10 @@ describe("activity library command repository", () => {
   })
 
   test("reports stale expected revisions explicitly", async () => {
-    const repository = new MemoryActivityLibraryRepository([activity("first")], 4)
+    const repository = new MemoryActivityLibraryRepository(
+      [activity("first")],
+      4
+    )
     await expect(
       repository.commit(
         {
@@ -152,5 +152,54 @@ describe("activity library command repository", () => {
         3
       )
     ).rejects.toBeInstanceOf(ActivityLibraryConflictError)
+  })
+
+  test("applies remote metadata by hash or id without needless revisions", async () => {
+    const repository = new MemoryActivityLibraryRepository([activity("local")])
+    const library = new ActivityLibrary(repository)
+    await library.initialize()
+
+    const byHash = await library.dispatch({
+      type: "applyRemote",
+      operationId: "remote-hash",
+      changes: [
+        {
+          type: "upsert",
+          activity: { ...activity("remote", "hash-local"), name: "renamed" },
+        },
+      ],
+    })
+    expect(byHash.snapshot.revision).toBe(1)
+    expect(byHash.snapshot.activities[0]).toMatchObject({
+      id: "local",
+      name: "renamed",
+    })
+
+    const noOp = await library.dispatch({
+      type: "applyRemote",
+      operationId: "remote-noop",
+      changes: [{ type: "upsert", activity: byHash.snapshot.activities[0]! }],
+    })
+    expect(noOp.snapshot.revision).toBe(1)
+    expect(noOp.change.updated).toHaveLength(0)
+  })
+
+  test("refresh publishes a newer repository snapshot to listeners", async () => {
+    const repository = new MemoryActivityLibraryRepository()
+    const library = new ActivityLibrary(repository)
+    await library.initialize()
+    const seen: number[] = []
+    library.subscribe((snapshot) => seen.push(snapshot.revision))
+
+    const otherTab = new ActivityLibrary(repository)
+    await otherTab.dispatch({
+      type: "import",
+      operationId: "other-tab",
+      activities: [activity("remote")],
+    })
+    await library.refresh()
+
+    expect(seen).toEqual([1])
+    expect(library.getSnapshot().activities).toHaveLength(1)
   })
 })

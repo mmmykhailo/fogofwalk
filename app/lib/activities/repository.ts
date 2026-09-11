@@ -26,7 +26,10 @@ interface StoredLibraryMeta {
 
 export interface ActivityLibraryRepository {
   load(): Promise<LibrarySnapshot>
-  commit(command: LibraryCommand, expectedRevision: number): Promise<LibraryCommit>
+  commit(
+    command: LibraryCommand,
+    expectedRevision: number
+  ): Promise<LibraryCommit>
 }
 
 function clone<T>(value: T): T {
@@ -42,12 +45,24 @@ function immutableSnapshot(
   const records = clone(activities)
   return {
     revision,
-    activities: Object.freeze(records.map((activity) => Object.freeze(activity))),
+    activities: Object.freeze(
+      records.map((activity) => Object.freeze(activity))
+    ),
   }
 }
 
 function findByHash(activities: ParsedActivity[], contentHash: string) {
-  return activities.findIndex((activity) => activity.contentHash === contentHash)
+  return activities.findIndex(
+    (activity) => activity.contentHash === contentHash
+  )
+}
+
+function findById(activities: ParsedActivity[], activityId: string) {
+  return activities.findIndex((activity) => activity.id === activityId)
+}
+
+function sameActivity(first: ParsedActivity, second: ParsedActivity): boolean {
+  return JSON.stringify(first) === JSON.stringify(second)
 }
 
 function duplicate(
@@ -112,9 +127,11 @@ function applyRemote(
     }
 
     const incoming = clone(change.activity)
-    const index = incoming.contentHash
+    const indexByHash = incoming.contentHash
       ? findByHash(activities, incoming.contentHash)
       : -1
+    const index =
+      indexByHash >= 0 ? indexByHash : findById(activities, incoming.id)
     if (index >= 0) {
       const current = activities[index]!
       // The content hash is the geometry identity. Remote metadata may update
@@ -125,8 +142,10 @@ function applyRemote(
         ...incoming,
         id: current.id,
       }
-      activities[index] = merged
-      updated.push(clone(merged))
+      if (!sameActivity(current, merged)) {
+        activities[index] = merged
+        updated.push(clone(merged))
+      }
       continue
     }
 
@@ -156,7 +175,9 @@ export function applyLibraryCommand(
       added.push(
         ...activities.filter(
           (activity) =>
-            command.activities.some((candidate) => candidate.id === activity.id) &&
+            command.activities.some(
+              (candidate) => candidate.id === activity.id
+            ) &&
             !current.activities.some((existing) => existing.id === activity.id)
         )
       )
@@ -208,7 +229,11 @@ function requestResult<T>(request: IDBRequest<T>): Promise<T> {
 function transactionResult(transaction: IDBTransaction): Promise<void> {
   return new Promise((resolve, reject) => {
     transaction.oncomplete = () => resolve()
-    transaction.onabort = () => reject(transaction.error ?? new DOMException("Transaction aborted", "AbortError"))
+    transaction.onabort = () =>
+      reject(
+        transaction.error ??
+          new DOMException("Transaction aborted", "AbortError")
+      )
     transaction.onerror = () => reject(transaction.error)
   })
 }
@@ -245,9 +270,7 @@ function readMeta(value: unknown): StoredLibraryMeta {
   }
 }
 
-export class IndexedDbActivityLibraryRepository
-  implements ActivityLibraryRepository
-{
+export class IndexedDbActivityLibraryRepository implements ActivityLibraryRepository {
   async load(): Promise<LibrarySnapshot> {
     const db = await openStorageDatabase()
     if (!db) {
@@ -263,7 +286,9 @@ export class IndexedDbActivityLibraryRepository
         "readwrite"
       )
       const activitiesRequest = transaction.objectStore("activities").getAll()
-      const metaRequest = transaction.objectStore("library-meta").get(LIBRARY_META_KEY)
+      const metaRequest = transaction
+        .objectStore("library-meta")
+        .get(LIBRARY_META_KEY)
       const [activities, rawMeta] = await Promise.all([
         requestResult<ParsedActivity[]>(activitiesRequest),
         requestResult<StoredLibraryMeta | undefined>(metaRequest),
@@ -298,7 +323,9 @@ export class IndexedDbActivityLibraryRepository
       const metaStore = transaction.objectStore("library-meta")
       const [activities, rawMeta] = await Promise.all([
         requestResult<ParsedActivity[]>(activityStore.getAll()),
-        requestResult<StoredLibraryMeta | undefined>(metaStore.get(LIBRARY_META_KEY)),
+        requestResult<StoredLibraryMeta | undefined>(
+          metaStore.get(LIBRARY_META_KEY)
+        ),
       ])
       const meta = readMeta(rawMeta)
       if (meta.revision !== expectedRevision) {
@@ -310,7 +337,8 @@ export class IndexedDbActivityLibraryRepository
       const result = applyLibraryCommand(current, command)
       for (const activity of result.change.added) activityStore.put(activity)
       for (const activity of result.change.updated) activityStore.put(activity)
-      for (const activity of result.change.removed) activityStore.delete(activity.id)
+      for (const activity of result.change.removed)
+        activityStore.delete(activity.id)
       if (result.snapshot.revision !== meta.revision || !rawMeta) {
         metaStore.put({
           key: LIBRARY_META_KEY,
@@ -328,9 +356,7 @@ export class IndexedDbActivityLibraryRepository
 }
 
 /** Deterministic repository for service tests and non-browser adapters. */
-export class MemoryActivityLibraryRepository
-  implements ActivityLibraryRepository
-{
+export class MemoryActivityLibraryRepository implements ActivityLibraryRepository {
   private state: LibrarySnapshot
   private failure: unknown = null
 
@@ -361,7 +387,10 @@ export class MemoryActivityLibraryRepository
       throw error
     }
     if (expectedRevision !== this.state.revision) {
-      throw new ActivityLibraryConflictError(expectedRevision, this.state.revision)
+      throw new ActivityLibraryConflictError(
+        expectedRevision,
+        this.state.revision
+      )
     }
     const result = applyLibraryCommand(this.state, command)
     this.state = result.snapshot

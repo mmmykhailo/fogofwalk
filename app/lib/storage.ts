@@ -600,9 +600,13 @@ export async function clearSyncState(): Promise<void> {
  * *is* dropped, so the next sync re-walks the manifest from zero rather than
  * believing it is already up to date with activities that are gone.
  */
-export async function clearAll(): Promise<void> {
+export async function clearAll(
+  options: { includeActivities?: boolean } = {}
+): Promise<void> {
+  const activityClear =
+    options.includeActivities === false ? Promise.resolve() : clearActivities()
   await Promise.all([
-    clearActivities(),
+    activityClear,
     clearPhotos(),
     clearSavedPoints(),
     prefDelete("fogCache"),

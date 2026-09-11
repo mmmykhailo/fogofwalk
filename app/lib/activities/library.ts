@@ -1,7 +1,4 @@
-import {
-  ActivityLibraryConflictError,
-  ActivityStorageError,
-} from "./errors"
+import { ActivityLibraryConflictError, ActivityStorageError } from "./errors"
 import {
   IndexedDbActivityLibraryRepository,
   type ActivityLibraryRepository,
@@ -35,6 +32,44 @@ function cloneChange(change: LibraryChange): LibraryChange {
   return JSON.parse(JSON.stringify(change)) as LibraryChange
 }
 
+function sameActivity(
+  first: LibrarySnapshot["activities"][number],
+  second: LibrarySnapshot["activities"][number]
+): boolean {
+  return JSON.stringify(first) === JSON.stringify(second)
+}
+
+function changeBetween(
+  previous: LibrarySnapshot,
+  next: LibrarySnapshot
+): LibraryChange {
+  const previousById = new Map(
+    previous.activities.map((activity) => [activity.id, activity])
+  )
+  const nextById = new Map(
+    next.activities.map((activity) => [activity.id, activity])
+  )
+  const added = next.activities.filter(
+    (activity) => !previousById.has(activity.id)
+  )
+  const updated = next.activities.filter((activity) => {
+    const old = previousById.get(activity.id)
+    return old !== undefined && !sameActivity(old, activity)
+  })
+  const removed = previous.activities.filter(
+    (activity) => !nextById.has(activity.id)
+  )
+  return cloneChange({
+    operationId: `external:${next.revision}`,
+    fromRevision: previous.revision,
+    revision: next.revision,
+    added: [...added],
+    updated: [...updated],
+    removed: [...removed],
+    duplicates: [],
+  })
+}
+
 function safeNavigatorLocks(): LockManager | null {
   if (typeof navigator === "undefined" || !navigator.locks) return null
   return navigator.locks
@@ -56,9 +91,14 @@ export class ActivityLibrary {
   private channel: BroadcastChannel | null = null
   private refreshPromise: Promise<void> | null = null
 
-  constructor(repository: ActivityLibraryRepository = new IndexedDbActivityLibraryRepository()) {
+  constructor(
+    repository: ActivityLibraryRepository = new IndexedDbActivityLibraryRepository()
+  ) {
     this.repository = repository
-    if (typeof BroadcastChannel !== "undefined") {
+    if (
+      typeof window !== "undefined" &&
+      typeof BroadcastChannel !== "undefined"
+    ) {
       this.channel = new BroadcastChannel(CHANNEL_NAME)
       this.channel.onmessage = (event: MessageEvent<unknown>) => {
         const data = event.data
@@ -77,7 +117,8 @@ export class ActivityLibrary {
 
   async initialize(): Promise<LibrarySnapshot> {
     return this.enqueue(async () => {
-      if (!this.snapshot) this.snapshot = cloneSnapshot(await this.repository.load())
+      if (!this.snapshot)
+        this.snapshot = cloneSnapshot(await this.repository.load())
       return cloneSnapshot(this.snapshot)
     })
   }
@@ -99,7 +140,8 @@ export class ActivityLibrary {
 
   async dispatch(command: LibraryCommand): Promise<LibraryCommit> {
     return this.enqueue(async () => {
-      if (!this.snapshot) this.snapshot = cloneSnapshot(await this.repository.load())
+      if (!this.snapshot)
+        this.snapshot = cloneSnapshot(await this.repository.load())
 
       let attempt = 0
       while (attempt < 2) {
@@ -108,7 +150,10 @@ export class ActivityLibrary {
         const commit = await this.withWriteLock(() =>
           this.repository.commit(command, base.revision)
         ).catch(async (error: unknown) => {
-          if (!(error instanceof ActivityLibraryConflictError) || attempt >= 2) {
+          if (
+            !(error instanceof ActivityLibraryConflictError) ||
+            attempt >= 2
+          ) {
             throw error
           }
           this.snapshot = cloneSnapshot(await this.repository.load())
@@ -137,7 +182,14 @@ export class ActivityLibrary {
     this.refreshPromise = this.enqueue(async () => {
       const next = cloneSnapshot(await this.repository.load())
       if (!this.snapshot || next.revision > this.snapshot.revision) {
+        const previous = this.snapshot
         this.snapshot = next
+        if (previous) {
+          const change = changeBetween(previous, next)
+          for (const listener of this.listeners) {
+            listener(cloneSnapshot(next), cloneChange(change))
+          }
+        }
       }
     }).finally(() => {
       this.refreshPromise = null

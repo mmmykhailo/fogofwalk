@@ -2,37 +2,21 @@ import { useLoaderData } from "react-router"
 import { EmptyActivitiesState } from "~/components/activities/EmptyActivitiesState"
 import { ActivitiesGridWithSorting } from "~/components/activities/ActivitiesGridWithSorting"
 import { PageShell } from "~/components/PageShell"
-import { mapStore } from "~/lib/mapStore"
 import {
-  areUniqueDistancesCurrent,
-  loadActivities,
-  loadUniqueDistanceState,
-  saveActivities,
-  saveUniqueDistances,
-} from "~/lib/storage"
-import {
-  populateUniqueDistances,
-  sortActivities,
-  sortActivitiesNewestFirst,
-} from "~/lib/statsAggregator"
+  activityLibrary,
+  initializeActivityLibrary,
+  mapStore,
+} from "~/lib/mapStore"
+import { sortActivitiesNewestFirst } from "~/lib/statsAggregator"
 import { isActivityType } from "~/lib/activityType"
 import { pushActivityUpdate } from "~/lib/server/syncEngine"
+import { createUuid } from "~/lib/uuid"
 import type { ParsedActivity } from "~/types/activities"
 import type { Route } from "./+types/activities"
 
 export async function clientLoader(): Promise<ParsedActivity[]> {
-  if (mapStore.activities.length === 0) {
-    const [activities, uniqueDistanceState] = await Promise.all([
-      loadActivities(),
-      loadUniqueDistanceState(),
-    ])
-    mapStore.activities = sortActivities(activities)
-    if (!areUniqueDistancesCurrent(mapStore.activities, uniqueDistanceState)) {
-      await populateUniqueDistances(mapStore.activities)
-      await saveUniqueDistances(mapStore.activities)
-    }
-  }
-  return sortActivitiesNewestFirst(mapStore.activities)
+  const activities = await initializeActivityLibrary()
+  return sortActivitiesNewestFirst(activities)
 }
 
 export async function clientAction({ request }: Route.ClientActionArgs) {
@@ -48,9 +32,16 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
   const activity = mapStore.activities.find((item) => item.id === activityId)
   if (!activity) return { ok: false as const }
 
-  activity.activityType = activityType
-  await saveActivities([activity])
-  await pushActivityUpdate(activity)
+  const updatedActivity = {
+    ...activity,
+    activityType,
+  }
+  await activityLibrary.dispatch({
+    type: "applyRemote",
+    operationId: createUuid(),
+    changes: [{ type: "upsert", activity: updatedActivity }],
+  })
+  await pushActivityUpdate(updatedActivity)
   return { ok: true as const, activityId, activityType }
 }
 

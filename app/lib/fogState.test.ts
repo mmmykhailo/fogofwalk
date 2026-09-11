@@ -137,6 +137,26 @@ describe("fog worker run state", () => {
     expect(mapStore.fogWorkerMode).toBeNull()
   })
 
+  test("does not record a process job when the worker is unavailable", () => {
+    mapStore.worker = null
+    mapStore.pendingFogJobs = 0
+    mapStore.isFogRunInFlight = false
+    mapStore.fogWorkerActivityIds = new Set()
+    mapStore.fogWorkerMode = null
+
+    expect(
+      postToFogWorker({
+        type: "PROCESS_ACTIVITIES",
+        activities: [activity("missing-worker")],
+        mode: "corridor",
+      })
+    ).toBe(false)
+    expect(mapStore.pendingFogJobs).toBe(0)
+    expect(mapStore.isFogRunInFlight).toBe(false)
+    expect(mapStore.fogWorkerActivityIds.size).toBe(0)
+    expect(mapStore.fogWorkerMode).toBeNull()
+  })
+
   test("replays the library before adding to a cache-cold worker", () => {
     const messages: unknown[] = []
     const first = activity("first")
