@@ -12,12 +12,12 @@ untouched.
 
 - Branch: `refactor/fog-processing`
 - Started: 2026-09-11
-- Current phase: Phase 4/5/6 — projections, bounded fog, and sync effects
-- Last completed commit: `86894c8 route fog work through library changes`
-- Current working slice: route projection and fog failures into observable
-  recovery states, then finish cache/style and sync status cleanup
-- Next action: add subscriptions and retry actions for failed derived/fog work
-  without reintroducing route-level awaits
+- Current phase: Phase 7 — route/UI cleanup and terminal recovery states
+- Last completed commit: `051b683 surface import and fog recovery status`
+- Current working slice: expose durable sync operation status and local
+  diagnostics, then finish cache/style cleanup and rollout checks
+- Next action: add durable outbox summaries/retry timing to the sync status
+  surface without making network state part of canonical activity commits
 
 ## A1 activity contract slice
 
@@ -226,6 +226,28 @@ untouched.
   sync owner, and the scheduler entry point is a no-op. Full client tests (175)
   and typecheck pass. This slice is committed as `86894c8`.
 
+## Import and fog recovery status slice
+
+- Added an observable import operation status with queued, parsing,
+  validating, committing, deriving, and terminal stages. Per-file stage
+  progress is monotonic and stale operation events cannot overwrite a newer
+  import.
+- Import actions pass their request cancellation signal through the bounded
+  service, retain storage error codes/messages, and return per-file failure
+  details. The UI shows live import progress and explains when a durable save
+  failed without implying that the activity was stored.
+- Share-target failures keep their Cache Storage entries and now expose
+  retry/discard actions. A successful terminal import is still the only path
+  that acknowledges the queued bytes.
+- Fog projection status is revision/generation aware and observable as
+  processing, recovering, degraded, failed, or idle. Worker unavailability,
+  engine warnings, and partial snapshots are visible; retry rebuilds through
+  the map-store coordinator instead of route-level RESET/PROCESS calls.
+- The home route derives processing state from the fog projection and no
+  longer maintains a second React boolean for worker progress or completion.
+- Focused import/fog tests and typecheck pass. This slice is committed as
+  `051b683`.
+
 ## Path-aware adapter and render slice
 
 - GPX tracks remain one activity and their track segments remain disconnected
@@ -263,6 +285,7 @@ untouched.
 | `89370fa` | Integrate fog coordinator with worker bridge                         | 19 focused fog tests pass; client typecheck passes                 |
 | `bf53061` | Decouple unique distance projection                           | 175 client tests pass; client typecheck passes                   |
 | `86894c8` | Route fog work through library changes                    | 175 client tests pass; client typecheck passes                   |
+| `051b683` | Surface import and fog recovery status                         | Focused import/fog tests pass; client typecheck passes                 |
 
 ## Phase checklist
 
