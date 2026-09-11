@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import type { FogWorkerActivity } from "~/types/activities"
 import { FOG_PROTOCOL_VERSION, type FogRequest } from "../protocol"
-import { FogEngine } from "."
+import { createFogEngine } from "."
 
 function activity(id: string): FogWorkerActivity {
   return {
@@ -31,7 +31,7 @@ describe("FogEngine", () => {
   test("publishes request-relative progress and a complete revisioned snapshot", async () => {
     const progress: number[] = []
     const updates: number[] = []
-    const engine = new FogEngine({
+    const engine = createFogEngine({
       hooks: {
         onProgress: (event) => progress.push(event.processed),
         onUpdate: (snapshot) => updates.push(snapshot.libraryRevision),
@@ -51,7 +51,7 @@ describe("FogEngine", () => {
   })
 
   test("rejects an append whose base revision or mode does not match", async () => {
-    const engine = new FogEngine()
+    const engine = createFogEngine()
     await engine.process(request())
 
     const staleRevision = await engine.process(
@@ -78,7 +78,7 @@ describe("FogEngine", () => {
 
   test("cancellation at a scheduler checkpoint produces no snapshot", async () => {
     let release: (() => void) | undefined
-    const engine = new FogEngine({
+    const engine = createFogEngine({
       hooks: {
         yieldToScheduler: () =>
           new Promise<void>((resolve) => {

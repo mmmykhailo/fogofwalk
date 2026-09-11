@@ -55,24 +55,35 @@ function emptyDiagnostics(total: number): FogDiagnostics {
 }
 
 /**
- * Stateful but transport-free fog processor. The worker owns one instance;
+ * Stateful but transport-free fog processor. The worker owns one processor;
  * tests can use the same state machine without pretending a module global is a
  * Worker. A request either extends the exact base revision or is rejected.
  */
-export class FogEngine {
-  private state: EngineState | null = null
-  private cancelledGenerations = new Set<number>()
-  private readonly hooks: FogEngineHooks
-  private readonly snapshotEvery: number
+export interface FogEngine {
+  reset(generation: number, libraryRevision: number, mode: FogMode): void
+  cancel(generation: number): void
+  getState(): Readonly<{
+    generation: number
+    libraryRevision: number
+    mode: FogMode
+    activityCount: number
+  }> | null
+  process(request: FogRequest): Promise<FogEngineResult>
+}
 
-  constructor(options: FogEngineOptions = {}) {
-    this.hooks = options.hooks ?? {}
-    this.snapshotEvery = Math.max(1, Math.floor(options.snapshotEvery ?? 5))
-  }
+export function createFogEngine(options: FogEngineOptions = {}): FogEngine {
+  let state: EngineState | null = null
+  const cancelledGenerations = new Set<number>()
+  const hooks = options.hooks ?? {}
+  const snapshotEvery = Math.max(1, Math.floor(options.snapshotEvery ?? 5))
 
-  reset(generation: number, libraryRevision: number, mode: FogMode): void {
-    this.cancelledGenerations.delete(generation)
-    this.state = {
+  function reset(
+    generation: number,
+    libraryRevision: number,
+    mode: FogMode
+  ): void {
+    cancelledGenerations.delete(generation)
+    state = {
       generation,
       libraryRevision,
       mode,
@@ -81,96 +92,26 @@ export class FogEngine {
     }
   }
 
-  cancel(generation: number): void {
-    this.cancelledGenerations.add(generation)
+  function cancel(generation: number): void {
+    cancelledGenerations.add(generation)
   }
 
-  getState(): Readonly<{
+  function getState(): Readonly<{
     generation: number
     libraryRevision: number
     mode: FogMode
     activityCount: number
   }> | null {
-    if (!this.state) return null
+    if (!state) return null
     return {
-      generation: this.state.generation,
-      libraryRevision: this.state.libraryRevision,
-      mode: this.state.mode,
-      activityCount: this.state.processedActivityIds.size,
+      generation: state.generation,
+      libraryRevision: state.libraryRevision,
+      mode: state.mode,
+      activityCount: state.processedActivityIds.size,
     }
   }
 
-  async process(request: FogRequest): Promise<FogEngineResult> {
-    const validation = this.validateRequest(request)
-    if (validation) {
-      this.emitError(request, validation, true)
-      return { status: "rejected", snapshot: null, message: validation }
-    }
-
-    if (request.kind === "cancel") {
-      this.cancel(request.generation)
-      return { status: "cancelled", snapshot: null }
-    }
-
-    if (request.kind === "rebuild") {
-      this.reset(request.generation, request.libraryRevision, request.mode)
-    } else if (!this.state) {
-      const message = "Fog append rejected because no worker base exists."
-      this.emitError(request, message, true)
-      return { status: "rejected", snapshot: null, message }
-    } else {
-      this.state.libraryRevision = request.libraryRevision
-    }
-
-    const state = this.state!
-    const diagnostics = emptyDiagnostics(request.activities.length)
-    for (let index = 0; index < request.activities.length; index += 1) {
-      await (this.hooks.yieldToScheduler ?? (() => Promise.resolve()))()
-      if (this.cancelledGenerations.has(request.generation)) {
-        return { status: "cancelled", snapshot: null }
-      }
-
-      const activity = request.activities[index]!
-      if (state.processedActivityIds.has(activity.id)) {
-        diagnostics.processed += 1
-        this.emitProgress(request, diagnostics, "buffering")
-        continue
-      }
-      const result = bufferFogActivity(activity)
-      diagnostics.inputPoints += result.inputPointCount
-      diagnostics.outputPoints += result.outputPointCount
-      if (result.rejected) {
-        diagnostics.errors.push(
-          `${activity.id}: ${result.reason ?? "activity geometry was rejected"}`
-        )
-        this.emitError(request, diagnostics.errors.at(-1)!, false, activity.id)
-      } else {
-        state.masks.push(...result.masks)
-        state.processedActivityIds.add(activity.id)
-        diagnostics.warnings.push(
-          ...result.warnings.map(
-            (warning) => `${activity.id}: ${warning.message}`
-          )
-        )
-      }
-      diagnostics.processed += 1
-      this.emitProgress(request, diagnostics, "buffering")
-      if (
-        diagnostics.processed % this.snapshotEvery === 0 ||
-        diagnostics.processed === request.activities.length
-      ) {
-        const snapshot = this.makeSnapshot(request, diagnostics, "aggregating")
-        this.hooks.onUpdate?.(snapshot, request)
-      }
-    }
-
-    const snapshot = this.makeSnapshot(request, diagnostics, "complete")
-    this.hooks.onUpdate?.(snapshot, request)
-    this.emitProgress(request, diagnostics, "complete")
-    return { status: "complete", snapshot }
-  }
-
-  private validateRequest(request: FogRequest): string | null {
+  function validateRequest(request: FogRequest): string | null {
     if (!Number.isSafeInteger(request.generation) || request.generation < 0) {
       return "Fog generation is invalid."
     }
@@ -181,29 +122,29 @@ export class FogEngine {
       return "Fog library revision is invalid."
     }
     if (request.kind === "append") {
-      if (this.state?.generation !== request.generation) {
+      if (state?.generation !== request.generation) {
         return "Fog append rejected because its generation is stale."
       }
-      if (this.state.mode !== request.mode) {
+      if (state.mode !== request.mode) {
         return "Fog append rejected because its mode does not match the base."
       }
-      if (request.baseLibraryRevision !== this.state.libraryRevision) {
+      if (request.baseLibraryRevision !== state.libraryRevision) {
         return "Fog append rejected because its base revision does not match."
       }
-      if (request.libraryRevision < this.state.libraryRevision) {
+      if (request.libraryRevision < state.libraryRevision) {
         return "Fog append rejected because its revision is older than the base."
       }
     }
     return null
   }
 
-  private makeSnapshot(
+  function makeSnapshot(
     request: FogRequest,
     diagnostics: FogDiagnostics,
     stage: "aggregating" | "complete"
   ): FogSnapshot {
-    const state = this.state!
-    const aggregate = buildBoundedFog(state.masks, state.mode)
+    const currentState = state!
+    const aggregate = buildBoundedFog(currentState.masks, currentState.mode)
     diagnostics.featureCount = aggregate.featureCount
     diagnostics.vertexCount = aggregate.vertexCount
     const warnings = [
@@ -212,8 +153,8 @@ export class FogEngine {
     diagnostics.degraded = diagnostics.errors.length > 0 || aggregate.degraded
     return {
       generation: request.generation,
-      libraryRevision: state.libraryRevision,
-      mode: state.mode,
+      libraryRevision: currentState.libraryRevision,
+      mode: currentState.mode,
       algorithmVersion: FOG_ALGORITHM_VERSION,
       partitionSchemeVersion: FOG_PARTITION_SCHEME_VERSION,
       completeness:
@@ -231,12 +172,12 @@ export class FogEngine {
     }
   }
 
-  private emitProgress(
+  function emitProgress(
     request: FogRequest,
     diagnostics: FogDiagnostics,
     stage: Extract<FogReply, { type: "PROGRESS" }>["stage"]
   ): void {
-    this.hooks.onProgress?.({
+    hooks.onProgress?.({
       type: "PROGRESS",
       protocolVersion: FOG_PROTOCOL_VERSION,
       requestId: request.requestId,
@@ -249,13 +190,13 @@ export class FogEngine {
     })
   }
 
-  private emitError(
+  function emitError(
     request: FogRequest,
     message: string,
     fatal: boolean,
     activityId?: string
   ): void {
-    this.hooks.onError?.({
+    hooks.onError?.({
       type: "ERROR",
       protocolVersion: 1,
       requestId: request.requestId,
@@ -267,4 +208,76 @@ export class FogEngine {
       message,
     })
   }
+
+  async function process(request: FogRequest): Promise<FogEngineResult> {
+    const validation = validateRequest(request)
+    if (validation) {
+      emitError(request, validation, true)
+      return { status: "rejected", snapshot: null, message: validation }
+    }
+
+    if (request.kind === "cancel") {
+      cancel(request.generation)
+      return { status: "cancelled", snapshot: null }
+    }
+
+    if (request.kind === "rebuild") {
+      reset(request.generation, request.libraryRevision, request.mode)
+    } else if (!state) {
+      const message = "Fog append rejected because no worker base exists."
+      emitError(request, message, true)
+      return { status: "rejected", snapshot: null, message }
+    } else {
+      state.libraryRevision = request.libraryRevision
+    }
+
+    const currentState = state!
+    const diagnostics = emptyDiagnostics(request.activities.length)
+    for (let index = 0; index < request.activities.length; index += 1) {
+      await (hooks.yieldToScheduler ?? (() => Promise.resolve()))()
+      if (cancelledGenerations.has(request.generation)) {
+        return { status: "cancelled", snapshot: null }
+      }
+
+      const activity = request.activities[index]!
+      if (currentState.processedActivityIds.has(activity.id)) {
+        diagnostics.processed += 1
+        emitProgress(request, diagnostics, "buffering")
+        continue
+      }
+      const result = bufferFogActivity(activity)
+      diagnostics.inputPoints += result.inputPointCount
+      diagnostics.outputPoints += result.outputPointCount
+      if (result.rejected) {
+        diagnostics.errors.push(
+          `${activity.id}: ${result.reason ?? "activity geometry was rejected"}`
+        )
+        emitError(request, diagnostics.errors.at(-1)!, false, activity.id)
+      } else {
+        currentState.masks.push(...result.masks)
+        currentState.processedActivityIds.add(activity.id)
+        diagnostics.warnings.push(
+          ...result.warnings.map(
+            (warning) => `${activity.id}: ${warning.message}`
+          )
+        )
+      }
+      diagnostics.processed += 1
+      emitProgress(request, diagnostics, "buffering")
+      if (
+        diagnostics.processed % snapshotEvery === 0 ||
+        diagnostics.processed === request.activities.length
+      ) {
+        const snapshot = makeSnapshot(request, diagnostics, "aggregating")
+        hooks.onUpdate?.(snapshot, request)
+      }
+    }
+
+    const snapshot = makeSnapshot(request, diagnostics, "complete")
+    hooks.onUpdate?.(snapshot, request)
+    emitProgress(request, diagnostics, "complete")
+    return { status: "complete", snapshot }
+  }
+
+  return { reset, cancel, getState, process }
 }

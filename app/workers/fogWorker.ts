@@ -7,10 +7,10 @@ import {
   type FogRequest,
   type FogSnapshot,
 } from "~/lib/fog/protocol"
-import { FogEngine } from "~/lib/fog/engine"
+import { createFogEngine } from "~/lib/fog/engine"
 
 // The worker is deliberately a thin transport adapter. All mutable geometry
-// state and cancellation checkpoints live in FogEngine, which is testable
+// state and cancellation checkpoints live in the fog engine factory, which is testable
 // without constructing a Worker.
 
 const yieldChannel = new MessageChannel()
@@ -24,7 +24,7 @@ function yieldToTaskQueue(): Promise<void> {
   })
 }
 
-const engine = new FogEngine({
+const engine = createFogEngine({
   hooks: {
     yieldToScheduler: yieldToTaskQueue,
     onProgress: (progress) => self.postMessage(progress satisfies FogReply),
