@@ -202,7 +202,7 @@ export async function saveActivities(
 }
 
 // Fields added after initial release; absent in older IDB records.
-type StoredActivity = Omit<
+export type StoredActivity = Omit<
   ParsedActivity,
   "startedAtMs" | "stats" | "isPublic"
 > & {
@@ -213,6 +213,33 @@ type StoredActivity = Omit<
   }
 }
 
+/**
+ * Apply read-time defaults for records written before the current activity
+ * schema. This is intentionally non-mutating so a failed projection or a
+ * caller holding the raw IDB result cannot observe a partial migration.
+ */
+export function migrateStoredActivity(
+  activity: StoredActivity
+): ParsedActivity {
+  const startedAtMs =
+    activity.startedAtMs === undefined
+      ? (activity.pointTimestamps?.find(
+          (timestamp) => timestamp != null && isFinite(timestamp)
+        ) ?? null)
+      : activity.startedAtMs
+
+  return {
+    ...activity,
+    startedAtMs,
+    isPublic: activity.isPublic ?? false,
+    stats: {
+      ...activity.stats,
+      uniqueDistanceKm:
+        activity.stats.uniqueDistanceKm ?? activity.stats.distanceKm,
+    },
+  } as ParsedActivity
+}
+
 /** Load all persisted activities. Returns [] on any error. */
 export async function loadActivities(): Promise<ParsedActivity[]> {
   const db = await getDb()
@@ -221,25 +248,25 @@ export async function loadActivities(): Promise<ParsedActivity[]> {
     const tx = db.transaction("activities", "readonly")
     const store = tx.objectStore("activities")
     const activities = await promisifyRequest<StoredActivity[]>(store.getAll())
-    for (const activity of activities) {
-      if (activity.startedAtMs === undefined) {
-        const first = activity.pointTimestamps?.find(
-          (t) => t != null && isFinite(t)
-        )
-        activity.startedAtMs = first ?? null
-      }
-      if (activity.isPublic === undefined) {
-        activity.isPublic = false
-      }
-      if (activity.stats.uniqueDistanceKm === undefined) {
-        activity.stats.uniqueDistanceKm = activity.stats.distanceKm
-      }
-    }
-    return activities as ParsedActivity[]
+    return activities.map(migrateStoredActivity)
   } catch (err) {
     console.warn("[storage] loadActivities failed:", err)
     return []
   }
+}
+
+/**
+ * Pure guard used immediately before writing a derived projection. A missing
+ * expected revision means the caller opted out of stale-write protection.
+ */
+export function isUniqueDistanceRevisionCurrent(
+  expectedLibraryRevision: number | undefined,
+  actualLibraryRevision: number | null
+): boolean {
+  return (
+    expectedLibraryRevision === undefined ||
+    expectedLibraryRevision === actualLibraryRevision
+  )
 }
 
 export async function loadUniqueDistanceState(): Promise<UniqueDistanceState | null> {
@@ -293,7 +320,10 @@ export async function saveUniqueDistances(
         : null
     if (
       options.libraryRevision !== undefined &&
-      actualLibraryRevision !== options.libraryRevision
+      !isUniqueDistanceRevisionCurrent(
+        options.libraryRevision,
+        actualLibraryRevision
+      )
     ) {
       tx.abort()
       return {
