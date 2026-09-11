@@ -66,7 +66,7 @@ function useShareMapSnapshot(
     null
   )
   const [mapActivityPointsPerActivity, setMapActivityPointsPerActivity] =
-    useState<Array<{ x: number; y: number }[]> | null>(null)
+    useState<Array<Array<{ x: number; y: number }[]>> | null>(null)
   const [isMapReady, setIsMapReady] = useState(false)
 
   useEffect(() => {
@@ -104,7 +104,7 @@ function useShareMapSnapshot(
   }, [backgroundMode, isSingle, activityId])
 
   const handleMapReady = useCallback(
-    (baseMap: ImageBitmap, pts: Array<{ x: number; y: number }[]>) => {
+    (baseMap: ImageBitmap, pts: Array<Array<{ x: number; y: number }[]>>) => {
       if (isSingle && activityId) {
         const activityPoints = pts[0] ?? []
         if (
