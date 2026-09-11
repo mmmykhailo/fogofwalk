@@ -4,7 +4,7 @@ import type {
   ActivityUploadPayload,
   ManifestPage,
 } from "~shared/api"
-import { ActivityLibrary } from "~/lib/activities/library"
+import { createActivityLibrary } from "~/lib/activities/library"
 import { createMemoryActivityLibraryRepository } from "~/lib/activities/repository"
 import type { SyncState } from "~/lib/storage"
 import type { ParsedActivity } from "~/types/activities"
@@ -128,7 +128,7 @@ async function createExecutor(
     state?: SyncState
   } = {}
 ) {
-  const library = new ActivityLibrary(
+  const library = createActivityLibrary(
     createMemoryActivityLibraryRepository(initial)
   )
   const repository = new MemorySyncRepository({ now: options.now })

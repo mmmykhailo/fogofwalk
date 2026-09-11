@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import type { ParsedActivity } from "~/types/activities"
-import { ActivityLibrary } from "./library"
+import { createActivityLibrary } from "./library"
 import {
   createActivityStorageError,
   isActivityLibraryConflictError,
@@ -68,7 +68,7 @@ describe("activity library command repository", () => {
 
   test("publishes one revisioned change after an atomic command", async () => {
     const repository = createMemoryActivityLibraryRepository()
-    const library = new ActivityLibrary(repository)
+    const library = createActivityLibrary(repository)
     const events: number[] = []
     library.subscribe((snapshot, change) => {
       events.push(snapshot.revision)
@@ -91,7 +91,7 @@ describe("activity library command repository", () => {
 
   test("commits a library mutation and its outbox effect together", async () => {
     const repository = createMemoryActivityLibraryRepository()
-    const library = new ActivityLibrary(repository)
+    const library = createActivityLibrary(repository)
 
     const result = await library.dispatch(
       {
@@ -127,7 +127,7 @@ describe("activity library command repository", () => {
       [activity("first")],
       1
     )
-    const library = new ActivityLibrary(repository)
+    const library = createActivityLibrary(repository)
     await library.initialize()
     // Simulate another tab committing after this tab loaded its snapshot.
     await repository.commit(
@@ -161,7 +161,7 @@ describe("activity library command repository", () => {
         retryable: false,
       })
     )
-    const library = new ActivityLibrary(repository)
+    const library = createActivityLibrary(repository)
 
     const failure = await library
       .dispatch({
@@ -195,7 +195,7 @@ describe("activity library command repository", () => {
 
   test("applies remote metadata by hash or id without needless revisions", async () => {
     const repository = createMemoryActivityLibraryRepository([activity("local")])
-    const library = new ActivityLibrary(repository)
+    const library = createActivityLibrary(repository)
     await library.initialize()
 
     const byHash = await library.dispatch({
@@ -225,12 +225,12 @@ describe("activity library command repository", () => {
 
   test("refresh publishes a newer repository snapshot to listeners", async () => {
     const repository = createMemoryActivityLibraryRepository()
-    const library = new ActivityLibrary(repository)
+    const library = createActivityLibrary(repository)
     await library.initialize()
     const seen: number[] = []
     library.subscribe((snapshot) => seen.push(snapshot.revision))
 
-    const otherTab = new ActivityLibrary(repository)
+    const otherTab = createActivityLibrary(repository)
     await otherTab.dispatch({
       type: "import",
       operationId: "other-tab",

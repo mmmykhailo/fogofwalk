@@ -11,7 +11,7 @@ import { emptyBoundedFog } from "~/lib/fog/engine/aggregate"
 import type { FogRenderData } from "~/lib/fog/protocol"
 import { createFogCoordinator } from "~/lib/fog/coordinator"
 import { pathsForActivity } from "~shared/activityContract"
-import { ActivityLibrary } from "~/lib/activities/library"
+import { createActivityLibrary } from "~/lib/activities/library"
 import type {
   LibraryChange,
   LibrarySnapshot,
@@ -239,7 +239,7 @@ function updateFogStatus(
 }
 
 /** Canonical activity ownership lives in ActivityLibrary; this is its map projection. */
-export const activityLibrary = new ActivityLibrary()
+export const activityLibrary = createActivityLibrary()
 let activityLibrarySubscription: (() => void) | null = null
 
 /** Revision-keyed derived-stat projection; canonical activity commits do not wait for it. */

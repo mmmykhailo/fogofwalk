@@ -87,95 +87,133 @@ function safeNavigatorLocks(): LockManager | null {
  * for other tabs. A conflict retries the same command against the newly loaded
  * revision, so concurrent imports form a union instead of overwriting a tab.
  */
-export class ActivityLibrary {
-  private readonly repository: ActivityLibraryRepository
-  private snapshot: LibrarySnapshot | null = null
-  private queue: Promise<unknown> = Promise.resolve()
-  private readonly listeners = new Set<LibraryListener>()
-  private channel: BroadcastChannel | null = null
-  private refreshPromise: Promise<void> | null = null
+export interface ActivityLibrary {
+  initialize(): Promise<LibrarySnapshot>
+  getSnapshot(): LibrarySnapshot
+  subscribe(listener: LibraryListener): () => void
+  dispatch(
+    command: LibraryCommand,
+    options?: ActivityLibraryCommitOptions
+  ): Promise<LibraryCommit>
+  refresh(): Promise<void>
+  close(): void
+}
 
-  constructor(
-    repository: ActivityLibraryRepository =
-      createIndexedDbActivityLibraryRepository()
-  ) {
-    this.repository = repository
-    if (
-      typeof window !== "undefined" &&
-      typeof BroadcastChannel !== "undefined"
-    ) {
-      this.channel = new BroadcastChannel(CHANNEL_NAME)
-      this.channel.onmessage = (event: MessageEvent<unknown>) => {
-        const data = event.data
-        if (
-          !data ||
-          typeof data !== "object" ||
-          typeof (data as { revision?: unknown }).revision !== "number"
-        ) {
-          return
+export function createActivityLibrary(
+  repository: ActivityLibraryRepository =
+    createIndexedDbActivityLibraryRepository()
+): ActivityLibrary {
+  let snapshot: LibrarySnapshot | null = null
+  let queue: Promise<unknown> = Promise.resolve()
+  const listeners = new Set<LibraryListener>()
+  let channel: BroadcastChannel | null = null
+  let refreshPromise: Promise<void> | null = null
+
+  async function refresh(): Promise<void> {
+    if (refreshPromise) return refreshPromise
+    refreshPromise = enqueue(async () => {
+      const next = cloneSnapshot(await repository.load())
+      if (!snapshot || next.revision > snapshot.revision) {
+        const previous = snapshot
+        snapshot = next
+        if (previous) {
+          const change = changeBetween(previous, next)
+          for (const listener of listeners) {
+            listener(cloneSnapshot(next), cloneChange(change))
+          }
         }
-        const revision = (data as { revision: number }).revision
-        if ((this.snapshot?.revision ?? -1) < revision) void this.refresh()
       }
+    }).finally(() => {
+      refreshPromise = null
+    })
+    return refreshPromise
+  }
+
+  if (
+    typeof window !== "undefined" &&
+    typeof BroadcastChannel !== "undefined"
+  ) {
+    channel = new BroadcastChannel(CHANNEL_NAME)
+    channel.onmessage = (event: MessageEvent<unknown>) => {
+      const data = event.data
+      if (
+        !data ||
+        typeof data !== "object" ||
+        typeof (data as { revision?: unknown }).revision !== "number"
+      ) {
+        return
+      }
+      const revision = (data as { revision: number }).revision
+      if ((snapshot?.revision ?? -1) < revision) void refresh()
     }
   }
 
-  async initialize(): Promise<LibrarySnapshot> {
-    return this.enqueue(async () => {
-      if (!this.snapshot)
-        this.snapshot = cloneSnapshot(await this.repository.load())
-      return cloneSnapshot(this.snapshot)
+  function enqueue<T>(operation: () => Promise<T>): Promise<T> {
+    const result = queue.then(operation, operation)
+    queue = result.then(
+      () => undefined,
+      () => undefined
+    )
+    return result
+  }
+
+  async function withWriteLock<T>(operation: () => Promise<T>): Promise<T> {
+    const locks = safeNavigatorLocks()
+    if (!locks) return operation()
+    return locks.request(LOCK_NAME, { mode: "exclusive" }, operation)
+  }
+
+  async function initialize(): Promise<LibrarySnapshot> {
+    return enqueue(async () => {
+      if (!snapshot) snapshot = cloneSnapshot(await repository.load())
+      return cloneSnapshot(snapshot)
     })
   }
 
-  getSnapshot(): LibrarySnapshot {
-    if (!this.snapshot) {
+  function getSnapshot(): LibrarySnapshot {
+    if (!snapshot) {
       throw createActivityStorageError(
         "unavailable",
         "The activity library has not finished loading."
       )
     }
-    return cloneSnapshot(this.snapshot)
+    return cloneSnapshot(snapshot)
   }
 
-  subscribe(listener: LibraryListener): () => void {
-    this.listeners.add(listener)
-    return () => this.listeners.delete(listener)
+  function subscribe(listener: LibraryListener): () => void {
+    listeners.add(listener)
+    return () => listeners.delete(listener)
   }
 
-  async dispatch(
+  async function dispatch(
     command: LibraryCommand,
     options: ActivityLibraryCommitOptions = {}
   ): Promise<LibraryCommit> {
-    return this.enqueue(async () => {
-      if (!this.snapshot)
-        this.snapshot = cloneSnapshot(await this.repository.load())
+    return enqueue(async () => {
+      if (!snapshot) snapshot = cloneSnapshot(await repository.load())
 
       let attempt = 0
       while (attempt < 2) {
         attempt++
-        const base = this.snapshot
-        const commit = await this.withWriteLock(() =>
-          this.repository.commit(command, base.revision, options)
+        const base = snapshot!
+        const commit = await withWriteLock(() =>
+          repository.commit(command, base.revision, options)
         ).catch(async (error: unknown) => {
-          if (
-            !isActivityLibraryConflictError(error) ||
-            attempt >= 2
-          ) {
+          if (!isActivityLibraryConflictError(error) || attempt >= 2) {
             throw error
           }
-          this.snapshot = cloneSnapshot(await this.repository.load())
+          snapshot = cloneSnapshot(await repository.load())
           return null
         })
         if (!commit) continue
 
-        this.snapshot = cloneSnapshot(commit.snapshot)
+        snapshot = cloneSnapshot(commit.snapshot)
         // `change` is already detached by the repository. The local object is
         // kept separate from the returned commit so listeners cannot mutate it.
-        for (const listener of this.listeners) {
+        for (const listener of listeners) {
           listener(cloneSnapshot(commit.snapshot), cloneChange(commit.change))
         }
-        this.channel?.postMessage({ revision: commit.snapshot.revision })
+        channel?.postMessage({ revision: commit.snapshot.revision })
         return {
           snapshot: cloneSnapshot(commit.snapshot),
           change: cloneChange(commit.change),
@@ -185,50 +223,18 @@ export class ActivityLibrary {
     })
   }
 
-  async refresh(): Promise<void> {
-    if (this.refreshPromise) return this.refreshPromise
-    this.refreshPromise = this.enqueue(async () => {
-      const next = cloneSnapshot(await this.repository.load())
-      if (!this.snapshot || next.revision > this.snapshot.revision) {
-        const previous = this.snapshot
-        this.snapshot = next
-        if (previous) {
-          const change = changeBetween(previous, next)
-          for (const listener of this.listeners) {
-            listener(cloneSnapshot(next), cloneChange(change))
-          }
-        }
-      }
-    }).finally(() => {
-      this.refreshPromise = null
-    })
-    return this.refreshPromise
+  function close(): void {
+    channel?.close()
+    channel = null
+    listeners.clear()
   }
 
-  close(): void {
-    this.channel?.close()
-    this.channel = null
-    this.listeners.clear()
+  return {
+    initialize,
+    getSnapshot,
+    subscribe,
+    dispatch,
+    refresh,
+    close,
   }
-
-  private enqueue<T>(operation: () => Promise<T>): Promise<T> {
-    const result = this.queue.then(operation, operation)
-    this.queue = result.then(
-      () => undefined,
-      () => undefined
-    )
-    return result
-  }
-
-  private async withWriteLock<T>(operation: () => Promise<T>): Promise<T> {
-    const locks = safeNavigatorLocks()
-    if (!locks) return operation()
-    return locks.request(LOCK_NAME, { mode: "exclusive" }, operation)
-  }
-}
-
-export function createActivityLibrary(
-  repository?: ActivityLibraryRepository
-): ActivityLibrary {
-  return new ActivityLibrary(repository)
 }
