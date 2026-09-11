@@ -13,11 +13,10 @@ untouched.
 - Branch: `refactor/fog-processing`
 - Started: 2026-09-11
 - Current phase: Phase 1/2 — contracts and activity-library ownership
-- Last completed commit: `15eca51 add path-aware activity contract`
-- Current working slices: path-aware parser/render integration and bounded B2
-  fog input sanitizer (both ready for their own commits)
-- Next action: commit the path-aware adapter/render slice, then commit B2 and
-  integrate the sanitizer into the callable fog engine
+- Last completed commit: `e977389 preserve disconnected activity paths`
+- Current working slice: bounded B2 fog input sanitizer (ready to commit)
+- Next action: commit B2, then integrate the sanitizer into the callable fog
+  engine and add geometry buffering/validation behind the same boundary
 
 ## A1 activity contract slice
 
@@ -44,7 +43,7 @@ untouched.
   per-path/total technical point budgets prevent unbounded engine input.
 - Input simplification uses `ACTIVITY_SIMPLIFY_TOLERANCE` only; emission
   simplification remains a separate downstream concern.
-- Focused tests pass; this working-tree slice is intentionally uncommitted.
+- Focused tests pass; this working-tree slice is ready to commit.
 
 ## Path-aware adapter and render slice
 
@@ -56,7 +55,7 @@ untouched.
   the transitional fog worker buffers each path independently.
 - Legacy flat coordinates remain readable while new parser output carries
   path-aligned timestamps and a compatibility alias.
-- Focused tests and client typecheck pass; this slice is ready to commit.
+- Focused tests and client typecheck pass; this slice is committed independently.
 
 ## Commit log
 
@@ -66,8 +65,8 @@ untouched.
 | `fa8e423` | Add the continuation tracker                                   | Client baseline recorded                                         |
 | `7f6c149` | Add revisioned activity-library repository/service foundations | 5 focused tests pass; client typecheck passes                    |
 | `15eca51` | Add A1 path-aware activity contract                            | Shared/client/server focused tests pass; server typecheck passes |
-| pending   | Preserve disconnected paths through adapters, stats, map, and worker    | 21 focused tests pass; client typecheck passes                   |
-| pending   | Add B2 fog input sanitizer                                     | 10 focused tests pass; full typecheck has unrelated baseline errors |
+| `e977389` | Preserve disconnected paths through adapters, stats, map, and worker | 21 focused tests pass; client typecheck passes                 |
+| pending   | Add B2 fog input sanitizer                                     | 10 focused tests pass; client typecheck passes                    |
 
 ## Phase checklist
 
