@@ -18,7 +18,7 @@ Or from the repo root: `bun run test:e2e`.
 
 ## What is covered
 
-Seven specs, one per area of sync behaviour:
+Nine specs covering local, map, profile, and sync behaviour:
 
 | Spec                        | Covers                                                                                                                      |
 | --------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
@@ -29,6 +29,8 @@ Seven specs, one per area of sync behaviour:
 | `serverless.spec.ts`        | the `VITE_API_URL`-unset build, fog-cache/worker convergence, and fog updates during map-style changes                      |
 | `rate-limit.spec.ts`        | a 429 upload is retried inside the same sync run, the retry is bounded, and both account surfaces count an upload hold down |
 | `sync-cancellation.spec.ts` | sign-out and account switching abort an active run without uploading or applying the previous account's effects             |
+| `public-profile.spec.ts`    | public activity visibility, profile rendering, and publishing changes                                                       |
+| `saved-points.spec.ts`      | saved-point editing controls and the owner's public saved-point link                                                        |
 
 ## How the rig fits together
 
