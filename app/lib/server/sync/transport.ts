@@ -9,6 +9,7 @@ import type { ParsedActivity } from "~/types/activities"
 import { computeContentHashCandidates } from "~/lib/activityHash"
 import { flattenActivityPaths } from "~shared/activityContract"
 import { apiRaw, apiSend } from "../apiClient"
+import { throwIfSyncAborted } from "./cancellation"
 
 const MAX_MANIFEST_ROWS = SYNC_PAGE_SIZE * 4
 const MAX_MANIFEST_BYTES = 4 * 1024 * 1024
@@ -289,8 +290,10 @@ function payloadAsParsedActivity(
 
 export async function validateActivityPayloadHash(
   contentHash: string,
-  payload: ActivityUploadPayload
+  payload: ActivityUploadPayload,
+  signal?: AbortSignal
 ): Promise<void> {
+  throwIfSyncAborted(signal)
   if (!isHash(contentHash)) {
     throw createSyncTransportError(
       "invalid-payload",
@@ -300,6 +303,7 @@ export async function validateActivityPayloadHash(
   const candidates = await computeContentHashCandidates(
     payloadAsParsedActivity(payload)
   )
+  throwIfSyncAborted(signal)
   if (!candidates.includes(contentHash)) {
     throw createSyncTransportError(
       "invalid-payload",
@@ -335,12 +339,16 @@ async function readJsonResponse(
 }
 
 export interface SyncTransport {
-  fetchActivityManifest(since: number): Promise<ManifestPage>
+  fetchActivityManifest(
+    since: number,
+    signal?: AbortSignal
+  ): Promise<ManifestPage>
   downloadActivity(
-    contentHash: string
+    contentHash: string,
+    signal?: AbortSignal
   ): Promise<{ meta?: ActivityMeta; payload: ActivityUploadPayload }>
-  uploadActivity(activity: ParsedActivity): Promise<void>
-  deleteActivity(contentHash: string): Promise<number>
+  uploadActivity(activity: ParsedActivity, signal?: AbortSignal): Promise<void>
+  deleteActivity(contentHash: string, signal?: AbortSignal): Promise<number>
 }
 
 async function gzipJson(value: unknown): Promise<Blob> {
@@ -359,41 +367,50 @@ async function gzipJson(value: unknown): Promise<Blob> {
 
 export function createApiSyncTransport(): SyncTransport {
   return {
-    async fetchActivityManifest(since) {
+    async fetchActivityManifest(since, signal) {
+      throwIfSyncAborted(signal)
       const response = await apiRaw(
         "GET",
-        `/api/activities/manifest?since=${encodeURIComponent(String(since))}`
+        `/api/activities/manifest?since=${encodeURIComponent(String(since))}`,
+        { signal }
       )
+      throwIfSyncAborted(signal)
       const value = await readJsonResponse(
         response,
         MAX_MANIFEST_BYTES,
         "invalid-manifest"
       )
+      throwIfSyncAborted(signal)
       return parseManifestPage(value)
     },
 
-    async downloadActivity(contentHash) {
+    async downloadActivity(contentHash, signal) {
+      throwIfSyncAborted(signal)
       const response = await apiRaw(
         "GET",
-        `/api/activities/${encodeURIComponent(contentHash)}`
+        `/api/activities/${encodeURIComponent(contentHash)}`,
+        { signal }
       )
+      throwIfSyncAborted(signal)
       const value = await readJsonResponse(
         response,
         MAX_PAYLOAD_BYTES,
         "invalid-payload"
       )
       const payload = parseActivityPayload(value)
-      await validateActivityPayloadHash(contentHash, payload)
+      await validateActivityPayloadHash(contentHash, payload, signal)
       return { payload }
     },
 
-    async uploadActivity(activity) {
+    async uploadActivity(activity, signal) {
+      throwIfSyncAborted(signal)
       const { id: _id, ...rest } = activity
       const payload: ActivityUploadPayload = {
         ...rest,
         stats: { ...activity.stats, uniqueDistanceKm: 0 },
       }
       const body = await gzipJson(payload)
+      throwIfSyncAborted(signal)
       if (body.size > MAX_ACTIVITY_BYTES) {
         throw createSyncTransportError(
           "payload-too-large",
@@ -406,14 +423,19 @@ export function createApiSyncTransport(): SyncTransport {
           "Content-Type": "application/json",
           "Content-Encoding": "gzip",
         },
+        signal,
       })
+      throwIfSyncAborted(signal)
     },
 
-    async deleteActivity(contentHash) {
+    async deleteActivity(contentHash, signal) {
+      throwIfSyncAborted(signal)
       const response = await apiRaw(
         "DELETE",
-        `/api/activities/${encodeURIComponent(contentHash)}`
+        `/api/activities/${encodeURIComponent(contentHash)}`,
+        { signal }
       )
+      throwIfSyncAborted(signal)
       const value = await readJsonResponse(
         response,
         64 * 1024,
@@ -429,6 +451,7 @@ export function createApiSyncTransport(): SyncTransport {
           "The server returned an invalid deletion response."
         )
       }
+      throwIfSyncAborted(signal)
       return value.deletedAt
     },
   }

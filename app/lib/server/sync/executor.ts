@@ -33,6 +33,10 @@ import {
   isSyncTransportError,
   type SyncTransport,
 } from "./transport"
+import {
+  isSyncCancellationError,
+  throwIfSyncAborted,
+} from "./cancellation"
 
 const DEFAULT_LEASE_MS = 60_000
 const DEFAULT_MAX_PAGES = 10_000
@@ -67,6 +71,7 @@ export interface SyncExecutorOptions {
   owner?: string
   leaseMs?: number
   maxPages?: number
+  signal?: AbortSignal
   onProgress?: (progress: SyncExecutorProgress) => void
 }
 
@@ -541,11 +546,15 @@ export function createActivitySyncExecutor(
   const leaseMs = options.leaseMs ?? DEFAULT_LEASE_MS
   const maxPages = options.maxPages ?? DEFAULT_MAX_PAGES
   const onProgress = options.onProgress
+  const signal = options.signal
 
   async function run(): Promise<SyncExecutorResult> {
+    throwIfSyncAborted(signal)
     await options.library.initialize()
+    throwIfSyncAborted(signal)
     let state =
       (await options.repository.loadState()) ?? clone(EMPTY_SYNC_STATE)
+    throwIfSyncAborted(signal)
     let pages = 0
     let downloadedCount = 0
     let updatedCount = 0
@@ -554,6 +563,7 @@ export function createActivitySyncExecutor(
     const failures: SyncEffectFailure[] = []
 
     const localResult = await executeLocalOutbox()
+    throwIfSyncAborted(signal)
     if (
       localResult.completions.length > 0 ||
       localResult.appliedTombstones.length > 0 ||
@@ -564,6 +574,7 @@ export function createActivitySyncExecutor(
         state: applyEffectState(state, localResult),
         complete: localResult.completions,
       })
+      throwIfSyncAborted(signal)
       if (!committed) {
         throw new Error(
           "The sync lease changed before local effects were committed."
@@ -574,12 +585,17 @@ export function createActivitySyncExecutor(
     failures.push(...localResult.failures)
 
     for (;;) {
+      throwIfSyncAborted(signal)
       if (pages >= maxPages) {
         throw createSyncExecutorProtocolError(
           "The activity manifest exceeded the safe page limit."
         )
       }
-      const page = await options.transport.fetchActivityManifest(state.cursor)
+      const page = await options.transport.fetchActivityManifest(
+        state.cursor,
+        signal
+      )
+      throwIfSyncAborted(signal)
       const plan = planActivitySync({
         localActivities: localMetadata(options.library.getSnapshot()),
         state,
@@ -593,17 +609,20 @@ export function createActivitySyncExecutor(
         plan,
         new Set(localResult.addedServerHashes)
       )
+      throwIfSyncAborted(signal)
       const required = requiredIntentIds(plan)
       const requiredFailed = [...required].some(
         (intentId) => !pageResult.completedIntentIds.has(intentId)
       )
 
       if (pageResult.changes.length > 0) {
+        throwIfSyncAborted(signal)
         const commit = await options.library.dispatch({
           type: "applyRemote",
           operationId: createUuid(),
           changes: pageResult.changes,
         })
+        throwIfSyncAborted(signal)
         downloadedCount += commit.change.added.length
         updatedCount += commit.change.updated.length
         addedActivities.push(...commit.change.added)
@@ -623,6 +642,7 @@ export function createActivitySyncExecutor(
         state: stateWithEffects,
         complete: pageResult.completions,
       })
+      throwIfSyncAborted(signal)
       if (!committed) {
         throw new Error(
           "The sync lease changed before its state was committed."
@@ -660,6 +680,7 @@ export function createActivitySyncExecutor(
     libraryRevision: number,
     alreadyUploaded: ReadonlySet<string> = new Set()
   ): Promise<Map<string, SyncOutboxItem>> {
+    throwIfSyncAborted(signal)
     const existing = new Map(
       (await options.repository.loadOutbox()).map((item) => [
         item.dedupeKey,
@@ -668,6 +689,7 @@ export function createActivitySyncExecutor(
     )
     const items = new Map<string, SyncOutboxItem>()
     for (const intent of plan.intents) {
+      throwIfSyncAborted(signal)
       if (
         intent.type === "upload" &&
         alreadyUploaded.has(intent.contentHash)
@@ -686,6 +708,7 @@ export function createActivitySyncExecutor(
           operation,
           payload,
         } satisfies SyncOutboxItemInput))
+      throwIfSyncAborted(signal)
       items.set(intent.intentId, item)
     }
     return items
@@ -695,6 +718,7 @@ export function createActivitySyncExecutor(
     plan: SyncPlan,
     alreadyUploaded: ReadonlySet<string> = new Set()
   ): Promise<ExecutedPage> {
+    throwIfSyncAborted(signal)
     const libraryRevision = options.library.getSnapshot().revision
     const items = await enqueueEffects(
       plan,
@@ -707,6 +731,7 @@ export function createActivitySyncExecutor(
     const work: EffectWork[] = []
     const completedWithoutWork: string[] = []
     for (const intent of effectIntents) {
+      throwIfSyncAborted(signal)
       const item = items.get(intent.intentId)
       const operation = effectOperation(intent)
       if (intent.type === "upload" && alreadyUploaded.has(intent.contentHash)) {
@@ -726,8 +751,10 @@ export function createActivitySyncExecutor(
   }
 
   async function executeLocalOutbox(): Promise<ExecutedPage> {
+    throwIfSyncAborted(signal)
     const work: EffectWork[] = []
     for (const item of await options.repository.loadOutbox()) {
+      throwIfSyncAborted(signal)
       if (!hasLocalActivityEffectSource(item.payload)) continue
       const payload = item.payload as Partial<
         LocalActivityUploadPayload | LocalActivityDeletePayload
@@ -750,6 +777,7 @@ export function createActivitySyncExecutor(
     work: readonly EffectWork[],
     completedWithoutWork: readonly string[] = []
   ): Promise<ExecutedPage> {
+    throwIfSyncAborted(signal)
     const completedIntentIds = new Set(completedWithoutWork)
     const completions: { id: string; leaseId: string }[] = []
     const changes: RemoteChange[] = []
@@ -759,6 +787,7 @@ export function createActivitySyncExecutor(
     const failures: SyncEffectFailure[] = []
 
     for (const entry of work) {
+      throwIfSyncAborted(signal)
       const { item, intentId, operation, contentHash } = entry
       if (item.status === "complete") {
         completedIntentIds.add(intentId)
@@ -820,6 +849,7 @@ export function createActivitySyncExecutor(
 
       try {
         const result = await executeEffect(claimed)
+        throwIfSyncAborted(signal)
         if (result.change) changes.push(result.change)
         if (result.appliedTombstone)
           appliedTombstones.push(result.appliedTombstone)
@@ -830,6 +860,10 @@ export function createActivitySyncExecutor(
         completedIntentIds.add(intentId)
         completions.push({ id: claimed.id, leaseId: claimed.leaseId })
       } catch (error) {
+        if (signal?.aborted || isSyncCancellationError(error)) {
+          throwIfSyncAborted(signal)
+          throw error
+        }
         const retryable = retryableError(error)
         const failure: SyncEffectFailure = {
           intentId,
@@ -869,6 +903,7 @@ export function createActivitySyncExecutor(
   }
 
   async function executeEffect(item: SyncOutboxItem): Promise<EffectExecution> {
+    throwIfSyncAborted(signal)
     const payload = intentFromPayload(item.payload)
     const snapshot = options.library.getSnapshot()
     switch (payload.kind) {
@@ -885,7 +920,7 @@ export function createActivitySyncExecutor(
           )
         }
         try {
-          await options.transport.uploadActivity(activity)
+          await options.transport.uploadActivity(activity, signal)
         } catch (error) {
           if (isApiRequestError(error) && error.status === 409) {
             return {
@@ -899,8 +934,10 @@ export function createActivitySyncExecutor(
       }
       case "download": {
         const result = await options.transport.downloadActivity(
-          payload.contentHash
+          payload.contentHash,
+          signal
         )
+        throwIfSyncAborted(signal)
         const local = activityFor(snapshot, undefined, payload.contentHash)
         const coordinates =
           result.payload.coordinates ??
@@ -945,8 +982,10 @@ export function createActivitySyncExecutor(
         }
       case "local-delete": {
         const deletedAt = await options.transport.deleteActivity(
-          payload.contentHash
+          payload.contentHash,
+          signal
         )
+        throwIfSyncAborted(signal)
         return {
           change: null,
           appliedTombstone: {

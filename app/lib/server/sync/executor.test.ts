@@ -17,6 +17,7 @@ import {
   createSyncTransportError,
   type SyncTransport,
 } from "./transport"
+import { isSyncCancellationError } from "./cancellation"
 import {
   createActivityDeleteOutboxItem,
   createActivityUploadOutboxItem,
@@ -132,6 +133,7 @@ async function createExecutor(
     now?: () => number
     random?: () => number
     state?: SyncState
+    signal?: AbortSignal
   } = {}
 ) {
   const library = createActivityLibrary(
@@ -146,6 +148,7 @@ async function createExecutor(
     owner: "test-executor",
     random: options.random ?? (() => 0),
     now: options.now,
+    signal: options.signal,
   })
   return { executor, library, repository }
 }
@@ -471,5 +474,78 @@ describe("ActivitySyncExecutor", () => {
     expect(isSyncExecutorProtocolError(failure)).toBe(true)
     expect(await repository.loadState()).toBeNull()
     expect(await repository.loadOutbox()).toEqual([])
+  })
+
+  test("does not start work when the run is already cancelled", async () => {
+    const controller = new AbortController()
+    controller.abort()
+    let manifestRequests = 0
+    const transport: SyncTransport = {
+      ...transportFor(
+        new Map([
+          [0, { activities: [], deletions: [], cursor: 1, hasMore: false }],
+        ])
+      ),
+      async fetchActivityManifest() {
+        manifestRequests++
+        return { activities: [], deletions: [], cursor: 1, hasMore: false }
+      },
+    }
+    const { executor, repository } = await createExecutor([], transport, {
+      signal: controller.signal,
+    })
+
+    const error = await executor.run().catch((value: unknown) => value)
+
+    expect(isSyncCancellationError(error)).toBe(true)
+    expect(manifestRequests).toBe(0)
+    expect(await repository.loadOutbox()).toEqual([])
+  })
+
+  test("leaves a claimed effect leased when cancellation interrupts its request", async () => {
+    const controller = new AbortController()
+    let resolveStarted!: () => void
+    const started = new Promise<void>((resolve) => {
+      resolveStarted = resolve
+    })
+    const transport = transportFor(
+      new Map([
+        [0, { activities: [], deletions: [], cursor: 1, hasMore: false }],
+      ]),
+      {
+        upload: async () => {
+          resolveStarted()
+          await new Promise<never>((_resolve, reject) => {
+            controller.signal.addEventListener(
+              "abort",
+              () => reject(controller.signal.reason),
+              { once: true }
+            )
+          })
+        },
+      }
+    )
+    const local = activity("local-a", HASH_A)
+    const { executor, repository } = await createExecutor([local], transport, {
+      signal: controller.signal,
+    })
+    await repository.enqueueOutbox(
+      createActivityUploadOutboxItem(local, "import-1", 1)!
+    )
+
+    const run = executor.run()
+    await started
+    controller.abort()
+    const error = await run.catch((value: unknown) => value)
+
+    expect(isSyncCancellationError(error)).toBe(true)
+    expect(await repository.loadOutbox()).toMatchObject([
+      {
+        operation: "upload",
+        status: "in-flight",
+        attempts: 1,
+      },
+    ])
+    expect((await repository.loadOutbox())[0]?.lastFailure).toBeUndefined()
   })
 })
