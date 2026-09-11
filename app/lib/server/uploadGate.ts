@@ -21,6 +21,7 @@ import {
   UPLOAD_RATE_CLIENT_BUDGET,
   UPLOAD_RATE_WINDOW_MS,
 } from "~shared/constants"
+import { throwIfSyncAborted } from "./sync/cancellation"
 
 declare global {
   interface Window {
@@ -81,7 +82,29 @@ const sent: number[] = []
 /** Set by a 429: every worker holds off until this passes. */
 let penaltyUntil = 0
 
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const cleanup = () => {
+      if (timer !== undefined) clearTimeout(timer)
+      signal?.removeEventListener("abort", onAbort)
+    }
+    const onAbort = () => {
+      cleanup()
+      try {
+        throwIfSyncAborted(signal)
+      } catch (error) {
+        reject(error)
+      }
+    }
+    timer = setTimeout(() => {
+      cleanup()
+      resolve()
+    }, Math.max(0, ms))
+    if (signal?.aborted) onAbort()
+    else signal?.addEventListener("abort", onAbort, { once: true })
+  })
+}
 
 // ─── Published hold, for the account surfaces ─────────────────────────────────
 
@@ -120,13 +143,14 @@ function announceHold(resumeAt: number): void {
  * The timestamp is pushed synchronously before any await, so the concurrent
  * pool workers cannot both see the same free slot.
  */
-export async function acquireUploadSlot(): Promise<void> {
+export async function acquireUploadSlot(signal?: AbortSignal): Promise<void> {
   for (;;) {
+    throwIfSyncAborted(signal)
     const now = Date.now()
 
     if (now < penaltyUntil) {
       announceHold(penaltyUntil)
-      await sleep(penaltyUntil - now)
+      await sleep(penaltyUntil - now, signal)
       continue
     }
 
@@ -144,7 +168,7 @@ export async function acquireUploadSlot(): Promise<void> {
     // countdown and a minute of "Syncing 108 of 195…" with nothing moving.
     const resumeAt = sent[0] + clientUploadRateWindowMs
     announceHold(resumeAt)
-    await sleep(resumeAt - now + WAKE_MARGIN_MS)
+    await sleep(resumeAt - now + WAKE_MARGIN_MS, signal)
   }
 }
 

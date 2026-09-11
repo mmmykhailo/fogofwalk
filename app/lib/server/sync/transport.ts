@@ -9,8 +9,14 @@ import { MAX_ACTIVITY_BYTES, SYNC_PAGE_SIZE } from "~shared/constants"
 import type { ParsedActivity } from "~/types/activities"
 import { computeContentHashCandidates } from "~/lib/activityHash"
 import { flattenActivityPaths } from "~shared/activityContract"
-import { apiRaw, apiSend } from "../apiClient"
+import { apiRaw, apiSend, isApiRequestError } from "../apiClient"
 import { throwIfSyncAborted } from "./cancellation"
+import {
+  acquireUploadSlot,
+  fallbackBackoffMs,
+  MAX_UPLOAD_RETRIES,
+  penalizeUploads,
+} from "../uploadGate"
 
 const MAX_MANIFEST_ROWS = SYNC_PAGE_SIZE * 4
 const MAX_MANIFEST_BYTES = 4 * 1024 * 1024
@@ -453,15 +459,31 @@ export function createApiSyncTransport(): SyncTransport {
           "That activity is too large to upload."
         )
       }
-      await apiSend("PUT", `/api/activities/${activity.contentHash}`, {
-        rawBody: body,
-        headers: {
-          "Content-Type": "application/json",
-          "Content-Encoding": "gzip",
-        },
-        signal,
-      })
-      throwIfSyncAborted(signal)
+      for (let attempt = 0; ; attempt++) {
+        await acquireUploadSlot(signal)
+        try {
+          await apiSend("PUT", `/api/activities/${activity.contentHash}`, {
+            rawBody: body,
+            headers: {
+              "Content-Type": "application/json",
+              "Content-Encoding": "gzip",
+            },
+            signal,
+          })
+          return
+        } catch (error) {
+          if (isApiRequestError(error) && error.status === 409) return
+          if (
+            isApiRequestError(error) &&
+            error.status === 429 &&
+            attempt < MAX_UPLOAD_RETRIES - 1
+          ) {
+            penalizeUploads(error.retryAfterMs ?? fallbackBackoffMs(attempt))
+            continue
+          }
+          throw error
+        }
+      }
     },
 
     async deleteActivity(contentHash, signal) {
