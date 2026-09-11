@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef } from "react"
 import maplibregl from "maplibre-gl"
 import { mapStore } from "~/lib/mapStore"
 import type { PhotoEntry, PhotoGroup } from "~/types/photos"
+import { MAP_INTERACTIVE_ATTRIBUTE } from "~/components/map/interactiveTargets"
 
 const CLUSTER_PIXEL_RADIUS = 50
 
@@ -58,6 +59,7 @@ function createPhotoMarkerElement(
 ): HTMLDivElement {
   const half = 18
   const element = document.createElement("div")
+  element.setAttribute(MAP_INTERACTIVE_ATTRIBUTE, "")
   element.style.cssText = "cursor:pointer;width:0;height:0;position:relative;"
 
   const circle = document.createElement("div")

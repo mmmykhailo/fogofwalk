@@ -2,6 +2,11 @@ import maplibregl from "maplibre-gl"
 import { MAP_LAYER_IDS } from "~/lib/map/layers"
 import type { SavedPoint } from "~shared/saved-points"
 import type { SavedPointTooltipState } from "~/components/map/useSavedPoints"
+import {
+  INTERACTIVE_TARGET_LAYER_IDS,
+  isInteractiveDomTarget,
+  queryInteractiveFeatures,
+} from "~/components/map/interactiveTargets"
 
 export interface SavedPointCreateLocation {
   lng: number
@@ -16,6 +21,9 @@ interface MapInteractionOptions {
   onSavedPointSelect: (id: string) => void
   onSavedPointCreate?: (location: SavedPointCreateLocation) => void
   onSavedPointTooltipChange: (tooltip: SavedPointTooltipState | null) => void
+  onMapBackgroundClick?: () => void
+  /** Test-only registry override; production uses the shared default registry. */
+  interactiveTargetLayerIds?: readonly string[]
 }
 
 /** Installs the map's pointer interactions once and returns their cleanup. */
@@ -23,14 +31,19 @@ export function attachMapInteractions(
   map: maplibregl.Map,
   options: MapInteractionOptions
 ): () => void {
-  const isSavedPointGesture = (point: maplibregl.Point) =>
-    options.isShowingSavedPoints() &&
-    map.queryRenderedFeatures(point, { layers: [MAP_LAYER_IDS.savedPointHit] })
-      .length > 0
-  const isProtectedCreateGesture = (point: maplibregl.Point) =>
-    isSavedPointGesture(point) ||
-    map.queryRenderedFeatures(point, { layers: [MAP_LAYER_IDS.activityHit] })
-      .length > 0
+  const interactiveTargetLayerIds =
+    options.interactiveTargetLayerIds ?? INTERACTIVE_TARGET_LAYER_IDS
+  const interactiveFeaturesAt = (point: maplibregl.Point) =>
+    queryInteractiveFeatures(map, point, interactiveTargetLayerIds)
+  const isInteractiveFeature = (feature: maplibregl.MapGeoJSONFeature) =>
+    feature.layer.id !== MAP_LAYER_IDS.savedPointHit ||
+    options.isShowingSavedPoints()
+  const isProtectedCreateGesture = (
+    point: maplibregl.Point,
+    target?: EventTarget | null
+  ) =>
+    isInteractiveDomTarget(target) ||
+    interactiveFeaturesAt(point).some(isInteractiveFeature)
   const createSavedPoint = (
     lngLat: maplibregl.LngLat,
     point: maplibregl.Point
@@ -84,18 +97,19 @@ export function attachMapInteractions(
   }
   const onContextMenu = (event: maplibregl.MapMouseEvent) => {
     event.preventDefault()
-    if (!isProtectedCreateGesture(event.point)) {
+    if (!isProtectedCreateGesture(event.point, event.originalEvent.target)) {
       createSavedPoint(event.lngLat, event.point)
     }
   }
   const onClick = (event: maplibregl.MapMouseEvent) => {
-    const savedPointFeatures = options.isShowingSavedPoints()
-      ? map.queryRenderedFeatures(event.point, {
-          layers: [MAP_LAYER_IDS.savedPointHit],
-        })
-      : []
-    if (savedPointFeatures.length > 0) {
-      const id = savedPointFeatures[0].properties?.id
+    const interactiveFeatures = interactiveFeaturesAt(event.point)
+    const savedPointFeature = options.isShowingSavedPoints()
+      ? interactiveFeatures.find(
+          (feature) => feature.layer.id === MAP_LAYER_IDS.savedPointHit
+        )
+      : undefined
+    if (savedPointFeature) {
+      const id = savedPointFeature.properties?.id
       if (id) options.onSavedPointSelect(id)
       const savedPoint = options
         .getSavedPoints()
@@ -109,19 +123,21 @@ export function attachMapInteractions(
       return
     }
 
-    const activityFeatures = map.queryRenderedFeatures(event.point, {
-      layers: [MAP_LAYER_IDS.activityHit],
-    })
-    if (activityFeatures.length > 0) {
-      options.onActivitySelect(activityFeatures[0].properties?.id ?? null)
+    const activityFeature = interactiveFeatures.find(
+      (feature) => feature.layer.id === MAP_LAYER_IDS.activityHit
+    )
+    if (activityFeature) {
+      options.onActivitySelect(activityFeature.properties?.id ?? null)
       return
     }
 
-    if (!map.getLayer(MAP_LAYER_IDS.fog)) return
-    const fogFeatures = map.queryRenderedFeatures(event.point, {
-      layers: [MAP_LAYER_IDS.fog],
-    })
-    if (fogFeatures.length > 0) options.onActivitySelect(null)
+    if (
+      interactiveFeatures.some(isInteractiveFeature) ||
+      isInteractiveDomTarget(event.originalEvent.target)
+    )
+      return
+
+    options.onMapBackgroundClick?.()
   }
 
   map.on("mouseenter", MAP_LAYER_IDS.activityHit, onActivityEnter)
@@ -157,8 +173,8 @@ export function attachMapInteractions(
       event.clientY - bounds.top
     )
     if (
-      (event.target as Element | null)?.closest(".maplibregl-marker") ||
-      isProtectedCreateGesture(point)
+      isInteractiveDomTarget(event.target) ||
+      isProtectedCreateGesture(point, event.target)
     )
       return
     longPressPointerId = event.pointerId
