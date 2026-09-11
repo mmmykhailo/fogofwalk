@@ -168,12 +168,17 @@ export function useFogWorkerBridge(onProcessingComplete?: ProcessingComplete): {
       }
 
       if (message.type === "CANCELLED") {
-        mapStore.isRestoreReprocess = false
         return
       }
 
       if (result.snapshot) setSnapshotOnMap(result.snapshot)
-      if (!result.terminal || mapStore.isFogRunInFlight) return
+      if (
+        !result.terminal ||
+        fogCoordinator.activeRequest !== null ||
+        fogCoordinator.queuedSnapshot !== null
+      ) {
+        return
+      }
 
       const snapshot = result.snapshot
       if (
@@ -223,7 +228,6 @@ export function useFogWorkerBridge(onProcessingComplete?: ProcessingComplete): {
           })
       }
 
-      mapStore.isRestoreReprocess = false
       onProcessingCompleteRef.current?.()
     }
 

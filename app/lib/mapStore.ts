@@ -78,7 +78,6 @@ interface MapStore {
   worker: Worker | null
   fogData: FogRenderData | null
   activities: ParsedActivity[]
-  isProcessing: boolean
   processedCount: number
   sourcesReady: boolean
   /** Current fog mode — kept in sync with React state so MapView can read it without a prop. */
@@ -87,37 +86,8 @@ interface MapStore {
   initialCenter: [number, number] | null
   /** Map zoom restored from localStorage; used once by MapView on initialization. */
   initialZoom: number | null
-  /**
-   * True when activities were restored but the fog cache was stale, triggering a
-   * worker reprocess. MapView skips fitBounds in this case so the saved map
-   * position is preserved.
-   */
-  isRestoreReprocess: boolean
-  /**
-   * Generation token for fog-worker runs. Bumped by `startFogRun()` wherever
-   * the app abandons in-flight work (fog-mode toggle, delete-activity, clear-all).
-   * Every message to and from the worker carries it.
-   */
+  /** Generation token for fog-worker runs. */
   runId: number
-  /**
-   * True between posting PROCESS_ACTIVITIES and the matching DONE.
-   *
-   * The progress UI cannot just assume work is outstanding after an action:
-   * the worker can finish a small batch *before* the action returns, since the
-   * action still has IDB writes (and, when signed in, a network round trip) to
-   * get through. Setting `isProcessing` unconditionally in that window strands
-   * "Processing 0 of N…" forever, because the only thing that clears it — DONE
-   * — has already been and gone.
-   */
-  isFogRunInFlight: boolean
-  /** Number of PROCESS_ACTIVITIES messages in the current run awaiting DONE. */
-  pendingFogJobs: number
-  /** Activity ids contained in, or already queued for, the current worker run. */
-  fogWorkerActivityIds: Set<string>
-  /** Fog mode used to build the current worker run's internal accumulators. */
-  fogWorkerMode: FogMode | null
-  /** Library revision represented by the worker's incremental accumulator. */
-  fogWorkerLibraryRevision: number
   /** Identity of the latest accepted complete/in-progress fog snapshot. */
   fogSnapshot: {
     generation: number
@@ -170,19 +140,12 @@ export const mapStore: MapStore = {
   worker: null,
   fogData: null,
   activities: [],
-  isProcessing: false,
   processedCount: 0,
   sourcesReady: false,
   fogMode: "corridor",
   initialCenter: _savedPosition?.center ?? null,
   initialZoom: _savedPosition?.zoom ?? null,
-  isRestoreReprocess: false,
   runId: 0,
-  isFogRunInFlight: false,
-  pendingFogJobs: 0,
-  fogWorkerActivityIds: new Set(),
-  fogWorkerMode: null,
-  fogWorkerLibraryRevision: 0,
   fogSnapshot: null,
   renderSourceRevision: null,
   libraryRevision: 0,
@@ -270,13 +233,6 @@ export const fogCoordinator = createFogCoordinator(
   },
   {
     onRequest: ({ request }) => {
-      if (request.kind === "rebuild") mapStore.fogWorkerActivityIds.clear()
-      for (const activity of request.activities)
-        mapStore.fogWorkerActivityIds.add(activity.id)
-      mapStore.fogWorkerMode = request.mode
-      mapStore.fogWorkerLibraryRevision = request.libraryRevision
-      mapStore.pendingFogJobs++
-      mapStore.isFogRunInFlight = true
       recordDiagnostic({
         subsystem: "fog",
         operationId: request.requestId,
@@ -362,8 +318,6 @@ export const fogCoordinator = createFogCoordinator(
       })
     },
     onTerminal: (terminal) => {
-      finishFogJob()
-      mapStore.isRestoreReprocess = false
       recordDiagnostic({
         subsystem: "fog",
         operationId: terminal.context.request.requestId,
@@ -393,7 +347,8 @@ export const fogCoordinator = createFogCoordinator(
         })
       } else if (
         terminal.status === "cancelled" &&
-        !fogCoordinator.activeRequest
+        !fogCoordinator.activeRequest &&
+        !fogCoordinator.queuedSnapshot
       ) {
         updateFogStatus({
           phase: "idle",
@@ -592,14 +547,11 @@ export function useFogStatus(): FogProjectionStatus {
  * and every reply is dropped, leaving the progress bar stuck.
  *
  * Only call this where the app genuinely discards prior work. Additions normally
- * join the current run; the cache-cold exception deliberately starts over because
- * there is no worker state to preserve.
+ * join the current run; the coordinator rebuilds from the canonical projection
+ * when a restored worker has no completed base.
  */
 export function startFogRun(): number {
   mapStore.runId++
-  mapStore.isRestoreReprocess = false
-  mapStore.fogWorkerMode = null
-  mapStore.fogWorkerLibraryRevision = 0
   mapStore.fogSnapshot = null
   mapStore.renderSourceRevision = null
   updateFogStatus({
@@ -622,13 +574,14 @@ export function postToFogWorker(msg: FogWorkerCommand): boolean {
     const worker = mapStore.worker
     if (!worker) return false
 
-    const kind =
-      msg.kind ??
-      (mapStore.fogWorkerActivityIds.size > 0 &&
-      mapStore.fogWorkerMode === msg.mode
-        ? "append"
-        : "rebuild")
     const libraryRevision = msg.libraryRevision ?? mapStore.libraryRevision
+    const completed = fogCoordinator.completedSnapshot
+    const hasCompatibleBase =
+      completed !== null &&
+      completed.generation === mapStore.runId &&
+      completed.mode === msg.mode &&
+      completed.libraryRevision < libraryRevision
+    const kind = msg.kind ?? (hasCompatibleBase ? "append" : "rebuild")
     // ParsedActivity contains timestamps, laps, statistics, and other metadata.
     // Project at the worker boundary so structured cloning only copies what fog
     // processing needs, including when the full library is replayed.
@@ -654,11 +607,6 @@ export function postToFogWorker(msg: FogWorkerCommand): boolean {
     }
   }
   if (msg.type === "RESET") {
-    mapStore.pendingFogJobs = 0
-    mapStore.isFogRunInFlight = false
-    mapStore.fogWorkerActivityIds.clear()
-    mapStore.fogWorkerMode = null
-    mapStore.fogWorkerLibraryRevision = 0
     mapStore.fogSnapshot = null
   }
   if (!mapStore.worker) return false
@@ -737,13 +685,6 @@ export function clearFogProjection(): void {
   }
 }
 
-/** Records one batch completion. Returns true only when the whole run is idle. */
-export function finishFogJob(): boolean {
-  mapStore.pendingFogJobs = Math.max(0, mapStore.pendingFogJobs - 1)
-  mapStore.isFogRunInFlight = mapStore.pendingFogJobs > 0
-  return !mapStore.isFogRunInFlight
-}
-
 /**
  * Queue an additive fog update. A worker behind a restored render cache has no
  * internal geometry, so its first addition must reset and replay the library.
@@ -752,32 +693,13 @@ export function queueAddedActivitiesForFog(
   added: ParsedActivity[],
   mode: FogMode
 ): void {
-  const addedIds = new Set(added.map((activity) => activity.id))
-  const missing = mapStore.activities.filter(
-    (activity) => !mapStore.fogWorkerActivityIds.has(activity.id)
-  )
-  if (missing.length === 0) return
-
-  // The worker already contains the previous library and lacks only this
-  // addition, so it is safe to extend the current run incrementally. Its
-  // accumulator is mode-specific, however: never append corridor work to a
-  // fill run (or vice versa).
-  const isModeCompatible =
-    mapStore.fogWorkerActivityIds.size === 0 || mapStore.fogWorkerMode === mode
-  if (
-    missing.every((activity) => addedIds.has(activity.id)) &&
-    isModeCompatible
-  ) {
-    postToFogWorker({ type: "PROCESS_ACTIVITIES", activities: missing, mode })
-    return
-  }
-
-  startFogRun()
-  postToFogWorker({ type: "RESET" })
+  if (added.length === 0) return
   postToFogWorker({
     type: "PROCESS_ACTIVITIES",
-    activities: mapStore.activities,
+    activities: added,
     mode,
+    kind: "append",
+    libraryRevision: mapStore.libraryRevision,
   })
 }
 

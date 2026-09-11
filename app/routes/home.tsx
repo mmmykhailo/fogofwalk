@@ -129,7 +129,6 @@ export async function clientLoader({
   restoredFogMode: FogMode
   viewedSavedPoint: SavedPoint | null
 }> {
-  let didCreateWorker = false
   if (!mapStore.worker) {
     console.debug("[clientLoader] creating worker")
     mapStore.worker = new Worker(
@@ -140,7 +139,6 @@ export async function clientLoader({
       console.error("[worker] uncaught error", e)
       fogCoordinator.handleWorkerFailure(e.error ?? e.message)
     }
-    didCreateWorker = true
     console.debug("[clientLoader] worker created", mapStore.worker)
   }
 
@@ -191,20 +189,12 @@ export async function clientLoader({
     } else {
       // Cache miss: fog will be null, world fog shown until worker reprocesses
       mapStore.fogData = null
-      mapStore.isRestoreReprocess = true
       console.debug(
         "[clientLoader] fog cache stale/absent — will reprocess",
         activities.length,
         "activities"
       )
     }
-  }
-
-  if (didCreateWorker) {
-    // A rendered cache can paint the map but cannot reconstruct the worker's
-    // corridor/fill accumulators. The first later addition will replay all
-    // activities before returning to incremental processing.
-    mapStore.fogWorkerActivityIds.clear()
   }
 
   // initialCenter/initialZoom are already loaded from localStorage at mapStore module init time.
@@ -652,8 +642,7 @@ export default function Home() {
     loaderData.restoredActivityCount > 0 && mapStore.fogData === null
   )
   // Set to true when the user uploads new files; cleared after fitBounds fires.
-  // Lets the isProcessing useEffect distinguish new uploads from restore-reprocesses
-  // and fog-mode reprocesses (both of which should NOT zoom the map).
+  // Restore-reprocesses and fog-mode reprocesses should not zoom the map.
   const isNewUploadRef = useRef(false)
   // Activity count before the latest upload so fitBounds can identify the new activities.
   const prevActivityCountRef = useRef(0)
@@ -674,10 +663,12 @@ export default function Home() {
       return
     }
 
-    if (mapStore.isFogRunInFlight) {
+    if (
+      fogCoordinator.activeRequest !== null ||
+      fogCoordinator.queuedSnapshot !== null
+    ) {
       if (mapStore.isFogWorkerListenerReady) return
       rebuildFogProjection(mapStore.fogMode)
-      mapStore.isRestoreReprocess = true
     }
 
     needsReprocessRef.current = true
@@ -905,7 +896,8 @@ export default function Home() {
     }
   }, [fetcher.data])
 
-  // Sync mutates mapStore directly; reconcile the React state it can't reach.
+  // The library subscription updates the activity projection; reconcile the
+  // route-only state that the sync engine cannot reach.
   // Do this only while the map is visible: the parent layout stays mounted for
   // every child page, but sync is intentionally inactive away from /map.
   useEffect(() => {
