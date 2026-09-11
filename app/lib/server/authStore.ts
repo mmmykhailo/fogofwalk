@@ -181,6 +181,10 @@ export async function fetchProviders(): Promise<AuthProvidersResponse> {
 }
 
 export async function signOut(): Promise<void> {
+  // Publish the transition before waiting on the revoke request. Sync observes
+  // auth changes and must stop using this account while logout is in flight;
+  // keep the token until the request completes so the server can revoke it.
+  if (state.status === "signedIn") setLoading()
   try {
     await apiSend("POST", "/api/auth/logout")
   } catch {
