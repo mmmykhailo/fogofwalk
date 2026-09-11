@@ -13,11 +13,11 @@ untouched.
 - Branch: `refactor/fog-processing`
 - Started: 2026-09-11
 - Current phase: completion audit across Phases 0–8
-- Last completed commit: `4dbb21e serialize one activity geometry`
+- Last completed commit: `466c89a abort sync before sign-out request`
 - Current working slice: close remaining acceptance gaps, add deterministic
   boundary tests, and verify the full client/server/build matrix
-- Next action: finish the synced browser matrix, add the sign-out/account-switch
-  race case, then run the full client/server/build matrix
+- Next action: run the full client/server/build matrix, then audit the remaining
+  Phase 0 and browser IndexedDB gaps
 
 ## A1 activity contract slice
 
@@ -345,6 +345,15 @@ untouched.
   ambiguous by the server. Focused transport tests and the full six-test
   synced activity browser slice pass; committed as `4dbb21e`.
 
+## Sign-out cancellation acceptance slice
+
+- Sign-out publishes the existing loading auth state before awaiting server
+  token revocation, so an active sync run is cancelled before it can claim a
+  local upload effect while the request is in flight.
+- Added a deterministic synced-browser race that gates the first saved-point
+  manifest, signs out, and verifies no activity upload is issued and the local
+  activity remains present. The focused test passes; committed as `466c89a`.
+
 ## Commit log
 
 | Commit    | Slice                                                                | Verification                                                     |
@@ -397,6 +406,7 @@ untouched.
 | `8d529f9` | Normalize GPX elevation geometry                              | Serverless import E2E and client typecheck pass                          |
 | `d5fb501` | Make E2E page fixture functional                              | E2E typecheck passes                                                     |
 | `4dbb21e` | Serialize one activity geometry                              | Sync tests, client typecheck, and six activity E2E tests pass             |
+| `466c89a` | Abort sync before sign-out request                           | Focused cancellation E2E, client/e2e typecheck pass                      |
 
 ## Phase checklist
 
