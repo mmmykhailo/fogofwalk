@@ -13,12 +13,11 @@ untouched.
 - Branch: `refactor/fog-processing`
 - Started: 2026-09-11
 - Current phase: Phase 4/5/6 — projections, bounded fog, and sync effects
-- Last completed commit: `ed8bc4e add page-wise sync executor`
-- Current working slice: wire page-wise activity execution into the existing
-  sync scheduler and migrate activity-side sync state helpers
-- Next action: replace the inline activity reconciliation path in
-  `syncEngine` with `ActivitySyncExecutor`, preserving saved-point sync as a
-  separate state path
+- Last completed commit: `37adff0 wire sync executor into scheduler`
+- Current working slice: make local activity mutations enqueue durable sync
+  effects and separate saved-point state from activity state
+- Next action: route delete/update/resurrection commands through the activity
+  outbox, then add scheduler/lease and local-mutation atomicity tests
 
 ## A1 activity contract slice
 
@@ -142,6 +141,18 @@ untouched.
 - Added seven executor tests and a targeted-claim repository test; this slice
   is committed as `ed8bc4e`.
 
+## Sync executor integration slice
+
+- `syncEngine` now delegates activity manifest planning, downloads, metadata,
+  tombstones, cursor advancement, retry state, and remote library commits to
+  `ActivitySyncExecutor`.
+- The old whole-manifest reconciliation and direct activity-array/storage
+  mutations were removed; saved-point reconciliation remains on its separate
+  compatibility cursor while its own repository split is completed.
+- Remote additions invalidate the render cache and enter the existing fog
+  projection queue after their canonical commit.
+- Client tests and typecheck pass; this slice is committed as `37adff0`.
+
 ## Path-aware adapter and render slice
 
 - GPX tracks remain one activity and their track segments remain disconnected
@@ -172,6 +183,7 @@ untouched.
 | `43c7b6f` | Add durable sync repository and outbox                                | 6 repository tests pass; client typecheck passes                 |
 | `af7b9cc` | Route sync through the revisioned library and validated transport     | 152 client tests pass; client typecheck passes                    |
 | `ed8bc4e` | Add page-wise resumable sync executor                                | 14 sync executor/repository tests pass; client typecheck passes  |
+| `37adff0` | Wire the page-wise executor into the sync scheduler                   | Client tests and typecheck pass                                 |
 
 ## Phase checklist
 
