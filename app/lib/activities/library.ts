@@ -1,4 +1,7 @@
-import { ActivityLibraryConflictError, ActivityStorageError } from "./errors"
+import {
+  createActivityStorageError,
+  isActivityLibraryConflictError,
+} from "./errors"
 import {
   IndexedDbActivityLibraryRepository,
   type ActivityLibraryCommitOptions,
@@ -126,7 +129,7 @@ export class ActivityLibrary {
 
   getSnapshot(): LibrarySnapshot {
     if (!this.snapshot) {
-      throw new ActivityStorageError(
+      throw createActivityStorageError(
         "unavailable",
         "The activity library has not finished loading."
       )
@@ -155,7 +158,7 @@ export class ActivityLibrary {
           this.repository.commit(command, base.revision, options)
         ).catch(async (error: unknown) => {
           if (
-            !(error instanceof ActivityLibraryConflictError) ||
+            !isActivityLibraryConflictError(error) ||
             attempt >= 2
           ) {
             throw error

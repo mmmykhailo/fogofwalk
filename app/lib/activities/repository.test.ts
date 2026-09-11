@@ -1,7 +1,11 @@
 import { describe, expect, test } from "bun:test"
 import type { ParsedActivity } from "~/types/activities"
 import { ActivityLibrary } from "./library"
-import { ActivityLibraryConflictError, ActivityStorageError } from "./errors"
+import {
+  createActivityStorageError,
+  isActivityLibraryConflictError,
+  isActivityStorageError,
+} from "./errors"
 import {
   MemoryActivityLibraryRepository,
   applyLibraryCommand,
@@ -153,19 +157,20 @@ describe("activity library command repository", () => {
   test("does not convert a storage failure into a successful commit", async () => {
     const repository = new MemoryActivityLibraryRepository()
     repository.failNext(
-      new ActivityStorageError("quota", "storage is full", {
+      createActivityStorageError("quota", "storage is full", {
         retryable: false,
       })
     )
     const library = new ActivityLibrary(repository)
 
-    await expect(
-      library.dispatch({
+    const failure = await library
+      .dispatch({
         type: "import",
         operationId: "failed",
         activities: [activity("first")],
       })
-    ).rejects.toBeInstanceOf(ActivityStorageError)
+      .catch((error: unknown) => error)
+    expect(isActivityStorageError(failure)).toBe(true)
     expect((await repository.load()).activities).toHaveLength(0)
     library.close()
   })
@@ -175,8 +180,8 @@ describe("activity library command repository", () => {
       [activity("first")],
       4
     )
-    await expect(
-      repository.commit(
+    const failure = await repository
+      .commit(
         {
           type: "import",
           operationId: "stale",
@@ -184,7 +189,8 @@ describe("activity library command repository", () => {
         },
         3
       )
-    ).rejects.toBeInstanceOf(ActivityLibraryConflictError)
+      .catch((error: unknown) => error)
+    expect(isActivityLibraryConflictError(failure)).toBe(true)
   })
 
   test("applies remote metadata by hash or id without needless revisions", async () => {

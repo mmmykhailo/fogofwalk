@@ -7,42 +7,82 @@ export type ActivityStorageErrorCode =
   | "schema"
   | "conflict"
 
-export class ActivityStorageError extends Error {
+export type ActivityStorageError = Error & {
+  readonly name: "ActivityStorageError"
   readonly code: Exclude<ActivityStorageErrorCode, "conflict">
   readonly retryable: boolean
-
-  constructor(
-    code: Exclude<ActivityStorageErrorCode, "conflict">,
-    message: string,
-    options?: { cause?: unknown; retryable?: boolean }
-  ) {
-    super(message, options)
-    this.name = "ActivityStorageError"
-    this.code = code
-    this.retryable = options?.retryable ?? true
-  }
 }
 
-export class ActivityLibraryConflictError extends Error {
-  readonly code = "conflict" as const
+export type ActivityLibraryConflictError = Error & {
+  readonly name: "ActivityLibraryConflictError"
+  readonly code: "conflict"
   readonly expectedRevision: number
   readonly actualRevision: number
+}
 
-  constructor(expectedRevision: number, actualRevision: number) {
-    super(
-      `Activity library changed from revision ${expectedRevision} to ${actualRevision}`
+export function createActivityStorageError(
+  code: Exclude<ActivityStorageErrorCode, "conflict">,
+  message: string,
+  options?: { cause?: unknown; retryable?: boolean }
+): ActivityStorageError {
+  const error = new Error(message, options) as ActivityStorageError
+  Object.assign(error, {
+    name: "ActivityStorageError",
+    code,
+    retryable: options?.retryable ?? true,
+  })
+  return error
+}
+
+export function isActivityStorageError(
+  error: unknown
+): error is ActivityStorageError {
+  return (
+    error instanceof Error &&
+    error.name === "ActivityStorageError" &&
+    typeof (error as Partial<ActivityStorageError>).code === "string" &&
+    typeof (error as Partial<ActivityStorageError>).retryable === "boolean"
+  )
+}
+
+export function createActivityLibraryConflictError(
+  expectedRevision: number,
+  actualRevision: number
+): ActivityLibraryConflictError {
+  const error = new Error(
+    `Activity library changed from revision ${expectedRevision} to ${actualRevision}`
+  ) as ActivityLibraryConflictError
+  Object.assign(error, {
+    name: "ActivityLibraryConflictError",
+    code: "conflict",
+    expectedRevision,
+    actualRevision,
+  })
+  return error
+}
+
+export function isActivityLibraryConflictError(
+  error: unknown
+): error is ActivityLibraryConflictError {
+  return (
+    error instanceof Error &&
+    error.name === "ActivityLibraryConflictError" &&
+    error instanceof Error &&
+    (error as Partial<ActivityLibraryConflictError>).code === "conflict" &&
+    Number.isSafeInteger(
+      (error as Partial<ActivityLibraryConflictError>).expectedRevision
+    ) &&
+    Number.isSafeInteger(
+      (error as Partial<ActivityLibraryConflictError>).actualRevision
     )
-    this.name = "ActivityLibraryConflictError"
-    this.expectedRevision = expectedRevision
-    this.actualRevision = actualRevision
-  }
+  )
 }
 
 export function toActivityStorageError(
   error: unknown,
   operation: string
 ): ActivityStorageError {
-  if (error instanceof ActivityStorageError) return error
+  if (isActivityStorageError(error)) return error
 
   const name =
     error instanceof DOMException
@@ -52,35 +92,35 @@ export function toActivityStorageError(
         : ""
 
   if (name === "QuotaExceededError") {
-    return new ActivityStorageError(
+    return createActivityStorageError(
       "quota",
       `The activity could not be saved because browser storage is full (${operation}).`,
       { cause: error, retryable: false }
     )
   }
   if (name === "VersionError" || name === "InvalidStateError") {
-    return new ActivityStorageError(
+    return createActivityStorageError(
       "schema",
       `Browser storage could not open the activity database (${operation}).`,
       { cause: error }
     )
   }
   if (name === "AbortError") {
-    return new ActivityStorageError(
+    return createActivityStorageError(
       "transaction-aborted",
       `The activity save was aborted before it was committed (${operation}).`,
       { cause: error }
     )
   }
   if (name === "DataCloneError") {
-    return new ActivityStorageError(
+    return createActivityStorageError(
       "serialization",
       `The activity contains data the browser cannot store (${operation}).`,
       { cause: error, retryable: false }
     )
   }
 
-  return new ActivityStorageError(
+  return createActivityStorageError(
     "unavailable",
     `Browser storage was unavailable while ${operation}.`,
     { cause: error }

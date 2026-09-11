@@ -7,8 +7,9 @@ import {
   type SyncOutboxItemInput,
 } from "~/lib/server/sync/repository"
 import {
-  ActivityLibraryConflictError,
-  ActivityStorageError,
+  createActivityLibraryConflictError,
+  createActivityStorageError,
+  isActivityLibraryConflictError,
   toActivityStorageError,
 } from "./errors"
 import type {
@@ -266,7 +267,7 @@ function readMeta(value: unknown): StoredLibraryMeta {
     !Number.isSafeInteger((value as { revision: number }).revision) ||
     (value as { revision: number }).revision < 0
   ) {
-    throw new ActivityStorageError(
+    throw createActivityStorageError(
       "schema",
       "The activity library metadata is invalid and cannot be opened.",
       { retryable: false }
@@ -286,7 +287,7 @@ export class IndexedDbActivityLibraryRepository implements ActivityLibraryReposi
   async load(): Promise<LibrarySnapshot> {
     const db = await openStorageDatabase()
     if (!db) {
-      throw new ActivityStorageError(
+      throw createActivityStorageError(
         "unavailable",
         "Browser storage is unavailable; the activity library was not loaded."
       )
@@ -321,7 +322,7 @@ export class IndexedDbActivityLibraryRepository implements ActivityLibraryReposi
   ): Promise<LibraryCommit> {
     const db = await openStorageDatabase()
     if (!db) {
-      throw new ActivityStorageError(
+      throw createActivityStorageError(
         "unavailable",
         "Browser storage is unavailable; the activity was not saved."
       )
@@ -349,7 +350,7 @@ export class IndexedDbActivityLibraryRepository implements ActivityLibraryReposi
       const meta = readMeta(rawMeta)
       if (meta.revision !== expectedRevision) {
         transaction.abort()
-        throw new ActivityLibraryConflictError(expectedRevision, meta.revision)
+        throw createActivityLibraryConflictError(expectedRevision, meta.revision)
       }
 
       const current = immutableSnapshot(meta.revision, activities)
@@ -385,7 +386,7 @@ export class IndexedDbActivityLibraryRepository implements ActivityLibraryReposi
       await transactionResult(transaction)
       return result
     } catch (error) {
-      if (error instanceof ActivityLibraryConflictError) throw error
+      if (isActivityLibraryConflictError(error)) throw error
       throw toActivityStorageError(error, "saving the activity library")
     }
   }
@@ -424,7 +425,7 @@ export class MemoryActivityLibraryRepository implements ActivityLibraryRepositor
       throw error
     }
     if (expectedRevision !== this.state.revision) {
-      throw new ActivityLibraryConflictError(
+      throw createActivityLibraryConflictError(
         expectedRevision,
         this.state.revision
       )

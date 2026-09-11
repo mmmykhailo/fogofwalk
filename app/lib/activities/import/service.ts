@@ -7,7 +7,7 @@ import { flattenActivityPaths } from "~shared/activityContract"
 import { createUuid } from "~/lib/uuid"
 import { parseFile as defaultParseFile } from "~/lib/parsers"
 import { normalizeAndHashActivity } from "~/lib/activities/normalize"
-import { ActivityStorageError } from "../errors"
+import { isActivityStorageError } from "../errors"
 import type { DuplicateReason, LibraryCommit } from "../libraryEvents"
 
 export type ImportStage =
@@ -86,7 +86,7 @@ export interface ImportServiceOptions {
 }
 
 function safeError(error: unknown): { errorCode: string; error: string } {
-  if (error instanceof ActivityStorageError) {
+  if (isActivityStorageError(error)) {
     return {
       errorCode: `storage-${error.code}`,
       error: error.message,
