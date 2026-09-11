@@ -59,6 +59,11 @@ A restored fog cache is render-only: it cannot reconstruct the worker's internal
 
 Use `mapStore.sourcesReady`, not `map.loaded()`, before operating on map sources. A style change destroys custom sources and layers, so `setupMapLayers` must re-add fog, activities, laps, and photos.
 
+Map background detection uses the centralized interactive-target registry, not
+fog geometry or fog visibility. During a style reload, the interaction helpers
+query only hit layers that are currently installed, so a temporary missing
+layer remains an empty-map click rather than an invalid MapLibre query.
+
 ## Files, photos, and laps
 
 GPX parsing uses `@tmcw/togeojson`. FIT coordinates from `fit-file-parser` are already degrees; filter pre-lock near-zero points rather than converting semicircles. Add a file format with a parser module and one registry entry in `lib/parsers/index.ts`.

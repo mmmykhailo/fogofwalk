@@ -2,6 +2,15 @@ import { expect, type Locator, type Page } from "@playwright/test"
 
 import { makeGpxSet, type GpxFixture } from "./gpx"
 
+// Keep this browser-side mirror aligned with the production interactive-target
+// registry. The E2E page object cannot import app modules because Playwright
+// executes it outside Vite's `~` alias environment.
+const INTERACTIVE_MAP_LAYER_IDS = [
+  "saved-points-hit-layer",
+  "activities-hit-layer",
+] as const
+const MAP_INTERACTIVE_MARKER_SELECTOR = "[data-map-interactive]"
+
 /**
  * Page object for the map screen.
  *
@@ -64,6 +73,143 @@ export function createAppPage(
       }
 
       await expect(openDrawerButton).toBeVisible({ timeout: 15_000 })
+    },
+
+    /** Seeds a persisted photo without depending on EXIF parsing in the test. */
+    async seedPhoto(photo: {
+      id: string
+      takenAtMs: number
+      lng: number
+      lat: number
+      fileName?: string
+    }): Promise<void> {
+      await page.evaluate(async (entry) => {
+        const db = await new Promise<IDBDatabase>((resolve, reject) => {
+          const request = indexedDB.open("fogofwalk")
+          request.onsuccess = () => resolve(request.result)
+          request.onerror = () => reject(request.error)
+        })
+        const image = new Uint8Array([
+          71, 73, 70, 56, 57, 97, 1, 0, 1, 0, 128, 0, 0, 255, 255, 255, 0, 0, 0,
+          33, 249, 4, 1, 0, 0, 0, 0, 44, 0, 0, 0, 0, 1, 0, 1, 0, 0, 2, 2, 68, 1,
+          0, 59,
+        ])
+        const file = new File([image], entry.fileName ?? "e2e-photo.gif", {
+          type: "image/gif",
+          lastModified: entry.takenAtMs,
+        })
+        await new Promise<void>((resolve, reject) => {
+          const transaction = db.transaction("photos", "readwrite")
+          transaction.objectStore("photos").put({
+            id: entry.id,
+            file,
+            takenAtMs: entry.takenAtMs,
+            lng: entry.lng,
+            lat: entry.lat,
+          })
+          transaction.oncomplete = () => resolve()
+          transaction.onerror = () => reject(transaction.error)
+          transaction.onabort = () => reject(transaction.error)
+        })
+        db.close()
+      }, photo)
+    },
+
+    /** Clicks a canvas location verified to have no registered map target. */
+    async clickMapBackground(): Promise<void> {
+      const canvas = page.locator(".maplibregl-canvas").first()
+      const point = await page.evaluate(
+        ({ layerIds, markerSelector }) => {
+          const map = window.__fogofwalkE2eMap
+          if (!map) throw new Error("MapLibre test handle is unavailable")
+          const mapCanvas = map.getCanvas()
+          const bounds = mapCanvas.getBoundingClientRect()
+          const mapRoot = mapCanvas.closest(".maplibregl-map")
+          if (!mapRoot) throw new Error("MapLibre map root is unavailable")
+          const fractions = [0.08, 0.2, 0.35, 0.5, 0.65, 0.8, 0.92]
+          const diagnostics: unknown[] = []
+          const installedLayerIds = layerIds.filter((layerId) => {
+            try {
+              return Boolean(map.getLayer(layerId))
+            } catch {
+              return false
+            }
+          })
+
+          for (const xFraction of fractions) {
+            for (const yFraction of fractions) {
+              const x = Math.floor(bounds.width * xFraction)
+              const y = Math.floor(bounds.height * yFraction)
+              if (installedLayerIds.length > 0) {
+                let features: unknown[]
+                try {
+                  features = map.queryRenderedFeatures([x, y], {
+                    layers: installedLayerIds,
+                  })
+                } catch {
+                  // A style transition makes this candidate unverifiable. Keep
+                  // looking rather than risking a click on a route.
+                  diagnostics.push({ x, y, query: "error" })
+                  continue
+                }
+                if (features.length > 0) {
+                  diagnostics.push({ x, y, features: features.length })
+                  continue
+                }
+              }
+
+              const element = document.elementFromPoint(
+                bounds.left + x,
+                bounds.top + y
+              )
+              if (!element || !mapRoot.contains(element)) {
+                diagnostics.push({
+                  x,
+                  y,
+                  element: element
+                    ? `${element.tagName}.${element.className}`
+                    : null,
+                })
+                continue
+              }
+              if (element.closest(".maplibregl-marker")) {
+                diagnostics.push({ x, y, element: "marker" })
+                continue
+              }
+              if (element.closest(markerSelector)) {
+                diagnostics.push({ x, y, element: "interactive-marker" })
+                continue
+              }
+              return { x, y }
+            }
+          }
+
+          throw new Error(
+            `Could not find an empty map canvas point outside registered interactive targets: ${JSON.stringify(diagnostics.slice(0, 5))}`
+          )
+        },
+        {
+          layerIds: INTERACTIVE_MAP_LAYER_IDS,
+          markerSelector: MAP_INTERACTIVE_MARKER_SELECTOR,
+        }
+      )
+      const bounds = await canvas.boundingBox()
+      if (!bounds) throw new Error("Map canvas is not visible")
+      await page.mouse.click(bounds.x + point.x, bounds.y + point.y)
+    },
+
+    /** Projects a map coordinate through MapLibre before clicking the canvas. */
+    async clickMapCoordinate(coordinate: [number, number]): Promise<void> {
+      const canvas = page.locator(".maplibregl-canvas").first()
+      const point = await page.evaluate((lngLat) => {
+        const map = window.__fogofwalkE2eMap
+        if (!map) throw new Error("MapLibre test handle is unavailable")
+        const projected = map.project(lngLat)
+        return { x: projected.x, y: projected.y }
+      }, coordinate)
+      const bounds = await canvas.boundingBox()
+      if (!bounds) throw new Error("Map canvas is not visible")
+      await page.mouse.click(bounds.x + point.x, bounds.y + point.y)
     },
 
     async openDrawer() {
