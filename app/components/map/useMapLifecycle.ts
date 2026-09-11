@@ -12,6 +12,12 @@ import { mapStore, saveMapPosition } from "~/lib/mapStore"
 import { styleForMapMode } from "~/lib/map/styles"
 import type { MapMode } from "~/types/activities"
 
+declare global {
+  interface Window {
+    __fogofwalkE2eMap?: maplibregl.Map
+  }
+}
+
 interface MapLifecycleOptions extends MapPresentationState {
   mapMode: MapMode
   onMapReady?: () => void
@@ -66,9 +72,15 @@ export function useMapLifecycle(
       zoom: mapStore.initialZoom ?? 5,
       minZoom: 5,
       pitch: initialMode === "relief" ? 45 : 0,
+      canvasContextAttributes: {
+        preserveDrawingBuffer: import.meta.env.VITE_E2E === "1",
+      },
       attributionControl: { compact: false },
     })
     mapStore.map = map
+    if (import.meta.env.VITE_E2E === "1") {
+      window.__fogofwalkE2eMap = map
+    }
 
     map.on("rotate", () => setBearing(map.getBearing()))
     map.on("moveend", () => {
@@ -105,6 +117,9 @@ export function useMapLifecycle(
       mapStore.sourcesReady = false
       mapStore.renderSourceRevision = null
       mapStore.map = null
+      if (window.__fogofwalkE2eMap === map) {
+        delete window.__fogofwalkE2eMap
+      }
       if (pendingStyleLoadRef.current) {
         map.off("style.load", pendingStyleLoadRef.current)
         pendingStyleLoadRef.current = null

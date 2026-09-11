@@ -229,7 +229,7 @@ export function createFogMaskLayer(initialData: FogRenderData): FogMaskLayer {
       nextGl.bufferData(nextGl.ARRAY_BUFFER, WORLD_VERTICES, nextGl.STATIC_DRAW)
       uploadPositiveData()
     },
-    render(nextGl, { modelViewProjectionMatrix }) {
+    render(nextGl, { defaultProjectionData }) {
       if (!program || !positiveBuffer || !worldBuffer) return
       const matrix = nextGl.getUniformLocation(program, "u_matrix")
       const color = nextGl.getUniformLocation(program, "u_color")
@@ -237,7 +237,10 @@ export function createFogMaskLayer(initialData: FogRenderData): FogMaskLayer {
       if (!matrix || !color || position < 0) return
 
       nextGl.useProgram(program)
-      nextGl.uniformMatrix4fv(matrix, false, modelViewProjectionMatrix)
+      // MapLibre's modelViewProjectionMatrix uses world-size coordinates. The
+      // custom-layer projection data supplies the equivalent matrix scaled for
+      // normalized Web Mercator coordinates in the [0, 1] range.
+      nextGl.uniformMatrix4fv(matrix, false, defaultProjectionData.mainMatrix)
       nextGl.disable(nextGl.BLEND)
       nextGl.disable(nextGl.DEPTH_TEST)
       nextGl.depthMask(false)

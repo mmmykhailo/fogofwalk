@@ -73,10 +73,20 @@ export function applyFogDataToMap(
     }
   ).getLayer
   const layer = getLayer?.call(map, MAP_LAYER_IDS.fog) as
-    | (maplibregl.StyleLayer & Partial<FogMaskLayer>)
+    | (Partial<FogMaskLayer> & {
+        implementation?: Partial<FogMaskLayer>
+      })
     | undefined
   if (layer && typeof layer.setData === "function") {
     layer.setData(data)
+    mapStore.renderSourceRevision = revision
+    return true
+  }
+  if (
+    layer?.implementation &&
+    typeof layer.implementation.setData === "function"
+  ) {
+    layer.implementation.setData(data)
     mapStore.renderSourceRevision = revision
     return true
   }

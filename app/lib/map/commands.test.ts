@@ -66,6 +66,31 @@ describe("map rendering commands", () => {
     }
   })
 
+  test("updates the implementation behind a custom fog layer", () => {
+    const previousSourcesReady = mapStore.sourcesReady
+    const previousRevision = mapStore.renderSourceRevision
+    mapStore.sourcesReady = true
+    mapStore.renderSourceRevision = null
+    let data: unknown
+    const map = {
+      getLayer: () => ({
+        implementation: {
+          setData: (next: unknown) => (data = next),
+        },
+      }),
+      getSource: () => undefined,
+    }
+
+    try {
+      expect(applyFogDataToMap(map as never, worldFogGeoJSON(), 4)).toBe(true)
+      expect(data).toEqual(worldFogGeoJSON())
+      expect(mapStore.renderSourceRevision as unknown).toBe(4)
+    } finally {
+      mapStore.sourcesReady = previousSourcesReady
+      mapStore.renderSourceRevision = previousRevision
+    }
+  })
+
   test("rehydrates a relief style without requiring a fog layer", () => {
     const layoutCalls: unknown[][] = []
     const paintCalls: unknown[][] = []
