@@ -263,18 +263,22 @@ async function loadLegacySyncState(db: IDBDatabase): Promise<SyncState | null> {
   return state
 }
 
-export class IndexedDbSyncRepository implements SyncRepository {
-  async loadState(): Promise<SyncState | null> {
+export interface IndexedDbSyncRepository extends SyncRepository {}
+
+export function createIndexedDbSyncRepository(): IndexedDbSyncRepository {
+  async function loadState(): Promise<SyncState | null> {
     const db = await openStorageDatabase()
     if (!db) return null
     return loadLegacySyncState(db)
   }
 
-  async saveState(state: SyncState): Promise<void> {
-    await this.commitStateAndOutbox({ state, complete: [] })
+  async function saveState(state: SyncState): Promise<void> {
+    await commitStateAndOutbox({ state, complete: [] })
   }
 
-  async commitStateAndOutbox(commit: SyncStateCommit): Promise<boolean> {
+  async function commitStateAndOutbox(
+    commit: SyncStateCommit
+  ): Promise<boolean> {
     const db = await openStorageDatabase()
     if (!db) return false
     const tx = db.transaction(["sync-state", "sync-outbox"], "readwrite")
@@ -318,7 +322,7 @@ export class IndexedDbSyncRepository implements SyncRepository {
     return true
   }
 
-  async clearState(): Promise<void> {
+  async function clearState(): Promise<void> {
     const db = await openStorageDatabase()
     if (!db) return
     const tx = db.transaction(["sync-state", "prefs"], "readwrite")
@@ -328,7 +332,7 @@ export class IndexedDbSyncRepository implements SyncRepository {
     await transactionResult(tx)
   }
 
-  async acquireSyncLease(options: SyncLeaseOptions): Promise<boolean> {
+  async function acquireSyncLease(options: SyncLeaseOptions): Promise<boolean> {
     const db = await openStorageDatabase()
     if (!db) return false
     const tx = db.transaction(["sync-state", "prefs"], "readwrite")
@@ -372,7 +376,7 @@ export class IndexedDbSyncRepository implements SyncRepository {
     return true
   }
 
-  async releaseSyncLease(owner: string): Promise<boolean> {
+  async function releaseSyncLease(owner: string): Promise<boolean> {
     const db = await openStorageDatabase()
     if (!db) return false
     const tx = db.transaction("sync-state", "readwrite")
@@ -393,7 +397,9 @@ export class IndexedDbSyncRepository implements SyncRepository {
     return true
   }
 
-  async enqueueOutbox(item: SyncOutboxItemInput): Promise<SyncOutboxItem> {
+  async function enqueueOutbox(
+    item: SyncOutboxItemInput
+  ): Promise<SyncOutboxItem> {
     const db = await openStorageDatabase()
     if (!db) throw new Error("IndexedDB is unavailable for sync outbox work")
     const now = item.updatedAt ?? item.createdAt ?? Date.now()
@@ -411,7 +417,7 @@ export class IndexedDbSyncRepository implements SyncRepository {
     return clone(next)
   }
 
-  async loadOutbox(): Promise<SyncOutboxItem[]> {
+  async function loadOutbox(): Promise<SyncOutboxItem[]> {
     const db = await openStorageDatabase()
     if (!db) return []
     const tx = db.transaction("sync-outbox", "readonly")
@@ -422,7 +428,9 @@ export class IndexedDbSyncRepository implements SyncRepository {
     return orderOutbox(items.map(clone))
   }
 
-  async claimOutbox(options: ClaimOutboxOptions): Promise<SyncOutboxItem[]> {
+  async function claimOutbox(
+    options: ClaimOutboxOptions
+  ): Promise<SyncOutboxItem[]> {
     const db = await openStorageDatabase()
     if (!db) return []
     const tx = db.transaction("sync-outbox", "readwrite")
@@ -444,7 +452,10 @@ export class IndexedDbSyncRepository implements SyncRepository {
     return claimed.map(clone)
   }
 
-  async completeOutbox(id: string, leaseId: string): Promise<boolean> {
+  async function completeOutbox(
+    id: string,
+    leaseId: string
+  ): Promise<boolean> {
     const db = await openStorageDatabase()
     if (!db) return false
     const tx = db.transaction("sync-outbox", "readwrite")
@@ -466,7 +477,7 @@ export class IndexedDbSyncRepository implements SyncRepository {
     return true
   }
 
-  async failOutbox(
+  async function failOutbox(
     id: string,
     leaseId: string,
     failure: SyncOutboxFailure
@@ -493,6 +504,20 @@ export class IndexedDbSyncRepository implements SyncRepository {
     store.put(next)
     await transactionResult(tx)
     return clone(next)
+  }
+
+  return {
+    loadState,
+    saveState,
+    commitStateAndOutbox,
+    clearState,
+    acquireSyncLease,
+    releaseSyncLease,
+    enqueueOutbox,
+    loadOutbox,
+    claimOutbox,
+    completeOutbox,
+    failOutbox,
   }
 }
 
@@ -525,50 +550,51 @@ export interface MemorySyncRepositoryOptions {
   idFactory?: (prefix: string) => string
 }
 
-export class MemorySyncRepository implements SyncRepository {
-  private state: SyncState | null = null
-  private readonly items = new Map<string, SyncOutboxItem>()
-  private readonly now: () => number
-  private readonly idFactory: (prefix: string) => string
+export interface MemorySyncRepository extends SyncRepository {}
 
-  constructor(options: MemorySyncRepositoryOptions = {}) {
-    this.now = options.now ?? (() => Date.now())
-    this.idFactory = options.idFactory ?? randomId
+export function createMemorySyncRepository(
+  options: MemorySyncRepositoryOptions = {}
+): MemorySyncRepository {
+  let state: SyncState | null = null
+  const items = new Map<string, SyncOutboxItem>()
+  const now = options.now ?? (() => Date.now())
+  const idFactory = options.idFactory ?? randomId
+
+  async function loadState(): Promise<SyncState | null> {
+    return state ? clone(state) : null
   }
 
-  async loadState(): Promise<SyncState | null> {
-    return this.state ? clone(this.state) : null
+  async function saveState(nextState: SyncState): Promise<void> {
+    state = clone(nextState)
   }
 
-  async saveState(state: SyncState): Promise<void> {
-    this.state = clone(state)
-  }
-
-  async commitStateAndOutbox(commit: SyncStateCommit): Promise<boolean> {
+  async function commitStateAndOutbox(
+    commit: SyncStateCommit
+  ): Promise<boolean> {
     for (const completion of commit.complete) {
-      const item = this.items.get(completion.id)
+      const item = items.get(completion.id)
       if (!item || !sameLease(item, completion.leaseId)) return false
     }
-    this.state = clone(commit.state)
+    state = clone(commit.state)
     for (const input of commit.enqueue ?? []) {
-      const current = [...this.items.values()].find(
+      const current = [...items.values()].find(
         (item) => item.dedupeKey === input.dedupeKey
       )
-      const now = input.updatedAt ?? input.createdAt ?? this.now()
+      const itemNow = input.updatedAt ?? input.createdAt ?? now()
       const next = current
-        ? mergeSyncOutboxItem(current, input, now)
+        ? mergeSyncOutboxItem(current, input, itemNow)
         : normaliseSyncOutboxItem(
-            { ...input, id: input.id || this.idFactory("outbox") },
-            now
+            { ...input, id: input.id || idFactory("outbox") },
+            itemNow
           )
-      this.items.set(next.id, clone(next))
+      items.set(next.id, clone(next))
     }
     for (const completion of commit.complete) {
-      const item = this.items.get(completion.id)!
-      this.items.set(item.id, {
+      const item = items.get(completion.id)!
+      items.set(item.id, {
         ...item,
         status: "complete",
-        updatedAt: this.now(),
+        updatedAt: now(),
         leaseId: undefined,
         leaseOwner: undefined,
         leaseUntil: undefined,
@@ -577,60 +603,64 @@ export class MemorySyncRepository implements SyncRepository {
     return true
   }
 
-  async clearState(): Promise<void> {
-    this.state = null
+  async function clearState(): Promise<void> {
+    state = null
   }
 
-  async acquireSyncLease(options: SyncLeaseOptions): Promise<boolean> {
-    const state = this.state ? clone(this.state) : clone(EMPTY_SYNC_STATE)
+  async function acquireSyncLease(options: SyncLeaseOptions): Promise<boolean> {
+    const currentState = state ? clone(state) : clone(EMPTY_SYNC_STATE)
     if (
-      state.syncLeaseOwner &&
-      state.syncLeaseOwner !== options.owner &&
-      (state.syncLeaseUntil ?? 0) > options.now
+      currentState.syncLeaseOwner &&
+      currentState.syncLeaseOwner !== options.owner &&
+      (currentState.syncLeaseUntil ?? 0) > options.now
     ) {
       return false
     }
-    this.state = {
-      ...state,
+    state = {
+      ...currentState,
       syncLeaseOwner: options.owner,
       syncLeaseUntil: options.now + Math.max(1, options.leaseMs),
     }
     return true
   }
 
-  async releaseSyncLease(owner: string): Promise<boolean> {
-    if (!this.state || this.state.syncLeaseOwner !== owner) return false
-    this.state = {
-      ...this.state,
+  async function releaseSyncLease(owner: string): Promise<boolean> {
+    if (!state || state.syncLeaseOwner !== owner) return false
+    state = {
+      ...state,
       syncLeaseOwner: undefined,
       syncLeaseUntil: undefined,
     }
     return true
   }
 
-  async enqueueOutbox(item: SyncOutboxItemInput): Promise<SyncOutboxItem> {
-    const now = item.updatedAt ?? item.createdAt ?? this.now()
-    const existing = [...this.items.values()].find(
+  async function enqueueOutbox(
+    item: SyncOutboxItemInput
+  ): Promise<SyncOutboxItem> {
+    const itemNow = item.updatedAt ?? item.createdAt ?? now()
+    const existing = [...items.values()].find(
       (candidate) => candidate.dedupeKey === item.dedupeKey
     )
     const next = existing
-      ? mergeSyncOutboxItem(existing, item, now)
+      ? mergeSyncOutboxItem(existing, item, itemNow)
       : normaliseSyncOutboxItem(
-          { ...item, id: item.id || this.idFactory("outbox") },
-          now
+          { ...item, id: item.id || idFactory("outbox") },
+          itemNow
         )
-    this.items.set(next.id, clone(next))
+    items.set(next.id, clone(next))
     return clone(next)
   }
 
-  async loadOutbox(): Promise<SyncOutboxItem[]> {
-    return orderOutbox([...this.items.values()].map(clone))
+  async function loadOutbox(): Promise<SyncOutboxItem[]> {
+    return orderOutbox([...items.values()].map(clone))
   }
 
-  async claimOutbox(options: ClaimOutboxOptions): Promise<SyncOutboxItem[]> {
+  async function claimOutbox(
+    options: ClaimOutboxOptions
+  ): Promise<SyncOutboxItem[]> {
     const requestedIds = options.ids ? new Set(options.ids) : null
     const candidates = orderOutbox(
-      [...this.items.values()].filter(
+      [...items.values()].filter(
         (item) =>
           canClaim(item, options.now) &&
           (requestedIds === null || requestedIds.has(item.id))
@@ -638,19 +668,22 @@ export class MemorySyncRepository implements SyncRepository {
     ).slice(0, Math.max(0, options.limit ?? 10))
     const claimed = candidates.map((item, index) => {
       const next = claimItem(item, options, index)
-      this.items.set(next.id, clone(next))
+      items.set(next.id, clone(next))
       return next
     })
     return claimed.map(clone)
   }
 
-  async completeOutbox(id: string, leaseId: string): Promise<boolean> {
-    const item = this.items.get(id)
+  async function completeOutbox(
+    id: string,
+    leaseId: string
+  ): Promise<boolean> {
+    const item = items.get(id)
     if (!item || !sameLease(item, leaseId)) return false
-    this.items.set(id, {
+    items.set(id, {
       ...item,
       status: "complete",
-      updatedAt: this.now(),
+      updatedAt: now(),
       leaseId: undefined,
       leaseOwner: undefined,
       leaseUntil: undefined,
@@ -658,12 +691,12 @@ export class MemorySyncRepository implements SyncRepository {
     return true
   }
 
-  async failOutbox(
+  async function failOutbox(
     id: string,
     leaseId: string,
     failure: SyncOutboxFailure
   ): Promise<SyncOutboxItem | null> {
-    const item = this.items.get(id)
+    const item = items.get(id)
     if (!item || !sameLease(item, leaseId)) return null
     const next: SyncOutboxItem = {
       ...item,
@@ -675,7 +708,21 @@ export class MemorySyncRepository implements SyncRepository {
       leaseOwner: undefined,
       leaseUntil: undefined,
     }
-    this.items.set(id, clone(next))
+    items.set(id, clone(next))
     return clone(next)
+  }
+
+  return {
+    loadState,
+    saveState,
+    commitStateAndOutbox,
+    clearState,
+    acquireSyncLease,
+    releaseSyncLease,
+    enqueueOutbox,
+    loadOutbox,
+    claimOutbox,
+    completeOutbox,
+    failOutbox,
   }
 }

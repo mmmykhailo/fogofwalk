@@ -8,7 +8,7 @@ import { createActivityLibrary } from "~/lib/activities/library"
 import { createMemoryActivityLibraryRepository } from "~/lib/activities/repository"
 import type { SyncState } from "~/lib/storage"
 import type { ParsedActivity } from "~/types/activities"
-import { MemorySyncRepository } from "./repository"
+import { createMemorySyncRepository } from "./repository"
 import { ActivitySyncExecutor, SyncExecutorProtocolError } from "./executor"
 import {
   createSyncTransportError,
@@ -134,7 +134,7 @@ async function createExecutor(
   const library = createActivityLibrary(
     createMemoryActivityLibraryRepository(initial)
   )
-  const repository = new MemorySyncRepository({ now: options.now })
+  const repository = createMemorySyncRepository({ now: options.now })
   if (options.state) await repository.saveState(options.state)
   const executor = new ActivitySyncExecutor({
     repository,

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import {
-  MemorySyncRepository,
+  createMemorySyncRepository,
   type SyncOutboxItemInput,
   type SyncOutboxFailure,
 } from "./repository"
@@ -23,7 +23,7 @@ const failure = (retryable: boolean, failedAt: number): SyncOutboxFailure => ({
 
 describe("MemorySyncRepository", () => {
   test("loads and saves an isolated sync state snapshot", async () => {
-    const repository = new MemorySyncRepository()
+    const repository = createMemorySyncRepository()
     const state: SyncState = {
       cursor: 12,
       lastSyncAt: 99,
@@ -46,7 +46,7 @@ describe("MemorySyncRepository", () => {
   })
 
   test("enqueue is idempotent and upserts a pending item", async () => {
-    const repository = new MemorySyncRepository({ now: () => 100 })
+    const repository = createMemorySyncRepository({ now: () => 100 })
 
     const first = await repository.enqueueOutbox(baseItem)
     const second = await repository.enqueueOutbox({
@@ -64,7 +64,7 @@ describe("MemorySyncRepository", () => {
   })
 
   test("a completed item is not resurrected by a replayed enqueue", async () => {
-    const repository = new MemorySyncRepository({ now: () => 100 })
+    const repository = createMemorySyncRepository({ now: () => 100 })
     const item = await repository.enqueueOutbox(baseItem)
     const [claimed] = await repository.claimOutbox({
       now: 100,
@@ -83,7 +83,7 @@ describe("MemorySyncRepository", () => {
   })
 
   test("expired leases are reclaimed after a crash", async () => {
-    const repository = new MemorySyncRepository({ now: () => 100 })
+    const repository = createMemorySyncRepository({ now: () => 100 })
     const item = await repository.enqueueOutbox(baseItem)
     const [firstLease] = await repository.claimOutbox({
       now: 100,
@@ -109,7 +109,7 @@ describe("MemorySyncRepository", () => {
   })
 
   test("can claim only the effects selected by a page plan", async () => {
-    const repository = new MemorySyncRepository({ now: () => 100 })
+    const repository = createMemorySyncRepository({ now: () => 100 })
     const first = await repository.enqueueOutbox(baseItem)
     const second = await repository.enqueueOutbox({
       ...baseItem,
@@ -130,7 +130,7 @@ describe("MemorySyncRepository", () => {
   })
 
   test("retryable and permanent failures retain durable metadata", async () => {
-    const repository = new MemorySyncRepository({ now: () => 100 })
+    const repository = createMemorySyncRepository({ now: () => 100 })
     const item = await repository.enqueueOutbox(baseItem)
     const [claimed] = await repository.claimOutbox({
       now: 100,
@@ -169,7 +169,7 @@ describe("MemorySyncRepository", () => {
   })
 
   test("commits state and leased completion as one resumable effect", async () => {
-    const repository = new MemorySyncRepository({ now: () => 100 })
+    const repository = createMemorySyncRepository({ now: () => 100 })
     const item = await repository.enqueueOutbox(baseItem)
     const [claimed] = await repository.claimOutbox({
       now: 100,
@@ -201,7 +201,7 @@ describe("MemorySyncRepository", () => {
   })
 
   test("allows one sync leader at a time and permits expiry takeover", async () => {
-    const repository = new MemorySyncRepository()
+    const repository = createMemorySyncRepository()
 
     expect(
       await repository.acquireSyncLease({

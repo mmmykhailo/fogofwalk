@@ -41,7 +41,7 @@ import { apiRaw, friendlyMessage } from "./apiClient"
 import { canSync } from "./authStore"
 import { isServerEnabled } from "./config"
 import { createApiSyncTransport } from "./sync/transport"
-import { IndexedDbSyncRepository } from "./sync/repository"
+import { createIndexedDbSyncRepository } from "./sync/repository"
 import { ActivitySyncExecutor } from "./sync/executor"
 import { createSyncScheduler } from "./sync/scheduler"
 import {
@@ -148,7 +148,7 @@ export function setSyncChangeHandler(
 // accidentally becoming a network prerequisite for local-only use.
 const syncTransport = isServerEnabled ? createApiSyncTransport() : null
 const activitySyncRepository = isServerEnabled
-  ? new IndexedDbSyncRepository()
+  ? createIndexedDbSyncRepository()
   : null
 const syncOwner = isServerEnabled ? `sync-tab:${createUuid()}` : null
 const SYNC_LEASE_MS = 90_000
