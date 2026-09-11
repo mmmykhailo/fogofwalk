@@ -1,9 +1,9 @@
 # ADR: bounded fog representation
 
-- Status: accepted
+- Status: accepted (supersedes the regional inverse implementation)
 - Date: 2026-09-11
 - Scope: browser fog projection and MapLibre GeoJSON handoff
-- Version: `FOG_PARTITION_SCHEME_VERSION = 2`
+- Version: `FOG_PARTITION_SCHEME_VERSION = 3`
 
 ## Context
 
@@ -22,39 +22,36 @@ also remain safe when the worker is restarted or the map style is reloaded.
 
 ## Options considered
 
-| Option                                                          | Correctness boundary                                                                                                        | Operational cost                                                                      | Decision                      |
-| --------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- | ----------------------------- |
-| Custom positive-mask/stencil layer                              | Strong: MapLibre never tessellates an inverse hole, but requires a separate render path and browser-specific visual testing | New WebGL/render infrastructure and cache shape                                       | Not selected for this release |
-| Regional explored masks converted to bounded inverse partitions | Each partition has a finite outer ring; any interior remainder is triangulated before publication                           | Deterministic Turf operations, bounded source features, straightforward GeoJSON cache | Selected                      |
-| Fixed Web Mercator raster/vector mask with halo ownership       | Strong if the edge ownership and halo rules are correct; resolution and seam policy become part of fog semantics            | Tile pyramid, raster memory, cache migration, and resolution tuning                   | Deferred                      |
-| One global inverse polygon with route holes                     | Fails at the confirmed tile-clipped hole boundary; tuning source tolerance or buffer only moves the artifact                | Low initial code cost, unsafe render handoff                                          | Excluded                      |
+| Option                                                          | Correctness boundary                                                                                             | Operational cost                                                                      | Decision   |
+| --------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- | ---------- |
+| Custom positive-mask/stencil layer                              | Strong: MapLibre never tessellates an inverse hole; browser visual testing covers the shared WebGL path          | New WebGL/render infrastructure and cache shape                                       | Selected   |
+| Regional explored masks converted to bounded inverse partitions | Each partition has a finite outer ring; any interior remainder is triangulated before publication                | Deterministic Turf operations, bounded source features, straightforward GeoJSON cache | Superseded |
+| Fixed Web Mercator raster/vector mask with halo ownership       | Strong if the edge ownership and halo rules are correct; resolution and seam policy become part of fog semantics | Tile pyramid, raster memory, cache migration, and resolution tuning                   | Deferred   |
+| One global inverse polygon with route holes                     | Fails at the confirmed tile-clipped hole boundary; tuning source tolerance or buffer only moves the artifact     | Low initial code cost, unsafe render handoff                                          | Excluded   |
 
 ## Decision
 
-The worker keeps positive explored masks internally. It projects usable masks
-and independent `30° × 30°` world partitions into normalized Web Mercator
-coordinates before union, difference, and triangulation. It then converts the
-vertices back to longitude/latitude for the GeoJSON contract. This makes the
-boolean and triangulation plane the same plane MapLibre uses when it tessellates
-the source. Each partition is published as ordinary hole-free polygons: a
-remainder with interior rings is triangulated into contained triangles, while a
-difficult partition falls back to the validated fogged partition. The source
-therefore never receives the old world-shell plus route-hole topology.
+The worker publishes positive explored masks in longitude/latitude. Corridor
+mode keeps disconnected path buffers as separate features; fill mode unions the
+accumulator incrementally and strips intentional loop interiors. The map uses
+a MapLibre custom layer: Earcut triangulates the positive masks only into the
+WebGL stencil buffer, then one fog-colored world quad is drawn wherever the
+stencil is clear. Triangle edges therefore never become visible fill edges, and
+MapLibre's GeoJSON tiler never receives a world shell with route-shaped holes.
 
-Fill mode removes only intentional interior rings from the explored union before
-the partition differences. It does not strip rings independently per MapLibre
-tile. A closed loop assembled from multiple activities can therefore be unioned
-before it crosses a partition boundary; corridor mode retains the loop interior
-as fog. Disconnected source paths are already separate masks at the buffer
-boundary, so this representation cannot invent a bridge between them.
+Fill mode removes only intentional interior rings from the explored union. A
+closed loop assembled from multiple activities can therefore be filled without
+depending on tile clipping; corridor mode retains the loop interior as fog.
+Disconnected source paths remain separate from the buffer boundary through the
+custom layer, so this representation cannot invent a bridge between them.
 
 The scheme has these safety properties:
 
 - every emitted coordinate is finite and within the supported render latitude;
-- each partition is closed and validated before it is published or cached;
+- each positive mask is closed and validated before it is published or cached;
 - geometry, feature, and byte budgets are checked before a snapshot is accepted;
-- a failed union/difference or invalid output produces degraded status and
-  fog-safe fallback coverage rather than unchecked partial geometry;
+- a failed union or invalid output produces degraded status and full-fog
+  fallback coverage rather than unchecked partial geometry;
 - cache identity includes library revision, fog mode, algorithm version, and
   partition scheme version;
 - a render-only cache is never treated as worker accumulator state, so the next
@@ -79,17 +76,17 @@ reference. It also measures the selected safe inverse at deterministic 100,
 the semantic explored geometry that a stencil renderer would consume; it is not
 an inverse source.
 
-The accepted implementation is the regional bounded inverse. The benchmark is
-a correctness and absolute-safety gate first: invalid geometry or an exceeded
-budget is a failure. Performance budgets remain provisional until the supported
-browser/device matrix is measured with the generated 100, 1,000, and 10,000
-activity corpora.
+The accepted implementation is the positive mask plus stencil layer. The
+benchmark is a correctness and absolute-safety gate first: invalid geometry or
+an exceeded budget is a failure. Performance budgets remain provisional until
+the supported browser/device matrix is measured with the generated 100, 1,000,
+and 10,000 activity corpora.
 
-One local Bun run on 2026-09-11 produced the following reference numbers. The
-positive-mask time is only the cost of packaging already-buffered masks; a
-stencil renderer would add its own GPU upload cost. “Valid” means valid for the
-hole-free inverse-source validator, so `false` is expected for the positive
-mask and the intentionally unsafe global-hole reference.
+One local Bun run on 2026-09-11 produced the following historical reference numbers. The
+positive-mask time is the cost of packaging already-buffered masks; the
+stencil layer uploads only those positive triangles. “Valid” means valid for the
+positive-mask validator, so accepted positive rows should be valid and the
+intentionally unsafe global-hole reference remains invalid.
 
 | Representation           | Median build | p95 build | Heap after run | Features | Rings | Vertices | JSON bytes | Valid |
 | ------------------------ | -----------: | --------: | -------------: | -------: | ----: | -------: | ---------: | ----- |
@@ -97,26 +94,17 @@ mask and the intentionally unsafe global-hole reference.
 | Regional bounded inverse |    667.96 ms | 853.48 ms |       29.78 MB |    5,463 | 5,463 |   22,759 |  1,566,472 | yes   |
 | Global-hole reference    |     87.03 ms |  88.91 ms |       47.69 MB |        1 |    28 |    6,196 |    242,586 | no    |
 
-These values are a baseline for the synthetic fixture, not a product budget.
-They show the deliberate trade: bounded inverse output is larger and more
-expensive to construct, while the global reference's apparent efficiency is
-not an acceptable substitute for valid tile topology. The scale run remained
-non-degraded at 100 masks (224.31 ms median, 269.25 ms p95, 60.74 MB observed
-heap, 632 features, 155,013 bytes) and 1,000 masks (2,360.47 ms median,
-2,390.94 ms p95, 42.53 MB observed heap, 5,022 features, 1,212,633 bytes). At
-10,000 masks it took 20,874.06 ms, observed 138.81 MB heap, and exceeded the
-8 MB output safety budget, so the implementation published its validated
-world-fog fallback with degraded status and two warnings instead of unchecked
-geometry. These numbers are diagnostic observations, not product limits;
-re-run the command when the geometry implementation or supported
+These values are a historical baseline for the superseded regional inverse,
+not a product budget. The positive-mask implementation avoids the global
+world-minus-route topology and keeps publication proportional to explored
+geometry; re-run the command when the geometry implementation or supported
 browser/device matrix changes.
 
 ## Consequences
 
-This adds more GeoJSON features than one global polygon and may perform several
-small difference operations for a geographically broad library. In return,
-MapLibre receives bounded, topology-valid pieces, one numerically difficult
-route is isolated to its partition, and cache/style reload behavior is
+The custom layer adds a small WebGL path and requires browser visual coverage,
+but it avoids sending an inverse world shell through MapLibre's GeoJSON tiler.
+Positive geometry, cache/style reload behavior, and worker replay remain
 deterministic. `FOG_PARTITION_SCHEME_VERSION` must be incremented whenever the
-partition grid, ownership rule, or output interpretation changes; old fog caches
+positive geometry interpretation or stencil contract changes; old fog caches
 are then ignored and rebuilt while canonical activities remain untouched.

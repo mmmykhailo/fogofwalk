@@ -18,6 +18,7 @@ import {
   MAP_SOURCE_IDS,
   SAVED_POINT_LAYER_IDS,
 } from "~/lib/map/layers"
+import type { FogMaskLayer } from "~/lib/map/fogMaskLayer"
 import type { ActivityCoords } from "~/types/activities"
 import type { SavedPoint } from "~shared/saved-points"
 import { mapStore, worldFogGeoJSON } from "~/lib/mapStore"
@@ -66,6 +67,19 @@ export function applyFogDataToMap(
     : null
 ): boolean {
   if (!mapStore.sourcesReady) return false
+  const getLayer = (
+    map as unknown as {
+      getLayer?: (layerId: string) => unknown
+    }
+  ).getLayer
+  const layer = getLayer?.call(map, MAP_LAYER_IDS.fog) as
+    | (maplibregl.StyleLayer & Partial<FogMaskLayer>)
+    | undefined
+  if (layer && typeof layer.setData === "function") {
+    layer.setData(data)
+    mapStore.renderSourceRevision = revision
+    return true
+  }
   const source = map.getSource(MAP_SOURCE_IDS.fog) as
     | maplibregl.GeoJSONSource
     | undefined

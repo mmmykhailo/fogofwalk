@@ -8,8 +8,13 @@ import {
   type FogReply,
   type FogSnapshot,
 } from "../protocol"
-import { bufferFogActivity, type FogMask } from "./buffer"
-import { buildBoundedFog } from "./aggregate"
+import { bufferFogActivity } from "./buffer"
+import {
+  appendFogMasks,
+  createFogMaskAccumulator,
+  finalizeFogMaskAccumulator,
+  type FogMaskAccumulator,
+} from "./aggregate"
 
 export interface FogEngineHooks {
   yieldToScheduler?: () => Promise<void>
@@ -37,7 +42,7 @@ interface EngineState {
   generation: number
   libraryRevision: number
   mode: FogMode
-  masks: FogMask[]
+  accumulator: FogMaskAccumulator
   processedActivityIds: Set<string>
   diagnostics: FogDiagnostics
   completeness: "partial" | "complete"
@@ -125,7 +130,7 @@ export function createFogEngine(options: FogEngineOptions = {}): FogEngine {
       generation,
       libraryRevision,
       mode,
-      masks: [],
+      accumulator: createFogMaskAccumulator(mode),
       processedActivityIds: new Set(),
       diagnostics: emptyDiagnostics(0),
       completeness: "complete",
@@ -189,13 +194,26 @@ export function createFogEngine(options: FogEngineOptions = {}): FogEngine {
   ): FogSnapshot {
     const currentState = state!
     const diagnostics = cloneDiagnostics(currentState.diagnostics)
-    const aggregate = buildBoundedFog(currentState.masks, currentState.mode)
+    const aggregate = finalizeFogMaskAccumulator(currentState.accumulator)
     diagnostics.featureCount = aggregate.featureCount
     diagnostics.vertexCount = aggregate.vertexCount
     const warnings = [
       ...new Set([...diagnostics.warnings, ...aggregate.warnings]),
     ]
     if (aggregate.degraded) currentState.completeness = "partial"
+    diagnostics.warningCounts = {
+      ...(diagnostics.warningCounts ?? {}),
+      ...Object.fromEntries(
+        Object.entries(aggregate.warningCounts).map(([key, count]) => [
+          key,
+          Math.max(diagnostics.warningCounts?.[key] ?? 0, count),
+        ])
+      ),
+    }
+    diagnostics.geometryFallbackCount = Math.max(
+      diagnostics.geometryFallbackCount ?? 0,
+      aggregate.geometryFallbackCount
+    )
     diagnostics.degraded =
       currentState.completeness === "partial" || aggregate.degraded
     return {
@@ -325,7 +343,7 @@ export function createFogEngine(options: FogEngineOptions = {}): FogEngine {
         currentState.completeness = "partial"
         emitError(request, message, false, activity.id)
       } else {
-        currentState.masks.push(...result.masks)
+        appendFogMasks(currentState.accumulator, result.masks)
         if (result.warnings.length > 0) {
           currentState.diagnostics.repairedActivityCount =
             (currentState.diagnostics.repairedActivityCount ?? 0) + 1

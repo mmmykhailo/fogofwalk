@@ -85,23 +85,16 @@ describe("bounded fog aggregation", () => {
     ).toThrow("Fog partition scheme exceeds its technical partition budget.")
   })
 
-  test("represents an empty world as bounded hole-free partitions", () => {
+  test("represents an empty world as an empty positive mask", () => {
     const result = emptyBoundedFog()
 
     expect(result.degraded).toBe(false)
-    expect(result.partitionCount).toBe(72)
-    expect(result.fogData.features.length).toBe(72)
+    expect(result.partitionCount).toBe(0)
+    expect(result.fogData.features.length).toBe(0)
     expect(validateFogRenderData(result.fogData).ok).toBe(true)
-    expect(
-      result.fogData.features.every(
-        (feature) =>
-          feature.geometry.type === "Polygon" &&
-          feature.geometry.coordinates.length === 1
-      )
-    ).toBe(true)
   })
 
-  test("triangulates inverse route holes before publication", () => {
+  test("publishes positive route masks without inverse triangulation", () => {
     const buffered = bufferFogActivity(
       activity("route", [
         [14, 50],
@@ -117,12 +110,8 @@ describe("bounded fog aggregation", () => {
     const report = validateFogRenderData(result.fogData)
     expect(report.ok).toBe(true)
     expect(result.degraded).toBe(false)
-    for (const feature of result.fogData.features) {
-      expect(feature.geometry.type).toBe("Polygon")
-      if (feature.geometry.type === "Polygon") {
-        expect(feature.geometry.coordinates).toHaveLength(1)
-      }
-    }
+    expect(result.fogData.features.length).toBeGreaterThan(0)
+    expect(result.fogData.features[0]?.geometry.type).toBe("Polygon")
   })
 
   test("fills a closed loop only when fill mode requests it", () => {
@@ -141,12 +130,23 @@ describe("bounded fog aggregation", () => {
     const fill = buildBoundedFog(buffered.masks, "fill")
     expect(validateFogRenderData(corridor.fogData).ok).toBe(true)
     expect(validateFogRenderData(fill.fogData).ok).toBe(true)
-    // Filling the loop removes the small interior fog island, so the inverse
-    // is represented by fewer triangles than corridor mode.
-    expect(fill.featureCount).toBeLessThan(corridor.featureCount)
+    // Filling the loop removes the unvisited interior ring from the positive
+    // explored mask; the custom layer handles any remaining holes.
+    const corridorGeometry = corridor.fogData.features[0]?.geometry
+    const fillGeometry = fill.fogData.features[0]?.geometry
+    expect(corridorGeometry?.type).toBe("Polygon")
+    expect(fillGeometry?.type).toBe("Polygon")
+    if (
+      corridorGeometry?.type === "Polygon" &&
+      fillGeometry?.type === "Polygon"
+    ) {
+      expect(corridorGeometry.coordinates.length).toBeGreaterThan(
+        fillGeometry.coordinates.length
+      )
+    }
   })
 
-  test("keeps crossing routes and loops inside bounded partitions", () => {
+  test("keeps crossing routes and loops as positive explored geometry", () => {
     const crossingRoute = bufferFogActivity(
       activity("crossing-route", [
         ...Array.from(
@@ -179,17 +179,10 @@ describe("bounded fog aggregation", () => {
     expect(validateFogRenderData(corridor.fogData).ok).toBe(true)
     expect(validateFogRenderData(fill.fogData).ok).toBe(true)
     expect(
-      corridor.fogData.features.every(
-        (feature) =>
-          feature.geometry.type === "Polygon" &&
-          feature.geometry.coordinates.length === 1
-      )
-    ).toBe(true)
-    expect(
       fill.fogData.features.every(
         (feature) =>
-          feature.geometry.type === "Polygon" &&
-          feature.geometry.coordinates.length === 1
+          feature.geometry.type === "Polygon" ||
+          feature.geometry.type === "MultiPolygon"
       )
     ).toBe(true)
     expect(fill.featureCount).toBeLessThan(corridor.featureCount)

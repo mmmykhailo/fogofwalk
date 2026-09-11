@@ -30,7 +30,7 @@ function isCurrentSnapshot(snapshot: FogSnapshot): boolean {
     snapshot.mode === mapStore.fogMode &&
     snapshot.algorithmVersion === FOG_ALGORITHM_VERSION &&
     snapshot.partitionSchemeVersion === FOG_PARTITION_SCHEME_VERSION &&
-    validateFogRenderData(snapshot.geometry).ok
+    validateFogRenderData(snapshot.geometry, { allowInteriorRings: true }).ok
   )
 }
 
@@ -82,7 +82,7 @@ export function useFogWorkerBridge(onProcessingComplete?: ProcessingComplete): {
     })
     const watchdogTimer = window.setInterval(() => {
       const active = fogCoordinator.activeRequest
-      watchdog.observe(active ? active.request : null)
+      watchdog.observe(active ? active.request : null, false)
       watchdog.check()
     }, 1_000)
 

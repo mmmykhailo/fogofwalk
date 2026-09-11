@@ -99,7 +99,9 @@ function geometryMetrics(data: GeometryCollection) {
     vertexCount,
     byteLength,
     bounds,
-    validForInverseSource: validateFogRenderData(data).ok,
+    validForPositiveSource: validateFogRenderData(data, {
+      allowInteriorRings: true,
+    }).ok,
   }
 }
 
@@ -200,7 +202,7 @@ function benchmarkScale(count: number) {
   let warningCount = 0
   const iterations = count >= 10_000 ? 1 : ITERATIONS
   const safe = benchmark(
-    "regional-bounded-inverse",
+    "positive-mask-aggregated",
     () => {
       const result = buildBoundedFog(masks, "corridor")
       degraded = result.degraded
@@ -215,7 +217,7 @@ function benchmarkScale(count: number) {
       maskCount: masks.length,
       pointsPerMask: 5,
     },
-    safe: {
+    positive: {
       ...safe,
       degraded,
       warningCount,
@@ -234,7 +236,7 @@ const baseline = {
   fixture: { activityCount: 24, masks: masks.length, pointsPerRoute: 96 },
   candidates: [
     benchmark("positive-explored-mask", () => positive),
-    benchmark("regional-bounded-inverse", bounded),
+    benchmark("positive-mask-aggregated", bounded),
     benchmark("global-hole-reference", () => globalHole(masks)),
   ],
 }

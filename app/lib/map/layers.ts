@@ -4,12 +4,11 @@ import {
   ACTIVITY_HIT_WIDTH,
   ACTIVITY_OPACITY_DEFAULT,
   ACTIVITY_WIDTH_DEFAULT,
-  FOG_COLOR,
-  FOG_OPACITY,
   LAP_HIGHLIGHT_WIDTH,
 } from "~/constants/fog"
 import { mapStore, worldFogGeoJSON } from "~/lib/mapStore"
 import { activitiesFeatureCollection } from "~/lib/map/geojson"
+import { createFogMaskLayer } from "~/lib/map/fogMaskLayer"
 import type { MapMode } from "~/types/activities"
 
 export const MAP_SOURCE_IDS = {
@@ -50,19 +49,7 @@ export function setupMapLayers(map: maplibregl.Map, mode: MapMode): void {
   }
 
   if (mode !== "relief") {
-    map.addSource(MAP_SOURCE_IDS.fog, {
-      type: "geojson",
-      data: mapStore.fogData ?? worldFogGeoJSON(),
-    })
-    map.addLayer({
-      id: MAP_LAYER_IDS.fog,
-      type: "fill",
-      source: MAP_SOURCE_IDS.fog,
-      paint: {
-        "fill-color": FOG_COLOR,
-        "fill-opacity": FOG_OPACITY,
-      },
-    })
+    map.addLayer(createFogMaskLayer(mapStore.fogData ?? worldFogGeoJSON()))
   }
 
   map.addSource(MAP_SOURCE_IDS.activities, {

@@ -616,7 +616,9 @@ export async function loadFogMode(): Promise<FogMode | null> {
 // ─── Fog cache ─────────────────────────────────────────────────────────────────
 
 export async function saveFogCache(cache: FogCache): Promise<void> {
-  const validation = validateFogRenderData(cache.fogData)
+  const validation = validateFogRenderData(cache.fogData, {
+    allowInteriorRings: true,
+  })
   if (!validation.ok) {
     throw new Error("Fog cache geometry is invalid.")
   }
@@ -639,7 +641,9 @@ export async function loadFogCache(): Promise<FogCache | null> {
     return null
   }
   if (!cache.fogData) return null
-  const validation = validateFogRenderData(cache.fogData)
+  const validation = validateFogRenderData(cache.fogData, {
+    allowInteriorRings: true,
+  })
   if (!validation.ok) return null
   return {
     activityIds,

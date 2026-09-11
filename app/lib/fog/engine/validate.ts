@@ -20,6 +20,8 @@ export interface FogValidationOptions {
   maxBytes?: number
   /** Maximum non-adjacent segment-pair checks permitted for one ring. */
   maxIntersectionChecks?: number
+  /** Positive explored masks may contain holes (for example an unvisited loop). */
+  allowInteriorRings?: boolean
 }
 
 export interface FogValidationReport {
@@ -182,7 +184,8 @@ function validateGeometry(
   geometry: FogRenderGeometry,
   featureIndex: number,
   errors: string[],
-  maxIntersectionChecks: number
+  maxIntersectionChecks: number,
+  allowInteriorRings: boolean
 ): number {
   let vertices = 0
   const polygons =
@@ -196,7 +199,7 @@ function validateGeometry(
     return 0
   }
   for (const polygon of polygons) {
-    if (polygon.length !== 1) {
+    if (polygon.length !== 1 && !allowInteriorRings) {
       errors.push(
         `feature ${featureIndex} contains interior rings; bounded fog output must be hole-free`
       )
@@ -224,6 +227,7 @@ export function validateFogRenderData(
     options.maxIntersectionChecks >= 0
       ? options.maxIntersectionChecks
       : FOG_OUTPUT_DEFAULTS.maxIntersectionChecks
+  const allowInteriorRings = options.allowInteriorRings ?? true
   const errors: string[] = []
   if (
     !data ||
@@ -252,7 +256,8 @@ export function validateFogRenderData(
       feature.geometry,
       index,
       errors,
-      maxIntersectionChecks
+      maxIntersectionChecks,
+      allowInteriorRings
     )
   }
   let byteLength = 0
