@@ -13,11 +13,11 @@ untouched.
 - Branch: `refactor/fog-processing`
 - Started: 2026-09-11
 - Current phase: Phase 4/5/6 — projections, bounded fog, and sync effects
-- Last completed commit: `0960111 queue local activity sync effects`
-- Current working slice: finish sync scheduling/leadership and projection
-  ownership, then add route-level terminal recovery states
-- Next action: add a cross-tab sync lease/scheduler seam and migrate unique
-  distance plus fog work behind revision-keyed coordinators
+- Last completed commit: `b446f7d coordinate sync leadership`
+- Current working slice: move derived statistics and fog scheduling behind
+  revision-keyed projection services, then add route-level recovery states
+- Next action: extract unique-distance projection scheduling and integrate the
+  existing FogCoordinator with map-store/worker projections
 
 ## A1 activity contract slice
 
@@ -179,6 +179,18 @@ untouched.
 - Focused sync/repository/storage tests and client typecheck pass; this slice is
   committed as `0960111`.
 
+## Sync scheduler and leadership slice
+
+- All focus, visibility, online, poll, manual, and mutation triggers now share
+  one coalescing scheduler with at most one queued follow-up.
+- Browser tabs use a non-blocking Web Lock when available; the fallback uses a
+  short-lived durable repository lease with expiry takeover and release checks.
+- The scheduler and lease state machine are independently tested with memory
+  repositories; leadership errors remain observable rather than becoming
+  unhandled background promises.
+- Focused scheduler/repository tests and client typecheck pass; this slice is
+  committed as `b446f7d`.
+
 ## Path-aware adapter and render slice
 
 - GPX tracks remain one activity and their track segments remain disconnected
@@ -212,6 +224,7 @@ untouched.
 | `37adff0` | Wire the page-wise executor into the sync scheduler                   | Client tests and typecheck pass                                 |
 | `e002ce4` | Commit library mutations with durable outbox effects                  | 8 repository tests pass; client typecheck passes                 |
 | `0960111` | Queue local activity sync effects and split saved-point state            | 20 focused tests pass; client typecheck passes                   |
+| `b446f7d` | Coordinate sync leadership and trigger coalescing                       | 11 focused tests pass; client typecheck passes                   |
 
 ## Phase checklist
 
