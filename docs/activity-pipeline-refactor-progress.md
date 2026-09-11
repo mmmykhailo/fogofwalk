@@ -13,11 +13,11 @@ untouched.
 - Branch: `refactor/fog-processing`
 - Started: 2026-09-11
 - Current phase: completion audit across Phases 0–8
-- Last completed commit: `bed3e1f cover storage migration boundaries`
+- Last completed commit: `3ddfcd6 cancel sync when auth changes`
 - Current working slice: close remaining acceptance gaps, add deterministic
-  boundary tests, and verify the full client/server matrix
+  boundary tests, and verify the full client/server/build matrix
 - Next action: run the full client/server/build matrix, then address the
-  highest-priority remaining cancellation, browser, or fixture gap
+  highest-priority remaining browser or fixture gap
 
 ## A1 activity contract slice
 
@@ -316,6 +316,20 @@ untouched.
   quota integration remain an environment-level gap, not a silent fallback.
 - This slice is committed as `bed3e1f`.
 
+## Sync cancellation slice
+
+- Added a shared abort helper and signal checkpoints around activity executor
+  planning, leasing, transport effects, library commits, and durable state
+  boundaries.
+- Activity transport methods forward `AbortSignal` to fetch; an interrupted
+  leased effect is rethrown without becoming retryable or permanent, leaving
+  lease expiry to provide crash-safe takeover.
+- Auth sign-out, revoked sync capability, and account changes abort the active
+  run; a new signed-in account queues a fresh scheduler run. Saved-point
+  reconciliation shares the same signal.
+- Added cancellation/lease-preservation coverage; the focused sync suite (49)
+  and client typecheck pass. Committed as `984fad4` and `3ddfcd6`.
+
 ## Commit log
 
 | Commit    | Slice                                                                | Verification                                                     |
@@ -362,6 +376,8 @@ untouched.
 | `8b77b6f` | Replace API request errors                                   | Sync tests and typecheck pass                                         |
 | `c47b918` | Remove fog state shadow                                      | Fog state tests and client typecheck pass                              |
 | `bed3e1f` | Cover storage migration boundaries                           | Storage migration tests and client typecheck pass                      |
+| `984fad4` | Abort sync effects safely                                    | Sync executor/transport tests and client typecheck pass                 |
+| `3ddfcd6` | Cancel sync when auth changes                                | 49 sync tests and client typecheck pass                                 |
 
 ## Phase checklist
 
