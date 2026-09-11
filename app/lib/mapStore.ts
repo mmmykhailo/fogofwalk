@@ -126,6 +126,8 @@ interface MapStore {
     algorithmVersion: number
     partitionSchemeVersion: number
   } | null
+  /** Library revision most recently delivered to the active fog map source. */
+  renderSourceRevision: number | null
   /** Revision of the canonical activity snapshot projected into this store. */
   libraryRevision: number
   /** Revision for which unique-distance values have been applied to this projection. */
@@ -182,6 +184,7 @@ export const mapStore: MapStore = {
   fogWorkerMode: null,
   fogWorkerLibraryRevision: 0,
   fogSnapshot: null,
+  renderSourceRevision: null,
   libraryRevision: 0,
   uniqueDistanceProjectionRevision: null,
   isFogWorkerListenerReady: false,
@@ -598,6 +601,7 @@ export function startFogRun(): number {
   mapStore.fogWorkerMode = null
   mapStore.fogWorkerLibraryRevision = 0
   mapStore.fogSnapshot = null
+  mapStore.renderSourceRevision = null
   updateFogStatus({
     phase: "processing",
     generation: mapStore.runId,

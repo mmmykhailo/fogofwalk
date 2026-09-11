@@ -3,6 +3,7 @@ import maplibregl from "maplibre-gl"
 import { attachMapInteractions } from "~/components/map/mapInteractions"
 import type { SavedPointTooltipState } from "~/components/map/useSavedPoints"
 import {
+  applyFogDataToMap,
   rehydrateMapPresentation,
   type MapPresentationState,
 } from "~/lib/map/commands"
@@ -89,8 +90,9 @@ export function useMapLifecycle(
     map.once("load", () => {
       map.resize()
       setupMapLayers(map, initialMode)
-      rehydrateMapPresentation(map, currentPresentation())
       mapStore.sourcesReady = true
+      rehydrateMapPresentation(map, currentPresentation())
+      applyFogDataToMap(map)
       isInitialStyleLoadedRef.current = true
       optionsRef.current.rebuildPhotoMarkers()
       optionsRef.current.onMapReady?.()
@@ -101,6 +103,7 @@ export function useMapLifecycle(
     return () => {
       detachMapInteractions()
       mapStore.sourcesReady = false
+      mapStore.renderSourceRevision = null
       mapStore.map = null
       if (pendingStyleLoadRef.current) {
         map.off("style.load", pendingStyleLoadRef.current)
@@ -119,6 +122,7 @@ export function useMapLifecycle(
       pendingStyleLoadRef.current = null
     }
     mapStore.sourcesReady = false
+    mapStore.renderSourceRevision = null
 
     const onStyleLoad = () => {
       if (pendingStyleLoadRef.current !== onStyleLoad) return
@@ -126,13 +130,14 @@ export function useMapLifecycle(
       pendingStyleLoadRef.current = null
 
       setupMapLayers(map, options.mapMode)
+      mapStore.sourcesReady = true
       optionsRef.current.invalidateActivitiesCache()
       rehydrateMapPresentation(map, currentPresentation())
+      applyFogDataToMap(map)
       map.easeTo({
         pitch: options.mapMode === "relief" ? 45 : 0,
         duration: 400,
       })
-      mapStore.sourcesReady = true
       optionsRef.current.rebuildPhotoMarkers()
     }
 

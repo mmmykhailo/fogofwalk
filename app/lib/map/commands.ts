@@ -57,6 +57,24 @@ export function setFogVisible(map: maplibregl.Map, isVisible: boolean): void {
   setLayerVisibility(map, MAP_LAYER_IDS.fog, isVisible)
 }
 
+/** Apply the latest accepted fog snapshot only after map sources are ready. */
+export function applyFogDataToMap(
+  map: maplibregl.Map,
+  data = mapStore.fogData ?? worldFogGeoJSON(),
+  revision = mapStore.fogData
+    ? (mapStore.fogSnapshot?.libraryRevision ?? mapStore.libraryRevision)
+    : null
+): boolean {
+  if (!mapStore.sourcesReady) return false
+  const source = map.getSource(MAP_SOURCE_IDS.fog) as
+    | maplibregl.GeoJSONSource
+    | undefined
+  if (!source) return false
+  source.setData(data)
+  mapStore.renderSourceRevision = revision
+  return true
+}
+
 export function setSavedPointsPresentation(
   map: maplibregl.Map,
   savedPoints: SavedPoint[],
@@ -144,10 +162,7 @@ export function clearRenderedActivityState(): void {
   const map = mapStore.map
   if (!map || !mapStore.sourcesReady) return
 
-  const fogSource = map.getSource(MAP_SOURCE_IDS.fog) as
-    | maplibregl.GeoJSONSource
-    | undefined
-  fogSource?.setData(worldFogGeoJSON())
+  applyFogDataToMap(map, worldFogGeoJSON(), null)
 
   const activitiesSource = map.getSource(MAP_SOURCE_IDS.activities) as
     | maplibregl.GeoJSONSource

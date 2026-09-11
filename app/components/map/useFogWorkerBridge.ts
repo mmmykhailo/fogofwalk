@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef } from "react"
 import type maplibregl from "maplibre-gl"
 import { activitiesFeatureCollection } from "~/lib/map/geojson"
+import { applyFogDataToMap } from "~/lib/map/commands"
 import { MAP_SOURCE_IDS } from "~/lib/map/layers"
 import {
   fogCoordinator,
@@ -86,10 +87,7 @@ export function useFogWorkerBridge(onProcessingComplete?: ProcessingComplete): {
 
       const map = mapStore.map
       if (!map || !mapStore.sourcesReady) return true
-      const fogSource = map.getSource(MAP_SOURCE_IDS.fog) as
-        | maplibregl.GeoJSONSource
-        | undefined
-      fogSource?.setData(snapshot.geometry)
+      applyFogDataToMap(map, snapshot.geometry, snapshot.libraryRevision)
 
       const activitiesKey =
         `${mapStore.libraryRevision}:` +
