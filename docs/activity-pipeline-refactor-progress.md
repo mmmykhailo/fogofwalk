@@ -13,7 +13,7 @@ untouched.
 - Branch: `refactor/fog-processing`
 - Started: 2026-09-11
 - Current phase: Phase 4/5/6 — projections, bounded fog, and sync effects
-- Last completed commit: `a74a0f7 commit library mutations with outbox`
+- Last completed commit: `e002ce4 commit library mutations with outbox`
 - Current working slice: route local import/update/delete mutations through the
   atomic activity outbox and split saved-point sync state
 - Next action: add durable local upload/delete effect handling to the executor,
@@ -163,7 +163,7 @@ untouched.
 - The caller migration and executor handling of local effects remain the next
   slice; no route mutation has been changed by this commit yet.
 - Focused repository tests and client typecheck pass; this slice is committed
-  as `a74a0f7`.
+  as `e002ce4`.
 
 ## Path-aware adapter and render slice
 
@@ -196,7 +196,7 @@ untouched.
 | `af7b9cc` | Route sync through the revisioned library and validated transport     | 152 client tests pass; client typecheck passes                    |
 | `ed8bc4e` | Add page-wise resumable sync executor                                | 14 sync executor/repository tests pass; client typecheck passes  |
 | `37adff0` | Wire the page-wise executor into the sync scheduler                   | Client tests and typecheck pass                                 |
-| `a74a0f7` | Commit library mutations with durable outbox effects                  | 8 repository tests pass; client typecheck passes                 |
+| `e002ce4` | Commit library mutations with durable outbox effects                  | 8 repository tests pass; client typecheck passes                 |
 
 ## Phase checklist
 
