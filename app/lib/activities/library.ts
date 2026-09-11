@@ -1,6 +1,7 @@
 import { ActivityLibraryConflictError, ActivityStorageError } from "./errors"
 import {
   IndexedDbActivityLibraryRepository,
+  type ActivityLibraryCommitOptions,
   type ActivityLibraryRepository,
 } from "./repository"
 import type {
@@ -138,7 +139,10 @@ export class ActivityLibrary {
     return () => this.listeners.delete(listener)
   }
 
-  async dispatch(command: LibraryCommand): Promise<LibraryCommit> {
+  async dispatch(
+    command: LibraryCommand,
+    options: ActivityLibraryCommitOptions = {}
+  ): Promise<LibraryCommit> {
     return this.enqueue(async () => {
       if (!this.snapshot)
         this.snapshot = cloneSnapshot(await this.repository.load())
@@ -148,7 +152,7 @@ export class ActivityLibrary {
         attempt++
         const base = this.snapshot
         const commit = await this.withWriteLock(() =>
-          this.repository.commit(command, base.revision)
+          this.repository.commit(command, base.revision, options)
         ).catch(async (error: unknown) => {
           if (
             !(error instanceof ActivityLibraryConflictError) ||

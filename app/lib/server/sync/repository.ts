@@ -141,7 +141,10 @@ function isSyncState(value: unknown): value is SyncState {
   )
 }
 
-function normaliseItem(item: SyncOutboxItemInput, now: number): SyncOutboxItem {
+export function normaliseSyncOutboxItem(
+  item: SyncOutboxItemInput,
+  now: number
+): SyncOutboxItem {
   const status = item.status ?? "pending"
   if (status === "in-flight") {
     throw new Error("New sync outbox items cannot start in-flight")
@@ -270,8 +273,8 @@ export class IndexedDbSyncRepository implements SyncRepository {
     for (const item of commit.enqueue ?? []) {
       const current = byDedupeKey.get(item.dedupeKey)
       const next = current
-        ? mergeEnqueuedItem(current, item, now)
-        : normaliseItem(item, now)
+        ? mergeSyncOutboxItem(current, item, now)
+        : normaliseSyncOutboxItem(item, now)
       byId.set(next.id, next)
       byDedupeKey.set(next.dedupeKey, next)
     }
@@ -316,8 +319,8 @@ export class IndexedDbSyncRepository implements SyncRepository {
       index.get(item.dedupeKey)
     )
     const next = existing
-      ? mergeEnqueuedItem(existing, item, now)
-      : normaliseItem(item, now)
+      ? mergeSyncOutboxItem(existing, item, now)
+      : normaliseSyncOutboxItem(item, now)
     store.put(next)
     await transactionResult(tx)
     return clone(next)
@@ -408,7 +411,7 @@ export class IndexedDbSyncRepository implements SyncRepository {
   }
 }
 
-function mergeEnqueuedItem(
+export function mergeSyncOutboxItem(
   existing: SyncOutboxItem,
   input: SyncOutboxItemInput,
   now: number
@@ -418,7 +421,7 @@ function mergeEnqueuedItem(
   if (existing.status === "complete" || existing.status === "in-flight") {
     return clone(existing)
   }
-  const incoming = normaliseItem(input, now)
+  const incoming = normaliseSyncOutboxItem(input, now)
   return {
     ...existing,
     ...incoming,
@@ -468,8 +471,8 @@ export class MemorySyncRepository implements SyncRepository {
       )
       const now = input.updatedAt ?? input.createdAt ?? this.now()
       const next = current
-        ? mergeEnqueuedItem(current, input, now)
-        : normaliseItem(
+        ? mergeSyncOutboxItem(current, input, now)
+        : normaliseSyncOutboxItem(
             { ...input, id: input.id || this.idFactory("outbox") },
             now
           )
@@ -499,8 +502,11 @@ export class MemorySyncRepository implements SyncRepository {
       (candidate) => candidate.dedupeKey === item.dedupeKey
     )
     const next = existing
-      ? mergeEnqueuedItem(existing, item, now)
-      : normaliseItem({ ...item, id: item.id || this.idFactory("outbox") }, now)
+      ? mergeSyncOutboxItem(existing, item, now)
+      : normaliseSyncOutboxItem(
+          { ...item, id: item.id || this.idFactory("outbox") },
+          now
+        )
     this.items.set(next.id, clone(next))
     return clone(next)
   }

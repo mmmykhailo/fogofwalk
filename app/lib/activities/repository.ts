@@ -1,6 +1,12 @@
 import type { ParsedActivity } from "~/types/activities"
 import { openStorageDatabase } from "~/lib/storage"
 import {
+  mergeSyncOutboxItem,
+  normaliseSyncOutboxItem,
+  type SyncOutboxItem,
+  type SyncOutboxItemInput,
+} from "~/lib/server/sync/repository"
+import {
   ActivityLibraryConflictError,
   ActivityStorageError,
   toActivityStorageError,
@@ -28,8 +34,14 @@ export interface ActivityLibraryRepository {
   load(): Promise<LibrarySnapshot>
   commit(
     command: LibraryCommand,
-    expectedRevision: number
+    expectedRevision: number,
+    options?: ActivityLibraryCommitOptions
   ): Promise<LibraryCommit>
+}
+
+/** Durable effects that must be committed with a canonical library mutation. */
+export interface ActivityLibraryCommitOptions {
+  outbox?: readonly SyncOutboxItemInput[]
 }
 
 function clone<T>(value: T): T {
@@ -304,7 +316,8 @@ export class IndexedDbActivityLibraryRepository implements ActivityLibraryReposi
 
   async commit(
     command: LibraryCommand,
-    expectedRevision: number
+    expectedRevision: number,
+    options: ActivityLibraryCommitOptions = {}
   ): Promise<LibraryCommit> {
     const db = await openStorageDatabase()
     if (!db) {
@@ -315,12 +328,18 @@ export class IndexedDbActivityLibraryRepository implements ActivityLibraryReposi
     }
 
     try {
+      const hasOutbox = (options.outbox?.length ?? 0) > 0
       const transaction = db.transaction(
-        ["activities", "library-meta"],
+        hasOutbox
+          ? ["activities", "library-meta", "sync-outbox"]
+          : ["activities", "library-meta"],
         "readwrite"
       )
       const activityStore = transaction.objectStore("activities")
       const metaStore = transaction.objectStore("library-meta")
+      const outboxStore = hasOutbox
+        ? transaction.objectStore("sync-outbox")
+        : null
       const [activities, rawMeta] = await Promise.all([
         requestResult<ParsedActivity[]>(activityStore.getAll()),
         requestResult<StoredLibraryMeta | undefined>(
@@ -345,6 +364,23 @@ export class IndexedDbActivityLibraryRepository implements ActivityLibraryReposi
           schemaVersion: LIBRARY_SCHEMA_VERSION,
           revision: result.snapshot.revision,
         } satisfies StoredLibraryMeta)
+      }
+      if (outboxStore) {
+        const existing = await requestResult<SyncOutboxItem[]>(
+          outboxStore.getAll()
+        )
+        const byDedupeKey = new Map(
+          existing.map((item) => [item.dedupeKey, item])
+        )
+        const now = Date.now()
+        for (const input of options.outbox ?? []) {
+          const currentItem = byDedupeKey.get(input.dedupeKey)
+          const next = currentItem
+            ? mergeSyncOutboxItem(currentItem, input, now)
+            : normaliseSyncOutboxItem(input, now)
+          outboxStore.put(next)
+          byDedupeKey.set(next.dedupeKey, next)
+        }
       }
       await transactionResult(transaction)
       return result
@@ -379,7 +415,8 @@ export class MemoryActivityLibraryRepository implements ActivityLibraryRepositor
 
   async commit(
     command: LibraryCommand,
-    expectedRevision: number
+    expectedRevision: number,
+    options: ActivityLibraryCommitOptions = {}
   ): Promise<LibraryCommit> {
     if (this.failure !== null) {
       const error = this.failure
@@ -394,6 +431,22 @@ export class MemoryActivityLibraryRepository implements ActivityLibraryRepositor
     }
     const result = applyLibraryCommand(this.state, command)
     this.state = result.snapshot
+    for (const input of options.outbox ?? []) {
+      const existing = [...this.outbox.values()].find(
+        (item) => item.dedupeKey === input.dedupeKey
+      )
+      const now = Date.now()
+      const next = existing
+        ? mergeSyncOutboxItem(existing, input, now)
+        : normaliseSyncOutboxItem(input, now)
+      this.outbox.set(next.id, next)
+    }
     return result
+  }
+
+  private readonly outbox = new Map<string, SyncOutboxItem>()
+
+  getOutbox(): SyncOutboxItem[] {
+    return [...this.outbox.values()].map(clone)
   }
 }

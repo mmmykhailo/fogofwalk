@@ -85,6 +85,39 @@ describe("activity library command repository", () => {
     library.close()
   })
 
+  test("commits a library mutation and its outbox effect together", async () => {
+    const repository = new MemoryActivityLibraryRepository()
+    const library = new ActivityLibrary(repository)
+
+    const result = await library.dispatch(
+      {
+        type: "import",
+        operationId: "import-with-outbox",
+        activities: [activity("first")],
+      },
+      {
+        outbox: [
+          {
+            dedupeKey: "activity:upload:import-with-outbox",
+            operation: "upload",
+            payload: { kind: "upload", activityId: "first" },
+          },
+        ],
+      }
+    )
+
+    expect(result.snapshot.activities).toHaveLength(1)
+    expect(repository.getOutbox()).toEqual([
+      expect.objectContaining({
+        dedupeKey: "activity:upload:import-with-outbox",
+        operation: "upload",
+        status: "pending",
+        attempts: 0,
+      }),
+    ])
+    library.close()
+  })
+
   test("retries a concurrent revision conflict without dropping the command", async () => {
     const repository = new MemoryActivityLibraryRepository(
       [activity("first")],

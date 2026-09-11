@@ -13,11 +13,11 @@ untouched.
 - Branch: `refactor/fog-processing`
 - Started: 2026-09-11
 - Current phase: Phase 4/5/6 — projections, bounded fog, and sync effects
-- Last completed commit: `37adff0 wire sync executor into scheduler`
-- Current working slice: make local activity mutations enqueue durable sync
-  effects and separate saved-point state from activity state
-- Next action: route delete/update/resurrection commands through the activity
-  outbox, then add scheduler/lease and local-mutation atomicity tests
+- Last completed commit: `a74a0f7 commit library mutations with outbox`
+- Current working slice: route local import/update/delete mutations through the
+  atomic activity outbox and split saved-point sync state
+- Next action: add durable local upload/delete effect handling to the executor,
+  then migrate saved-point state and scheduler leadership
 
 ## A1 activity contract slice
 
@@ -153,6 +153,18 @@ untouched.
   projection queue after their canonical commit.
 - Client tests and typecheck pass; this slice is committed as `37adff0`.
 
+## Atomic library/outbox slice
+
+- Activity-library commits can carry durable sync-outbox inputs. IndexedDB now
+  commits activities, `library-meta`, and those effects in one transaction;
+  memory repositories exercise the same merge/dedupe behavior.
+- Shared outbox normalization/merge helpers keep standalone sync enqueue and
+  library-coupled enqueue semantics identical.
+- The caller migration and executor handling of local effects remain the next
+  slice; no route mutation has been changed by this commit yet.
+- Focused repository tests and client typecheck pass; this slice is committed
+  as `a74a0f7`.
+
 ## Path-aware adapter and render slice
 
 - GPX tracks remain one activity and their track segments remain disconnected
@@ -184,6 +196,7 @@ untouched.
 | `af7b9cc` | Route sync through the revisioned library and validated transport     | 152 client tests pass; client typecheck passes                    |
 | `ed8bc4e` | Add page-wise resumable sync executor                                | 14 sync executor/repository tests pass; client typecheck passes  |
 | `37adff0` | Wire the page-wise executor into the sync scheduler                   | Client tests and typecheck pass                                 |
+| `a74a0f7` | Commit library mutations with durable outbox effects                  | 8 repository tests pass; client typecheck passes                 |
 
 ## Phase checklist
 
