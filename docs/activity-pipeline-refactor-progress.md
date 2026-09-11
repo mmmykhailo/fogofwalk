@@ -13,11 +13,11 @@ untouched.
 - Branch: `refactor/fog-processing`
 - Started: 2026-09-11
 - Current phase: completion audit across Phases 0–8
-- Last completed commit: `c47b918 remove fog state shadow`
+- Last completed commit: `bed3e1f cover storage migration boundaries`
 - Current working slice: close remaining acceptance gaps, add deterministic
   boundary tests, and verify the full client/server matrix
-- Next action: run the full client/server/build matrix, then add the
-  highest-priority missing fault or migration coverage
+- Next action: run the full client/server/build matrix, then address the
+  highest-priority remaining cancellation, browser, or fixture gap
 
 ## A1 activity contract slice
 
@@ -307,6 +307,15 @@ untouched.
   keeps render and revision projections only. Committed as `c47b918`.
 - Focused tests and typecheck passed after every functional-style slice.
 
+## Storage migration boundary slice
+
+- Extracted non-mutating legacy activity defaults and a pure unique-distance
+  revision guard from the storage paths.
+- Added deterministic migration, explicit-value preservation, stale-write, and
+  IndexedDB error-classification tests. Browser IndexedDB upgrade/rollback and
+  quota integration remain an environment-level gap, not a silent fallback.
+- This slice is committed as `bed3e1f`.
+
 ## Commit log
 
 | Commit    | Slice                                                                | Verification                                                     |
@@ -352,6 +361,7 @@ untouched.
 | `7c67c57` | Make sync executor functional                                | Sync executor/repository/transport tests and typecheck pass            |
 | `8b77b6f` | Replace API request errors                                   | Sync tests and typecheck pass                                         |
 | `c47b918` | Remove fog state shadow                                      | Fog state tests and client typecheck pass                              |
+| `bed3e1f` | Cover storage migration boundaries                           | Storage migration tests and client typecheck pass                      |
 
 ## Phase checklist
 
