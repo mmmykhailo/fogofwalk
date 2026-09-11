@@ -7,7 +7,6 @@ import {
   useRevalidator,
   useSearchParams,
 } from "react-router"
-import { featureCollection, lineString } from "@turf/helpers"
 import bbox from "@turf/bbox"
 import type { Route } from "./+types/home"
 import { MapView } from "~/components/map/MapView"
@@ -65,6 +64,7 @@ import {
 } from "~/lib/storage"
 import { clearMapPosition } from "~/lib/mapStore"
 import { clearRenderedActivityState } from "~/lib/map/commands"
+import { activitiesFeatureCollection } from "~/lib/map/geojson"
 import { initAuth, useAuth } from "~/lib/server/authStore"
 import { apiUrl, isServerEnabled } from "~/lib/server/config"
 import {
@@ -566,6 +566,10 @@ export default function Home() {
   const isNewUploadRef = useRef(false)
   // Activity count before the latest upload so fitBounds can identify the new activities.
   const prevActivityCountRef = useRef(0)
+  // Share-target entries stay in Cache Storage until the import action returns
+  // a terminal result. Keeping the request keys lets a parse/storage failure
+  // remain retryable after reload instead of losing the shared files.
+  const pendingShareRequestsRef = useRef<Request[]>([])
 
   // A fresh OAuth sign-in can start syncing while this loader is still reading
   // IndexedDB. In that case its first result contains no activities, then the
@@ -608,7 +612,7 @@ export default function Home() {
     setSelectedActivityIds([activityId])
     const activity = mapStore.activities.find((t) => t.id === activityId)
     if (!activity || !mapStore.map) return
-    const fc = featureCollection([lineString(activity.coordinates)])
+    const fc = activitiesFeatureCollection([activity])
     const [w, s, e, n] = bbox(fc)
     if (isFinite(w)) {
       mapStore.map.fitBounds(
@@ -652,23 +656,26 @@ export default function Home() {
       if (!("caches" in window)) return
       const cache = await caches.open("share-target-queue")
       const keys = await cache.keys()
-      if (keys.length === 0) return
+      if (keys.length === 0) {
+        setSearchParams({}, { replace: true })
+        return
+      }
       const files: File[] = []
+      const importedRequests: Request[] = []
       for (const req of keys) {
         const res = await cache.match(req)
         if (!res) continue
         const name = res.headers.get("X-File-Name") ?? "file"
         const type = res.headers.get("Content-Type") ?? ""
         files.push(new File([await res.arrayBuffer()], name, { type }))
-        await cache.delete(req)
+        importedRequests.push(req)
       }
       if (files.length > 0) {
+        pendingShareRequestsRef.current = importedRequests
         const dt = new DataTransfer()
         files.forEach((f) => dt.items.add(f))
         handleAddFiles(dt.files)
       }
-      // Clean the URL so a page refresh doesn't re-trigger this effect
-      setSearchParams({}, { replace: true })
     })()
   }, [mapReady])
 
@@ -699,9 +706,7 @@ export default function Home() {
     if (mapStore.activities.length === 0 || !map) return
 
     // Compute bbox for all activities and check the zoom needed to fit them.
-    const allFc = featureCollection(
-      mapStore.activities.map((t) => lineString(t.coordinates))
-    )
+    const allFc = activitiesFeatureCollection(mapStore.activities)
     const [w, s, e, n] = bbox(allFc)
     if (!isFinite(w)) return
 
@@ -723,9 +728,7 @@ export default function Home() {
         prevActivityCountRef.current
       )
       if (newActivities.length === 0) return
-      const newFc = featureCollection(
-        newActivities.map((t) => lineString(t.coordinates))
-      )
+      const newFc = activitiesFeatureCollection(newActivities)
       const [nw, ns, ne, nn] = bbox(newFc)
       if (isFinite(nw)) {
         map.fitBounds(
@@ -744,6 +747,23 @@ export default function Home() {
     const data = fetcher.data
     if (!data) return
     if (data.intent === "add-files") {
+      const pendingShareRequests = pendingShareRequestsRef.current
+      pendingShareRequestsRef.current = []
+      if (pendingShareRequests.length > 0 && data.failedFiles.length === 0) {
+        void caches
+          .open("share-target-queue")
+          .then(async (cache) => {
+            for (const request of pendingShareRequests) {
+              await cache.delete(request)
+            }
+            setSearchParams({}, { replace: true })
+          })
+          .catch((error) =>
+            console.warn("[share-target] queue acknowledgement failed:", error)
+          )
+      }
+      // Keep a failed share target addressable for a retry after reload. The
+      // files remain in Cache Storage until a fully successful terminal import.
       prevActivityCountRef.current = activityCount // snapshot pre-upload count for fitBounds fallback
       setShowUploadDialog(false)
       if (data.newActivitiesCount > 0) {
@@ -865,11 +885,8 @@ export default function Home() {
     return startSyncScheduler()
   }, [isMapRoute, isSyncEnabled])
 
-  const visibility = useActivityVisibility((activityId, isPublic) => {
-    const index = mapStore.activities.findIndex((t) => t.id === activityId)
-    if (index >= 0) {
-      mapStore.activities[index]!.isPublic = isPublic
-    }
+  const visibility = useActivityVisibility(() => {
+    void revalidator.revalidate()
   })
 
   function handleAddFiles(files: FileList, mode: FogMode = fogMode) {

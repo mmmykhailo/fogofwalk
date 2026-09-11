@@ -59,6 +59,9 @@ untouched.
   directly. Cross-tab refreshes publish projection changes.
 - The canonical commit remains independent of unique-distance, fog-cache, and
   sync side effects; those projections are scheduled after the commit.
+- Share-target files are retained until a successful terminal import result and
+  remain addressable for retry when parsing or storage fails. Visibility edits
+  also go through the library projection instead of mutating its array.
 - Focused tests and client typecheck pass; this slice is committed as
   `60e9047`.
 
@@ -127,6 +130,7 @@ untouched.
 | `60e9047` | Route activity changes through the serialized library                | 30 focused tests pass; client typecheck passes                   |
 | `2378a7f` | Add bounded fog worker engine, protocol, and cache handoff           | 48 focused tests pass; client typecheck passes                   |
 | `ce7255d` | Add the revisioned fog coordinator                                   | 4 focused tests pass                                             |
+| pending   | Close share-queue acknowledgement and visibility mutation seams      | Client typecheck passes                                          |
 | pending   | Add pure sync planner and validated transport                        | 29 focused tests pass; client typecheck passes                   |
 
 ## Phase checklist

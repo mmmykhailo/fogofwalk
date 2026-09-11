@@ -2,7 +2,8 @@ import { useCallback, useRef, useState } from "react"
 import type { ParsedActivity } from "~/types/activities"
 import { updateActivityVisibility } from "~/lib/server/activityVisibility"
 import { canSync } from "~/lib/server/authStore"
-import { saveActivities } from "~/lib/storage"
+import { activityLibrary, initializeActivityLibrary } from "~/lib/mapStore"
+import { createUuid } from "~/lib/uuid"
 
 const SAVE_DELAY_MS = 600
 
@@ -35,7 +36,6 @@ export function useActivityVisibility(
     (activity: ParsedActivity, isPublic: boolean) => {
       if (!canSync() || !activity.contentHash) return
 
-      activity.isPublic = isPublic
       latestRef.current = { activity, isPublic }
       setPendingValue(isPublic)
       if (timeoutRef.current) {
@@ -48,13 +48,29 @@ export function useActivityVisibility(
 
         setIsLoading(true)
         try {
+          await initializeActivityLibrary()
+          const canonical = activityLibrary
+            .getSnapshot()
+            .activities.find((item) => item.id === current.activity.id)
+          if (!canonical?.contentHash) return
           await updateActivityVisibility(
-            current.activity.contentHash!,
+            canonical.contentHash,
             current.isPublic
           )
-          current.activity.isPublic = current.isPublic
-          await saveActivities([current.activity])
-          onUpdated?.(current.activity.id, current.isPublic)
+          const result = await activityLibrary.dispatch({
+            type: "applyRemote",
+            operationId: createUuid(),
+            changes: [
+              {
+                type: "upsert",
+                activity: { ...canonical, isPublic: current.isPublic },
+              },
+            ],
+          })
+          onUpdated?.(
+            result.change.updated[0]?.id ?? canonical.id,
+            current.isPublic
+          )
         } catch (err) {
           console.warn("[visibility] failed to save:", err)
         } finally {
