@@ -35,7 +35,7 @@ const UNIQUE_DISTANCE_VERSION = 1
 // ─── DB singleton ──────────────────────────────────────────────────────────────
 
 const DB_NAME = "fogofwalk"
-const DB_VERSION = 3
+const DB_VERSION = 4
 
 let dbPromise: Promise<IDBDatabase | null> | null = null
 
@@ -82,6 +82,9 @@ function getDb(): Promise<IDBDatabase | null> {
         if (!db.objectStoreNames.contains("prefs")) {
           db.createObjectStore("prefs", { keyPath: "key" })
         }
+        if (!db.objectStoreNames.contains("library-meta")) {
+          db.createObjectStore("library-meta", { keyPath: "key" })
+        }
       }
 
       req.onsuccess = () => resolve(req.result)
@@ -95,6 +98,17 @@ function getDb(): Promise<IDBDatabase | null> {
     }
   })
   return dbPromise
+}
+
+/**
+ * Shared database handle for the activity-library repository.
+ *
+ * The legacy storage helpers intentionally remain available during migration,
+ * but the canonical activity service must be able to report an unavailable
+ * database instead of treating it as an empty library.
+ */
+export async function openStorageDatabase(): Promise<IDBDatabase | null> {
+  return getDb()
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────

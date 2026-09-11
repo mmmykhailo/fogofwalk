@@ -12,15 +12,18 @@ untouched.
 
 - Branch: `refactor/fog-processing`
 - Started: 2026-09-11
-- Current phase: Phase 0/1 — baselines, contracts, and characterization
-- Last completed commit: none for this implementation yet
-- Next action: land the first typed activity model/hash slice
+- Current phase: Phase 1/2 — contracts and activity-library ownership
+- Last completed commit: `fa8e423 track refactor progress`
+- Next action: integrate the bounded path-aware model/hash slice, then wire the
+  service into restore/import/delete callers
 
 ## Commit log
 
 | Commit | Slice | Verification |
 | ------ | ----- | ------------ |
 | — | Baseline before implementation | Client: 78 tests pass; client typecheck passes |
+| `fa8e423` | Add the continuation tracker | Client baseline recorded |
+| pending | Add revisioned activity-library repository/service foundations | 5 focused tests pass; client typecheck passes |
 
 ## Phase checklist
 
