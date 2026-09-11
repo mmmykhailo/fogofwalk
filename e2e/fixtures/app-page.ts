@@ -273,14 +273,23 @@ export function createAppPage(
         })
         if (!entry) return null
 
-        const geometry = entry.fogData.geometry
-        const ringCount =
-          geometry.type === "Polygon"
-            ? geometry.coordinates.length
-            : geometry.coordinates.reduce(
-                (sum: number, polygon: unknown[]) => sum + polygon.length,
+        const ringCount = entry.fogData.features.reduce(
+          (sum: number, feature: any) => {
+            const geometry = feature.geometry
+            if (geometry.type === "Polygon") {
+              return sum + geometry.coordinates.length
+            }
+            return (
+              sum +
+              geometry.coordinates.reduce(
+                (polygonSum: number, polygon: unknown[]) =>
+                  polygonSum + polygon.length,
                 0
               )
+            )
+          },
+          0
+        )
         return {
           activityIds: entry.activityIds,
           fogMode: entry.fogMode,
