@@ -68,4 +68,30 @@ describe("fog worker watchdog", () => {
     watchdog.observe({ requestId: "active", generation: 1 }, false)
     expect(watchdog.check(10)).toBe(true)
   })
+
+  test("uses a longer bounded deadline for active aggregation", () => {
+    let clock = 0
+    const timedOut: string[] = []
+    const watchdog = createFogWorkerWatchdog({
+      timeoutMs: 10,
+      stageTimeoutMs: { aggregating: 30 },
+      now: () => clock,
+      onTimeout: (request) => timedOut.push(request.requestId),
+    })
+
+    watchdog.observe({
+      requestId: "active",
+      generation: 1,
+      stage: "buffering",
+    })
+    clock = 9
+    watchdog.observe({
+      requestId: "active",
+      generation: 1,
+      stage: "aggregating",
+    })
+    expect(watchdog.check(38)).toBe(false)
+    expect(watchdog.check(39)).toBe(true)
+    expect(timedOut).toEqual(["active"])
+  })
 })

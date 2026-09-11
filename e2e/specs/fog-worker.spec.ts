@@ -28,10 +28,19 @@ const resetRequest = {
 interface BrowserWatchdogModule {
   createFogWorkerWatchdog: (options: {
     timeoutMs: number
+    stageTimeoutMs?: { aggregating?: number }
     now: () => number
-    onTimeout: (request: { requestId: string; generation: number }) => void
+    onTimeout: (request: {
+      requestId: string
+      generation: number
+      stage?: "buffering" | "aggregating" | "complete"
+    }) => void
   }) => {
-    observe: (request: { requestId: string; generation: number }) => void
+    observe: (request: {
+      requestId: string
+      generation: number
+      stage?: "buffering" | "aggregating" | "complete"
+    }) => void
     check: (now?: number) => boolean
   }
 }
@@ -240,16 +249,25 @@ test("[F-041] refreshes the watchdog deadline from browser progress", async ({
     const timedOut: string[] = []
     const watchdog = createFogWorkerWatchdog({
       timeoutMs: 10,
+      stageTimeoutMs: { aggregating: 30 },
       now: () => clock,
       onTimeout: ({ requestId }) => timedOut.push(requestId),
     })
 
-    watchdog.observe({ requestId: "active", generation: 1 })
+    watchdog.observe({
+      requestId: "active",
+      generation: 1,
+      stage: "buffering",
+    })
     clock = 9
-    watchdog.observe({ requestId: "active", generation: 1 })
+    watchdog.observe({
+      requestId: "active",
+      generation: 1,
+      stage: "aggregating",
+    })
     return {
-      beforeDeadline: watchdog.check(18),
-      atDeadline: watchdog.check(19),
+      beforeDeadline: watchdog.check(38),
+      atDeadline: watchdog.check(39),
       timedOut,
     }
   })

@@ -180,7 +180,16 @@ export function useFogWorkerBridge(onProcessingComplete?: ProcessingComplete): {
 
       const result = fogCoordinator.handleReply(message)
       if (!result.accepted) return
-      watchdog.observe(fogCoordinator.activeRequest?.request ?? null)
+      const activeRequest = fogCoordinator.activeRequest?.request
+      watchdog.observe(
+        activeRequest
+          ? {
+              requestId: activeRequest.requestId,
+              generation: activeRequest.generation,
+              ...(message.type === "PROGRESS" ? { stage: message.stage } : {}),
+            }
+          : null
+      )
 
       // Replies from an abandoned generation cannot mutate the map, progress,
       // cache, or completion state.
@@ -190,6 +199,10 @@ export function useFogWorkerBridge(onProcessingComplete?: ProcessingComplete): {
         console.warn(
           `[worker] fog ${message.fatal ? "failed" : "degraded"}: ${message.message}`
         )
+        if (message.fatal) {
+          const worker = attachedWorker
+          if (worker) failWorker(new Error(message.message), worker)
+        }
         return
       }
 

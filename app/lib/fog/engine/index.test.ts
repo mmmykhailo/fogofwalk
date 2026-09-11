@@ -50,7 +50,7 @@ describe("FogEngine", () => {
     expect(result.snapshot.libraryRevision).toBe(1)
     expect(result.snapshot.generation).toBe(1)
     expect(result.snapshot.completeness).toBe("complete")
-    expect(progress).toEqual([1, 1])
+    expect(progress).toEqual([1, 1, 1, 1])
     expect(updates).toEqual([1, 1])
   })
 

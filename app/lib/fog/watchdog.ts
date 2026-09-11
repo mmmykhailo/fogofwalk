@@ -1,12 +1,28 @@
 export const DEFAULT_FOG_WORKER_TIMEOUT_MS = 30_000
 
+export type FogWorkerStage = "buffering" | "aggregating" | "complete"
+
+export const DEFAULT_FOG_WORKER_STAGE_TIMEOUTS_MS: Record<
+  FogWorkerStage,
+  number
+> = {
+  buffering: DEFAULT_FOG_WORKER_TIMEOUT_MS,
+  // Boolean geometry and validation can legitimately outlive the normal
+  // request interval. The preceding aggregating progress reply starts this
+  // larger, still bounded window.
+  aggregating: 60_000,
+  complete: DEFAULT_FOG_WORKER_TIMEOUT_MS,
+}
+
 export interface FogWorkerWatchdogRequest {
   requestId: string
   generation: number
+  stage?: FogWorkerStage
 }
 
 export interface FogWorkerWatchdogOptions {
   timeoutMs?: number
+  stageTimeoutMs?: Partial<Record<FogWorkerStage, number>>
   now?: () => number
   onTimeout: (request: FogWorkerWatchdogRequest) => void
 }
@@ -33,6 +49,21 @@ export function createFogWorkerWatchdog(
     1,
     Math.floor(options.timeoutMs ?? DEFAULT_FOG_WORKER_TIMEOUT_MS)
   )
+  const stageTimeouts = Object.fromEntries(
+    (Object.keys(DEFAULT_FOG_WORKER_STAGE_TIMEOUTS_MS) as FogWorkerStage[]).map(
+      (stage) => [
+        stage,
+        Math.max(
+          1,
+          Math.floor(
+            options.stageTimeoutMs?.[stage] ??
+              options.timeoutMs ??
+              DEFAULT_FOG_WORKER_STAGE_TIMEOUTS_MS[stage]
+          )
+        ),
+      ]
+    )
+  ) as Record<FogWorkerStage, number>
   const now = options.now ?? (() => Date.now())
   const onTimeout = options.onTimeout
   let active: {
@@ -52,14 +83,23 @@ export function createFogWorkerWatchdog(
       active?.request.requestId === request.requestId &&
       active.request.generation === request.generation
     ) {
-      if (refresh) active.startedAt = now()
+      const stageChanged =
+        request.stage !== undefined && request.stage !== active.request.stage
+      if (request.stage !== undefined) active.request.stage = request.stage
+      if (refresh || stageChanged) active.startedAt = now()
       return
     }
-    active = { request, startedAt: now() }
+    active = {
+      request: { ...request, stage: request.stage ?? "buffering" },
+      startedAt: now(),
+    }
   }
 
   function check(at = now()): boolean {
-    if (!active || at - active.startedAt < timeoutMs) {
+    const timeout = active
+      ? stageTimeouts[active.request.stage ?? "buffering"]
+      : timeoutMs
+    if (!active || at - active.startedAt < timeout) {
       return false
     }
     const request = active.request

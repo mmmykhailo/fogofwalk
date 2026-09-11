@@ -368,6 +368,7 @@ export function createFogEngine(options: FogEngineOptions = {}): FogEngine {
         snapshotEvery !== null && diagnostics.processed % snapshotEvery === 0
       const timeReached = now() - lastPublishedAt >= emitIntervalMs
       if (cadenceReached || timeReached) {
+        emitProgress(request, diagnostics, "aggregating")
         const snapshot = makeSnapshot(request, "aggregating")
         hooks.onUpdate?.(snapshot, request)
         lastPublishedAt = now()
@@ -378,6 +379,7 @@ export function createFogEngine(options: FogEngineOptions = {}): FogEngine {
       currentState.diagnostics.total,
       currentState.processedActivityIds.size
     )
+    emitProgress(request, diagnostics, "aggregating")
     const snapshot = makeSnapshot(request, "complete")
     hooks.onUpdate?.(snapshot, request)
     emitProgress(request, diagnostics, "complete")
