@@ -13,11 +13,11 @@ untouched.
 - Branch: `refactor/fog-processing`
 - Started: 2026-09-11
 - Current phase: Phase 4/5/6 — projections, bounded fog, and sync effects
-- Last completed commit: `e002ce4 commit library mutations with outbox`
-- Current working slice: route local import/update/delete mutations through the
-  atomic activity outbox and split saved-point sync state
-- Next action: add durable local upload/delete effect handling to the executor,
-  then migrate saved-point state and scheduler leadership
+- Last completed commit: `0960111 queue local activity sync effects`
+- Current working slice: finish sync scheduling/leadership and projection
+  ownership, then add route-level terminal recovery states
+- Next action: add a cross-tab sync lease/scheduler seam and migrate unique
+  distance plus fog work behind revision-keyed coordinators
 
 ## A1 activity contract slice
 
@@ -165,6 +165,20 @@ untouched.
 - Focused repository tests and client typecheck pass; this slice is committed
   as `e002ce4`.
 
+## Local sync effects and saved-point state slice
+
+- File imports, activity-type edits, visibility edits, and delete-everywhere
+  now attach upload/delete effects to the canonical library commit when sync is
+  configured. The activity outbox is durable before the route reports the
+  mutation complete.
+- The page-wise executor drains local upload/delete effects independently of
+  manifest pages, records server tombstones and known-hash changes atomically
+  with effect completion, and preserves retry/permanent failure states.
+- Saved-point cursor, known IDs, tombstone memory, and outbound IDs now live in
+  a dedicated state shape with one-way migration from the legacy shared record.
+- Focused sync/repository/storage tests and client typecheck pass; this slice is
+  committed as `0960111`.
+
 ## Path-aware adapter and render slice
 
 - GPX tracks remain one activity and their track segments remain disconnected
@@ -197,6 +211,7 @@ untouched.
 | `ed8bc4e` | Add page-wise resumable sync executor                                | 14 sync executor/repository tests pass; client typecheck passes  |
 | `37adff0` | Wire the page-wise executor into the sync scheduler                   | Client tests and typecheck pass                                 |
 | `e002ce4` | Commit library mutations with durable outbox effects                  | 8 repository tests pass; client typecheck passes                 |
+| `0960111` | Queue local activity sync effects and split saved-point state            | 20 focused tests pass; client typecheck passes                   |
 
 ## Phase checklist
 
