@@ -10,59 +10,67 @@ export interface SyncSchedulerOptions {
  * follow-up. Leadership is injected so this state machine can be tested
  * without browser locks, timers, or a network transport.
  */
-export class SyncScheduler {
-  private running = false
-  private queued = false
-  private queuedReason = "queued"
-  private activeRun: Promise<void> | null = null
-  private stopped = false
+export interface SyncScheduler {
+  trigger(reason: string): void
+  whenIdle(): Promise<void>
+  stop(): void
+}
 
-  constructor(private readonly options: SyncSchedulerOptions) {}
+export function createSyncScheduler(
+  options: SyncSchedulerOptions
+): SyncScheduler {
+  let running = false
+  let queued = false
+  let queuedReason = "queued"
+  let activeRun: Promise<void> | null = null
+  let stopped = false
 
-  trigger(reason: string): void {
-    if (this.stopped || this.options.enabled?.() === false) return
-    if (this.running) {
-      this.queued = true
-      this.queuedReason = reason
+  function trigger(reason: string): void {
+    if (stopped || options.enabled?.() === false) return
+    if (running) {
+      queued = true
+      queuedReason = reason
       return
     }
 
-    this.running = true
-    const run = this.run(reason)
-    this.activeRun = run
+    running = true
+    const run = runScheduler(reason)
+    activeRun = run
     void run.finally(() => {
-      if (this.activeRun === run) this.activeRun = null
+      if (activeRun === run) activeRun = null
     })
   }
 
-  async whenIdle(): Promise<void> {
-    const run = this.activeRun
+  async function whenIdle(): Promise<void> {
+    const run = activeRun
     if (run) await run
   }
 
-  stop(): void {
-    this.stopped = true
-    this.queued = false
+  function stop(): void {
+    stopped = true
+    queued = false
   }
 
-  private async run(initialReason: string): Promise<void> {
+  async function runScheduler(initialReason: string): Promise<void> {
     let reason = initialReason
     try {
       do {
-        this.queued = false
-        if (this.options.enabled?.() === false) break
-        const execute = () => this.options.execute(reason)
-        if (this.options.acquireLeadership) {
-          await this.options.acquireLeadership(execute)
+        queued = false
+        if (options.enabled?.() === false) break
+        const execute = () => options.execute(reason)
+        if (options.acquireLeadership) {
+          await options.acquireLeadership(execute)
         } else {
           await execute()
         }
-        reason = this.queuedReason
-      } while (this.queued && !this.stopped)
+        reason = queuedReason
+      } while (queued && !stopped)
     } catch (error) {
-      this.options.onError?.(error)
+      options.onError?.(error)
     } finally {
-      this.running = false
+      running = false
     }
   }
+
+  return { trigger, whenIdle, stop }
 }

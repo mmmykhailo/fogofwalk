@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test"
-import { SyncScheduler } from "./scheduler"
+import { createSyncScheduler } from "./scheduler"
 
 describe("SyncScheduler", () => {
   test("coalesces triggers during a run into one follow-up", async () => {
     const starts: string[] = []
     let release: (() => void) | null = null
-    const scheduler = new SyncScheduler({
+    const scheduler = createSyncScheduler({
       execute: async (reason) => {
         starts.push(reason)
         if (starts.length === 1) {
@@ -29,7 +29,7 @@ describe("SyncScheduler", () => {
     let enabled = false
     const errors: unknown[] = []
     let runs = 0
-    const scheduler = new SyncScheduler({
+    const scheduler = createSyncScheduler({
       enabled: () => enabled,
       execute: async () => {
         runs++
@@ -51,7 +51,7 @@ describe("SyncScheduler", () => {
   test("does not start a second run when leadership is unavailable", async () => {
     let executions = 0
     let leadershipAttempts = 0
-    const scheduler = new SyncScheduler({
+    const scheduler = createSyncScheduler({
       execute: async () => {
         executions++
       },

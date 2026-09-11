@@ -43,7 +43,7 @@ import { isServerEnabled } from "./config"
 import { createApiSyncTransport } from "./sync/transport"
 import { IndexedDbSyncRepository } from "./sync/repository"
 import { ActivitySyncExecutor } from "./sync/executor"
-import { SyncScheduler } from "./sync/scheduler"
+import { createSyncScheduler } from "./sync/scheduler"
 import {
   describeSyncStatus,
   getSyncStatus,
@@ -205,7 +205,7 @@ async function acquireSyncLeadership(
 }
 
 const syncScheduler = isServerEnabled
-  ? new SyncScheduler({
+  ? createSyncScheduler({
       enabled: canSync,
       execute: (reason) => syncOnce(reason),
       acquireLeadership: acquireSyncLeadership,
