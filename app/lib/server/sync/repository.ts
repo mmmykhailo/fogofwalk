@@ -331,7 +331,8 @@ function transactionResult(transaction: IDBTransaction): Promise<void> {
 
 async function readStateInTransaction(
   transaction: IDBTransaction,
-  accountId?: string
+  accountId?: string,
+  strict = false
 ): Promise<SyncState | null> {
   const stateStore = transaction.objectStore("sync-state")
   const id = stateId(accountId)
@@ -340,7 +341,12 @@ async function readStateInTransaction(
   )
   if (dedicated) {
     const { id: _id, ...state } = dedicated
-    return isSyncState(state) ? clone(state) : null
+    if (isSyncState(state)) return clone(state)
+    if (strict) {
+      transaction.abort()
+      throw new Error("The durable sync state is invalid.")
+    }
+    return null
   }
 
   const prefsStore = transaction.objectStore("prefs")
@@ -469,7 +475,7 @@ export function createIndexedDbSyncRepository(
     if (!db) return false
     const tx = db.transaction(["sync-state", "prefs"], "readwrite")
     const stateStore = tx.objectStore("sync-state")
-    const loaded = await readStateInTransaction(tx, accountId)
+    const loaded = await readStateInTransaction(tx, accountId, true)
     const state = loaded ?? clone(EMPTY_SYNC_STATE)
 
     if (

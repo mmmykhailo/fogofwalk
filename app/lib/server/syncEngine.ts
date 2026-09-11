@@ -41,7 +41,10 @@ import { apiRaw, friendlyMessage } from "./apiClient"
 import { canSync, getAuthState, subscribeAuth } from "./authStore"
 import { isServerEnabled } from "./config"
 import { createApiSyncTransport } from "./sync/transport"
-import { createIndexedDbSyncRepository } from "./sync/repository"
+import {
+  createIndexedDbSyncRepository,
+  type IndexedDbSyncRepository,
+} from "./sync/repository"
 import { createActivitySyncExecutor } from "./sync/executor"
 import {
   isSyncCancellationError,
@@ -62,6 +65,7 @@ import {
 import {
   createActivityDeleteOutboxItem,
   createActivityUploadOutboxItem,
+  hasLocalActivityEffectSource,
 } from "./sync/activityEffects"
 
 // ─── Status, published to the drawer ──────────────────────────────────────────
@@ -154,20 +158,52 @@ const syncTransport = isServerEnabled ? createApiSyncTransport() : null
 const activitySyncRepository = isServerEnabled
   ? createIndexedDbSyncRepository()
   : null
+const accountSyncRepositories = new Map<string, IndexedDbSyncRepository>()
 const syncOwner = isServerEnabled ? `sync-tab:${createUuid()}` : null
 const SYNC_LEASE_MS = 90_000
 let nextSyncRunId = 0
 
+function repositoryForAccount(
+  accountId: string
+): IndexedDbSyncRepository | null {
+  if (!activitySyncRepository) return null
+  const current = accountSyncRepositories.get(accountId)
+  if (current) return current
+  const repository = createIndexedDbSyncRepository(accountId)
+  accountSyncRepositories.set(accountId, repository)
+  return repository
+}
+
+function repositoryForCurrentAccount(): IndexedDbSyncRepository | null {
+  const auth = getAuthState()
+  return auth.status === "signedIn"
+    ? repositoryForAccount(auth.user.id)
+    : activitySyncRepository
+}
+
+async function foreignActivityHashes(accountId: string): Promise<Set<string>> {
+  if (!activitySyncRepository) return new Set()
+  const hashes = new Set<string>()
+  for (const item of await activitySyncRepository.loadOutbox()) {
+    if (!item.accountId || item.accountId === accountId) continue
+    if (!hasLocalActivityEffectSource(item.payload)) continue
+    const contentHash = (item.payload as { contentHash?: unknown }).contentHash
+    if (typeof contentHash === "string") hashes.add(contentHash)
+  }
+  return hashes
+}
+
 async function publishOutboxStatus(
-  update: SyncStatusUpdate
+  update: SyncStatusUpdate,
+  repository: IndexedDbSyncRepository | null = repositoryForCurrentAccount()
 ): Promise<ReturnType<typeof summarizeSyncOutbox> | null> {
-  if (!activitySyncRepository) {
+  if (!repository) {
     setStatus(update)
     return null
   }
   try {
     const summary = summarizeSyncOutbox(
-      await activitySyncRepository.loadOutbox()
+      await repository.loadOutbox()
     )
     applySyncOutboxSummary(summary, update)
     return summary
@@ -181,10 +217,15 @@ async function publishOutboxStatus(
 async function acquireSyncLeadership(
   run: () => Promise<void>
 ): Promise<boolean> {
-  if (!activitySyncRepository || !syncOwner) return false
+  const auth = getAuthState()
+  const repository =
+    auth.status === "signedIn" && auth.canSync
+      ? repositoryForAccount(auth.user.id)
+      : null
+  if (!repository || !syncOwner) return false
   if (typeof navigator !== "undefined" && navigator.locks) {
     return navigator.locks.request(
-      "fogofwalk:sync",
+      `fogofwalk:sync:${auth.status === "signedIn" ? auth.user.id : "none"}`,
       { mode: "exclusive", ifAvailable: true },
       async (lock) => {
         if (!lock) return false
@@ -194,7 +235,7 @@ async function acquireSyncLeadership(
     )
   }
 
-  const acquired = await activitySyncRepository.acquireSyncLease({
+  const acquired = await repository.acquireSyncLease({
     owner: syncOwner,
     now: Date.now(),
     leaseMs: SYNC_LEASE_MS,
@@ -204,7 +245,7 @@ async function acquireSyncLeadership(
     await run()
     return true
   } finally {
-    await activitySyncRepository.releaseSyncLease(syncOwner)
+    await repository.releaseSyncLease(syncOwner)
   }
 }
 
@@ -252,11 +293,12 @@ subscribeAuth(() => {
 })
 
 async function loadActivitySyncState() {
-  if (!activitySyncRepository) {
+  const repository = repositoryForCurrentAccount()
+  if (!repository) {
     return { cursor: 0, lastSyncAt: 0, serverHashes: [] }
   }
   return (
-    (await activitySyncRepository.loadState()) ?? {
+    (await repository.loadState()) ?? {
       cursor: 0,
       lastSyncAt: 0,
       serverHashes: [],
@@ -324,6 +366,8 @@ async function syncOnce(reason: string): Promise<void> {
   if (!isServerEnabled || !activitySyncRepository || !syncTransport) return
   const auth = getAuthState()
   if (auth.status !== "signedIn" || !auth.canSync) return
+  const repository = repositoryForAccount(auth.user.id)
+  if (!repository) return
   const active: ActiveSyncRun = {
     controller: new AbortController(),
     accountId: auth.user.id,
@@ -355,6 +399,10 @@ async function syncOnce(reason: string): Promise<void> {
 
   try {
     throwIfSyncAborted(signal)
+    // Imports made before the first authenticated run are intentionally
+    // unscoped. Adopt them before any account-specific work can be sent.
+    await repository.adoptUnscopedOutbox()
+    throwIfSyncAborted(signal)
     // Saved points have their own manifest cursor and are intentionally kept
     // outside activity upload pacing. Reconcile them before activities.
     await syncSavedPoints(signal)
@@ -381,7 +429,15 @@ async function syncOnce(reason: string): Promise<void> {
       throwIfSyncAborted(signal)
     }
 
-    await runActivitySync(lastSyncAt, operationId, startedAt, signal)
+    const excludedLocalHashes = await foreignActivityHashes(auth.user.id)
+    await runActivitySync(
+      lastSyncAt,
+      operationId,
+      startedAt,
+      signal,
+      repository,
+      excludedLocalHashes
+    )
     return
   } catch (err) {
     if (signal.aborted || isSyncCancellationError(err)) {
@@ -410,7 +466,7 @@ async function syncOnce(reason: string): Promise<void> {
       message: friendlyMessage(err),
       lastSyncAt,
       cursorHeld: false,
-    })
+    }, repository)
   } finally {
     if (activeSyncRun === active) activeSyncRun = null
   }
@@ -420,15 +476,18 @@ async function runActivitySync(
   lastSyncAt: number | null,
   operationId: string,
   startedAt: number,
-  signal: AbortSignal
+  signal: AbortSignal,
+  repository: IndexedDbSyncRepository,
+  excludedLocalHashes: ReadonlySet<string>
 ): Promise<void> {
-  if (!activitySyncRepository || !syncTransport) return
+  if (!syncTransport) return
   throwIfSyncAborted(signal)
   setStatus({ phase: "syncing", done: 0, total: 0 })
   const result = await createActivitySyncExecutor({
-    repository: activitySyncRepository,
+    repository,
     library: activityLibrary,
     transport: syncTransport,
+    excludedLocalHashes: [...excludedLocalHashes],
     signal,
     onProgress: ({ done, total }) => {
       setStatus({ phase: "syncing", done, total })
@@ -468,7 +527,7 @@ async function runActivitySync(
       lastSyncAt:
         result.state.lastSyncAt > 0 ? result.state.lastSyncAt : lastSyncAt,
       cursorHeld: result.cursorHeld,
-    })
+    }, repository)
     if (permanent || summary?.permanentCount) {
       setStatus({ phase: "permanent" })
     }
@@ -491,7 +550,7 @@ async function runActivitySync(
     lastSyncAt: result.state.lastSyncAt,
     cursorHeld: false,
     message: null,
-  })
+  }, repository)
   if (summary?.permanentCount) {
     setStatus({
       phase: "permanent",
@@ -799,15 +858,15 @@ export async function pushSavedPointDeletion(id: string): Promise<void> {
 export async function pushActivityUpdate(
   activity: ParsedActivity
 ): Promise<void> {
-  if (!isServerEnabled || !activitySyncRepository || !activity.contentHash)
-    return
+  const repository = repositoryForCurrentAccount()
+  if (!isServerEnabled || !repository || !activity.contentHash) return
   const item = createActivityUploadOutboxItem(
     activity,
     createUuid(),
     activityLibrary.getSnapshot().revision
   )
   if (!item) return
-  await activitySyncRepository.enqueueOutbox(item)
+  await repository.enqueueOutbox(item)
   requestSync("activity-update")
 }
 
@@ -818,15 +877,15 @@ export async function pushActivityUpdate(
 export async function pushActivityDeletion(
   activity: ParsedActivity
 ): Promise<void> {
-  if (!isServerEnabled || !activitySyncRepository || !activity.contentHash)
-    return
+  const repository = repositoryForCurrentAccount()
+  if (!isServerEnabled || !repository || !activity.contentHash) return
   const item = createActivityDeleteOutboxItem(
     activity,
     createUuid(),
     activityLibrary.getSnapshot().revision
   )
   if (!item) return
-  await activitySyncRepository.enqueueOutbox(item)
+  await repository.enqueueOutbox(item)
   requestSync("activity-deletion")
 }
 
@@ -848,13 +907,14 @@ export async function ignoreActivityLocally(
  * a sync still has to record the decision, or the very first sync would undo it.
  */
 async function addIgnoredHashes(hashes: string[]): Promise<void> {
-  if (hashes.length === 0 || !activitySyncRepository) return
+  const repository = repositoryForCurrentAccount()
+  if (hashes.length === 0 || !repository) return
   const state = await loadActivitySyncState()
   const ignored = new Set(state.ignoredHashes ?? [])
   const before = ignored.size
   for (const hash of hashes) ignored.add(hash)
   if (ignored.size === before) return
-  await activitySyncRepository.saveState({
+  await repository.saveState({
     ...state,
     ignoredHashes: [...ignored],
   })

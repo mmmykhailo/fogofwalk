@@ -1,5 +1,6 @@
 import type { ParsedActivity } from "~/types/activities"
 import type { SyncOutboxItemInput } from "./repository"
+import { getAuthState } from "../authStore"
 
 export interface LocalActivityUploadPayload {
   kind: "upload"
@@ -18,6 +19,11 @@ export interface LocalActivityDeletePayload {
   libraryRevision: number
 }
 
+function currentAccountId(): string | undefined {
+  const auth = getAuthState()
+  return auth.status === "signedIn" ? auth.user.id : undefined
+}
+
 export function createActivityUploadOutboxItem(
   activity: ParsedActivity,
   operationId: string,
@@ -25,7 +31,9 @@ export function createActivityUploadOutboxItem(
 ): SyncOutboxItemInput | null {
   if (!activity.contentHash) return null
   const intentId = `local-upload:${operationId}:${activity.contentHash}`
+  const accountId = currentAccountId()
   return {
+    ...(accountId ? { accountId } : {}),
     dedupeKey: `activity:local-upload:${operationId}:${activity.contentHash}`,
     operation: "upload",
     payload: {
@@ -46,7 +54,9 @@ export function createActivityDeleteOutboxItem(
 ): SyncOutboxItemInput | null {
   if (!activity.contentHash) return null
   const intentId = `local-delete:${operationId}:${activity.contentHash}`
+  const accountId = currentAccountId()
   return {
+    ...(accountId ? { accountId } : {}),
     dedupeKey: `activity:local-delete:${operationId}:${activity.contentHash}`,
     operation: "delete",
     payload: {

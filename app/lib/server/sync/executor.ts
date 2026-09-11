@@ -66,6 +66,8 @@ export interface SyncExecutorOptions {
   repository: SyncRepository
   library: ActivityLibraryPort
   transport: SyncTransport
+  /** Local hashes already owned by another account on this device. */
+  excludedLocalHashes?: readonly string[]
   now?: () => number
   random?: () => number
   owner?: string
@@ -197,15 +199,23 @@ function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T
 }
 
-function localMetadata(snapshot: LibrarySnapshot): LocalActivityMetadata[] {
-  return snapshot.activities.map((activity) => ({
-    id: activity.id,
-    name: activity.name,
-    contentHash: activity.contentHash,
-    isPublic: activity.isPublic,
-    activityType: activity.activityType,
-    startSunPhase: activity.startSunPhase,
-  }))
+function localMetadata(
+  snapshot: LibrarySnapshot,
+  excludedHashes: ReadonlySet<string> = new Set()
+): LocalActivityMetadata[] {
+  return snapshot.activities
+    .filter(
+      (activity) =>
+        !activity.contentHash || !excludedHashes.has(activity.contentHash)
+    )
+    .map((activity) => ({
+      id: activity.id,
+      name: activity.name,
+      contentHash: activity.contentHash,
+      isPublic: activity.isPublic,
+      activityType: activity.activityType,
+      startSunPhase: activity.startSunPhase,
+    }))
 }
 
 function activityFor(
@@ -547,6 +557,7 @@ export function createActivitySyncExecutor(
   const maxPages = options.maxPages ?? DEFAULT_MAX_PAGES
   const onProgress = options.onProgress
   const signal = options.signal
+  const excludedLocalHashes = new Set(options.excludedLocalHashes ?? [])
 
   async function run(): Promise<SyncExecutorResult> {
     throwIfSyncAborted(signal)
@@ -597,7 +608,10 @@ export function createActivitySyncExecutor(
       )
       throwIfSyncAborted(signal)
       const plan = planActivitySync({
-        localActivities: localMetadata(options.library.getSnapshot()),
+        localActivities: localMetadata(
+          options.library.getSnapshot(),
+          excludedLocalHashes
+        ),
         state,
         remote: { ...page, since: state.cursor },
       })

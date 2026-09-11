@@ -134,6 +134,7 @@ async function createExecutor(
     random?: () => number
     state?: SyncState
     signal?: AbortSignal
+    excludedLocalHashes?: readonly string[]
   } = {}
 ) {
   const library = createActivityLibrary(
@@ -145,6 +146,7 @@ async function createExecutor(
     repository,
     library,
     transport,
+    excludedLocalHashes: options.excludedLocalHashes,
     owner: "test-executor",
     random: options.random ?? (() => 0),
     now: options.now,
@@ -217,6 +219,27 @@ describe("ActivitySyncExecutor", () => {
       { operation: "upload", status: "complete" },
     ])
     expect(library.getSnapshot().activities).toHaveLength(1)
+  })
+
+  test("does not generate a local upload for another account's activity", async () => {
+    const local = activity("local-a", HASH_A)
+    let uploads = 0
+    const { executor } = await createExecutor(
+      [local],
+      transportFor(
+        new Map([
+          [0, { activities: [], deletions: [], cursor: 1, hasMore: false }],
+        ]),
+        { upload: async () => void uploads++ }
+      ),
+      { excludedLocalHashes: [HASH_A] }
+    )
+
+    const result = await executor.run()
+
+    expect(uploads).toBe(0)
+    expect(result.state.cursor).toBe(1)
+    expect(result.failures).toEqual([])
   })
 
   test("drains a durable local deletion and remembers the returned tombstone", async () => {
