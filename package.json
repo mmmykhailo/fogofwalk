@@ -9,6 +9,7 @@
     "typecheck": "react-router typegen && tsc",
     "test": "bun test",
     "bench:fog": "bun scripts/bench-fog-representations.ts",
+    "test:fog-tiles": "bun scripts/test-fog-tiles.ts",
     "release": "bun scripts/generate-release.js minor",
     "release:patch": "bun scripts/generate-release.js patch",
     "release:major": "bun scripts/generate-release.js major",
@@ -47,6 +48,7 @@
     "vaul": "^1.1.2"
   },
   "devDependencies": {
+    "@maplibre/geojson-vt": "^6.1.0",
     "@react-router/dev": "7.13.1",
     "@tailwindcss/vite": "^4.2.1",
     "@types/bun": "^1.4.0",

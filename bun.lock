@@ -36,6 +36,7 @@
         "vaul": "^1.1.2",
       },
       "devDependencies": {
+        "@maplibre/geojson-vt": "^6.1.0",
         "@react-router/dev": "7.13.1",
         "@tailwindcss/vite": "^4.2.1",
         "@types/bun": "^1.4.0",
