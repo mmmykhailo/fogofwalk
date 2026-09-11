@@ -11,6 +11,7 @@ import type { FogWorkerActivity } from "../app/types/activities"
 const WORLD_SOUTH = -85.05112878
 const WORLD_NORTH = 85.05112878
 const ITERATIONS = 3
+const SCALE_TIERS = [100, 1_000, 10_000]
 
 type GeometryFeature = Feature<Polygon | MultiPolygon>
 type GeometryCollection = FeatureCollection<Polygon | MultiPolygon>
@@ -123,30 +124,102 @@ function globalHole(masks: readonly FogMask[]): GeometryCollection {
     : featureCollection<Polygon | MultiPolygon>([])
 }
 
+function makeScaleMasks(count: number): FogMask[] {
+  const columns = Math.ceil(Math.sqrt(count))
+  const rows = Math.ceil(count / columns)
+  return Array.from({ length: count }, (_, index) => {
+    const column = index % columns
+    const row = Math.floor(index / columns)
+    const cellWidth = 340 / columns
+    const cellHeight = 160 / rows
+    const longitude = -170 + (column + 0.5) * cellWidth
+    const latitude = -80 + (row + 0.5) * cellHeight
+    const width = cellWidth * 0.15
+    const height = cellHeight * 0.15
+    return polygon([
+      [
+        [longitude - width / 2, latitude - height / 2],
+        [longitude + width / 2, latitude - height / 2],
+        [longitude + width / 2, latitude + height / 2],
+        [longitude - width / 2, latitude + height / 2],
+        [longitude - width / 2, latitude - height / 2],
+      ],
+    ]) as FogMask
+  })
+}
+
 function median(values: readonly number[]): number {
   const sorted = [...values].sort((first, second) => first - second)
   return sorted[Math.floor(sorted.length / 2)]!
 }
 
+function percentile(
+  values: readonly number[],
+  percentileValue: number
+): number {
+  const sorted = [...values].sort((first, second) => first - second)
+  const index = Math.min(
+    sorted.length - 1,
+    Math.max(0, Math.ceil(percentileValue * sorted.length) - 1)
+  )
+  return sorted[index]!
+}
+
 function benchmark(
   name: string,
-  build: () => GeometryCollection
+  build: () => GeometryCollection,
+  iterations = ITERATIONS
 ): {
   name: string
   medianMs: number
+  p95Ms: number
+  heapUsedMb: number
   metrics: ReturnType<typeof geometryMetrics>
 } {
   const durations: number[] = []
+  const heapSamples: number[] = []
   let output: GeometryCollection | null = null
-  for (let iteration = 0; iteration < ITERATIONS; iteration += 1) {
+  for (let iteration = 0; iteration < iterations; iteration += 1) {
     const started = performance.now()
     output = build()
     durations.push(performance.now() - started)
+    heapSamples.push(process.memoryUsage().heapUsed)
   }
   return {
     name,
     medianMs: Number(median(durations).toFixed(2)),
+    p95Ms: Number((percentile(durations, 0.95) ?? 0).toFixed(2)),
+    heapUsedMb: Number((Math.max(...heapSamples) / (1024 * 1024)).toFixed(2)),
     metrics: geometryMetrics(output!),
+  }
+}
+
+function benchmarkScale(count: number) {
+  const masks = makeScaleMasks(count)
+  let degraded = false
+  let warningCount = 0
+  const iterations = count >= 10_000 ? 1 : ITERATIONS
+  const safe = benchmark(
+    "regional-bounded-inverse",
+    () => {
+      const result = buildBoundedFog(masks, "corridor")
+      degraded = result.degraded
+      warningCount = result.warnings.length
+      return result.fogData
+    },
+    iterations
+  )
+  return {
+    corpus: {
+      activityCount: count,
+      maskCount: masks.length,
+      pointsPerMask: 5,
+    },
+    safe: {
+      ...safe,
+      degraded,
+      warningCount,
+    },
   }
 }
 
@@ -157,15 +230,20 @@ const bounded = () => {
   return result.fogData
 }
 
+const baseline = {
+  fixture: { activityCount: 24, masks: masks.length, pointsPerRoute: 96 },
+  candidates: [
+    benchmark("positive-explored-mask", () => positive),
+    benchmark("regional-bounded-inverse", bounded),
+    benchmark("global-hole-reference", () => globalHole(masks)),
+  ],
+}
+
 console.log(
   JSON.stringify(
     {
-      fixture: { activityCount: 24, masks: masks.length, pointsPerRoute: 96 },
-      candidates: [
-        benchmark("positive-explored-mask", () => positive),
-        benchmark("regional-bounded-inverse", bounded),
-        benchmark("global-hole-reference", () => globalHole(masks)),
-      ],
+      baseline,
+      scaleTiers: SCALE_TIERS.map(benchmarkScale),
     },
     null,
     2
