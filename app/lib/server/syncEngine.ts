@@ -11,37 +11,38 @@
 
 import { useSyncExternalStore } from "react"
 import type {
-  ManifestPage,
   ActivityDeleteResponse,
   ActivityMeta,
   ActivityTombstone,
-  ActivityUploadPayload,
   SavedPointDeleteResponse,
   SavedPointManifestPage,
   SavedPointTombstone,
   SavedPointUpsertInput,
   SavedPointUpsertResponse,
 } from "~shared/api"
-import { MAX_ACTIVITY_BYTES, SYNC_CONCURRENCY } from "~shared/constants"
+import { SYNC_CONCURRENCY } from "~shared/constants"
 import type { SavedPoint } from "~shared/saved-points"
+import { flattenActivityPaths } from "~shared/activityContract"
 import type { ParsedActivity } from "~/types/activities"
 import {
-  deleteActivity as deleteActivityFromIdb,
   loadSyncState,
   saveSyncState,
-  saveActivities,
-  saveUniqueDistances,
   deleteSavedPoint as deleteSavedPointFromIdb,
   loadSavedPoints,
   saveSavedPoint,
   saveSavedPoints,
 } from "~/lib/storage"
-import { ingestActivities, mapStore } from "~/lib/mapStore"
+import {
+  activityLibrary,
+  ingestActivities,
+  initializeActivityLibrary,
+  mapStore,
+} from "~/lib/mapStore"
 import { backfillContentHashes } from "~/lib/activityHash"
 import { createUuid } from "~/lib/uuid"
-import { populateUniqueDistances } from "~/lib/statsAggregator"
-import { apiRaw, apiSend, ApiRequestError, friendlyMessage } from "./apiClient"
+import { apiRaw, ApiRequestError, friendlyMessage } from "./apiClient"
 import { canSync } from "./authStore"
+import { createApiSyncTransport } from "./sync/transport"
 import {
   acquireUploadSlot,
   fallbackBackoffMs,
@@ -141,9 +142,10 @@ export interface SyncChanges {
 let onChanged: ((changes: SyncChanges) => void) | null = null
 
 /**
- * Registered by `home.tsx`. Sync mutates `mapStore` directly, but rebuilding
- * the fog after a remote delete and dropping deleted activities out of the
- * selection are React concerns that belong in the route.
+ * Registered by `home.tsx`. Activity changes are published through the
+ * ActivityLibrary; rebuilding the fog after a remote delete and dropping
+ * deleted activities out of the selection are React concerns that belong in
+ * the route.
  */
 export function setSyncChangeHandler(
   handler: ((changes: SyncChanges) => void) | null
@@ -165,20 +167,12 @@ export function describeSyncStatus(s: SyncStatus): string | null {
   return `Synced ${Math.floor(hours / 24)}d ago`
 }
 
-// ─── Gzip helpers ─────────────────────────────────────────────────────────────
-
-async function gzip(text: string): Promise<Blob> {
-  const stream = new Blob([text])
-    .stream()
-    .pipeThrough(new CompressionStream("gzip"))
-  return new Response(stream).blob()
-}
-
 // ─── Run loop ─────────────────────────────────────────────────────────────────
 
 let isRunning = false
 /** Set when a trigger fires mid-run: the loop repeats instead of dropping it. */
 let isRerunQueued = false
+const syncTransport = createApiSyncTransport()
 
 /**
  * Ask for a sync. Cheap and safe to call from anywhere — it no-ops when the
@@ -258,10 +252,23 @@ async function syncOnce(reason: string): Promise<void> {
     // Saved points have their own manifest cursor and are intentionally kept
     // outside activity upload pacing. Reconcile them before activities.
     await syncSavedPoints()
+    await initializeActivityLibrary()
 
     // Activities imported before sync existed have no hash yet.
-    const backfilled = await backfillContentHashes(mapStore.activities)
-    if (backfilled.length > 0) await saveActivities(backfilled)
+    const backfillCandidates = activityLibrary
+      .getSnapshot()
+      .activities.map((activity) => structuredClone(activity))
+    const backfilled = await backfillContentHashes(backfillCandidates)
+    if (backfilled.length > 0) {
+      await activityLibrary.dispatch({
+        type: "applyRemote",
+        operationId: createUuid(),
+        changes: backfilled.map((activity) => ({
+          type: "upsert" as const,
+          activity,
+        })),
+      })
+    }
 
     const state = await loadSyncState()
     const since = state?.cursor ?? 0
@@ -417,14 +424,14 @@ async function syncOnce(reason: string): Promise<void> {
     if (downloaded.length > 0) await ingestActivities(downloaded)
 
     if (updated.length > 0) {
-      const byHash = new Map(
-        updated.map((activity) => [activity.contentHash, activity])
-      )
-      mapStore.activities = mapStore.activities.map(
-        (activity) => byHash.get(activity.contentHash) ?? activity
-      )
-      await populateUniqueDistances(mapStore.activities)
-      await saveUniqueDistances(mapStore.activities)
+      await activityLibrary.dispatch({
+        type: "applyRemote",
+        operationId: createUuid(),
+        changes: updated.map((activity) => ({
+          type: "upsert" as const,
+          activity,
+        })),
+      })
     }
 
     if (downloaded.length > 0 || updated.length > 0 || deletedIds.length > 0) {
@@ -649,13 +656,14 @@ async function fetchManifest(since: number): Promise<{
 
   // Follow `hasMore` to the end; the server pages by (updatedAt, contentHash).
   for (;;) {
-    const res = await apiRaw(
-      "GET",
-      `/api/activities/manifest?since=${encodeURIComponent(String(cursor))}`
-    )
-    const page = (await res.json()) as ManifestPage
+    const page = await syncTransport.fetchActivityManifest(cursor)
     serverActivities.push(...page.activities)
     deletions.push(...page.deletions)
+    if (page.hasMore && page.cursor <= cursor) {
+      throw new Error(
+        "The activity manifest did not advance while more pages were available."
+      )
+    }
     cursor = page.cursor
     if (!page.hasMore) break
   }
@@ -688,24 +696,6 @@ async function fetchSavedPointsManifest(since: number): Promise<{
 // ─── Upload / download / delete ───────────────────────────────────────────────
 
 async function uploadActivity(activity: ParsedActivity): Promise<void> {
-  const { id: _id, ...rest } = activity
-  const payload: ActivityUploadPayload = {
-    ...rest,
-    // Recomputed per-library on the receiving device; uploading it would ship
-    // a number that is only meaningful relative to this device's other activities.
-    stats: { ...activity.stats, uniqueDistanceKm: 0 },
-  }
-
-  const body = await gzip(JSON.stringify(payload))
-  if (body.size > MAX_ACTIVITY_BYTES) {
-    console.warn(
-      "[sync] activity too large to upload:",
-      activity.name,
-      body.size
-    )
-    return
-  }
-
   // Bounded retry rather than one shot: the only expected failure here is the
   // upload rate limit, and dropping the activity for the whole run over it means
   // waiting for a later sync trigger to try again. `acquireUploadSlot` should
@@ -714,13 +704,7 @@ async function uploadActivity(activity: ParsedActivity): Promise<void> {
   for (let attempt = 0; ; attempt++) {
     await acquireUploadSlot()
     try {
-      await apiSend("PUT", `/api/activities/${activity.contentHash}`, {
-        rawBody: body,
-        headers: {
-          "Content-Type": "application/json",
-          "Content-Encoding": "gzip",
-        },
-      })
+      await syncTransport.uploadActivity(activity)
       return
     } catch (err) {
       // Another device won the race and stored the identical bytes first.
@@ -852,10 +836,12 @@ async function downloadActivity(
   meta: ActivityMeta,
   localId?: string
 ): Promise<ParsedActivity | null> {
-  const res = await apiRaw("GET", `/api/activities/${meta.contentHash}`)
-  const payload = (await res.json()) as ActivityUploadPayload
+  const { payload } = await syncTransport.downloadActivity(meta.contentHash)
+  const coordinates =
+    payload.coordinates ?? flattenActivityPaths(payload.paths ?? [])
   return {
     ...payload,
+    coordinates,
     // Ids are per-device; the content hash is the shared identity.
     id: localId ?? createUuid(),
     contentHash: meta.contentHash,
@@ -867,8 +853,11 @@ async function downloadActivity(
 }
 
 async function removeLocalActivity(activity: ParsedActivity): Promise<void> {
-  mapStore.activities = mapStore.activities.filter((t) => t.id !== activity.id)
-  await deleteActivityFromIdb(activity.id)
+  await activityLibrary.dispatch({
+    type: "delete",
+    operationId: createUuid(),
+    activityId: activity.id,
+  })
 }
 
 /**
