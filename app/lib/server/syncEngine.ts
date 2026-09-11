@@ -11,9 +11,6 @@
 
 import { useSyncExternalStore } from "react"
 import type {
-  ActivityDeleteResponse,
-  ActivityMeta,
-  ActivityTombstone,
   SavedPointDeleteResponse,
   SavedPointManifestPage,
   SavedPointTombstone,
@@ -22,11 +19,11 @@ import type {
 } from "~shared/api"
 import { SYNC_CONCURRENCY } from "~shared/constants"
 import type { SavedPoint } from "~shared/saved-points"
-import { flattenActivityPaths } from "~shared/activityContract"
 import type { ParsedActivity } from "~/types/activities"
 import {
   loadSyncState,
   saveSyncState,
+  clearFogCache,
   deleteSavedPoint as deleteSavedPointFromIdb,
   loadSavedPoints,
   saveSavedPoint,
@@ -34,15 +31,17 @@ import {
 } from "~/lib/storage"
 import {
   activityLibrary,
-  ingestActivities,
   initializeActivityLibrary,
   mapStore,
+  queueAddedActivitiesForFog,
 } from "~/lib/mapStore"
 import { backfillContentHashes } from "~/lib/activityHash"
 import { createUuid } from "~/lib/uuid"
 import { apiRaw, ApiRequestError, friendlyMessage } from "./apiClient"
 import { canSync } from "./authStore"
 import { createApiSyncTransport } from "./sync/transport"
+import { IndexedDbSyncRepository } from "./sync/repository"
+import { ActivitySyncExecutor } from "./sync/executor"
 import {
   acquireUploadSlot,
   fallbackBackoffMs,
@@ -173,6 +172,17 @@ let isRunning = false
 /** Set when a trigger fires mid-run: the loop repeats instead of dropping it. */
 let isRerunQueued = false
 const syncTransport = createApiSyncTransport()
+const activitySyncRepository = new IndexedDbSyncRepository()
+
+async function loadActivitySyncState() {
+  return (
+    (await activitySyncRepository.loadState()) ?? {
+      cursor: 0,
+      lastSyncAt: 0,
+      serverHashes: [],
+    }
+  )
+}
 
 /**
  * Ask for a sync. Cheap and safe to call from anywhere — it no-ops when the
@@ -270,203 +280,60 @@ async function syncOnce(reason: string): Promise<void> {
       })
     }
 
-    const state = await loadSyncState()
-    const since = state?.cursor ?? 0
-    const { serverActivities, deletions, cursor } = await fetchManifest(since)
-
-    const localByHash = new Map<string, ParsedActivity>()
-    for (const activity of mapStore.activities) {
-      if (activity.contentHash) localByHash.set(activity.contentHash, activity)
-    }
-
-    // Accumulated across syncs — this window only describes what changed since
-    // `since`, so the previously-known set has to carry forward.
-    const serverHashes = new Set(since === 0 ? [] : (state?.serverHashes ?? []))
-    for (const t of serverActivities) serverHashes.add(t.contentHash)
-    for (const tomb of deletions) serverHashes.delete(tomb.contentHash)
-
-    // Activities this device deleted locally while choosing to leave the server
-    // copy alone. Without this they would be downloaded straight back.
-    const ignoredHashes = new Set(state?.ignoredHashes ?? [])
-
-    /**
-     * A from-scratch walk converges toward the union of local and server —
-     * never toward deletion.
-     *
-     * With no cursor there is no prior shared state to reconcile against, so a
-     * tombstone says nothing about *this* device: it describes a deletion
-     * relative to a history it no longer has. `clear-all` drops syncState, so
-     * every tombstone the account ever wrote replays here. Honouring them would
-     * delete activities the user had just re-imported and refuse to upload them.
-     *
-     * Incremental walks keep the real semantics — that is where a delete on one
-     * device has to reach the others.
-     */
-    const isFromScratch = since === 0
-
-    const serverByHash = new Map(
-      serverActivities.map((activity) => [activity.contentHash, activity])
-    )
-    const metadataDiffers = (
-      local: ParsedActivity,
-      server: ActivityMeta
-    ): boolean =>
-      local.name !== server.name ||
-      Boolean(local.isPublic) !== server.isPublic ||
-      local.activityType !== server.activityType ||
-      local.startSunPhase !== server.startSunPhase
-
-    // Unlike user-editable metadata, sun phase is derived during import. A
-    // newly derived value may safely backfill an older server record even in
-    // an incremental sync; never let the missing legacy value overwrite it.
-    const shouldBackfillSunPhase = (
-      local: ParsedActivity,
-      server: ActivityMeta
-    ): boolean =>
-      local.startSunPhase !== undefined && server.startSunPhase === undefined
-
-    /**
-     * A tombstone must be acted on exactly once per device.
-     *
-     * The server's cursor is an *inclusive* lower bound (deliberately — it is
-     * how a row written in the same millisecond as the read is not lost), so
-     * the newest tombstones are re-served on the following sync. Without this
-     * memory, re-importing a file you had just deleted gets it silently deleted
-     * again and refused for upload, because the same tombstone applies twice.
-     */
-    const applied = new Map<string, number>(
-      Object.entries(state?.appliedTombstones ?? {})
-    )
-    const freshTombstones = deletions.filter(
-      (tomb) => applied.get(tomb.contentHash) !== tomb.deletedAt
-    )
-    const freshDeletedHashes = new Set(
-      freshTombstones.map((tomb) => tomb.contentHash)
-    )
-
-    const toUpload = [...localByHash.values()].filter((t) => {
-      if (!t.contentHash) return false
-      const server = serverByHash.get(t.contentHash)
-      const isMissing = !serverHashes.has(t.contentHash)
-      const shouldRestoreLocalMetadata =
-        server != null &&
-        metadataDiffers(t, server) &&
-        (isFromScratch || shouldBackfillSunPhase(t, server))
-      return (
-        (isMissing || shouldRestoreLocalMetadata) &&
-        // Suppressed only while the deletion is still being applied. Once it
-        // has been, a local copy means a deliberate re-import — resurrect it.
-        (isFromScratch || !freshDeletedHashes.has(t.contentHash)) &&
-        // Deliberately unsynced (a server purge, or a local-only delete that
-        // was later re-imported). Never push these back up.
-        !ignoredHashes.has(t.contentHash)
-      )
-    })
-    const toDownload = serverActivities.filter((server) => {
-      if (ignoredHashes.has(server.contentHash)) return false
-      const local = localByHash.get(server.contentHash)
-      if (!local) return true
-      return (
-        !isFromScratch &&
-        metadataDiffers(local, server) &&
-        !shouldBackfillSunPhase(local, server)
-      )
-    })
-    const toDelete = isFromScratch
-      ? []
-      : [...freshDeletedHashes].filter((h) => localByHash.has(h))
-
-    // Recorded even when not acted on, so a from-scratch walk cannot leave the
-    // whole backlog primed to fire on the next incremental sync.
-    for (const tomb of deletions) applied.set(tomb.contentHash, tomb.deletedAt)
-
-    const total = toUpload.length + toDownload.length + toDelete.length
-    if (total === 0) {
-      await finish(cursor, serverHashes, ignoredHashes, applied)
-      return
-    }
-
-    let done = 0
-    const step = () => setStatus({ phase: "syncing", done: ++done, total })
-    setStatus({ phase: "syncing", done: 0, total })
-
-    // Deletions first — cheap, and it shrinks what we might re-upload.
-    const deletedIds: string[] = []
-    for (const hash of toDelete) {
-      const activity = localByHash.get(hash)
-      if (activity) {
-        await removeLocalActivity(activity)
-        deletedIds.push(activity.id)
-      }
-      step()
-    }
-
-    const uploadFailures = await pooled(toUpload, async (activity) => {
-      await uploadActivity(activity)
-      // Only on success: a failed upload must be retried next run.
-      if (activity.contentHash) serverHashes.add(activity.contentHash)
-      step()
-    })
-
-    const downloaded: ParsedActivity[] = []
-    const updated: ParsedActivity[] = []
-    const downloadFailures = await pooled(toDownload, async (meta) => {
-      const local = localByHash.get(meta.contentHash)
-      const activity = await downloadActivity(meta, local?.id)
-      if (activity) {
-        if (local) updated.push(activity)
-        else downloaded.push(activity)
-      }
-      step()
-    })
-    // One ingest for the whole batch: a single worker post and a single
-    // unique-distance pass rather than one per activity.
-    if (downloaded.length > 0) await ingestActivities(downloaded)
-
-    if (updated.length > 0) {
-      await activityLibrary.dispatch({
-        type: "applyRemote",
-        operationId: createUuid(),
-        changes: updated.map((activity) => ({
-          type: "upsert" as const,
-          activity,
-        })),
-      })
-    }
-
-    if (downloaded.length > 0 || updated.length > 0 || deletedIds.length > 0) {
-      onChanged?.({
-        downloadedCount: downloaded.length,
-        updatedCount: updated.length,
-        deletedIds,
-      })
-    }
-
-    if (downloadFailures > 0) {
-      // Hold the cursor where it was. Advancing past an activity we failed to
-      // fetch would skip it forever — the window never covers it again.
-      console.warn(`[sync] ${downloadFailures} download(s) failed; cursor held`)
-      await finish(since, serverHashes, ignoredHashes, applied)
-      setStatus({
-        phase: "error",
-        message: "Some activities couldn't be downloaded",
-        lastSyncAt,
-      })
-      return
-    }
-
-    await finish(cursor, serverHashes, ignoredHashes, applied)
-    if (uploadFailures > 0) {
-      setStatus({
-        phase: "error",
-        message: "Some activities couldn't be uploaded",
-        lastSyncAt: Date.now(),
-      })
-    }
+    await runActivitySync(lastSyncAt)
+    return
   } catch (err) {
     console.warn("[sync] failed:", err)
     setStatus({ phase: "error", message: friendlyMessage(err), lastSyncAt })
   }
+}
+
+async function runActivitySync(lastSyncAt: number | null): Promise<void> {
+  setStatus({ phase: "syncing", done: 0, total: 0 })
+  const result = await new ActivitySyncExecutor({
+    repository: activitySyncRepository,
+    library: activityLibrary,
+    transport: syncTransport,
+    onProgress: ({ done, total }) =>
+      setStatus({ phase: "syncing", done, total }),
+  }).run()
+
+  if (result.addedActivities.length > 0 && result.deletedIds.length === 0) {
+    queueAddedActivitiesForFog(result.addedActivities, mapStore.fogMode)
+    void clearFogCache().catch((error) =>
+      console.warn("[storage] fog cache invalidation failed:", error)
+    )
+  }
+
+  if (
+    result.downloadedCount > 0 ||
+    result.updatedCount > 0 ||
+    result.deletedIds.length > 0
+  ) {
+    onChanged?.({
+      downloadedCount: result.downloadedCount,
+      updatedCount: result.updatedCount,
+      deletedIds: result.deletedIds,
+    })
+  }
+
+  if (result.failures.length > 0) {
+    const permanent = result.failures.find((failure) => !failure.retryable)
+    setStatus({
+      phase: "error",
+      message:
+        permanent?.message ??
+        (result.cursorHeld
+          ? "Some activities couldn't be received"
+          : "Some activities couldn't be uploaded"),
+      lastSyncAt:
+        result.state.lastSyncAt > 0 ? result.state.lastSyncAt : lastSyncAt,
+    })
+    return
+  }
+
+  setStatus({ phase: "idle", lastSyncAt: result.state.lastSyncAt })
+  console.debug("[sync] done")
 }
 
 /** Reconcile remote point changes/deletions, then upload local outbound edits. */
@@ -574,43 +441,7 @@ async function syncSavedPoints(): Promise<void> {
   }
 }
 
-/**
- * Tombstones older than this are dropped from the applied-set. Only the newest
- * are ever re-served (the cursor is an inclusive bound), so the memory needs to
- * cover the boundary, not all history — otherwise it grows without limit.
- */
 const TOMBSTONE_MEMORY_MS = 7 * 24 * 60 * 60 * 1000
-
-async function finish(
-  cursor: number,
-  serverHashes: Set<string>,
-  ignoredHashes: Set<string>,
-  applied: Map<string, number>
-): Promise<void> {
-  // Saved-point synchronisation maintains an independent cursor in the same
-  // preference record. Preserve it while activity sync advances its cursor.
-  const existing = await loadSyncState()
-  const lastSyncAt = Date.now()
-  const cutoff = cursor - TOMBSTONE_MEMORY_MS
-  const appliedTombstones: Record<string, number> = {}
-  for (const [hash, deletedAt] of applied) {
-    if (deletedAt >= cutoff) appliedTombstones[hash] = deletedAt
-  }
-  await saveSyncState({
-    savedPointsCursor: existing?.savedPointsCursor,
-    serverSavedPointIds: existing?.serverSavedPointIds,
-    appliedSavedPointTombstones: existing?.appliedSavedPointTombstones,
-    outboundSavedPointIds: existing?.outboundSavedPointIds,
-    outboundSavedPointDeletionIds: existing?.outboundSavedPointDeletionIds,
-    cursor,
-    lastSyncAt,
-    serverHashes: [...serverHashes],
-    ignoredHashes: [...ignoredHashes],
-    appliedTombstones,
-  })
-  setStatus({ phase: "idle", lastSyncAt })
-  console.debug("[sync] done")
-}
 
 /**
  * Runs `fn` over `items` with a bounded number in flight.
@@ -641,34 +472,6 @@ async function pooled<T>(
   )
   await Promise.all(workers)
   return failed
-}
-
-// ─── Manifest ─────────────────────────────────────────────────────────────────
-
-async function fetchManifest(since: number): Promise<{
-  serverActivities: ActivityMeta[]
-  deletions: ActivityTombstone[]
-  cursor: number
-}> {
-  const serverActivities: ActivityMeta[] = []
-  const deletions: ActivityTombstone[] = []
-  let cursor = since
-
-  // Follow `hasMore` to the end; the server pages by (updatedAt, contentHash).
-  for (;;) {
-    const page = await syncTransport.fetchActivityManifest(cursor)
-    serverActivities.push(...page.activities)
-    deletions.push(...page.deletions)
-    if (page.hasMore && page.cursor <= cursor) {
-      throw new Error(
-        "The activity manifest did not advance while more pages were available."
-      )
-    }
-    cursor = page.cursor
-    if (!page.hasMore) break
-  }
-
-  return { serverActivities, deletions, cursor }
 }
 
 async function fetchSavedPointsManifest(since: number): Promise<{
@@ -832,34 +635,6 @@ export async function pushActivityUpdate(
   }
 }
 
-async function downloadActivity(
-  meta: ActivityMeta,
-  localId?: string
-): Promise<ParsedActivity | null> {
-  const { payload } = await syncTransport.downloadActivity(meta.contentHash)
-  const coordinates =
-    payload.coordinates ?? flattenActivityPaths(payload.paths ?? [])
-  return {
-    ...payload,
-    coordinates,
-    // Ids are per-device; the content hash is the shared identity.
-    id: localId ?? createUuid(),
-    contentHash: meta.contentHash,
-    name: meta.name,
-    isPublic: meta.isPublic,
-    activityType: meta.activityType ?? payload.activityType,
-    startSunPhase: meta.startSunPhase ?? payload.startSunPhase,
-  }
-}
-
-async function removeLocalActivity(activity: ParsedActivity): Promise<void> {
-  await activityLibrary.dispatch({
-    type: "delete",
-    operationId: createUuid(),
-    activityId: activity.id,
-  })
-}
-
 /**
  * Propagate a local delete to the server. Called by the `delete-activity` action;
  * a no-op when signed out, and never fatal — the activity is already gone locally.
@@ -869,11 +644,7 @@ export async function pushActivityDeletion(
 ): Promise<void> {
   if (!canSync() || !activity.contentHash) return
   try {
-    const res = await apiRaw(
-      "DELETE",
-      `/api/activities/${activity.contentHash}`
-    )
-    const { deletedAt } = (await res.json()) as ActivityDeleteResponse
+    const deletedAt = await syncTransport.deleteActivity(activity.contentHash)
     // Record our own tombstone as already applied. Without this the next sync
     // reads it back out of the manifest as news and deletes the activity again —
     // including a copy the user has deliberately re-imported since.
@@ -887,12 +658,8 @@ async function recordAppliedTombstone(
   contentHash: string,
   deletedAt: number
 ): Promise<void> {
-  const state = (await loadSyncState()) ?? {
-    cursor: 0,
-    lastSyncAt: 0,
-    serverHashes: [],
-  }
-  await saveSyncState({
+  const state = await loadActivitySyncState()
+  await activitySyncRepository.saveState({
     ...state,
     appliedTombstones: {
       ...(state.appliedTombstones ?? {}),
@@ -920,16 +687,15 @@ export async function ignoreActivityLocally(
  */
 async function addIgnoredHashes(hashes: string[]): Promise<void> {
   if (hashes.length === 0) return
-  const state = (await loadSyncState()) ?? {
-    cursor: 0,
-    lastSyncAt: 0,
-    serverHashes: [],
-  }
+  const state = await loadActivitySyncState()
   const ignored = new Set(state.ignoredHashes ?? [])
   const before = ignored.size
   for (const hash of hashes) ignored.add(hash)
   if (ignored.size === before) return
-  await saveSyncState({ ...state, ignoredHashes: [...ignored] })
+  await activitySyncRepository.saveState({
+    ...state,
+    ignoredHashes: [...ignored],
+  })
 }
 
 /**

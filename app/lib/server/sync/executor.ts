@@ -76,6 +76,7 @@ export interface SyncExecutorResult {
   pages: number
   downloadedCount: number
   updatedCount: number
+  addedActivities: ParsedActivity[]
   deletedIds: string[]
   failures: SyncEffectFailure[]
   cursorHeld: boolean
@@ -449,6 +450,7 @@ export class ActivitySyncExecutor {
     let pages = 0
     let downloadedCount = 0
     let updatedCount = 0
+    const addedActivities: ParsedActivity[] = []
     const deletedIds: string[] = []
     const failures: SyncEffectFailure[] = []
 
@@ -484,6 +486,7 @@ export class ActivitySyncExecutor {
         })
         downloadedCount += commit.change.added.length
         updatedCount += commit.change.updated.length
+        addedActivities.push(...commit.change.added)
         deletedIds.push(...commit.change.removed.map((activity) => activity.id))
       }
 
@@ -522,6 +525,7 @@ export class ActivitySyncExecutor {
           pages,
           downloadedCount,
           updatedCount,
+          addedActivities,
           deletedIds,
           failures,
           cursorHeld: requiredFailed,
