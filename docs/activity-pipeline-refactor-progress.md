@@ -13,11 +13,11 @@ untouched.
 - Branch: `refactor/fog-processing`
 - Started: 2026-09-11
 - Current phase: Phase 4/5/6 — projections, bounded fog, and sync effects
-- Last completed commit: `ce7255d add fog coordinator`
-- Current working slice: sync planner and transport validation (focused tests
-  pass)
-- Next action: add the durable sync repository/outbox and connect the planner
-  to a resumable executor
+- Last completed commit: `43c7b6f add durable sync repository`
+- Current working slice: connect the pure planner and validated transport to a
+  page-wise resumable executor
+- Next action: replace inline activity reconciliation in `syncEngine` with the
+  planner/transport seam, then add executor fault-boundary tests
 
 ## A1 activity contract slice
 
@@ -102,8 +102,19 @@ untouched.
 - Added runtime validation for manifest metadata, tombstones, path/timestamp
   relationships, activity statistics, payload hashes, response sizes, and
   idempotent upload/delete transport effects.
-- Added three focused transport tests; this slice is ready to commit with the
-  planner.
+- Added three focused transport tests; this slice is committed as `db6eeec`.
+
+## C2 durable sync repository slice
+
+- Added dedicated IndexedDB `sync-state` and `sync-outbox` stores with
+  migration indexes, legacy cursor migration, immutable state snapshots, and
+  lease-based outbox claiming.
+- Added retryable/permanent failure metadata, idempotent dedupe, crash lease
+  takeover, and an atomic cursor-plus-outbox completion seam.
+- Kept the saved-point fields in sync state while separating activity cursor
+  storage from the legacy preference record; sign-out and clear-local remove
+  both cursor copies.
+- Added six focused repository tests; this slice is committed as `43c7b6f`.
 
 ## Path-aware adapter and render slice
 
@@ -130,8 +141,9 @@ untouched.
 | `60e9047` | Route activity changes through the serialized library                | 30 focused tests pass; client typecheck passes                   |
 | `2378a7f` | Add bounded fog worker engine, protocol, and cache handoff           | 48 focused tests pass; client typecheck passes                   |
 | `ce7255d` | Add the revisioned fog coordinator                                   | 4 focused tests pass                                             |
-| pending   | Close share-queue acknowledgement and visibility mutation seams      | Client typecheck passes                                          |
-| pending   | Add pure sync planner and validated transport                        | 29 focused tests pass; client typecheck passes                   |
+| `8c09534` | Close share-queue acknowledgement and visibility mutation seams      | Client typecheck passes                                          |
+| `db6eeec` | Add pure sync planner and validated transport                        | 29 focused tests pass; client typecheck passes                   |
+| `43c7b6f` | Add durable sync repository and outbox                                | 6 repository tests pass; client typecheck passes                 |
 
 ## Phase checklist
 
