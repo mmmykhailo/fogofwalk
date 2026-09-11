@@ -108,6 +108,27 @@ describe("MemorySyncRepository", () => {
     )
   })
 
+  test("can claim only the effects selected by a page plan", async () => {
+    const repository = new MemorySyncRepository({ now: () => 100 })
+    const first = await repository.enqueueOutbox(baseItem)
+    const second = await repository.enqueueOutbox({
+      ...baseItem,
+      id: "upload-b-1",
+      dedupeKey: "upload:hash-b",
+      payload: { contentHash: "b".repeat(64) },
+    })
+
+    const claimed = await repository.claimOutbox({
+      now: 100,
+      leaseMs: 1_000,
+      ids: [second.id],
+    })
+    expect(claimed.map((item) => item.id)).toEqual([second.id])
+    expect(
+      (await repository.loadOutbox()).find((item) => item.id === first.id)
+    ).toMatchObject({ status: "pending" })
+  })
+
   test("retryable and permanent failures retain durable metadata", async () => {
     const repository = new MemorySyncRepository({ now: () => 100 })
     const item = await repository.enqueueOutbox(baseItem)

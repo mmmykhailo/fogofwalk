@@ -2,7 +2,7 @@ import { openStorageDatabase, type SyncState } from "~/lib/storage"
 
 const SYNC_STATE_ID = "default"
 
-export type SyncOutboxOperation = "upload" | "delete" | "metadata"
+export type SyncOutboxOperation = "upload" | "download" | "delete" | "metadata"
 
 export type SyncOutboxStatus =
   | "pending"
@@ -64,6 +64,7 @@ export interface ClaimOutboxOptions {
   leaseMs: number
   limit?: number
   owner?: string
+  ids?: readonly string[]
 }
 
 export interface SyncStateCommit {
@@ -338,9 +339,12 @@ export class IndexedDbSyncRepository implements SyncRepository {
     if (!db) return []
     const tx = db.transaction("sync-outbox", "readwrite")
     const store = tx.objectStore("sync-outbox")
+    const requestedIds = options.ids ? new Set(options.ids) : null
     const items = orderOutbox(
-      (await requestResult<SyncOutboxItem[]>(store.getAll())).filter((item) =>
-        canClaim(item, options.now)
+      (await requestResult<SyncOutboxItem[]>(store.getAll())).filter(
+        (item) =>
+          canClaim(item, options.now) &&
+          (requestedIds === null || requestedIds.has(item.id))
       )
     ).slice(0, Math.max(0, options.limit ?? 10))
     const claimed = items.map((item, index) => {
@@ -506,8 +510,13 @@ export class MemorySyncRepository implements SyncRepository {
   }
 
   async claimOutbox(options: ClaimOutboxOptions): Promise<SyncOutboxItem[]> {
+    const requestedIds = options.ids ? new Set(options.ids) : null
     const candidates = orderOutbox(
-      [...this.items.values()].filter((item) => canClaim(item, options.now))
+      [...this.items.values()].filter(
+        (item) =>
+          canClaim(item, options.now) &&
+          (requestedIds === null || requestedIds.has(item.id))
+      )
     ).slice(0, Math.max(0, options.limit ?? 10))
     const claimed = candidates.map((item, index) => {
       const next = claimItem(item, options, index)
