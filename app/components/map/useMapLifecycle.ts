@@ -7,7 +7,8 @@ import {
   rehydrateMapPresentation,
   type MapPresentationState,
 } from "~/lib/map/commands"
-import { setupMapLayers } from "~/lib/map/layers"
+import { activitiesFeatureCollection } from "~/lib/map/geojson"
+import { MAP_SOURCE_IDS, setupMapLayers } from "~/lib/map/layers"
 import { mapStore, saveMapPosition } from "~/lib/mapStore"
 import { styleForMapMode } from "~/lib/map/styles"
 import type { MapMode } from "~/types/activities"
@@ -63,6 +64,7 @@ export function useMapLifecycle(
   useEffect(() => {
     const container = containerRef.current
     if (!container || mapStore.map) return
+    let disposed = false
 
     const initialMode = optionsRef.current.mapMode
     const map = new maplibregl.Map({
@@ -81,6 +83,54 @@ export function useMapLifecycle(
     if (import.meta.env.VITE_E2E === "1") {
       window.__fogofwalkE2eMap = map
     }
+
+    const rehydrateAfterContextRestore = () => {
+      if (disposed) return
+      setupMapLayers(map, optionsRef.current.mapMode)
+      mapStore.sourcesReady = true
+      const activitiesSource = map.getSource(MAP_SOURCE_IDS.activities) as
+        | maplibregl.GeoJSONSource
+        | undefined
+      activitiesSource?.setData(
+        activitiesFeatureCollection(mapStore.activities)
+      )
+      optionsRef.current.invalidateActivitiesCache()
+      rehydrateMapPresentation(map, currentPresentation())
+      applyFogDataToMap(map)
+      isInitialStyleLoadedRef.current = true
+      optionsRef.current.rebuildPhotoMarkers()
+    }
+
+    const waitForContextStyle = () => {
+      const pending = pendingStyleLoadRef.current
+      if (pending) map.off("style.load", pending)
+      pendingStyleLoadRef.current = null
+
+      const onStyleLoad = () => {
+        if (pendingStyleLoadRef.current !== onStyleLoad) return
+        map.off("style.load", onStyleLoad)
+        pendingStyleLoadRef.current = null
+        rehydrateAfterContextRestore()
+      }
+      pendingStyleLoadRef.current = onStyleLoad
+      map.on("style.load", onStyleLoad)
+      // Context restoration may have completed the style before MapLibre emits
+      // its restoration event. In that case the event has already been missed,
+      // but the style readiness check still lets us re-add the custom layer.
+      if (map.isStyleLoaded()) onStyleLoad()
+    }
+
+    const handleContextLost = () => {
+      mapStore.sourcesReady = false
+      mapStore.renderSourceRevision = null
+    }
+    const handleContextRestored = () => {
+      mapStore.sourcesReady = false
+      mapStore.renderSourceRevision = null
+      waitForContextStyle()
+    }
+    map.on("webglcontextlost", handleContextLost)
+    map.on("webglcontextrestored", handleContextRestored)
 
     map.on("rotate", () => setBearing(map.getBearing()))
     map.on("moveend", () => {
@@ -113,7 +163,10 @@ export function useMapLifecycle(
     map.on("zoomend", () => optionsRef.current.rebuildPhotoMarkers())
 
     return () => {
+      disposed = true
       detachMapInteractions()
+      map.off("webglcontextlost", handleContextLost)
+      map.off("webglcontextrestored", handleContextRestored)
       mapStore.sourcesReady = false
       mapStore.renderSourceRevision = null
       mapStore.map = null

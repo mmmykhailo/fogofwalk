@@ -192,6 +192,58 @@ export function createFogMaskLayer(initialData: FogRenderData): FogMaskLayer {
   let positiveBuffer: WebGLBuffer | null = null
   let worldBuffer: WebGLBuffer | null = null
   let positiveVertexCount = 0
+  let contextLostHandler: (() => void) | null = null
+  let contextRestoredHandler: (() => void) | null = null
+
+  function discardResources(): void {
+    // WebGL objects are invalid after context loss. Do not call delete* on the
+    // lost context; MapLibre will provide a fresh context after restoration.
+    program = null
+    positiveBuffer = null
+    worldBuffer = null
+    glContext = null
+    positiveVertexCount = 0
+  }
+
+  function releaseResources(): void {
+    if (glContext && program) glContext.deleteProgram(program)
+    if (glContext && positiveBuffer) glContext.deleteBuffer(positiveBuffer)
+    if (glContext && worldBuffer) glContext.deleteBuffer(worldBuffer)
+    discardResources()
+  }
+
+  function createResources(nextGl: GL): void {
+    const nextProgram = createProgram(nextGl)
+    const nextPositiveBuffer = nextGl.createBuffer()
+    const nextWorldBuffer = nextGl.createBuffer()
+    if (!nextPositiveBuffer || !nextWorldBuffer) {
+      nextGl.deleteProgram(nextProgram)
+      if (nextPositiveBuffer) nextGl.deleteBuffer(nextPositiveBuffer)
+      if (nextWorldBuffer) nextGl.deleteBuffer(nextWorldBuffer)
+      throw new Error("Fog mask vertex buffers could not be created.")
+    }
+
+    program = nextProgram
+    positiveBuffer = nextPositiveBuffer
+    worldBuffer = nextWorldBuffer
+    glContext = nextGl
+    nextGl.bindBuffer(nextGl.ARRAY_BUFFER, worldBuffer)
+    nextGl.bufferData(nextGl.ARRAY_BUFFER, WORLD_VERTICES, nextGl.STATIC_DRAW)
+    uploadPositiveData()
+  }
+
+  function ensureResources(nextGl: GL): void {
+    if (
+      glContext === nextGl &&
+      program !== null &&
+      positiveBuffer !== null &&
+      worldBuffer !== null
+    ) {
+      return
+    }
+    if (glContext) releaseResources()
+    createResources(nextGl)
+  }
 
   function uploadPositiveData(): void {
     if (!glContext || !positiveBuffer) return
@@ -218,18 +270,24 @@ export function createFogMaskLayer(initialData: FogRenderData): FogMaskLayer {
     setData,
     onAdd(nextMap, nextGl) {
       map = nextMap
-      glContext = nextGl
-      program = createProgram(nextGl)
-      positiveBuffer = nextGl.createBuffer()
-      worldBuffer = nextGl.createBuffer()
-      if (!positiveBuffer || !worldBuffer) {
-        throw new Error("Fog mask vertex buffers could not be created.")
+      contextLostHandler = () => {
+        if (map !== nextMap) return
+        discardResources()
+        // MapLibre does not call a custom layer's onRemove when it destroys a
+        // style for context loss. Remove these listeners here so a discarded
+        // implementation cannot retain the map after lifecycle rehydration.
+        nextMap.off("webglcontextlost", contextLostHandler!)
+        nextMap.off("webglcontextrestored", contextRestoredHandler!)
       }
-      nextGl.bindBuffer(nextGl.ARRAY_BUFFER, worldBuffer)
-      nextGl.bufferData(nextGl.ARRAY_BUFFER, WORLD_VERTICES, nextGl.STATIC_DRAW)
-      uploadPositiveData()
+      contextRestoredHandler = () => {
+        if (map === nextMap) nextMap.triggerRepaint()
+      }
+      nextMap.on("webglcontextlost", contextLostHandler)
+      nextMap.on("webglcontextrestored", contextRestoredHandler)
+      ensureResources(nextGl)
     },
     render(nextGl, { defaultProjectionData }) {
+      ensureResources(nextGl)
       if (!program || !positiveBuffer || !worldBuffer) return
       const matrix = nextGl.getUniformLocation(program, "u_matrix")
       const color = nextGl.getUniformLocation(program, "u_color")
@@ -273,13 +331,15 @@ export function createFogMaskLayer(initialData: FogRenderData): FogMaskLayer {
       nextGl.useProgram(null)
     },
     onRemove(nextMap, nextGl) {
-      if (program) nextGl.deleteProgram(program)
-      if (positiveBuffer) nextGl.deleteBuffer(positiveBuffer)
-      if (worldBuffer) nextGl.deleteBuffer(worldBuffer)
-      program = null
-      positiveBuffer = null
-      worldBuffer = null
-      glContext = null
+      if (contextLostHandler) {
+        nextMap.off("webglcontextlost", contextLostHandler)
+      }
+      if (contextRestoredHandler) {
+        nextMap.off("webglcontextrestored", contextRestoredHandler)
+      }
+      releaseResources()
+      contextLostHandler = null
+      contextRestoredHandler = null
       if (map === nextMap) map = null
     },
   }
