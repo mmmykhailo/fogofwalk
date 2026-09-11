@@ -48,7 +48,7 @@ describe("local diagnostics", () => {
 
     const exported = exportDiagnostics(123)
     expect(exported).toEqual({
-      schemaVersion: 1,
+      schemaVersion: 2,
       exportedAt: 123,
       events: [
         expect.objectContaining({
@@ -88,6 +88,30 @@ describe("local diagnostics", () => {
       libraryRevision: null,
       errorCode: "unknown",
       geometry: { inputPoints: 4 },
+    })
+  })
+
+  test("keeps bounded warning and fallback counts", () => {
+    recordDiagnostic({
+      subsystem: "fog",
+      stage: "complete",
+      result: "partial",
+      warningCounts: {
+        dropped_path: 2.8,
+        "unsafe warning": 4,
+      },
+      errorCounts: { "activity:no_usable_paths": 3 },
+      repairedActivityCount: 1,
+      rejectedActivityCount: 2,
+      geometryFallbackCount: 1,
+    })
+
+    expect(getDiagnostics()[0]).toMatchObject({
+      warningCounts: { dropped_path: 2 },
+      errorCounts: { "activity:no_usable_paths": 3 },
+      repairedActivityCount: 1,
+      rejectedActivityCount: 2,
+      geometryFallbackCount: 1,
     })
   })
 })

@@ -5,8 +5,10 @@ import { applyFogDataToMap } from "~/lib/map/commands"
 import { MAP_SOURCE_IDS } from "~/lib/map/layers"
 import {
   fogCoordinator,
+  createFogWorker,
   mapStore,
   recordFogSnapshot,
+  replaceFogWorker,
   setFogProcessedCount,
 } from "~/lib/mapStore"
 import { saveFogCache } from "~/lib/storage"
@@ -54,8 +56,36 @@ export function useFogWorkerBridge(onProcessingComplete?: ProcessingComplete): {
   }, [])
 
   useEffect(() => {
-    const worker = mapStore.worker
-    if (!worker) return
+    const initialWorker = mapStore.worker ?? createFogWorker()
+    let attachedWorker: Worker | null = initialWorker
+    let disposed = false
+    let replacing = false
+
+    function attachWorker(worker: Worker): void {
+      attachedWorker = worker
+      worker.onmessage = handleMessage
+      worker.onerror = (event) => handleError(event, worker)
+      worker.onmessageerror = () => handleMessageError(worker)
+      mapStore.isFogWorkerListenerReady = true
+    }
+
+    function failWorker(reason: unknown, failedWorker: Worker): void {
+      if (
+        disposed ||
+        replacing ||
+        attachedWorker !== failedWorker ||
+        mapStore.worker !== failedWorker
+      ) {
+        return
+      }
+      replacing = true
+      const replacement = replaceFogWorker(failedWorker)
+      attachedWorker = replacement
+      if (replacement) attachWorker(replacement)
+      else mapStore.isFogWorkerListenerReady = false
+      replacing = false
+      fogCoordinator.handleWorkerFailure(reason)
+    }
 
     const watchdog = createFogWorkerWatchdog({
       onTimeout: (request) => {
@@ -77,7 +107,8 @@ export function useFogWorkerBridge(onProcessingComplete?: ProcessingComplete): {
           errorCode: "worker-timeout",
           retryability: "retryable",
         })
-        fogCoordinator.handleWorkerFailure(new Error("Fog worker timed out."))
+        const worker = attachedWorker
+        if (worker) failWorker(new Error("Fog worker timed out."), worker)
       },
     })
     const watchdogTimer = window.setInterval(() => {
@@ -103,6 +134,11 @@ export function useFogWorkerBridge(onProcessingComplete?: ProcessingComplete): {
           featureCount: snapshot.diagnostics.featureCount,
           vertexCount: snapshot.diagnostics.vertexCount,
         },
+        warningCounts: snapshot.diagnostics.warningCounts,
+        errorCounts: snapshot.diagnostics.errorCounts,
+        repairedActivityCount: snapshot.diagnostics.repairedActivityCount,
+        rejectedActivityCount: snapshot.diagnostics.rejectedActivityCount,
+        geometryFallbackCount: snapshot.diagnostics.geometryFallbackCount,
       })
       recordFogSnapshot(snapshot)
       mapStore.fogSnapshot = {
@@ -231,28 +267,30 @@ export function useFogWorkerBridge(onProcessingComplete?: ProcessingComplete): {
       onProcessingCompleteRef.current?.()
     }
 
-    mapStore.isFogWorkerListenerReady = true
-    worker.onmessage = handleMessage
-    const handleError = (event: ErrorEvent) => {
+    function handleError(event: ErrorEvent, worker: Worker) {
       console.warn("[worker] fog worker failed", event.error ?? event.message)
-      fogCoordinator.handleWorkerFailure(event.error ?? event.message)
+      failWorker(event.error ?? event.message, worker)
     }
-    worker.onerror = handleError
-    const handleMessageError = () => {
-      fogCoordinator.handleWorkerFailure(
-        new Error("Fog worker message could not be decoded.")
-      )
+    function handleMessageError(worker: Worker) {
+      failWorker(new Error("Fog worker message could not be decoded."), worker)
     }
-    worker.onmessageerror = handleMessageError
+
+    attachWorker(initialWorker)
 
     return () => {
+      disposed = true
       window.clearInterval(watchdogTimer)
       watchdog.observe(null)
       mapStore.isFogWorkerListenerReady = false
-      if (worker.onmessage === handleMessage) worker.onmessage = null
-      if (worker.onerror === handleError) worker.onerror = null
-      if (worker.onmessageerror === handleMessageError) {
+      const worker = attachedWorker
+      if (worker) {
+        worker.onmessage = null
+        worker.onerror = null
         worker.onmessageerror = null
+        if (mapStore.worker === worker) {
+          worker.terminate()
+          mapStore.worker = null
+        }
       }
     }
   }, [])

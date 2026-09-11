@@ -133,6 +133,12 @@ export interface FogProjectionStatus {
   error: string | null
   warnings: string[]
   recoveryAttempts: number
+  retryable: boolean
+  warningCounts: Record<string, number>
+  errorCounts: Record<string, number>
+  repairedActivityCount: number
+  rejectedActivityCount: number
+  geometryFallbackCount: number
 }
 
 export const mapStore: MapStore = {
@@ -154,6 +160,66 @@ export const mapStore: MapStore = {
   shareCardCache: null,
 }
 
+function detachFogWorker(worker: Worker): void {
+  worker.onmessage = null
+  worker.onerror = null
+  worker.onmessageerror = null
+  worker.terminate()
+}
+
+/** Create the page-owned fog worker with a safe pre-bridge failure handler. */
+export function createFogWorker(): Worker {
+  if (typeof Worker === "undefined") {
+    throw new Error("Fog workers are unavailable in this environment.")
+  }
+
+  const worker = new Worker(
+    new URL("../workers/fogWorker.ts", import.meta.url),
+    { type: "module" }
+  )
+  mapStore.worker = worker
+
+  // The loader creates the worker before MapView mounts and can therefore have
+  // a short window without the bridge's handlers. Keep recovery safe in that
+  // window; the bridge replaces these handlers once it is ready.
+  const handleFailure = (reason: unknown) => {
+    if (mapStore.worker !== worker) return
+    replaceFogWorker(worker)
+    fogCoordinator.handleWorkerFailure(reason)
+  }
+  worker.onerror = (event) => {
+    console.error("[worker] uncaught fog worker error", event)
+    handleFailure(event.error ?? event.message)
+  }
+  worker.onmessageerror = () => {
+    handleFailure(new Error("Fog worker message could not be decoded."))
+  }
+  return worker
+}
+
+/** Terminate a failed fog worker and install a fresh one for recovery. */
+export function replaceFogWorker(
+  failedWorker: Worker | null = mapStore.worker
+): Worker | null {
+  const current = mapStore.worker
+  if (failedWorker && failedWorker !== current) {
+    detachFogWorker(failedWorker)
+    return current
+  }
+
+  if (current) {
+    detachFogWorker(current)
+    mapStore.worker = null
+  }
+
+  try {
+    return createFogWorker()
+  } catch {
+    mapStore.worker = null
+    return null
+  }
+}
+
 const fogProgressListeners = new Set<() => void>()
 const fogStatusListeners = new Set<() => void>()
 
@@ -167,6 +233,24 @@ let fogStatus: FogProjectionStatus = {
   error: null,
   warnings: [],
   recoveryAttempts: 0,
+  retryable: false,
+  warningCounts: {},
+  errorCounts: {},
+  repairedActivityCount: 0,
+  rejectedActivityCount: 0,
+  geometryFallbackCount: 0,
+}
+
+function sameCounts(
+  first: Record<string, number>,
+  second: Record<string, number>
+): boolean {
+  const firstEntries = Object.entries(first)
+  const secondEntries = Object.entries(second)
+  return (
+    firstEntries.length === secondEntries.length &&
+    firstEntries.every(([key, value]) => second[key] === value)
+  )
 }
 
 function updateFogStatus(
@@ -187,6 +271,12 @@ function updateFogStatus(
     next.total === fogStatus.total &&
     next.error === fogStatus.error &&
     next.recoveryAttempts === fogStatus.recoveryAttempts &&
+    next.retryable === fogStatus.retryable &&
+    next.repairedActivityCount === fogStatus.repairedActivityCount &&
+    next.rejectedActivityCount === fogStatus.rejectedActivityCount &&
+    next.geometryFallbackCount === fogStatus.geometryFallbackCount &&
+    sameCounts(next.warningCounts, fogStatus.warningCounts) &&
+    sameCounts(next.errorCounts, fogStatus.errorCounts) &&
     next.warnings.length === fogStatus.warnings.length &&
     next.warnings.every(
       (warning, index) => warning === fogStatus.warnings[index]
@@ -197,6 +287,8 @@ function updateFogStatus(
   fogStatus = {
     ...next,
     warnings: [...next.warnings],
+    warningCounts: { ...next.warningCounts },
+    errorCounts: { ...next.errorCounts },
   }
   for (const listener of fogStatusListeners) listener()
 }
@@ -251,6 +343,12 @@ export const fogCoordinator = createFogCoordinator(
         total: request.activities.length,
         error: null,
         warnings: [],
+        retryable: false,
+        warningCounts: {},
+        errorCounts: {},
+        repairedActivityCount: 0,
+        rejectedActivityCount: 0,
+        geometryFallbackCount: 0,
       })
     },
     onProgress: (progress, context) => {
@@ -286,7 +384,12 @@ export const fogCoordinator = createFogCoordinator(
             : error.kind === "engine"
               ? "engine-failed"
               : "protocol-error",
-        retryability: error.kind === "protocol" ? "permanent" : "retryable",
+        retryability:
+          error.kind === "worker"
+            ? "retryable"
+            : error.kind === "protocol"
+              ? "permanent"
+              : "permanent",
       })
       updateFogStatus((current) => ({
         ...current,
@@ -295,6 +398,7 @@ export const fogCoordinator = createFogCoordinator(
             ? "failed"
             : "degraded",
         error: error.message,
+        retryable: error.kind === "worker",
       }))
     },
     onRecovery: (context) => {
@@ -315,6 +419,7 @@ export const fogCoordinator = createFogCoordinator(
         processed: 0,
         total: context.request.activities.length,
         recoveryAttempts: 1,
+        retryable: true,
       })
     },
     onTerminal: (terminal) => {
@@ -330,20 +435,43 @@ export const fogCoordinator = createFogCoordinator(
               geometry: snapshotGeometryMetrics(terminal.snapshot),
             }
           : {}),
-        result:
-          terminal.status === "complete"
-            ? terminal.snapshot?.completeness === "complete"
-              ? "success"
-              : "degraded"
-            : terminal.status,
+        result: terminal.status === "complete" ? "success" : terminal.status,
         ...(terminal.status === "failed"
           ? { errorCode: "fog-processing-failed", retryability: "retryable" }
+          : {}),
+        ...(terminal.snapshot
+          ? {
+              warningCounts: terminal.snapshot.diagnostics.warningCounts,
+              errorCounts: terminal.snapshot.diagnostics.errorCounts,
+              repairedActivityCount:
+                terminal.snapshot.diagnostics.repairedActivityCount,
+              rejectedActivityCount:
+                terminal.snapshot.diagnostics.rejectedActivityCount,
+              geometryFallbackCount:
+                terminal.snapshot.diagnostics.geometryFallbackCount,
+            }
           : {}),
       })
       if (terminal.status === "failed") {
         updateFogStatus({
           phase: "failed",
           error: terminal.error ?? "Fog processing failed.",
+          retryable: true,
+        })
+      } else if (terminal.status === "partial" && terminal.snapshot) {
+        const diagnostics = terminal.snapshot.diagnostics
+        updateFogStatus({
+          phase: "degraded",
+          error:
+            diagnostics.errors[0] ??
+            "Fog completed with reduced coverage; your activities are safe.",
+          warnings: [...diagnostics.warnings, ...diagnostics.errors],
+          retryable: false,
+          warningCounts: { ...(diagnostics.warningCounts ?? {}) },
+          errorCounts: { ...(diagnostics.errorCounts ?? {}) },
+          repairedActivityCount: diagnostics.repairedActivityCount ?? 0,
+          rejectedActivityCount: diagnostics.rejectedActivityCount ?? 0,
+          geometryFallbackCount: diagnostics.geometryFallbackCount ?? 0,
         })
       } else if (
         terminal.status === "cancelled" &&
@@ -356,6 +484,12 @@ export const fogCoordinator = createFogCoordinator(
           total: 0,
           error: null,
           warnings: [],
+          retryable: false,
+          warningCounts: {},
+          errorCounts: {},
+          repairedActivityCount: 0,
+          rejectedActivityCount: 0,
+          geometryFallbackCount: 0,
         })
       }
     },
@@ -430,6 +564,7 @@ function applyFogLibraryChange(
         mode: mapStore.fogMode,
         total: snapshot.activities.length,
         error: "Fog processing is unavailable. Retry to clear the new route.",
+        retryable: true,
       })
     }
     return
@@ -510,9 +645,14 @@ export function recordFogSnapshot(snapshot: FogSnapshot): void {
     return
   }
   setFogProcessedCount(snapshot.diagnostics.processed)
+  const diagnostics = snapshot.diagnostics
   updateFogStatus({
     phase:
-      snapshot.completeness === "complete" && !snapshot.diagnostics.degraded
+      snapshot.completeness === "complete" &&
+      !diagnostics.degraded &&
+      (diagnostics.repairedActivityCount ?? 0) === 0 &&
+      (diagnostics.rejectedActivityCount ?? 0) === 0 &&
+      (diagnostics.geometryFallbackCount ?? 0) === 0
         ? "idle"
         : "degraded",
     generation: snapshot.generation,
@@ -521,15 +661,16 @@ export function recordFogSnapshot(snapshot: FogSnapshot): void {
     processed: snapshot.diagnostics.processed,
     total: snapshot.diagnostics.total,
     error:
-      snapshot.diagnostics.errors[0] ??
-      (snapshot.diagnostics.degraded
-        ? "Fog was rebuilt with reduced coverage."
-        : null),
-    warnings: [
-      ...snapshot.diagnostics.warnings,
-      ...snapshot.diagnostics.errors,
-    ],
+      diagnostics.errors[0] ??
+      (diagnostics.degraded ? "Fog was rebuilt with reduced coverage." : null),
+    warnings: [...diagnostics.warnings, ...diagnostics.errors],
     recoveryAttempts: 0,
+    retryable: false,
+    warningCounts: { ...(diagnostics.warningCounts ?? {}) },
+    errorCounts: { ...(diagnostics.errorCounts ?? {}) },
+    repairedActivityCount: diagnostics.repairedActivityCount ?? 0,
+    rejectedActivityCount: diagnostics.rejectedActivityCount ?? 0,
+    geometryFallbackCount: diagnostics.geometryFallbackCount ?? 0,
   })
 }
 
@@ -564,6 +705,12 @@ export function startFogRun(): number {
     error: null,
     warnings: [],
     recoveryAttempts: 0,
+    retryable: false,
+    warningCounts: {},
+    errorCounts: {},
+    repairedActivityCount: 0,
+    rejectedActivityCount: 0,
+    geometryFallbackCount: 0,
   })
   return mapStore.runId
 }
@@ -637,6 +784,7 @@ export function rebuildFogProjection(
       libraryRevision: mapStore.libraryRevision,
       mode,
       error: "Fog processing is unavailable. Retry to rebuild the map.",
+      retryable: true,
     })
     return false
   }
@@ -647,6 +795,12 @@ export function rebuildFogProjection(
       total: 0,
       error: null,
       warnings: [],
+      retryable: false,
+      warningCounts: {},
+      errorCounts: {},
+      repairedActivityCount: 0,
+      rejectedActivityCount: 0,
+      geometryFallbackCount: 0,
     })
     return true
   }
@@ -661,6 +815,7 @@ export function rebuildFogProjection(
     updateFogStatus({
       phase: "failed",
       error: "Fog processing could not be scheduled. Retry to rebuild the map.",
+      retryable: true,
     })
   }
   return scheduled

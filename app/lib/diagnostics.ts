@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from "react"
 
-export const DIAGNOSTICS_SCHEMA_VERSION = 1
+export const DIAGNOSTICS_SCHEMA_VERSION = 2
 export const MAX_DIAGNOSTIC_EVENTS = 200
 
 export type DiagnosticSubsystem =
@@ -47,6 +47,11 @@ export interface DiagnosticEvent {
   errorCode: string | null
   retryability: DiagnosticRetryability | null
   geometry: DiagnosticGeometryMetrics | null
+  warningCounts: Record<string, number>
+  errorCounts: Record<string, number>
+  repairedActivityCount: number
+  rejectedActivityCount: number
+  geometryFallbackCount: number
 }
 
 export interface DiagnosticEventInput {
@@ -62,6 +67,11 @@ export interface DiagnosticEventInput {
   errorCode?: string | null
   retryability?: DiagnosticRetryability | null
   geometry?: DiagnosticGeometryMetrics | null
+  warningCounts?: Record<string, number> | null
+  errorCounts?: Record<string, number> | null
+  repairedActivityCount?: number | null
+  rejectedActivityCount?: number | null
+  geometryFallbackCount?: number | null
 }
 
 export interface DiagnosticExport {
@@ -89,6 +99,19 @@ function safeCount(value: number | null | undefined): number | null {
 function safeDuration(value: number | null | undefined): number | null {
   if (value == null || !Number.isFinite(value)) return null
   return Math.min(86_400_000, Math.max(0, Math.round(value)))
+}
+
+function safeCounts(
+  counts: Record<string, number> | null | undefined
+): Record<string, number> {
+  if (!counts || typeof counts !== "object") return {}
+  const result: Record<string, number> = {}
+  for (const [key, value] of Object.entries(counts).slice(0, 64)) {
+    if (!SAFE_TOKEN.test(key)) continue
+    const count = safeCount(value)
+    if (count !== null) result[key] = count
+  }
+  return result
 }
 
 function safeRevision(value: number | null | undefined): number | null {
@@ -146,6 +169,11 @@ export function recordDiagnostic(input: DiagnosticEventInput): DiagnosticEvent {
       input.errorCode == null ? null : safeToken(input.errorCode, "unknown"),
     retryability: input.retryability ?? null,
     geometry: safeGeometry(input.geometry),
+    warningCounts: safeCounts(input.warningCounts),
+    errorCounts: safeCounts(input.errorCounts),
+    repairedActivityCount: safeCount(input.repairedActivityCount) ?? 0,
+    rejectedActivityCount: safeCount(input.rejectedActivityCount) ?? 0,
+    geometryFallbackCount: safeCount(input.geometryFallbackCount) ?? 0,
   }
 
   events = [...events, event].slice(-MAX_DIAGNOSTIC_EVENTS)
@@ -186,6 +214,8 @@ export function exportDiagnostics(now = Date.now()): DiagnosticExport {
     events: events.map((event) => ({
       ...event,
       geometry: event.geometry ? { ...event.geometry } : null,
+      warningCounts: { ...event.warningCounts },
+      errorCounts: { ...event.errorCounts },
     })),
   }
 }

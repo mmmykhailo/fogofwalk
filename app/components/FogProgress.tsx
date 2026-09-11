@@ -62,9 +62,21 @@ export function FogStatusNotice({ onRetry }: { onRetry: () => void }) {
   if (status.phase !== "failed" && status.phase !== "degraded") return null
 
   const isFailed = status.phase === "failed"
+  const rejected = status.rejectedActivityCount
+  const fallbacks = status.geometryFallbackCount
+  const repaired = status.repairedActivityCount
+  const unionFailures = status.warningCounts["explored-mask-union-failed"] ?? 0
   const message = isFailed
     ? (status.error ?? "Fog could not be rebuilt.")
-    : "Some routes could not clear fog; your activities are safe."
+    : rejected > 0
+      ? `${rejected} route${rejected === 1 ? "" : "s"} could not clear fog; your activities are safe.`
+      : fallbacks > 0
+        ? "Some fog regions remain covered because their geometry could not be validated; your activities are safe."
+        : repaired > 0
+          ? `${repaired} route${repaired === 1 ? " was" : "s were"} repaired before clearing fog.`
+          : unionFailures > 0
+            ? "Explored regions were kept separate because they could not be merged safely."
+            : "Fog completed with reduced coverage; your activities are safe."
 
   return (
     <div
@@ -86,15 +98,17 @@ export function FogStatusNotice({ onRetry }: { onRetry: () => void }) {
           ? ` (${status.warnings.length} warning${status.warnings.length === 1 ? "" : "s"})`
           : ""}
       </span>
-      <Button
-        variant="outline"
-        size="xs"
-        onClick={onRetry}
-        aria-label="Retry fog processing"
-      >
-        <ArrowClockwiseIcon weight="bold" />
-        Retry
-      </Button>
+      {status.retryable && (
+        <Button
+          variant="outline"
+          size="xs"
+          onClick={onRetry}
+          aria-label="Retry fog processing"
+        >
+          <ArrowClockwiseIcon weight="bold" />
+          Retry
+        </Button>
+      )}
     </div>
   )
 }

@@ -174,7 +174,8 @@ function warningCountKey(message: string): string {
 function aggregationResult(
   fogData: FogRenderData,
   degraded: boolean,
-  warnings: string[]
+  warnings: string[],
+  geometryFallbackCount = 0
 ): FogAggregationResult {
   const validation = validateFogRenderData(fogData, {
     allowInteriorRings: true,
@@ -219,7 +220,7 @@ function aggregationResult(
     degraded,
     warnings,
     warningCounts,
-    geometryFallbackCount: degraded ? 1 : 0,
+    geometryFallbackCount,
     partitionCount: 0,
     featureCount: validation.featureCount,
     vertexCount: validation.vertexCount,

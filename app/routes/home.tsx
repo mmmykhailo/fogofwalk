@@ -36,6 +36,7 @@ import {
   fogCoordinator,
   mapStore,
   activityLibrary,
+  createFogWorker,
   initializeActivityLibrary,
   rebuildFogProjection,
   useFogStatus,
@@ -131,14 +132,7 @@ export async function clientLoader({
 }> {
   if (!mapStore.worker) {
     console.debug("[clientLoader] creating worker")
-    mapStore.worker = new Worker(
-      new URL("../workers/fogWorker.ts", import.meta.url),
-      { type: "module" }
-    )
-    mapStore.worker.onerror = (e) => {
-      console.error("[worker] uncaught error", e)
-      fogCoordinator.handleWorkerFailure(e.error ?? e.message)
-    }
+    createFogWorker()
     console.debug("[clientLoader] worker created", mapStore.worker)
   }
 
