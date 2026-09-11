@@ -13,11 +13,11 @@ untouched.
 - Branch: `refactor/fog-processing`
 - Started: 2026-09-11
 - Current phase: completion audit across Phases 0–8
-- Last completed commit: `3ddfcd6 cancel sync when auth changes`
+- Last completed commit: `4dbb21e serialize one activity geometry`
 - Current working slice: close remaining acceptance gaps, add deterministic
   boundary tests, and verify the full client/server/build matrix
-- Next action: run the full client/server/build matrix, then address the
-  highest-priority remaining browser or fixture gap
+- Next action: finish the synced browser matrix, add the sign-out/account-switch
+  race case, then run the full client/server/build matrix
 
 ## A1 activity contract slice
 
@@ -330,6 +330,21 @@ untouched.
 - Added cancellation/lease-preservation coverage; the focused sync suite (49)
   and client typecheck pass. Committed as `984fad4` and `3ddfcd6`.
 
+## B4 validation and import/sync wire-boundary slices
+
+- Fog ring simplicity checks now have a finite technical budget, and partition
+  grids are counted before allocation with a guarded construction loop. Focused
+  aggregation tests and client typecheck pass; committed as `6af6aed`.
+- GPX adapters preserve elevation for statistics while stripping the third
+  `togeojson` ordinate from canonical 2D paths. The serverless browser import
+  regression passes; committed as `8d529f9`.
+- The E2E map fixture is a closure-backed factory rather than a class, and its
+  fixture wiring remains type-safe; committed as `d5fb501`.
+- Compatibility-shaped local activities are projected to exactly one geometry
+  representation on upload, so path-aware records cannot be rejected as
+  ambiguous by the server. Focused transport tests and the full six-test
+  synced activity browser slice pass; committed as `4dbb21e`.
+
 ## Commit log
 
 | Commit    | Slice                                                                | Verification                                                     |
@@ -378,6 +393,10 @@ untouched.
 | `bed3e1f` | Cover storage migration boundaries                           | Storage migration tests and client typecheck pass                      |
 | `984fad4` | Abort sync effects safely                                    | Sync executor/transport tests and client typecheck pass                 |
 | `3ddfcd6` | Cancel sync when auth changes                                | 49 sync tests and client typecheck pass                                 |
+| `6af6aed` | Bound fog validation work                                      | Aggregation safety tests and client typecheck pass                       |
+| `8d529f9` | Normalize GPX elevation geometry                              | Serverless import E2E and client typecheck pass                          |
+| `d5fb501` | Make E2E page fixture functional                              | E2E typecheck passes                                                     |
+| `4dbb21e` | Serialize one activity geometry                              | Sync tests, client typecheck, and six activity E2E tests pass             |
 
 ## Phase checklist
 
