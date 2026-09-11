@@ -38,11 +38,15 @@ import { backfillContentHashes } from "~/lib/activityHash"
 import { createUuid } from "~/lib/uuid"
 import { recordDiagnostic } from "~/lib/diagnostics"
 import { apiRaw, friendlyMessage } from "./apiClient"
-import { canSync } from "./authStore"
+import { canSync, getAuthState, subscribeAuth } from "./authStore"
 import { isServerEnabled } from "./config"
 import { createApiSyncTransport } from "./sync/transport"
 import { createIndexedDbSyncRepository } from "./sync/repository"
 import { createActivitySyncExecutor } from "./sync/executor"
+import {
+  isSyncCancellationError,
+  throwIfSyncAborted,
+} from "./sync/cancellation"
 import { createSyncScheduler } from "./sync/scheduler"
 import {
   describeSyncStatus,
@@ -223,6 +227,30 @@ const syncScheduler = isServerEnabled
     })
   : null
 
+interface ActiveSyncRun {
+  controller: AbortController
+  accountId: string
+}
+
+let activeSyncRun: ActiveSyncRun | null = null
+
+subscribeAuth(() => {
+  const active = activeSyncRun
+  if (!active) return
+  const auth = getAuthState()
+  if (
+    auth.status === "signedIn" &&
+    auth.canSync &&
+    auth.user.id === active.accountId
+  ) {
+    return
+  }
+  active.controller.abort()
+  if (auth.status === "signedIn" && auth.canSync) {
+    syncScheduler?.trigger("account-change")
+  }
+})
+
 async function loadActivitySyncState() {
   if (!activitySyncRepository) {
     return { cursor: 0, lastSyncAt: 0, serverHashes: [] }
@@ -294,6 +322,14 @@ export function startSyncScheduler(): () => void {
 
 async function syncOnce(reason: string): Promise<void> {
   if (!isServerEnabled || !activitySyncRepository || !syncTransport) return
+  const auth = getAuthState()
+  if (auth.status !== "signedIn" || !auth.canSync) return
+  const active: ActiveSyncRun = {
+    controller: new AbortController(),
+    accountId: auth.user.id,
+  }
+  activeSyncRun = active
+  const { signal } = active.controller
   const previousStatus = getSyncStatus()
   const lastSyncAt =
     previousStatus.phase === "syncing" ? null : previousStatus.lastSyncAt
@@ -318,17 +354,22 @@ async function syncOnce(reason: string): Promise<void> {
   console.debug("[sync] start", reason)
 
   try {
+    throwIfSyncAborted(signal)
     // Saved points have their own manifest cursor and are intentionally kept
     // outside activity upload pacing. Reconcile them before activities.
-    await syncSavedPoints()
+    await syncSavedPoints(signal)
+    throwIfSyncAborted(signal)
     await initializeActivityLibrary()
+    throwIfSyncAborted(signal)
 
     // Activities imported before sync existed have no hash yet.
     const backfillCandidates = activityLibrary
       .getSnapshot()
       .activities.map((activity) => structuredClone(activity))
     const backfilled = await backfillContentHashes(backfillCandidates)
+    throwIfSyncAborted(signal)
     if (backfilled.length > 0) {
+      throwIfSyncAborted(signal)
       await activityLibrary.dispatch({
         type: "applyRemote",
         operationId: createUuid(),
@@ -337,11 +378,23 @@ async function syncOnce(reason: string): Promise<void> {
           activity,
         })),
       })
+      throwIfSyncAborted(signal)
     }
 
-    await runActivitySync(lastSyncAt, operationId, startedAt)
+    await runActivitySync(lastSyncAt, operationId, startedAt, signal)
     return
   } catch (err) {
+    if (signal.aborted || isSyncCancellationError(err)) {
+      if (activeSyncRun === active) {
+        setStatus({
+          phase: "idle",
+          message: null,
+          cursorHeld: false,
+        })
+      }
+      console.debug("[sync] cancelled", reason)
+      return
+    }
     console.warn("[sync] failed:", err)
     recordDiagnostic({
       subsystem: "sync",
@@ -358,20 +411,25 @@ async function syncOnce(reason: string): Promise<void> {
       lastSyncAt,
       cursorHeld: false,
     })
+  } finally {
+    if (activeSyncRun === active) activeSyncRun = null
   }
 }
 
 async function runActivitySync(
   lastSyncAt: number | null,
   operationId: string,
-  startedAt: number
+  startedAt: number,
+  signal: AbortSignal
 ): Promise<void> {
   if (!activitySyncRepository || !syncTransport) return
+  throwIfSyncAborted(signal)
   setStatus({ phase: "syncing", done: 0, total: 0 })
   const result = await createActivitySyncExecutor({
     repository: activitySyncRepository,
     library: activityLibrary,
     transport: syncTransport,
+    signal,
     onProgress: ({ done, total }) => {
       setStatus({ phase: "syncing", done, total })
       recordDiagnostic({
@@ -383,6 +441,7 @@ async function runActivitySync(
       })
     },
   }).run()
+  throwIfSyncAborted(signal)
 
   if (
     result.downloadedCount > 0 ||
@@ -455,15 +514,19 @@ async function runActivitySync(
 }
 
 /** Reconcile remote point changes/deletions, then upload local outbound edits. */
-async function syncSavedPoints(): Promise<void> {
+async function syncSavedPoints(signal?: AbortSignal): Promise<void> {
+  throwIfSyncAborted(signal)
   const state = await loadSavedPointSyncState()
+  throwIfSyncAborted(signal)
   const since = state?.cursor ?? 0
   const isFromScratch = since === 0
   const { serverPoints, deletions, cursor } =
-    await fetchSavedPointsManifest(since)
+    await fetchSavedPointsManifest(since, signal)
+  throwIfSyncAborted(signal)
   const localById = new Map(
     (await loadSavedPoints()).map((point) => [point.id, point])
   )
+  throwIfSyncAborted(signal)
   const serverIds = new Set(isFromScratch ? [] : (state?.serverPointIds ?? []))
   for (const point of serverPoints) serverIds.add(point.id)
   for (const tombstone of deletions) serverIds.delete(tombstone.id)
@@ -479,8 +542,10 @@ async function syncSavedPoints(): Promise<void> {
   const deletedIds: string[] = []
   if (!isFromScratch) {
     for (const tombstone of freshTombstones) {
+      throwIfSyncAborted(signal)
       if (localById.has(tombstone.id)) {
         await deleteSavedPointFromIdb(tombstone.id)
+        throwIfSyncAborted(signal)
         localById.delete(tombstone.id)
         deletedIds.push(tombstone.id)
       }
@@ -497,7 +562,9 @@ async function syncSavedPoints(): Promise<void> {
     (point) => !dirtyIds.has(point.id) && !outboundDeletionIds.has(point.id)
   )
   if (remoteUpdates.length > 0) {
+    throwIfSyncAborted(signal)
     await saveSavedPoints(remoteUpdates)
+    throwIfSyncAborted(signal)
     for (const point of remoteUpdates) localById.set(point.id, point)
   }
 
@@ -505,13 +572,16 @@ async function syncSavedPoints(): Promise<void> {
   const deletionFailures = await pooled(
     [...outboundDeletionIds],
     async (id) => {
-      const deletedAt = await deleteSavedPointOnServer(id)
+      const deletedAt = await deleteSavedPointOnServer(id, signal)
+      throwIfSyncAborted(signal)
       serverIds.delete(id)
       dirtyIds.delete(id)
       outboundDeletionIds.delete(id)
       applied.set(id, deletedAt)
-    }
+    },
+    signal
   )
+  throwIfSyncAborted(signal)
   const toUpload = [...localById.values()].filter(
     (point) =>
       !outboundDeletionIds.has(point.id) &&
@@ -519,11 +589,13 @@ async function syncSavedPoints(): Promise<void> {
       (isFromScratch || !deletedThisWindow.has(point.id))
   )
   const failures = await pooled(toUpload, async (point) => {
-    const saved = await uploadSavedPoint(point)
+    const saved = await uploadSavedPoint(point, signal)
+    throwIfSyncAborted(signal)
     localById.set(saved.id, saved)
     serverIds.add(saved.id)
     dirtyIds.delete(saved.id)
-  })
+  }, signal)
+  throwIfSyncAborted(signal)
 
   const cutoff = cursor - TOMBSTONE_MEMORY_MS
   const appliedSavedPointTombstones: Record<string, number> = {}
@@ -538,6 +610,7 @@ async function syncSavedPoints(): Promise<void> {
     outboundIds: [...dirtyIds],
     outboundDeletionIds: [...outboundDeletionIds],
   })
+  throwIfSyncAborted(signal)
   if (remoteUpdates.length > 0 || deletedIds.length > 0) {
     onChanged?.({
       downloadedCount: 0,
@@ -563,18 +636,25 @@ const TOMBSTONE_MEMORY_MS = 7 * 24 * 60 * 60 * 1000
  */
 async function pooled<T>(
   items: T[],
-  fn: (item: T) => Promise<void>
+  fn: (item: T) => Promise<void>,
+  signal?: AbortSignal
 ): Promise<number> {
+  throwIfSyncAborted(signal)
   let next = 0
   let failed = 0
   const workers = Array.from(
     { length: Math.min(SYNC_CONCURRENCY, items.length) },
     async () => {
       while (next < items.length) {
+        throwIfSyncAborted(signal)
         const item = items[next++]
         try {
           await fn(item)
         } catch (err) {
+          if (signal?.aborted || isSyncCancellationError(err)) {
+            throwIfSyncAborted(signal)
+            throw err
+          }
           failed++
           console.warn("[sync] item failed:", err)
         }
@@ -582,10 +662,14 @@ async function pooled<T>(
     }
   )
   await Promise.all(workers)
+  throwIfSyncAborted(signal)
   return failed
 }
 
-async function fetchSavedPointsManifest(since: number): Promise<{
+async function fetchSavedPointsManifest(
+  since: number,
+  signal?: AbortSignal
+): Promise<{
   serverPoints: SavedPoint[]
   deletions: SavedPointTombstone[]
   cursor: number
@@ -594,11 +678,14 @@ async function fetchSavedPointsManifest(since: number): Promise<{
   const deletions: SavedPointTombstone[] = []
   let cursor = since
   for (;;) {
+    throwIfSyncAborted(signal)
     const res = await apiRaw(
       "GET",
-      `/api/saved-points/manifest?since=${encodeURIComponent(String(cursor))}`
+      `/api/saved-points/manifest?since=${encodeURIComponent(String(cursor))}`,
+      { signal }
     )
     const page = (await res.json()) as SavedPointManifestPage
+    throwIfSyncAborted(signal)
     serverPoints.push(...page.savedPoints)
     deletions.push(...page.deletions)
     cursor = page.cursor
@@ -607,7 +694,11 @@ async function fetchSavedPointsManifest(since: number): Promise<{
   return { serverPoints, deletions, cursor }
 }
 
-async function uploadSavedPoint(point: SavedPoint): Promise<SavedPoint> {
+async function uploadSavedPoint(
+  point: SavedPoint,
+  signal?: AbortSignal
+): Promise<SavedPoint> {
+  throwIfSyncAborted(signal)
   const input: SavedPointUpsertInput = {
     id: point.id,
     lng: point.lng,
@@ -619,15 +710,23 @@ async function uploadSavedPoint(point: SavedPoint): Promise<SavedPoint> {
   }
   const res = await apiRaw("PUT", `/api/saved-points/${point.id}`, {
     body: input,
+    signal,
   })
   const { savedPoint } = (await res.json()) as SavedPointUpsertResponse
+  throwIfSyncAborted(signal)
   await saveSavedPoint(savedPoint)
+  throwIfSyncAborted(signal)
   return savedPoint
 }
 
-async function deleteSavedPointOnServer(id: string): Promise<number> {
-  const res = await apiRaw("DELETE", `/api/saved-points/${id}`)
+async function deleteSavedPointOnServer(
+  id: string,
+  signal?: AbortSignal
+): Promise<number> {
+  throwIfSyncAborted(signal)
+  const res = await apiRaw("DELETE", `/api/saved-points/${id}`, { signal })
   const { deletedAt } = (await res.json()) as SavedPointDeleteResponse
+  throwIfSyncAborted(signal)
   return deletedAt
 }
 

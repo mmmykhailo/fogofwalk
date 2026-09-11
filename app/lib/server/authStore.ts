@@ -54,6 +54,11 @@ function subscribe(listener: () => void): () => void {
   return () => listeners.delete(listener)
 }
 
+/** Non-reactive subscription for services that must respond to auth changes. */
+export function subscribeAuth(listener: () => void): () => void {
+  return subscribe(listener)
+}
+
 function getSnapshot(): AuthState {
   return state
 }
