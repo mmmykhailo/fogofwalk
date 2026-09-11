@@ -283,8 +283,11 @@ function readMeta(value: unknown): StoredLibraryMeta {
   }
 }
 
-export class IndexedDbActivityLibraryRepository implements ActivityLibraryRepository {
-  async load(): Promise<LibrarySnapshot> {
+export interface IndexedDbActivityLibraryRepository
+  extends ActivityLibraryRepository {}
+
+export function createIndexedDbActivityLibraryRepository(): IndexedDbActivityLibraryRepository {
+  async function load(): Promise<LibrarySnapshot> {
     const db = await openStorageDatabase()
     if (!db) {
       throw createActivityStorageError(
@@ -315,7 +318,7 @@ export class IndexedDbActivityLibraryRepository implements ActivityLibraryReposi
     }
   }
 
-  async commit(
+  async function commit(
     command: LibraryCommand,
     expectedRevision: number,
     options: ActivityLibraryCommitOptions = {}
@@ -390,64 +393,72 @@ export class IndexedDbActivityLibraryRepository implements ActivityLibraryReposi
       throw toActivityStorageError(error, "saving the activity library")
     }
   }
+
+  return { load, commit }
 }
 
 /** Deterministic repository for service tests and non-browser adapters. */
-export class MemoryActivityLibraryRepository implements ActivityLibraryRepository {
-  private state: LibrarySnapshot
-  private failure: unknown = null
+export interface MemoryActivityLibraryRepository
+  extends ActivityLibraryRepository {
+  failNext(error: unknown): void
+  getOutbox(): SyncOutboxItem[]
+}
 
-  constructor(activities: ParsedActivity[] = [], revision = 0) {
-    this.state = immutableSnapshot(revision, activities)
+export function createMemoryActivityLibraryRepository(
+  activities: ParsedActivity[] = [],
+  revision = 0
+): MemoryActivityLibraryRepository {
+  let state = immutableSnapshot(revision, activities)
+  let failure: unknown = null
+  const outbox = new Map<string, SyncOutboxItem>()
+
+  function failNext(error: unknown): void {
+    failure = error
   }
 
-  failNext(error: unknown): void {
-    this.failure = error
-  }
-
-  async load(): Promise<LibrarySnapshot> {
-    if (this.failure !== null) {
-      const error = this.failure
-      this.failure = null
+  async function load(): Promise<LibrarySnapshot> {
+    if (failure !== null) {
+      const error = failure
+      failure = null
       throw error
     }
-    return immutableSnapshot(this.state.revision, [...this.state.activities])
+    return immutableSnapshot(state.revision, [...state.activities])
   }
 
-  async commit(
+  async function commit(
     command: LibraryCommand,
     expectedRevision: number,
     options: ActivityLibraryCommitOptions = {}
   ): Promise<LibraryCommit> {
-    if (this.failure !== null) {
-      const error = this.failure
-      this.failure = null
+    if (failure !== null) {
+      const error = failure
+      failure = null
       throw error
     }
-    if (expectedRevision !== this.state.revision) {
+    if (expectedRevision !== state.revision) {
       throw createActivityLibraryConflictError(
         expectedRevision,
-        this.state.revision
+        state.revision
       )
     }
-    const result = applyLibraryCommand(this.state, command)
-    this.state = result.snapshot
+    const result = applyLibraryCommand(state, command)
+    state = result.snapshot
     for (const input of options.outbox ?? []) {
-      const existing = [...this.outbox.values()].find(
+      const existing = [...outbox.values()].find(
         (item) => item.dedupeKey === input.dedupeKey
       )
       const now = Date.now()
       const next = existing
         ? mergeSyncOutboxItem(existing, input, now)
         : normaliseSyncOutboxItem(input, now)
-      this.outbox.set(next.id, next)
+      outbox.set(next.id, next)
     }
     return result
   }
 
-  private readonly outbox = new Map<string, SyncOutboxItem>()
-
-  getOutbox(): SyncOutboxItem[] {
-    return [...this.outbox.values()].map(clone)
+  function getOutbox(): SyncOutboxItem[] {
+    return [...outbox.values()].map(clone)
   }
+
+  return { load, commit, failNext, getOutbox }
 }

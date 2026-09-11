@@ -7,8 +7,8 @@ import {
   isActivityStorageError,
 } from "./errors"
 import {
-  MemoryActivityLibraryRepository,
   applyLibraryCommand,
+  createMemoryActivityLibraryRepository,
 } from "./repository"
 
 function activity(id: string, contentHash = `hash-${id}`): ParsedActivity {
@@ -67,7 +67,7 @@ describe("activity library command repository", () => {
   })
 
   test("publishes one revisioned change after an atomic command", async () => {
-    const repository = new MemoryActivityLibraryRepository()
+    const repository = createMemoryActivityLibraryRepository()
     const library = new ActivityLibrary(repository)
     const events: number[] = []
     library.subscribe((snapshot, change) => {
@@ -90,7 +90,7 @@ describe("activity library command repository", () => {
   })
 
   test("commits a library mutation and its outbox effect together", async () => {
-    const repository = new MemoryActivityLibraryRepository()
+    const repository = createMemoryActivityLibraryRepository()
     const library = new ActivityLibrary(repository)
 
     const result = await library.dispatch(
@@ -123,7 +123,7 @@ describe("activity library command repository", () => {
   })
 
   test("retries a concurrent revision conflict without dropping the command", async () => {
-    const repository = new MemoryActivityLibraryRepository(
+    const repository = createMemoryActivityLibraryRepository(
       [activity("first")],
       1
     )
@@ -155,7 +155,7 @@ describe("activity library command repository", () => {
   })
 
   test("does not convert a storage failure into a successful commit", async () => {
-    const repository = new MemoryActivityLibraryRepository()
+    const repository = createMemoryActivityLibraryRepository()
     repository.failNext(
       createActivityStorageError("quota", "storage is full", {
         retryable: false,
@@ -176,7 +176,7 @@ describe("activity library command repository", () => {
   })
 
   test("reports stale expected revisions explicitly", async () => {
-    const repository = new MemoryActivityLibraryRepository(
+    const repository = createMemoryActivityLibraryRepository(
       [activity("first")],
       4
     )
@@ -194,7 +194,7 @@ describe("activity library command repository", () => {
   })
 
   test("applies remote metadata by hash or id without needless revisions", async () => {
-    const repository = new MemoryActivityLibraryRepository([activity("local")])
+    const repository = createMemoryActivityLibraryRepository([activity("local")])
     const library = new ActivityLibrary(repository)
     await library.initialize()
 
@@ -224,7 +224,7 @@ describe("activity library command repository", () => {
   })
 
   test("refresh publishes a newer repository snapshot to listeners", async () => {
-    const repository = new MemoryActivityLibraryRepository()
+    const repository = createMemoryActivityLibraryRepository()
     const library = new ActivityLibrary(repository)
     await library.initialize()
     const seen: number[] = []

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import type { ParsedActivity } from "~shared/activities"
 import { createActivityImportService } from "./service"
-import { MemoryActivityLibraryRepository } from "../repository"
+import { createMemoryActivityLibraryRepository } from "../repository"
 
 function activity(id: string, hash = `hash-${id}`): ParsedActivity {
   return {
@@ -45,7 +45,7 @@ describe("ActivityImportService", () => {
   test("bounds parser concurrency and reports each file terminally", async () => {
     let active = 0
     let peak = 0
-    const repository = new MemoryActivityLibraryRepository()
+    const repository = createMemoryActivityLibraryRepository()
     const service = createActivityImportService({
       concurrency: 2,
       parseFile: async (input) => {
@@ -78,7 +78,7 @@ describe("ActivityImportService", () => {
   })
 
   test("keeps a bad sibling from rejecting valid files", async () => {
-    const repository = new MemoryActivityLibraryRepository()
+    const repository = createMemoryActivityLibraryRepository()
     const service = createActivityImportService({
       parseFile: async (input) => {
         if (input.name === "bad.gpx") throw new Error("malformed")

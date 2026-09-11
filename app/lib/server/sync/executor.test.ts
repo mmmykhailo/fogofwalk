@@ -5,7 +5,7 @@ import type {
   ManifestPage,
 } from "~shared/api"
 import { ActivityLibrary } from "~/lib/activities/library"
-import { MemoryActivityLibraryRepository } from "~/lib/activities/repository"
+import { createMemoryActivityLibraryRepository } from "~/lib/activities/repository"
 import type { SyncState } from "~/lib/storage"
 import type { ParsedActivity } from "~/types/activities"
 import { MemorySyncRepository } from "./repository"
@@ -129,7 +129,7 @@ async function createExecutor(
   } = {}
 ) {
   const library = new ActivityLibrary(
-    new MemoryActivityLibraryRepository(initial)
+    createMemoryActivityLibraryRepository(initial)
   )
   const repository = new MemorySyncRepository({ now: options.now })
   if (options.state) await repository.saveState(options.state)

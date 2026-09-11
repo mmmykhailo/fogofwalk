@@ -3,7 +3,7 @@ import {
   isActivityLibraryConflictError,
 } from "./errors"
 import {
-  IndexedDbActivityLibraryRepository,
+  createIndexedDbActivityLibraryRepository,
   type ActivityLibraryCommitOptions,
   type ActivityLibraryRepository,
 } from "./repository"
@@ -96,7 +96,8 @@ export class ActivityLibrary {
   private refreshPromise: Promise<void> | null = null
 
   constructor(
-    repository: ActivityLibraryRepository = new IndexedDbActivityLibraryRepository()
+    repository: ActivityLibraryRepository =
+      createIndexedDbActivityLibraryRepository()
   ) {
     this.repository = repository
     if (
