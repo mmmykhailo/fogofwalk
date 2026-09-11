@@ -112,7 +112,7 @@ interface MapStore {
   shareCardCache: {
     activityId: string
     baseMap: ImageBitmap
-    activityPoints: { x: number; y: number }[]
+    activityPoints: Array<{ x: number; y: number }[]>
   } | null
 }
 
@@ -723,14 +723,15 @@ export async function ingestActivities(
     },
     {
       outbox: isServerEnabled
-        ? newActivities.flatMap((activity) => {
-            const item = createActivityUploadOutboxItem(
-              activity,
-              operationId,
-              activityLibrary.getSnapshot().revision
-            )
-            return item ? [item] : []
-          })
+        ? (commit) =>
+            commit.change.added.flatMap((activity) => {
+              const item = createActivityUploadOutboxItem(
+                activity,
+                operationId,
+                commit.snapshot.revision
+              )
+              return item ? [item] : []
+            })
         : [],
     }
   )

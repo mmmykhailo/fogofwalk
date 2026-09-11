@@ -254,14 +254,15 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
             { type: "import", operationId, activities },
             {
               outbox: isServerEnabled
-                ? activities.flatMap((activity) => {
-                    const item = createActivityUploadOutboxItem(
-                      activity,
-                      operationId,
-                      activityLibrary.getSnapshot().revision
-                    )
-                    return item ? [item] : []
-                  })
+                ? (commit) =>
+                    commit.change.added.flatMap((activity) => {
+                      const item = createActivityUploadOutboxItem(
+                        activity,
+                        operationId,
+                        commit.snapshot.revision
+                      )
+                      return item ? [item] : []
+                    })
                 : [],
             }
           )
@@ -413,15 +414,16 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
       },
       {
         outbox:
-          deleteEverywhere && isServerEnabled && deletedActivity
-            ? (() => {
-                const item = createActivityDeleteOutboxItem(
-                  deletedActivity,
-                  operationId,
-                  activityLibrary.getSnapshot().revision
-                )
-                return item ? [item] : []
-              })()
+          deleteEverywhere && isServerEnabled
+            ? (commit) =>
+                commit.change.removed.flatMap((activity) => {
+                  const item = createActivityDeleteOutboxItem(
+                    activity,
+                    operationId,
+                    commit.snapshot.revision
+                  )
+                  return item ? [item] : []
+                })
             : [],
       }
     )

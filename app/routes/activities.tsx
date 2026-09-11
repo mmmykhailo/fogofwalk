@@ -39,20 +39,25 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
     activityType,
   }
   const operationId = createUuid()
-  const outboxItem = isServerEnabled
-    ? createActivityUploadOutboxItem(
-        updatedActivity,
-        operationId,
-        activityLibrary.getSnapshot().revision
-      )
-    : null
   await activityLibrary.dispatch(
     {
       type: "applyRemote",
       operationId,
       changes: [{ type: "upsert", activity: updatedActivity }],
     },
-    { outbox: outboxItem ? [outboxItem] : [] }
+    {
+      outbox: isServerEnabled
+        ? (commit) =>
+            commit.change.updated.flatMap((nextActivity) => {
+              const item = createActivityUploadOutboxItem(
+                nextActivity,
+                operationId,
+                commit.snapshot.revision
+              )
+              return item ? [item] : []
+            })
+        : [],
+    }
   )
   requestSync("activity-type-update")
   return { ok: true as const, activityId, activityType }

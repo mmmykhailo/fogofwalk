@@ -57,20 +57,25 @@ export function useActivityVisibility(
           if (!canonical?.contentHash) return
           const operationId = createUuid()
           const updated = { ...canonical, isPublic: current.isPublic }
-          const outboxItem = isServerEnabled
-            ? createActivityUploadOutboxItem(
-                updated,
-                operationId,
-                activityLibrary.getSnapshot().revision
-              )
-            : null
           const result = await activityLibrary.dispatch(
             {
               type: "applyRemote",
               operationId,
               changes: [{ type: "upsert", activity: updated }],
             },
-            { outbox: outboxItem ? [outboxItem] : [] }
+            {
+              outbox: isServerEnabled
+                ? (commit) =>
+                    commit.change.updated.flatMap((nextActivity) => {
+                      const item = createActivityUploadOutboxItem(
+                        nextActivity,
+                        operationId,
+                        commit.snapshot.revision
+                      )
+                      return item ? [item] : []
+                    })
+                : [],
+            }
           )
           requestSync("activity-visibility-update")
           onUpdated?.(

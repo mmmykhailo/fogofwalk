@@ -122,6 +122,92 @@ describe("activity library command repository", () => {
     library.close()
   })
 
+  test("derives activity effects from the committed change and revision", async () => {
+    const repository = createMemoryActivityLibraryRepository()
+    const library = createActivityLibrary(repository)
+    const first = activity("first", "hash-first")
+
+    await library.dispatch(
+      {
+        type: "import",
+        operationId: "authoritative-import",
+        activities: [first],
+      },
+      {
+        outbox: (commit) =>
+          commit.change.added.flatMap((item) => [
+            {
+              dedupeKey: "activity:authoritative:first",
+              operation: "upload" as const,
+              payload: {
+                kind: "upload",
+                activityId: item.id,
+                contentHash: item.contentHash,
+                libraryRevision: commit.snapshot.revision - 1,
+              },
+            },
+          ]),
+      }
+    )
+
+    expect(repository.getOutbox()[0]?.payload).toMatchObject({
+      activityId: "first",
+      libraryRevision: 1,
+    })
+
+    await library.dispatch(
+      {
+        type: "import",
+        operationId: "duplicate-import",
+        activities: [activity("duplicate", "hash-first")],
+      },
+      {
+        outbox: (commit) => [
+          {
+            dedupeKey: "activity:authoritative:duplicate",
+            operation: "upload",
+            payload: {
+              kind: "upload",
+              activityId: "duplicate",
+              contentHash: "hash-first",
+              libraryRevision: commit.snapshot.revision,
+            },
+          },
+        ],
+      }
+    )
+
+    expect(repository.getOutbox()).toHaveLength(1)
+    library.close()
+  })
+
+  test("does not persist a delete effect for a delete no-op", async () => {
+    const repository = createMemoryActivityLibraryRepository()
+    const library = createActivityLibrary(repository)
+    const missing = activity("missing")
+
+    await library.dispatch(
+      { type: "delete", operationId: "delete-no-op", activityId: missing.id },
+      {
+        outbox: (commit) => [
+          {
+            dedupeKey: "activity:authoritative:missing",
+            operation: "delete",
+            payload: {
+              kind: "local-delete",
+              activityId: missing.id,
+              contentHash: missing.contentHash,
+              libraryRevision: commit.snapshot.revision,
+            },
+          },
+        ],
+      }
+    )
+
+    expect(repository.getOutbox()).toHaveLength(0)
+    library.close()
+  })
+
   test("retries a concurrent revision conflict without dropping the command", async () => {
     const repository = createMemoryActivityLibraryRepository(
       [activity("first")],
@@ -194,7 +280,9 @@ describe("activity library command repository", () => {
   })
 
   test("applies remote metadata by hash or id without needless revisions", async () => {
-    const repository = createMemoryActivityLibraryRepository([activity("local")])
+    const repository = createMemoryActivityLibraryRepository([
+      activity("local"),
+    ])
     const library = createActivityLibrary(repository)
     await library.initialize()
 

@@ -42,7 +42,14 @@ export interface ActivityLibraryRepository {
 
 /** Durable effects that must be committed with a canonical library mutation. */
 export interface ActivityLibraryCommitOptions {
-  outbox?: readonly SyncOutboxItemInput[]
+  /**
+   * A factory is evaluated after the command has produced its authoritative
+   * LibraryChange. The array form remains for generic repository adapters, but
+   * activity effects are filtered against the actual mutation below.
+   */
+  outbox?:
+    | readonly SyncOutboxItemInput[]
+    | ((commit: LibraryCommit) => readonly SyncOutboxItemInput[])
 }
 
 function clone<T>(value: T): T {
@@ -76,6 +83,68 @@ function findById(activities: ParsedActivity[], activityId: string) {
 
 function sameActivity(first: ParsedActivity, second: ParsedActivity): boolean {
   return JSON.stringify(first) === JSON.stringify(second)
+}
+
+function outboxInputs(
+  options: ActivityLibraryCommitOptions,
+  commit: LibraryCommit
+): readonly SyncOutboxItemInput[] {
+  if (!options.outbox) return []
+  const inputs =
+    typeof options.outbox === "function"
+      ? options.outbox(commit)
+      : options.outbox
+  return inputs
+    .filter((input) => effectMatchesChange(input, commit.change))
+    .map((input) => withCommittedRevision(input, commit.snapshot.revision))
+}
+
+function effectMatchesChange(
+  input: SyncOutboxItemInput,
+  change: LibraryChange
+): boolean {
+  const payload = input.payload
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    // Non-activity effects are left to their owning adapter. Local activity
+    // effects always carry an identity and take the stricter path below.
+    return true
+  }
+  const candidate = payload as {
+    source?: unknown
+    activityId?: unknown
+    contentHash?: unknown
+  }
+  const isActivityEffect =
+    candidate.source === "local" ||
+    typeof candidate.activityId === "string" ||
+    typeof candidate.contentHash === "string"
+  if (!isActivityEffect) return true
+
+  const records =
+    input.operation === "delete"
+      ? change.removed
+      : [...change.added, ...change.updated]
+  if (records.length === 0) return false
+  return records.some(
+    (activity) =>
+      (typeof candidate.activityId === "string" &&
+        candidate.activityId === activity.id) ||
+      (typeof candidate.contentHash === "string" &&
+        candidate.contentHash === activity.contentHash)
+  )
+}
+
+function withCommittedRevision(
+  input: SyncOutboxItemInput,
+  libraryRevision: number
+): SyncOutboxItemInput {
+  if (!input.payload || typeof input.payload !== "object") return input
+  const payload = input.payload as Record<string, unknown>
+  if (!("libraryRevision" in payload)) return input
+  return {
+    ...input,
+    payload: { ...payload, libraryRevision },
+  }
 }
 
 function duplicate(
@@ -283,8 +352,7 @@ function readMeta(value: unknown): StoredLibraryMeta {
   }
 }
 
-export interface IndexedDbActivityLibraryRepository
-  extends ActivityLibraryRepository {}
+export interface IndexedDbActivityLibraryRepository extends ActivityLibraryRepository {}
 
 export function createIndexedDbActivityLibraryRepository(): IndexedDbActivityLibraryRepository {
   async function load(): Promise<LibrarySnapshot> {
@@ -332,7 +400,9 @@ export function createIndexedDbActivityLibraryRepository(): IndexedDbActivityLib
     }
 
     try {
-      const hasOutbox = (options.outbox?.length ?? 0) > 0
+      const hasOutbox =
+        typeof options.outbox === "function" ||
+        (options.outbox?.length ?? 0) > 0
       const transaction = db.transaction(
         hasOutbox
           ? ["activities", "library-meta", "sync-outbox"]
@@ -353,7 +423,10 @@ export function createIndexedDbActivityLibraryRepository(): IndexedDbActivityLib
       const meta = readMeta(rawMeta)
       if (meta.revision !== expectedRevision) {
         transaction.abort()
-        throw createActivityLibraryConflictError(expectedRevision, meta.revision)
+        throw createActivityLibraryConflictError(
+          expectedRevision,
+          meta.revision
+        )
       }
 
       const current = immutableSnapshot(meta.revision, activities)
@@ -369,6 +442,7 @@ export function createIndexedDbActivityLibraryRepository(): IndexedDbActivityLib
           revision: result.snapshot.revision,
         } satisfies StoredLibraryMeta)
       }
+      const resolvedOutbox = outboxInputs(options, result)
       if (outboxStore) {
         const existing = await requestResult<SyncOutboxItem[]>(
           outboxStore.getAll()
@@ -377,7 +451,7 @@ export function createIndexedDbActivityLibraryRepository(): IndexedDbActivityLib
           existing.map((item) => [item.dedupeKey, item])
         )
         const now = Date.now()
-        for (const input of options.outbox ?? []) {
+        for (const input of resolvedOutbox) {
           const currentItem = byDedupeKey.get(input.dedupeKey)
           const next = currentItem
             ? mergeSyncOutboxItem(currentItem, input, now)
@@ -398,8 +472,7 @@ export function createIndexedDbActivityLibraryRepository(): IndexedDbActivityLib
 }
 
 /** Deterministic repository for service tests and non-browser adapters. */
-export interface MemoryActivityLibraryRepository
-  extends ActivityLibraryRepository {
+export interface MemoryActivityLibraryRepository extends ActivityLibraryRepository {
   failNext(error: unknown): void
   getOutbox(): SyncOutboxItem[]
 }
@@ -436,14 +509,11 @@ export function createMemoryActivityLibraryRepository(
       throw error
     }
     if (expectedRevision !== state.revision) {
-      throw createActivityLibraryConflictError(
-        expectedRevision,
-        state.revision
-      )
+      throw createActivityLibraryConflictError(expectedRevision, state.revision)
     }
     const result = applyLibraryCommand(state, command)
     state = result.snapshot
-    for (const input of options.outbox ?? []) {
+    for (const input of outboxInputs(options, result)) {
       const existing = [...outbox.values()].find(
         (item) => item.dedupeKey === input.dedupeKey
       )
