@@ -2,6 +2,7 @@ import type {
   ActivityMeta,
   ActivityTombstone,
   ActivityUploadPayload,
+  ActivityUploadRequestPayload,
   ManifestPage,
 } from "~shared/api"
 import { MAX_ACTIVITY_BYTES, SYNC_PAGE_SIZE } from "~shared/constants"
@@ -351,6 +352,44 @@ export interface SyncTransport {
   deleteActivity(contentHash: string, signal?: AbortSignal): Promise<number>
 }
 
+/**
+ * Project the compatibility-shaped local record onto the unambiguous wire
+ * shape. New local records carry both `paths` and flattened `coordinates` so
+ * older render consumers keep working, but the server accepts exactly one
+ * geometry representation per upload.
+ */
+export function toActivityUploadPayload(
+  activity: ParsedActivity
+): ActivityUploadRequestPayload {
+  const {
+    id: _id,
+    coordinates: _coordinates,
+    paths: _paths,
+    pointTimestamps: _pointTimestamps,
+    pathTimestamps: _pathTimestamps,
+    ...metadata
+  } = activity
+  const stats = { ...activity.stats, uniqueDistanceKm: 0 }
+  if (activity.paths && activity.paths.length > 0) {
+    return {
+      ...metadata,
+      paths: activity.paths,
+      ...(activity.pathTimestamps
+        ? { pathTimestamps: activity.pathTimestamps }
+        : {}),
+      stats,
+    }
+  }
+  return {
+    ...metadata,
+    coordinates: activity.coordinates,
+    ...(activity.pointTimestamps
+      ? { pointTimestamps: activity.pointTimestamps }
+      : {}),
+    stats,
+  }
+}
+
 async function gzipJson(value: unknown): Promise<Blob> {
   if (typeof CompressionStream === "undefined") {
     throw createSyncTransportError(
@@ -404,11 +443,8 @@ export function createApiSyncTransport(): SyncTransport {
 
     async uploadActivity(activity, signal) {
       throwIfSyncAborted(signal)
-      const { id: _id, ...rest } = activity
-      const payload: ActivityUploadPayload = {
-        ...rest,
-        stats: { ...activity.stats, uniqueDistanceKm: 0 },
-      }
+      const payload: ActivityUploadRequestPayload =
+        toActivityUploadPayload(activity)
       const body = await gzipJson(payload)
       throwIfSyncAborted(signal)
       if (body.size > MAX_ACTIVITY_BYTES) {

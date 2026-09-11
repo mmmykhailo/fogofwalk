@@ -4,9 +4,11 @@ import {
   parseActivityPayload,
   parseManifestPage,
   isSyncTransportError,
+  toActivityUploadPayload,
   validateActivityPayloadHash,
 } from "./transport"
 import { computeContentHash } from "~/lib/activityHash"
+import type { ParsedActivity } from "~/types/activities"
 
 function payload(): ActivityUploadPayload {
   return {
@@ -92,6 +94,26 @@ describe("sync transport validation", () => {
         pointTimestamps: [1],
       })
     )
+  })
+
+  test("projects compatibility records to one geometry representation", () => {
+    const legacy = payload()
+    const modern = {
+      ...legacy,
+      id: "local-id",
+      paths: [legacy.coordinates],
+      pathTimestamps: [[0, 1_000]],
+    } as ParsedActivity
+
+    const wire = toActivityUploadPayload(modern)
+
+    expect(wire).toMatchObject({
+      paths: modern.paths,
+      pathTimestamps: modern.pathTimestamps,
+      stats: { uniqueDistanceKm: 0 },
+    })
+    expect("coordinates" in wire).toBe(false)
+    expect("pointTimestamps" in wire).toBe(false)
   })
 
   test("rejects a downloaded body whose geometry does not match the hash", async () => {
