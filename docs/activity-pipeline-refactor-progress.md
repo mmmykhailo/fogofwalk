@@ -13,11 +13,11 @@ untouched.
 - Branch: `refactor/fog-processing`
 - Started: 2026-09-11
 - Current phase: Phase 4/5/6 — projections, bounded fog, and sync effects
-- Last completed commit: `89370fa integrate fog coordinator with worker bridge`
-- Current working slice: move derived statistics behind a revision-keyed
-  projection service, then add route-level recovery states
-- Next action: extract unique-distance projection scheduling and remove its
-  blocking waits from restore/delete routes
+- Last completed commit: `bf53061 decouple unique distance projection`
+- Current working slice: route projection and fog failures into observable
+  recovery states, then finish serverless/scheduler cleanup
+- Next action: add map-store projection subscriptions and a retry path for
+  failed derived/fog work without reintroducing route-level awaits
 
 ## A1 activity contract slice
 
@@ -202,6 +202,18 @@ untouched.
   coverage; typecheck and focused fog tests pass. This slice is committed as
   `89370fa`.
 
+## Unique-distance projection slice
+
+- Added `UniqueDistanceProjection`, a serialized revision-keyed worker job that
+  coalesces newer library snapshots and preserves a recoverable failure status.
+- Projection saves now include the library revision in their marker and verify
+  `library-meta` in the same IndexedDB transaction before writing activity
+  values, so a backdated result cannot overwrite a newer commit.
+- Restore, delete, and stats loaders no longer await library-wide unique
+  distance work; the map projection receives the eventual derived values after
+  a durable save. Full client tests (175) and typecheck pass. This slice is
+  committed as `bf53061`.
+
 ## Path-aware adapter and render slice
 
 - GPX tracks remain one activity and their track segments remain disconnected
@@ -237,6 +249,7 @@ untouched.
 | `0960111` | Queue local activity sync effects and split saved-point state            | 20 focused tests pass; client typecheck passes                   |
 | `b446f7d` | Coordinate sync leadership and trigger coalescing                       | 11 focused tests pass; client typecheck passes                   |
 | `89370fa` | Integrate fog coordinator with worker bridge                         | 19 focused fog tests pass; client typecheck passes                 |
+| `bf53061` | Decouple unique distance projection                           | 175 client tests pass; client typecheck passes                   |
 
 ## Phase checklist
 
