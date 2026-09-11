@@ -24,7 +24,6 @@ import {
   emptySavedPointSyncState,
   loadSavedPointSyncState,
   saveSavedPointSyncState,
-  clearFogCache,
   deleteSavedPoint as deleteSavedPointFromIdb,
   loadSavedPoints,
   saveSavedPoint,
@@ -34,7 +33,6 @@ import {
   activityLibrary,
   initializeActivityLibrary,
   mapStore,
-  queueAddedActivitiesForFog,
 } from "~/lib/mapStore"
 import { backfillContentHashes } from "~/lib/activityHash"
 import { createUuid } from "~/lib/uuid"
@@ -169,14 +167,20 @@ export function describeSyncStatus(s: SyncStatus): string | null {
 
 // ─── Run loop ─────────────────────────────────────────────────────────────────
 
-const syncTransport = createApiSyncTransport()
-const activitySyncRepository = new IndexedDbSyncRepository()
-const syncOwner = `sync-tab:${createUuid()}`
+// Do not construct sync resources in a serverless build. Besides keeping the
+// disabled bundle inert, this prevents a future transport constructor from
+// accidentally becoming a network prerequisite for local-only use.
+const syncTransport = isServerEnabled ? createApiSyncTransport() : null
+const activitySyncRepository = isServerEnabled
+  ? new IndexedDbSyncRepository()
+  : null
+const syncOwner = isServerEnabled ? `sync-tab:${createUuid()}` : null
 const SYNC_LEASE_MS = 90_000
 
 async function acquireSyncLeadership(
   run: () => Promise<void>
 ): Promise<boolean> {
+  if (!activitySyncRepository || !syncOwner) return false
   if (typeof navigator !== "undefined" && navigator.locks) {
     return navigator.locks.request(
       "fogofwalk:sync",
@@ -203,21 +207,26 @@ async function acquireSyncLeadership(
   }
 }
 
-const syncScheduler = new SyncScheduler({
-  enabled: canSync,
-  execute: (reason) => syncOnce(reason),
-  acquireLeadership: acquireSyncLeadership,
-  onError: (error) => {
-    console.warn("[sync] scheduler failed:", error)
-    setStatus({
-      phase: "error",
-      message: friendlyMessage(error),
-      lastSyncAt: status.phase === "syncing" ? null : status.lastSyncAt,
+const syncScheduler = isServerEnabled
+  ? new SyncScheduler({
+      enabled: canSync,
+      execute: (reason) => syncOnce(reason),
+      acquireLeadership: acquireSyncLeadership,
+      onError: (error) => {
+        console.warn("[sync] scheduler failed:", error)
+        setStatus({
+          phase: "error",
+          message: friendlyMessage(error),
+          lastSyncAt: status.phase === "syncing" ? null : status.lastSyncAt,
+        })
+      },
     })
-  },
-})
+  : null
 
 async function loadActivitySyncState() {
+  if (!activitySyncRepository) {
+    return { cursor: 0, lastSyncAt: 0, serverHashes: [] }
+  }
   return (
     (await activitySyncRepository.loadState()) ?? {
       cursor: 0,
@@ -239,7 +248,7 @@ export function requestSync(
   reason: string,
   options: { manual?: boolean } = {}
 ): void {
-  if (!canSync()) return
+  if (!canSync() || !syncScheduler) return
   if (isSuspended) {
     if (!options.manual) {
       console.debug("[sync] skipped while suspended:", reason)
@@ -262,6 +271,8 @@ const SYNC_POLL_MS = 5 * 60 * 1000
  * to the tab), the interval covers a tab left open.
  */
 export function startSyncScheduler(): () => void {
+  if (!isServerEnabled || !syncScheduler) return () => {}
+
   const onFocus = () => {
     if (document.visibilityState === "visible") requestSync("focus")
   }
@@ -282,6 +293,7 @@ export function startSyncScheduler(): () => void {
 }
 
 async function syncOnce(reason: string): Promise<void> {
+  if (!isServerEnabled || !activitySyncRepository || !syncTransport) return
   const lastSyncAt = status.phase === "syncing" ? null : status.lastSyncAt
   console.debug("[sync] start", reason)
 
@@ -316,6 +328,7 @@ async function syncOnce(reason: string): Promise<void> {
 }
 
 async function runActivitySync(lastSyncAt: number | null): Promise<void> {
+  if (!activitySyncRepository || !syncTransport) return
   setStatus({ phase: "syncing", done: 0, total: 0 })
   const result = await new ActivitySyncExecutor({
     repository: activitySyncRepository,
@@ -324,13 +337,6 @@ async function runActivitySync(lastSyncAt: number | null): Promise<void> {
     onProgress: ({ done, total }) =>
       setStatus({ phase: "syncing", done, total }),
   }).run()
-
-  if (result.addedActivities.length > 0 && result.deletedIds.length === 0) {
-    queueAddedActivitiesForFog(result.addedActivities, mapStore.fogMode)
-    void clearFogCache().catch((error) =>
-      console.warn("[storage] fog cache invalidation failed:", error)
-    )
-  }
 
   if (
     result.downloadedCount > 0 ||
@@ -609,7 +615,8 @@ export async function pushSavedPointDeletion(id: string): Promise<void> {
 export async function pushActivityUpdate(
   activity: ParsedActivity
 ): Promise<void> {
-  if (!isServerEnabled || !activity.contentHash) return
+  if (!isServerEnabled || !activitySyncRepository || !activity.contentHash)
+    return
   const item = createActivityUploadOutboxItem(
     activity,
     createUuid(),
@@ -627,7 +634,8 @@ export async function pushActivityUpdate(
 export async function pushActivityDeletion(
   activity: ParsedActivity
 ): Promise<void> {
-  if (!isServerEnabled || !activity.contentHash) return
+  if (!isServerEnabled || !activitySyncRepository || !activity.contentHash)
+    return
   const item = createActivityDeleteOutboxItem(
     activity,
     createUuid(),
@@ -656,7 +664,7 @@ export async function ignoreActivityLocally(
  * a sync still has to record the decision, or the very first sync would undo it.
  */
 async function addIgnoredHashes(hashes: string[]): Promise<void> {
-  if (hashes.length === 0) return
+  if (hashes.length === 0 || !activitySyncRepository) return
   const state = await loadActivitySyncState()
   const ignored = new Set(state.ignoredHashes ?? [])
   const before = ignored.size

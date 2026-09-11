@@ -6,13 +6,15 @@ import type {
   FogWorkerActivity,
 } from "~/types/activities"
 import { sortActivities } from "~/lib/statsAggregator"
-import { clearFogCache } from "~/lib/storage"
 import { emptyBoundedFog } from "~/lib/fog/engine/aggregate"
 import type { FogRenderData } from "~/lib/fog/protocol"
 import { FogCoordinator } from "~/lib/fog/coordinator"
 import { pathsForActivity } from "~shared/activityContract"
 import { ActivityLibrary } from "~/lib/activities/library"
-import type { LibrarySnapshot } from "~/lib/activities/libraryEvents"
+import type {
+  LibraryChange,
+  LibrarySnapshot,
+} from "~/lib/activities/libraryEvents"
 import { createUuid } from "~/lib/uuid"
 import { isServerEnabled } from "~/lib/server/config"
 import { createActivityUploadOutboxItem } from "~/lib/server/sync/activityEffects"
@@ -242,12 +244,55 @@ function applyLibrarySnapshot(snapshot: LibrarySnapshot): void {
   uniqueDistanceProjection.schedule(snapshot)
 }
 
+function applyFogLibraryChange(
+  snapshot: LibrarySnapshot,
+  change: LibraryChange
+): void {
+  const hasChanges =
+    change.added.length > 0 ||
+    change.updated.length > 0 ||
+    change.removed.length > 0
+  if (!hasChanges || !mapStore.worker) return
+
+  setFogProcessedCount(0)
+  if (change.updated.length > 0 || change.removed.length > 0) {
+    // A removal or revisioned update invalidates the worker accumulator. The
+    // coordinator owns the reset/rebuild identity; this projection only
+    // clears the render-side snapshot before the replacement arrives.
+    mapStore.fogData = null
+    startFogRun()
+    postToFogWorker({ type: "RESET" })
+    if (snapshot.activities.length > 0) {
+      postToFogWorker({
+        type: "PROCESS_ACTIVITIES",
+        activities: mapStore.activities,
+        mode: mapStore.fogMode,
+        kind: "rebuild",
+      })
+    }
+    return
+  }
+
+  // Additions can extend the exact completed base. FogCoordinator falls back
+  // to a full rebuild when the restored worker has no durable base state.
+  postToFogWorker({
+    type: "PROCESS_ACTIVITIES",
+    activities: change.added,
+    mode: mapStore.fogMode,
+    kind: "append",
+    libraryRevision: snapshot.revision,
+  })
+}
+
 /** Load and bind the canonical activity library to the map render projection. */
 export async function initializeActivityLibrary(): Promise<ParsedActivity[]> {
   if (!activityLibrarySubscription) {
-    activityLibrarySubscription = activityLibrary.subscribe((snapshot) => {
-      applyLibrarySnapshot(snapshot)
-    })
+    activityLibrarySubscription = activityLibrary.subscribe(
+      (snapshot, change) => {
+        applyLibrarySnapshot(snapshot)
+        applyFogLibraryChange(snapshot, change)
+      }
+    )
   }
   const snapshot = await activityLibrary.initialize()
   applyLibrarySnapshot(snapshot)
@@ -399,16 +444,11 @@ export function queueAddedActivitiesForFog(
 }
 
 /**
- * Add newly-acquired activities to the library: merge, recompute unique distances,
- * hand them to the fog worker, persist, invalidate the fog cache.
+ * Add newly-acquired activities to the canonical library.
  *
- * Both entry points for new activities go through here — the `add-files` action and
- * the sync engine's downloads — so a downloaded activity is indistinguishable from
- * an imported one.
- *
- * Normally it **joins** the current fog run and posts only the additions. The
- * exception is a worker that has only a restored render cache: because that
- * cache cannot hydrate its accumulators, the first addition replays the library.
+ * The library subscription owns both derived projections, so imported and
+ * downloaded activities follow the same fog and unique-distance path after the
+ * durable commit returns.
  */
 export async function ingestActivities(
   newActivities: ParsedActivity[]
@@ -439,10 +479,6 @@ export async function ingestActivities(
 
   // The canonical commit has completed. Fog starts immediately and derived
   // work/cache invalidation are independent projections of that revision.
-  queueAddedActivitiesForFog(added, mapStore.fogMode)
-  void clearFogCache().catch((error) =>
-    console.warn("[storage] fog cache invalidation failed:", error)
-  )
   return added
 }
 

@@ -37,7 +37,6 @@ import {
   mapStore,
   activityLibrary,
   initializeActivityLibrary,
-  queueAddedActivitiesForFog,
   startFogRun,
   postToFogWorker,
   setFogProcessedCount,
@@ -55,7 +54,6 @@ import {
   saveFogMode,
   loadFogMode,
   loadFogCache,
-  clearFogCache,
   clearAll,
   loadSavedPoints,
   saveSavedPoint,
@@ -227,11 +225,8 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
 
   if (intent === "add-files") {
     const files = formData.getAll("files") as File[]
-    const modeValue = formData.get("mode")
-    const mode: FogMode = modeValue === "fill" ? "fill" : "corridor"
     console.debug("[clientAction] add-files", {
       fileCount: files.length,
-      mode,
       files: files.map((f) => f.name),
     })
     const commitState: { value: LibraryCommit | null } = { value: null }
@@ -261,10 +256,6 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
     const batch = await importService.importFiles(files)
     const added = commitState.value?.change.added ?? []
     if (added.length > 0) {
-      queueAddedActivitiesForFog(added, mode)
-      void clearFogCache().catch((error) =>
-        console.warn("[storage] fog cache invalidation failed:", error)
-      )
       void requestSync("add-files")
     }
     const failedFiles = batch.files
@@ -301,10 +292,6 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
     })
     mapStore.fogData = null
     setFogProcessedCount(0)
-    // Abandons the in-flight run so its FOG_UPDATEs cannot repaint the map
-    // we just cleared, and its DONE cannot save a stale fog cache.
-    startFogRun()
-    postToFogWorker({ type: "RESET" })
     // Runs synchronously before the fetcher effect resets React selection state.
     clearRenderedActivityState()
     await clearAll({ includeActivities: false })
@@ -349,26 +336,10 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
     )
     setFogProcessedCount(0)
 
-    // Reset worker + update map sources immediately
-    // Abandons the in-flight run so its FOG_UPDATEs cannot repaint the map
-    // we just cleared, and its DONE cannot save a stale fog cache.
-    startFogRun()
-    postToFogWorker({ type: "RESET" })
+    // The library subscription has already reset/rebuilt the fog projection for
+    // the committed survivor revision. Clear the current map source before its
+    // next validated snapshot arrives.
     clearRenderedActivityState()
-
-    // Invalidate the old fog projection; the library listener has already
-    // queued unique-distance projection work for the committed revision.
-    await clearFogCache()
-
-    // Replay only after invalidation finishes. Otherwise a fast worker can save
-    // the rebuilt cache and have clearFogCache erase that fresh result.
-    if (mapStore.activities.length > 0) {
-      postToFogWorker({
-        type: "PROCESS_ACTIVITIES",
-        activities: mapStore.activities,
-        mode: mapStore.fogMode,
-      })
-    }
 
     if (deletedActivity) {
       if (formData.get("alsoOnServer") === "0") {
@@ -849,23 +820,14 @@ export default function Home() {
         }
 
         if (deletedIds.length > 0) {
-          // A removal invalidates the accumulated fog, so the run is abandoned
-          // and the survivors replayed — the same dance as `delete-activity`.
+          // The library subscription already abandoned/rebuilt the worker run;
+          // this callback only reconciles route selection and map sources.
           setSelectedActivityIds((prev) =>
             prev.filter((id) => !deletedIds.includes(id))
           )
           setPendingActivityId(null)
           setFogProcessedCount(0)
-          startFogRun()
-          postToFogWorker({ type: "RESET" })
           clearRenderedActivityState()
-          if (mapStore.activities.length > 0) {
-            postToFogWorker({
-              type: "PROCESS_ACTIVITIES",
-              activities: mapStore.activities,
-              mode: mapStore.fogMode,
-            })
-          }
         }
 
         if (downloadedCount > 0 || deletedIds.length > 0) {
