@@ -71,10 +71,13 @@ loops. It contains no private activity, names, coordinates, or screenshots.
 The command reports median/p95 construction time, post-run heap observation, and
 feature, ring, vertex, byte, bounds, and validation metrics. Its baseline compares
 the positive mask, the selected regional inverse, and the excluded global-hole
-reference. It also measures the selected safe inverse at deterministic 100,
-1,000, and 10,000 pre-buffered-mask tiers. The positive-mask candidate measures
-the semantic explored geometry that a stencil renderer would consume; it is not
-an inverse source.
+reference. It also measures the selected positive projection at deterministic
+100, 1,000, and 10,000 pre-buffered-mask tiers, then runs the same scale tiers
+through the real `FogEngine.process()` path. The engine rows include buffering,
+intermediate publication, structured cloning, validation, and final cache-payload
+serialization; a partial row records the safe fallback and remains non-cacheable.
+The positive-mask candidate measures the semantic explored geometry that a
+stencil renderer would consume; it is not an inverse source.
 
 The accepted implementation is the positive mask plus stencil layer. The
 benchmark is a correctness and absolute-safety gate first: invalid geometry or

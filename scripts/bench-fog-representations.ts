@@ -3,9 +3,12 @@ import bbox from "@turf/bbox"
 import difference from "@turf/difference"
 import { featureCollection, polygon } from "@turf/helpers"
 import type { Feature, FeatureCollection, MultiPolygon, Polygon } from "geojson"
+import { FOG_EMIT_INTERVAL_MS } from "../app/constants/fog"
 import { bufferFogActivity, type FogMask } from "../app/lib/fog/engine/buffer"
 import { buildBoundedFog } from "../app/lib/fog/engine/aggregate"
+import { createFogEngine, type FogEngineResult } from "../app/lib/fog/engine"
 import { validateFogRenderData } from "../app/lib/fog/engine/validate"
+import { FOG_PROTOCOL_VERSION, type FogRequest } from "../app/lib/fog/protocol"
 import type { FogWorkerActivity } from "../app/types/activities"
 
 const WORLD_SOUTH = -85.05112878
@@ -150,6 +153,31 @@ function makeScaleMasks(count: number): FogMask[] {
   })
 }
 
+function makeScaleActivities(count: number): FogWorkerActivity[] {
+  const columns = Math.ceil(Math.sqrt(count))
+  const rows = Math.ceil(count / columns)
+  const cellWidth = 340 / columns
+  const cellHeight = 156 / rows
+  return Array.from({ length: count }, (_, index) => {
+    const column = index % columns
+    const row = Math.floor(index / columns)
+    const longitude = -170 + (column + 0.5) * cellWidth
+    const latitude = -78 + (row + 0.5) * cellHeight
+    // Keep every synthetic segment below the input teleport threshold even in
+    // the equatorial 100-activity tier, so a partial result measures geometry
+    // pressure rather than an accidentally rejected corpus.
+    const halfLength = cellWidth * 0.004
+    return {
+      id: `engine-route-${index}`,
+      name: "synthetic engine route",
+      coordinates: [
+        [longitude - halfLength, latitude],
+        [longitude + halfLength, latitude],
+      ],
+    }
+  })
+}
+
 function median(values: readonly number[]): number {
   const sorted = [...values].sort((first, second) => first - second)
   return sorted[Math.floor(sorted.length / 2)]!
@@ -225,6 +253,108 @@ function benchmarkScale(count: number) {
   }
 }
 
+interface EngineBenchmarkResult {
+  corpus: {
+    activityCount: number
+    pointsPerActivity: number
+  }
+  medianMs: number
+  p95Ms: number
+  updateCount: number
+  status: "complete" | "partial"
+  publishedBytes: number
+  finalPayloadBytes: number
+  degraded: boolean
+  geometryFallbackCount: number
+  rejectedActivityCount: number
+  metrics: ReturnType<typeof geometryMetrics>
+}
+
+async function benchmarkEngineScale(
+  count: number
+): Promise<EngineBenchmarkResult> {
+  const activities = makeScaleActivities(count)
+  const durations: number[] = []
+  const updateCounts: number[] = []
+  const publishedBytes: number[] = []
+  const finalPayloadBytes: number[] = []
+  let finalResult: FogEngineResult | null = null
+
+  const iterations = count >= 10_000 ? 1 : ITERATIONS
+  for (let iteration = 0; iteration < iterations; iteration += 1) {
+    let updateCount = 0
+    let publishedByteCount = 0
+    const engine = createFogEngine({
+      emitIntervalMs: FOG_EMIT_INTERVAL_MS,
+      hooks: {
+        yieldToScheduler: () =>
+          new Promise<void>((resolve) => setImmediate(resolve)),
+        onUpdate: (snapshot) => {
+          updateCount += 1
+          const cloned = structuredClone(snapshot)
+          const validation = validateFogRenderData(cloned.geometry, {
+            allowInteriorRings: true,
+          })
+          if (!validation.ok) {
+            throw new Error(validation.errors.join("; "))
+          }
+          publishedByteCount += new TextEncoder().encode(
+            JSON.stringify(cloned)
+          ).byteLength
+        },
+      },
+    })
+    const request: FogRequest = {
+      protocolVersion: FOG_PROTOCOL_VERSION,
+      requestId: `engine-benchmark-${count}-${iteration}`,
+      generation: iteration + 1,
+      libraryRevision: iteration + 1,
+      mode: "corridor",
+      kind: "rebuild",
+      activities,
+    }
+    const started = performance.now()
+    const result = await engine.process(request)
+    const final =
+      result.status === "complete" || result.status === "partial"
+        ? structuredClone(result.snapshot)
+        : null
+    if (!final)
+      throw new Error(`engine benchmark failed at ${count} activities`)
+    const validation = validateFogRenderData(final.geometry, {
+      allowInteriorRings: true,
+    })
+    if (!validation.ok) throw new Error(validation.errors.join("; "))
+    const finalBytes = new TextEncoder().encode(
+      JSON.stringify(final)
+    ).byteLength
+    durations.push(performance.now() - started)
+    updateCounts.push(updateCount)
+    publishedBytes.push(publishedByteCount)
+    finalPayloadBytes.push(finalBytes)
+    finalResult = result
+  }
+
+  const snapshot =
+    finalResult?.status === "complete" || finalResult?.status === "partial"
+      ? finalResult.snapshot
+      : null
+  if (!snapshot) throw new Error("engine benchmark did not produce a snapshot")
+  return {
+    corpus: { activityCount: count, pointsPerActivity: 2 },
+    medianMs: Number(median(durations).toFixed(2)),
+    p95Ms: Number(percentile(durations, 0.95).toFixed(2)),
+    updateCount: Math.max(...updateCounts),
+    status: snapshot.completeness,
+    publishedBytes: Math.max(...publishedBytes),
+    finalPayloadBytes: Math.max(...finalPayloadBytes),
+    degraded: snapshot.diagnostics.degraded,
+    geometryFallbackCount: snapshot.diagnostics.geometryFallbackCount ?? 0,
+    rejectedActivityCount: snapshot.diagnostics.rejectedActivityCount ?? 0,
+    metrics: geometryMetrics(snapshot.geometry),
+  }
+}
+
 const masks = collectMasks(makeFixture())
 const positive = featureCollection(masks) as GeometryCollection
 const bounded = () => {
@@ -246,6 +376,9 @@ console.log(
     {
       baseline,
       scaleTiers: SCALE_TIERS.map(benchmarkScale),
+      engineScaleTiers: await Promise.all(
+        SCALE_TIERS.map(benchmarkEngineScale)
+      ),
     },
     null,
     2
