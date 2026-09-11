@@ -59,6 +59,8 @@ export interface SanitizedFogInput {
   paths: ActivityPaths
   pathTimestamps?: ActivityPathTimestamps[]
   warnings: FogInputWarning[]
+  /** Exact event totals; warnings is only a bounded example list. */
+  warningCounts: Record<string, number>
   inputPointCount: number
   outputPointCount: number
 }
@@ -86,6 +88,23 @@ interface InputPoint {
 interface OutputPoint {
   coordinate: [number, number]
   timestamp: Timestamp | undefined
+}
+
+const MAX_WARNING_EXAMPLES = 16
+
+interface WarningCollector {
+  examples: FogInputWarning[]
+  counts: Record<string, number>
+}
+
+function addWarning(
+  collector: WarningCollector,
+  warning: FogInputWarning
+): void {
+  collector.counts[warning.code] = (collector.counts[warning.code] ?? 0) + 1
+  if (collector.examples.length < MAX_WARNING_EXAMPLES) {
+    collector.examples.push(warning)
+  }
 }
 
 export type FogGeometryInput =
@@ -255,7 +274,7 @@ function reduceToBudget(
 function makeResult(
   paths: ActivityPaths,
   pathTimestamps: ActivityPathTimestamps[] | undefined,
-  warnings: FogInputWarning[],
+  warningCollector: WarningCollector,
   inputPointCount: number,
   reason?: RejectedFogInput["reason"]
 ): FogInputResult {
@@ -266,7 +285,8 @@ function makeResult(
       reason,
       paths,
       pathTimestamps,
-      warnings,
+      warnings: warningCollector.examples,
+      warningCounts: warningCollector.counts,
       inputPointCount,
       outputPointCount,
     }
@@ -275,7 +295,8 @@ function makeResult(
     rejected: false,
     paths,
     pathTimestamps,
-    warnings,
+    warnings: warningCollector.examples,
+    warningCounts: warningCollector.counts,
     inputPointCount,
     outputPointCount,
   }
@@ -338,7 +359,7 @@ function splitAtAntimeridian(
   points: InputPoint[],
   pathIndex: number,
   options: Required<FogInputOptions>,
-  warnings: FogInputWarning[]
+  warningCollector: WarningCollector
 ): OutputPoint[][] {
   if (points.length < 2) return []
   const result: OutputPoint[][] = []
@@ -349,13 +370,22 @@ function splitAtAntimeridian(
   }
   const push = (point: OutputPoint, pointIndex: number) => {
     appendOutputPoint(current, point, options.duplicateToleranceMeters, () => {
-      warnings.push({
+      addWarning(warningCollector, {
         code: "coalesced_duplicate_point",
         message:
           "A consecutive duplicate or near-duplicate point was coalesced.",
         pathIndex,
         pointIndex,
       })
+    })
+  }
+
+  const warnSeam = (pointIndex: number, message: string) => {
+    addWarning(warningCollector, {
+      code: "split_antimeridian",
+      message,
+      pathIndex,
+      pointIndex,
     })
   }
 
@@ -402,12 +432,7 @@ function splitAtAntimeridian(
       current[current.length - 1].coordinate[0] !==
         boundaryLongitudeForPoint(from, delta)
     ) {
-      warnings.push({
-        code: "split_antimeridian",
-        message: "A route at the antimeridian was split at the seam.",
-        pathIndex,
-        pointIndex: index - 1,
-      })
+      warnSeam(index - 1, "A route at the antimeridian was split at the seam.")
       flush()
       current.push({
         coordinate: [boundaryLongitudeForPoint(from, delta), from.lat],
@@ -440,12 +465,10 @@ function splitAtAntimeridian(
         coordinate: [delta > 0 ? -180 : 180, latitude],
         timestamp,
       })
-      warnings.push({
-        code: "split_antimeridian",
-        message: "A route crossing the antimeridian was split at the seam.",
-        pathIndex,
-        pointIndex: index,
-      })
+      warnSeam(
+        index,
+        "A route crossing the antimeridian was split at the seam."
+      )
       band += step
     }
 
@@ -480,7 +503,10 @@ export function sanitizeFogInput(
     ...suppliedOptions,
   }
   const geometry = readGeometry(input)
-  const warnings: FogInputWarning[] = []
+  const warningCollector: WarningCollector = {
+    examples: [],
+    counts: {},
+  }
   const outputPaths: ActivityPaths = []
   const outputTimestamps: ActivityPathTimestamps[] = []
   let inputPointCount = 0
@@ -489,7 +515,7 @@ export function sanitizeFogInput(
   for (let pathIndex = 0; pathIndex < geometry.paths.length; pathIndex += 1) {
     const rawPath = geometry.paths[pathIndex]
     if (!Array.isArray(rawPath)) {
-      warnings.push({
+      addWarning(warningCollector, {
         code: "dropped_path",
         message: "A non-array activity path was dropped.",
         pathIndex,
@@ -502,7 +528,7 @@ export function sanitizeFogInput(
       return makeResult(
         outputPaths,
         hasTimestamps ? outputTimestamps : undefined,
-        warnings,
+        warningCollector,
         inputPointCount,
         "invalid_timestamps"
       )
@@ -514,7 +540,7 @@ export function sanitizeFogInput(
       return makeResult(
         outputPaths,
         hasTimestamps ? outputTimestamps : undefined,
-        warnings,
+        warningCollector,
         inputPointCount,
         "invalid_timestamps"
       )
@@ -523,7 +549,7 @@ export function sanitizeFogInput(
       return makeResult(
         outputPaths,
         outputTimestamps,
-        warnings,
+        warningCollector,
         inputPointCount,
         "invalid_timestamps"
       )
@@ -534,7 +560,7 @@ export function sanitizeFogInput(
     const flush = () => {
       if (current.length < 2) {
         if (current.length === 1) {
-          warnings.push({
+          addWarning(warningCollector, {
             code: "dropped_path",
             message: "A path with fewer than two usable points was dropped.",
             pathIndex,
@@ -548,7 +574,7 @@ export function sanitizeFogInput(
         current,
         pathIndex,
         options,
-        warnings
+        warningCollector
       )
       for (const splitPath of splitPaths) {
         const simplified = simplifyPath(
@@ -557,7 +583,7 @@ export function sanitizeFogInput(
         )
         const reduced = reduceToBudget(simplified, options.maxPointsPerPath)
         if (reduced.reduced) {
-          warnings.push({
+          addWarning(warningCollector, {
             code: "point_budget_exceeded",
             message:
               "A path exceeded the technical point budget and was reduced deterministically.",
@@ -579,7 +605,7 @@ export function sanitizeFogInput(
     for (let pointIndex = 0; pointIndex < rawPath.length; pointIndex += 1) {
       const rawPoint: unknown = rawPath[pointIndex]
       if (!isCoordinate(rawPoint) || rawPoint[1] < -90 || rawPoint[1] > 90) {
-        warnings.push({
+        addWarning(warningCollector, {
           code: "dropped_invalid_point",
           message: "A non-finite or out-of-range WGS84 point split the path.",
           pathIndex,
@@ -600,7 +626,7 @@ export function sanitizeFogInput(
           return makeResult(
             outputPaths,
             hasTimestamps ? outputTimestamps : undefined,
-            warnings,
+            warningCollector,
             inputPointCount,
             "invalid_timestamps"
           )
@@ -613,7 +639,7 @@ export function sanitizeFogInput(
         Math.min(options.maxLatitude, rawPoint[1])
       )
       if (latitude !== rawPoint[1]) {
-        warnings.push({
+        addWarning(warningCollector, {
           code: "clamped_latitude",
           message:
             "A pole-adjacent point was clamped to the map projection limit.",
@@ -643,7 +669,7 @@ export function sanitizeFogInput(
         haversineMeters([previous.lng, previous.lat], [point.lng, point.lat]) >
           options.teleportThresholdMeters
       ) {
-        warnings.push({
+        addWarning(warningCollector, {
           code: "split_teleport",
           message:
             "An implausibly long GPS jump split the path before buffering.",
@@ -659,7 +685,7 @@ export function sanitizeFogInput(
           [point.lng, point.lat]
         )
         if (distance <= options.duplicateToleranceMeters) {
-          warnings.push({
+          addWarning(warningCollector, {
             code: "coalesced_duplicate_point",
             message:
               "A consecutive duplicate or near-duplicate point was coalesced.",
@@ -679,7 +705,7 @@ export function sanitizeFogInput(
     return makeResult(
       outputPaths,
       hasTimestamps ? outputTimestamps : undefined,
-      warnings,
+      warningCollector,
       inputPointCount,
       "no_usable_paths"
     )
@@ -688,7 +714,7 @@ export function sanitizeFogInput(
     return makeResult(
       outputPaths,
       hasTimestamps ? outputTimestamps : undefined,
-      warnings,
+      warningCollector,
       inputPointCount,
       "point_budget_exceeded"
     )
@@ -698,7 +724,7 @@ export function sanitizeFogInput(
     0
   )
   if (outputPointCount > options.maxTotalPoints) {
-    warnings.push({
+    addWarning(warningCollector, {
       code: "point_budget_exceeded",
       message:
         "The activity exceeded the total technical point budget and was rejected.",
@@ -707,7 +733,7 @@ export function sanitizeFogInput(
     return makeResult(
       outputPaths,
       hasTimestamps ? outputTimestamps : undefined,
-      warnings,
+      warningCollector,
       inputPointCount,
       "point_budget_exceeded"
     )
@@ -715,7 +741,7 @@ export function sanitizeFogInput(
   return makeResult(
     outputPaths,
     hasTimestamps ? outputTimestamps : undefined,
-    warnings,
+    warningCollector,
     inputPointCount
   )
 }

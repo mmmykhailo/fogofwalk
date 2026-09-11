@@ -124,6 +124,27 @@ describe("fog input sanitizer", () => {
     expect(
       result.warnings.filter(({ code }) => code === "coalesced_duplicate_point")
     ).toHaveLength(2)
+    expect(result.warningCounts.coalesced_duplicate_point).toBe(2)
+  })
+
+  test("bounds warning examples while retaining every coalesced event count", () => {
+    const duplicateCount = 20_000
+    const result = sanitizeFogInput(
+      geometry([
+        [
+          [14, 50],
+          ...Array.from(
+            { length: duplicateCount },
+            () => [14, 50] as [number, number]
+          ),
+          [14.01, 50],
+        ],
+      ])
+    )
+
+    expect(result.rejected).toBe(false)
+    expect(result.warningCounts.coalesced_duplicate_point).toBe(duplicateCount)
+    expect(result.warnings.length).toBeLessThanOrEqual(16)
   })
 
   test("splits an implausible teleport into independent paths", () => {
@@ -196,12 +217,22 @@ describe("fog input sanitizer", () => {
 
   test("does not turn equivalent seam endpoints into a 360-degree edge", () => {
     const result = sanitizeFogInput(
-      geometry([[[180, 0], [-180, 1]]]),
+      geometry([
+        [
+          [180, 0],
+          [-180, 1],
+        ],
+      ]),
       { activitySimplifyToleranceDegrees: 0 }
     )
 
     expect(result.rejected).toBe(false)
-    expect(result.paths).toEqual([[[180, 0], [180, 1]]])
+    expect(result.paths).toEqual([
+      [
+        [180, 0],
+        [180, 1],
+      ],
+    ])
   })
 
   test("clamps pole-adjacent points to the projection limit", () => {

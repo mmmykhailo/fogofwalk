@@ -1,12 +1,12 @@
 import type { FeatureCollection, MultiPolygon, Polygon } from "geojson"
 import type { FogMode, FogWorkerActivity } from "~/types/activities"
 
-export const FOG_PROTOCOL_VERSION = 1
+export const FOG_PROTOCOL_VERSION = 2
 // The algorithm and render representation changed from world-minus-route
 // polygons to positive explored masks rendered through the fog custom layer.
 // Keep these values in this protocol module so cache, worker, and coordinator
 // identity checks cannot drift apart.
-export const FOG_ALGORITHM_VERSION = 2
+export const FOG_ALGORITHM_VERSION = 3
 export const FOG_PARTITION_SCHEME_VERSION = 3
 
 export type FogRequestKind = "rebuild" | "append" | "cancel"
@@ -25,6 +25,8 @@ export interface FogRequest {
 
 export type FogRenderData = FeatureCollection<Polygon | MultiPolygon>
 
+export type FogDiagnosticSeverity = "info" | "coverage_reduced" | "error"
+
 export interface FogDiagnostics {
   processed: number
   total: number
@@ -32,12 +34,26 @@ export interface FogDiagnostics {
   outputPoints: number
   featureCount: number
   vertexCount: number
+  /** Bounded, redacted examples; exact totals live in the coded counters. */
   warnings: string[]
+  /** Bounded, redacted examples; exact totals live in errorCounts. */
   errors: string[]
   degraded: boolean
   /** Stable aggregate counts used by the status UI and support diagnostics. */
   warningCounts?: Record<string, number>
   errorCounts?: Record<string, number>
+  /** Informational, coverage-neutral normalization events. */
+  infoCounts?: Record<string, number>
+  /** Events that may have reduced the explored projection. */
+  coverageReducedCounts?: Record<string, number>
+  /** Number of activities normalized without reducing coverage. */
+  normalizedActivityCount?: number
+  /** Number of activities whose fog coverage may have been reduced. */
+  coverageReducedActivityCount?: number
+  /**
+   * Kept for compatibility with the first status contract. It now aliases
+   * coverageReducedActivityCount and never counts informational coalesces.
+   */
   repairedActivityCount?: number
   rejectedActivityCount?: number
   geometryFallbackCount?: number

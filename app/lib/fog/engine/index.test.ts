@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import { readFile } from "node:fs/promises"
 import type { FogWorkerActivity } from "~/types/activities"
 import { FOG_PROTOCOL_VERSION, type FogRequest } from "../protocol"
 import { createFogEngine } from "."
@@ -32,6 +33,56 @@ function request(overrides: Partial<FogRequest> = {}): FogRequest {
 }
 
 describe("FogEngine", () => {
+  test("rebuilds the public large-track fixture in both modes", async () => {
+    const xml = await readFile(
+      new URL("../../../../public/sample-run.gpx", import.meta.url),
+      "utf8"
+    )
+    const coordinates: [number, number][] = []
+    for (const match of xml.matchAll(/<trkpt\b([^>]*)>/g)) {
+      const attributes = match[1] ?? ""
+      const latitude = Number(attributes.match(/\blat="([^"]+)"/)?.[1])
+      const longitude = Number(attributes.match(/\blon="([^"]+)"/)?.[1])
+      if (Number.isFinite(latitude) && Number.isFinite(longitude)) {
+        coordinates.push([longitude, latitude])
+      }
+    }
+    expect(coordinates).toHaveLength(82_364)
+
+    for (const [generation, mode] of [
+      [1, "corridor"],
+      [2, "fill"],
+    ] as const) {
+      const result = await createFogEngine().process(
+        request({
+          generation,
+          mode,
+          activities: [
+            {
+              id: "public-sample-run",
+              name: "public sample run",
+              coordinates,
+            },
+          ],
+        })
+      )
+
+      expect(result.status).toBe("complete")
+      if (result.status !== "complete") continue
+      expect(result.snapshot.completeness).toBe("complete")
+      expect(result.snapshot.geometry.features.length).toBeGreaterThan(0)
+      expect(result.snapshot.diagnostics).toMatchObject({
+        inputPoints: 82_364,
+        outputPoints: 298,
+        warningCounts: { coalesced_duplicate_point: 3_061 },
+        infoCounts: { coalesced_duplicate_point: 3_061 },
+        coverageReducedCounts: {},
+        coverageReducedActivityCount: 0,
+        geometryFallbackCount: 0,
+      })
+    }
+  })
+
   test("publishes request-relative progress and a complete revisioned snapshot", async () => {
     const progress: number[] = []
     const updates: number[] = []
@@ -52,6 +103,70 @@ describe("FogEngine", () => {
     expect(result.snapshot.completeness).toBe("complete")
     expect(progress).toEqual([1, 1, 1, 1])
     expect(updates).toEqual([1, 1])
+  })
+
+  test("keeps high-frequency duplicate cleanup informational and bounded", async () => {
+    const duplicateCount = 3_061
+    const result = await createFogEngine().process(
+      request({
+        activities: [
+          {
+            id: "dense",
+            name: "dense",
+            coordinates: [
+              [14, 50],
+              ...Array.from(
+                { length: duplicateCount },
+                () => [14, 50] as [number, number]
+              ),
+              [14.01, 50],
+            ],
+          },
+        ],
+      })
+    )
+
+    expect(result.status).toBe("complete")
+    if (result.status !== "complete") return
+    expect(result.snapshot.diagnostics).toMatchObject({
+      degraded: false,
+      warningCounts: { coalesced_duplicate_point: duplicateCount },
+      infoCounts: { coalesced_duplicate_point: duplicateCount },
+      coverageReducedCounts: {},
+      normalizedActivityCount: 1,
+      coverageReducedActivityCount: 0,
+      repairedActivityCount: 0,
+    })
+    expect(result.snapshot.diagnostics.warnings.length).toBeLessThanOrEqual(8)
+  })
+
+  test("keeps a valid subset when input normalization reduces coverage", async () => {
+    const result = await createFogEngine().process(
+      request({
+        activities: [
+          {
+            id: "partially-valid",
+            name: "partially-valid",
+            coordinates: [
+              [14, 50],
+              [Number.NaN, 50],
+              [14.01, 50],
+              [14.02, 50],
+            ],
+          },
+          activity("good"),
+        ],
+      })
+    )
+
+    expect(result.status).toBe("partial")
+    if (result.status !== "partial") return
+    expect(result.snapshot.diagnostics).toMatchObject({
+      coverageReducedActivityCount: 1,
+      warningCounts: { dropped_invalid_point: 1 },
+    })
+    expect(result.snapshot.diagnostics.featureCount).toBeGreaterThan(0)
+    expect(result.snapshot.completeness).toBe("partial")
   })
 
   test("rejects an append whose base revision or mode does not match", async () => {

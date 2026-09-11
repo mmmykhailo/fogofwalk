@@ -7,6 +7,7 @@ import {
   type FogSnapshot,
 } from "./protocol"
 import type { FogMode, FogWorkerActivity } from "~/types/activities"
+import { validateFogRenderData } from "./engine/validate"
 
 export interface FogCoordinatorTransport {
   send(request: FogRequest): void
@@ -403,6 +404,20 @@ export function createFogCoordinator(
     ) {
       return ignored
     }
+    if (reply.snapshot) {
+      const validation = validateFogRenderData(reply.snapshot.geometry, {
+        allowInteriorRings: true,
+      })
+      if (!validation.ok) {
+        finish(
+          current,
+          "failed",
+          null,
+          "Fog worker returned a snapshot that could not be validated"
+        )
+        return { accepted: true, terminal: true, snapshot: null }
+      }
+    }
     if (current.cancel) {
       finish(current, "cancelled", null)
       return { accepted: true, terminal: true, snapshot: null }
@@ -412,11 +427,16 @@ export function createFogCoordinator(
       return { accepted: true, terminal: true, snapshot: null }
     }
 
-    finish(
-      current,
-      reply.snapshot.completeness === "complete" ? "complete" : "partial",
-      reply.snapshot
-    )
+    const snapshotIsComplete =
+      reply.snapshot.completeness === "complete" &&
+      !reply.snapshot.diagnostics.degraded &&
+      (reply.snapshot.diagnostics.coverageReducedActivityCount ??
+        reply.snapshot.diagnostics.repairedActivityCount ??
+        0) === 0 &&
+      (reply.snapshot.diagnostics.rejectedActivityCount ?? 0) === 0 &&
+      (reply.snapshot.diagnostics.geometryFallbackCount ?? 0) === 0 &&
+      reply.snapshot.diagnostics.errors.length === 0
+    finish(current, snapshotIsComplete ? "complete" : "partial", reply.snapshot)
     return { accepted: true, terminal: true, snapshot: reply.snapshot }
   }
 
@@ -516,7 +536,17 @@ export function createFogCoordinator(
   ): void {
     if (active !== candidate) return
     active = null
-    if (status === "complete" && snapshot?.completeness === "complete") {
+    if (
+      status === "complete" &&
+      snapshot?.completeness === "complete" &&
+      !snapshot.diagnostics.degraded &&
+      (snapshot.diagnostics.coverageReducedActivityCount ??
+        snapshot.diagnostics.repairedActivityCount ??
+        0) === 0 &&
+      (snapshot.diagnostics.rejectedActivityCount ?? 0) === 0 &&
+      (snapshot.diagnostics.geometryFallbackCount ?? 0) === 0 &&
+      snapshot.diagnostics.errors.length === 0
+    ) {
       completed = { input: candidate.context.input }
       recoveryRebuilds = 0
     }

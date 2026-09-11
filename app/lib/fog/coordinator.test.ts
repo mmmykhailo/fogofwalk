@@ -238,4 +238,47 @@ describe("FogCoordinator", () => {
       libraryRevision: 41,
     })
   })
+
+  test("does not accept an invalid terminal snapshot as an append base", () => {
+    const { coordinator, requests, terminals, snapshots } = setup()
+    coordinator.schedule(input(11, 50), { forceRebuild: true })
+    const rebuild = requests[0]!
+    const invalid = snapshot(rebuild)
+    invalid.geometry = {
+      type: "FeatureCollection",
+      features: [
+        {
+          type: "Feature",
+          properties: null,
+          geometry: {
+            type: "Polygon",
+            coordinates: [
+              [
+                [0, 0],
+                [2, 2],
+                [0, 2],
+                [2, 0],
+                [0, 0],
+              ],
+            ],
+          },
+        },
+      ],
+    }
+
+    const result = coordinator.handleReply(
+      reply(rebuild, { snapshot: invalid })
+    )
+
+    expect(result).toMatchObject({
+      accepted: true,
+      terminal: true,
+      snapshot: null,
+    })
+    expect(terminals).toMatchObject([
+      { status: "failed", error: expect.stringContaining("validated") },
+    ])
+    expect(snapshots).toHaveLength(0)
+    expect(coordinator.completedSnapshot).toBeNull()
+  })
 })

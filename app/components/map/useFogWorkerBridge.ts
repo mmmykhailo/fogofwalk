@@ -36,6 +36,22 @@ function isCurrentSnapshot(snapshot: FogSnapshot): boolean {
   )
 }
 
+function isCacheableSnapshot(snapshot: FogSnapshot): boolean {
+  const diagnostics = snapshot.diagnostics
+  const coverageReducedActivityCount =
+    diagnostics.coverageReducedActivityCount ??
+    diagnostics.repairedActivityCount ??
+    0
+  return (
+    snapshot.completeness === "complete" &&
+    !diagnostics.degraded &&
+    coverageReducedActivityCount === 0 &&
+    (diagnostics.rejectedActivityCount ?? 0) === 0 &&
+    (diagnostics.geometryFallbackCount ?? 0) === 0 &&
+    diagnostics.errors.length === 0
+  )
+}
+
 /** Bridges authoritative revisioned fog snapshots into the UI and map sources. */
 export function useFogWorkerBridge(onProcessingComplete?: ProcessingComplete): {
   invalidateActivitiesCache: () => void
@@ -117,7 +133,7 @@ export function useFogWorkerBridge(onProcessingComplete?: ProcessingComplete): {
       watchdog.check()
     }, 1_000)
 
-    const setSnapshotOnMap = (snapshot: FogSnapshot) => {
+    const setSnapshotOnMap = (snapshot: FogSnapshot, terminal = false) => {
       if (!isCurrentSnapshot(snapshot)) return false
       const operationId = `fog-${snapshot.generation}-${snapshot.libraryRevision}`
       recordDiagnostic({
@@ -136,11 +152,16 @@ export function useFogWorkerBridge(onProcessingComplete?: ProcessingComplete): {
         },
         warningCounts: snapshot.diagnostics.warningCounts,
         errorCounts: snapshot.diagnostics.errorCounts,
+        infoCounts: snapshot.diagnostics.infoCounts,
+        coverageReducedCounts: snapshot.diagnostics.coverageReducedCounts,
+        normalizedActivityCount: snapshot.diagnostics.normalizedActivityCount,
+        coverageReducedActivityCount:
+          snapshot.diagnostics.coverageReducedActivityCount,
         repairedActivityCount: snapshot.diagnostics.repairedActivityCount,
         rejectedActivityCount: snapshot.diagnostics.rejectedActivityCount,
         geometryFallbackCount: snapshot.diagnostics.geometryFallbackCount,
       })
-      recordFogSnapshot(snapshot)
+      recordFogSnapshot(snapshot, terminal)
       mapStore.fogSnapshot = {
         generation: snapshot.generation,
         libraryRevision: snapshot.libraryRevision,
@@ -220,7 +241,7 @@ export function useFogWorkerBridge(onProcessingComplete?: ProcessingComplete): {
         return
       }
 
-      if (result.snapshot) setSnapshotOnMap(result.snapshot)
+      if (result.snapshot) setSnapshotOnMap(result.snapshot, true)
       if (
         !result.terminal ||
         fogCoordinator.activeRequest !== null ||
@@ -231,7 +252,8 @@ export function useFogWorkerBridge(onProcessingComplete?: ProcessingComplete): {
 
       const snapshot = result.snapshot
       if (
-        snapshot?.completeness === "complete" &&
+        snapshot &&
+        isCacheableSnapshot(snapshot) &&
         mapStore.activities.length > 0 &&
         mapStore.fogData &&
         isCurrentSnapshot(snapshot)

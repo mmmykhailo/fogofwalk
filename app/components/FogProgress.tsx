@@ -64,19 +64,23 @@ export function FogStatusNotice({ onRetry }: { onRetry: () => void }) {
   const isFailed = status.phase === "failed"
   const rejected = status.rejectedActivityCount
   const fallbacks = status.geometryFallbackCount
-  const repaired = status.repairedActivityCount
+  const coverageReduced = status.coverageReducedActivityCount
   const unionFailures = status.warningCounts["explored-mask-union-failed"] ?? 0
+  const validationBudgetFailures =
+    status.coverageReducedCounts.validation_budget_exceeded ?? 0
   const message = isFailed
     ? (status.error ?? "Fog could not be rebuilt.")
     : rejected > 0
       ? `${rejected} route${rejected === 1 ? "" : "s"} could not clear fog; your activities are safe.`
       : fallbacks > 0
-        ? "Some fog regions remain covered because their geometry could not be validated; your activities are safe."
-        : repaired > 0
-          ? `${repaired} route${repaired === 1 ? " was" : "s were"} repaired before clearing fog.`
-          : unionFailures > 0
-            ? "Explored regions were kept separate because they could not be merged safely."
-            : "Fog completed with reduced coverage; your activities are safe."
+        ? `${fallbacks} explored region${fallbacks === 1 ? " remains" : "s remain"} covered because the geometry could not be validated; your activities are safe.`
+        : validationBudgetFailures > 0
+          ? `${validationBudgetFailures} explored region${validationBudgetFailures === 1 ? " exceeded" : "s exceeded"} the validation budget and remain covered; your activities are safe.`
+          : coverageReduced > 0
+            ? `${coverageReduced} route${coverageReduced === 1 ? " was" : "s were"} cleared with reduced coverage; your activities are safe.`
+            : unionFailures > 0
+              ? `${unionFailures} explored region${unionFailures === 1 ? " was" : "s were"} kept separate because the regions could not be merged safely.`
+              : "Fog completed with reduced coverage; your activities are safe."
 
   return (
     <div
@@ -94,9 +98,6 @@ export function FogStatusNotice({ onRetry }: { onRetry: () => void }) {
       />
       <span className="min-w-0 flex-1 text-pretty text-muted-foreground">
         {message}
-        {!isFailed && status.warnings.length > 0
-          ? ` (${status.warnings.length} warning${status.warnings.length === 1 ? "" : "s"})`
-          : ""}
       </span>
       {status.retryable && (
         <Button

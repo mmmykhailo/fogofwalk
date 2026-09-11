@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from "react"
 
-export const DIAGNOSTICS_SCHEMA_VERSION = 2
+export const DIAGNOSTICS_SCHEMA_VERSION = 3
 export const MAX_DIAGNOSTIC_EVENTS = 200
 
 export type DiagnosticSubsystem =
@@ -49,6 +49,10 @@ export interface DiagnosticEvent {
   geometry: DiagnosticGeometryMetrics | null
   warningCounts: Record<string, number>
   errorCounts: Record<string, number>
+  infoCounts: Record<string, number>
+  coverageReducedCounts: Record<string, number>
+  normalizedActivityCount: number
+  coverageReducedActivityCount: number
   repairedActivityCount: number
   rejectedActivityCount: number
   geometryFallbackCount: number
@@ -69,6 +73,10 @@ export interface DiagnosticEventInput {
   geometry?: DiagnosticGeometryMetrics | null
   warningCounts?: Record<string, number> | null
   errorCounts?: Record<string, number> | null
+  infoCounts?: Record<string, number> | null
+  coverageReducedCounts?: Record<string, number> | null
+  normalizedActivityCount?: number | null
+  coverageReducedActivityCount?: number | null
   repairedActivityCount?: number | null
   rejectedActivityCount?: number | null
   geometryFallbackCount?: number | null
@@ -171,6 +179,11 @@ export function recordDiagnostic(input: DiagnosticEventInput): DiagnosticEvent {
     geometry: safeGeometry(input.geometry),
     warningCounts: safeCounts(input.warningCounts),
     errorCounts: safeCounts(input.errorCounts),
+    infoCounts: safeCounts(input.infoCounts),
+    coverageReducedCounts: safeCounts(input.coverageReducedCounts),
+    normalizedActivityCount: safeCount(input.normalizedActivityCount) ?? 0,
+    coverageReducedActivityCount:
+      safeCount(input.coverageReducedActivityCount) ?? 0,
     repairedActivityCount: safeCount(input.repairedActivityCount) ?? 0,
     rejectedActivityCount: safeCount(input.rejectedActivityCount) ?? 0,
     geometryFallbackCount: safeCount(input.geometryFallbackCount) ?? 0,
@@ -216,6 +229,8 @@ export function exportDiagnostics(now = Date.now()): DiagnosticExport {
       geometry: event.geometry ? { ...event.geometry } : null,
       warningCounts: { ...event.warningCounts },
       errorCounts: { ...event.errorCounts },
+      infoCounts: { ...event.infoCounts },
+      coverageReducedCounts: { ...event.coverageReducedCounts },
     })),
   }
 }

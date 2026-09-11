@@ -2,8 +2,8 @@ import type { Page } from "@playwright/test"
 import { test, expect } from "../fixtures/app"
 import { makeGpx } from "../fixtures/gpx"
 
-const PROTOCOL_VERSION = 1
-const ALGORITHM_VERSION = 2
+const PROTOCOL_VERSION = 2
+const ALGORITHM_VERSION = 3
 const PARTITION_SCHEME_VERSION = 3
 
 const baseActivity = {

@@ -6,8 +6,10 @@ import {
   mapStore,
   postToFogWorker,
   queueAddedActivitiesForFog,
+  recordFogSnapshot,
   rebuildFogProjection,
   setFogProcessedCount,
+  startFogRun,
   subscribeFogProgress,
   worldFogGeoJSON,
 } from "./mapStore"
@@ -92,6 +94,85 @@ function activity(id: string): ParsedActivity {
 }
 
 describe("fog worker run state", () => {
+  test("keeps informational normalization quiet but exposes coverage loss", () => {
+    mapStore.worker = { postMessage() {} } as unknown as Worker
+    mapStore.activities = []
+    mapStore.fogMode = "corridor"
+    const generation = startFogRun()
+    postToFogWorker({
+      type: "PROCESS_ACTIVITIES",
+      activities: [],
+      mode: "corridor",
+    })
+
+    recordFogSnapshot({
+      generation,
+      libraryRevision: mapStore.libraryRevision,
+      mode: "corridor",
+      algorithmVersion: FOG_ALGORITHM_VERSION,
+      partitionSchemeVersion: FOG_PARTITION_SCHEME_VERSION,
+      completeness: "complete",
+      geometry: worldFogGeoJSON(),
+      diagnostics: {
+        processed: 0,
+        total: 0,
+        inputPoints: 0,
+        outputPoints: 0,
+        featureCount: 0,
+        vertexCount: 0,
+        warnings: [],
+        errors: [],
+        degraded: false,
+        warningCounts: { coalesced_duplicate_point: 3_061 },
+        infoCounts: { coalesced_duplicate_point: 3_061 },
+        coverageReducedCounts: {},
+        normalizedActivityCount: 1,
+        coverageReducedActivityCount: 0,
+        repairedActivityCount: 0,
+        rejectedActivityCount: 0,
+        geometryFallbackCount: 0,
+      },
+    })
+    expect(getFogStatus()).toMatchObject({
+      phase: "idle",
+      normalizedActivityCount: 1,
+      coverageReducedActivityCount: 0,
+    })
+
+    recordFogSnapshot({
+      generation,
+      libraryRevision: mapStore.libraryRevision,
+      mode: "corridor",
+      algorithmVersion: FOG_ALGORITHM_VERSION,
+      partitionSchemeVersion: FOG_PARTITION_SCHEME_VERSION,
+      completeness: "partial",
+      geometry: worldFogGeoJSON(),
+      diagnostics: {
+        processed: 0,
+        total: 0,
+        inputPoints: 0,
+        outputPoints: 0,
+        featureCount: 0,
+        vertexCount: 0,
+        warnings: [],
+        errors: [],
+        degraded: true,
+        warningCounts: { dropped_invalid_point: 1 },
+        infoCounts: {},
+        coverageReducedCounts: { dropped_invalid_point: 1 },
+        normalizedActivityCount: 0,
+        coverageReducedActivityCount: 1,
+        repairedActivityCount: 1,
+        rejectedActivityCount: 0,
+        geometryFallbackCount: 0,
+      },
+    })
+    expect(getFogStatus()).toMatchObject({
+      phase: "degraded",
+      coverageReducedActivityCount: 1,
+    })
+  })
+
   test("notifies progress subscribers only when the count changes", () => {
     mapStore.processedCount = 3
     let notifications = 0
@@ -376,5 +457,32 @@ describe("fog cache validity", () => {
     expect(isFogCacheValid(cache, ["a"], "corridor")).toBe(false)
     expect(isFogCacheValid(cache, ["a", "b", "c"], "corridor")).toBe(false)
     expect(isFogCacheValid(cache, ["a", "b"], "fill")).toBe(false)
+  })
+
+  test("rejects stale algorithm, partition, and library identities", () => {
+    expect(
+      isFogCacheValid(
+        {
+          ...cache,
+          algorithmVersion: (FOG_ALGORITHM_VERSION -
+            1) as typeof FOG_ALGORITHM_VERSION,
+        },
+        ["a", "b"],
+        "corridor"
+      )
+    ).toBe(false)
+    expect(
+      isFogCacheValid(
+        {
+          ...cache,
+          partitionSchemeVersion: (FOG_PARTITION_SCHEME_VERSION -
+            1) as typeof FOG_PARTITION_SCHEME_VERSION,
+        },
+        ["a", "b"],
+        "corridor"
+      )
+    ).toBe(false)
+    expect(isFogCacheValid(cache, ["a", "b"], "corridor", 3)).toBe(false)
+    expect(isFogCacheValid(cache, ["a", "b"], "corridor", 2)).toBe(true)
   })
 })

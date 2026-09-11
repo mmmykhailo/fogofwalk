@@ -43,9 +43,41 @@ describe("bounded fog aggregation", () => {
       true
     )
     expect(report.ok).toBe(false)
+    expect(report.status).toBe("budget_exceeded")
     expect(report.errors).toContain(
       "feature 0 ring 0 self-intersection check exceeded its technical budget"
     )
+  })
+
+  test("reports output size limits as technical budget exhaustion", () => {
+    const report = validateFogRenderData(
+      {
+        type: "FeatureCollection",
+        features: [
+          {
+            type: "Feature",
+            properties: null,
+            geometry: {
+              type: "Polygon",
+              coordinates: [
+                [
+                  [0, 0],
+                  [1, 0],
+                  [1, 1],
+                  [0, 1],
+                  [0, 0],
+                ],
+              ],
+            },
+          },
+        ],
+      },
+      { maxFeatures: 0 }
+    )
+
+    expect(report.ok).toBe(false)
+    expect(report.status).toBe("budget_exceeded")
+    expect(report.errorCodes.feature_budget_exceeded).toBe(1)
   })
 
   test("preserves the self-intersection error when the check completes", () => {
@@ -72,7 +104,172 @@ describe("bounded fog aggregation", () => {
     })
 
     expect(report.ok).toBe(false)
+    expect(report.status).toBe("invalid")
     expect(report.errors).toContain("feature 0 ring 0 self-intersects")
+  })
+
+  test("validates large simple rings with the spatially indexed scan", () => {
+    const pointCount = 5_000
+    const ring = Array.from({ length: pointCount }, (_, index) => {
+      const angle = (Math.PI * 2 * index) / (pointCount - 1)
+      return [Math.cos(angle), Math.sin(angle)] as [number, number]
+    })
+    ring[ring.length - 1] = ring[0]!
+    const report = validateFogRenderData({
+      type: "FeatureCollection",
+      features: [
+        {
+          type: "Feature",
+          properties: null,
+          geometry: { type: "Polygon", coordinates: [ring] },
+        },
+      ],
+    })
+
+    expect(report.status).toBe("valid")
+    expect(report.ok).toBe(true)
+  })
+
+  test("rejects repeated vertices and holes touching their shell", () => {
+    const repeated = validateFogRenderData({
+      type: "FeatureCollection",
+      features: [
+        {
+          type: "Feature",
+          properties: null,
+          geometry: {
+            type: "Polygon",
+            coordinates: [
+              [
+                [0, 0],
+                [2, 0],
+                [2, 2],
+                [2, 0],
+                [0, 0],
+              ],
+            ],
+          },
+        },
+      ],
+    })
+    expect(repeated.status).toBe("invalid")
+    expect(repeated.errorCodes.repeated_vertex).toBeGreaterThan(0)
+
+    const touchingHole = validateFogRenderData({
+      type: "FeatureCollection",
+      features: [
+        {
+          type: "Feature",
+          properties: null,
+          geometry: {
+            type: "Polygon",
+            coordinates: [
+              [
+                [0, 0],
+                [10, 0],
+                [10, 10],
+                [0, 10],
+                [0, 0],
+              ],
+              [
+                [0, 2],
+                [3, 2],
+                [3, 4],
+                [0, 4],
+                [0, 2],
+              ],
+            ],
+          },
+        },
+      ],
+    })
+    expect(touchingHole.status).toBe("invalid")
+    expect(touchingHole.errorCodes.hole_touches_shell).toBeGreaterThan(0)
+  })
+
+  test("rejects collinear overlaps and near-epsilon non-adjacent crossings", () => {
+    const collinearOverlap = validateFogRenderData({
+      type: "FeatureCollection",
+      features: [
+        {
+          type: "Feature",
+          properties: null,
+          geometry: {
+            type: "Polygon",
+            coordinates: [
+              [
+                [0, 0],
+                [4, 0],
+                [1, 0],
+                [1, 3],
+                [0, 3],
+                [0, 0],
+              ],
+            ],
+          },
+        },
+      ],
+    })
+    expect(collinearOverlap.status).toBe("invalid")
+    expect(collinearOverlap.errorCodes.ring_self_intersects).toBeGreaterThan(0)
+
+    const nearEpsilonCrossing = validateFogRenderData({
+      type: "FeatureCollection",
+      features: [
+        {
+          type: "Feature",
+          properties: null,
+          geometry: {
+            type: "Polygon",
+            coordinates: [
+              [
+                [0, 0],
+                [4, 4],
+                [0, 4],
+                [4, 4 - 1e-13],
+                [0, 0],
+              ],
+            ],
+          },
+        },
+      ],
+    })
+    expect(nearEpsilonCrossing.status).toBe("invalid")
+    expect(nearEpsilonCrossing.errorCodes.ring_self_intersects).toBeGreaterThan(
+      0
+    )
+  })
+
+  test("reports cancellation separately from invalid geometry", () => {
+    const pointCount = 5_000
+    const ring = Array.from({ length: pointCount }, (_, index) => {
+      const angle = (Math.PI * 2 * index) / (pointCount - 1)
+      return [Math.cos(angle), Math.sin(angle)] as [number, number]
+    })
+    ring[ring.length - 1] = ring[0]!
+    let checkpoints = 0
+    const report = validateFogRenderData(
+      {
+        type: "FeatureCollection",
+        features: [
+          {
+            type: "Feature",
+            properties: null,
+            geometry: { type: "Polygon", coordinates: [ring] },
+          },
+        ],
+      },
+      {
+        shouldCancel: () => {
+          checkpoints += 1
+          return checkpoints > 4
+        },
+      }
+    )
+
+    expect(report.ok).toBe(false)
+    expect(report.status).toBe("cancelled")
+    expect(report.errorCodes.validation_cancelled).toBeGreaterThan(0)
   })
 
   test("rejects an oversized partition grid before constructing it", () => {
@@ -112,6 +309,74 @@ describe("bounded fog aggregation", () => {
     expect(result.degraded).toBe(false)
     expect(result.fogData.features.length).toBeGreaterThan(0)
     expect(result.fogData.features[0]?.geometry.type).toBe("Polygon")
+    const rawVertexCount = buffered.masks.reduce((total, mask) => {
+      if (mask.geometry.type === "Polygon") {
+        return (
+          total +
+          mask.geometry.coordinates.reduce((sum, ring) => sum + ring.length, 0)
+        )
+      }
+      return (
+        total +
+        mask.geometry.coordinates.reduce(
+          (sum, polygonCoordinates) =>
+            sum +
+            polygonCoordinates.reduce(
+              (polygonSum, ring) => polygonSum + ring.length,
+              0
+            ),
+          0
+        )
+      )
+    }, 0)
+    expect(result.vertexCount).toBeLessThan(rawVertexCount)
+  })
+
+  test("omits only an invalid explored feature", () => {
+    const invalid = {
+      type: "Feature" as const,
+      properties: null,
+      geometry: {
+        type: "Polygon" as const,
+        coordinates: [
+          [
+            [0, 0],
+            [2, 2],
+            [0, 2],
+            [2, 0],
+            [0, 0],
+          ],
+        ],
+      },
+    }
+    const valid = {
+      type: "Feature" as const,
+      properties: null,
+      geometry: {
+        type: "Polygon" as const,
+        coordinates: [
+          [
+            [30, 0],
+            [31, 0],
+            [31, 1],
+            [30, 1],
+            [30, 0],
+          ],
+        ],
+      },
+    }
+    const result = buildBoundedFog([invalid, valid], "corridor")
+
+    expect(result.degraded).toBe(true)
+    expect(result.geometryFallbackCount).toBe(1)
+    expect(result.fogData.features).toHaveLength(1)
+    expect(result.fogData.features[0]?.geometry.type).toBe("Polygon")
+    if (result.fogData.features[0]?.geometry.type === "Polygon") {
+      expect(result.fogData.features[0].geometry.coordinates[0]?.[0]).toEqual([
+        30, 0,
+      ])
+    }
+    expect(validateFogRenderData(result.fogData).ok).toBe(true)
   })
 
   test("fills a closed loop only when fill mode requests it", () => {

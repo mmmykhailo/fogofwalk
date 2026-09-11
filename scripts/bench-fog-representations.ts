@@ -1,12 +1,17 @@
 import { performance } from "node:perf_hooks"
+import { readFile } from "node:fs/promises"
 import bbox from "@turf/bbox"
 import difference from "@turf/difference"
 import { featureCollection, polygon } from "@turf/helpers"
 import type { Feature, FeatureCollection, MultiPolygon, Polygon } from "geojson"
 import { FOG_EMIT_INTERVAL_MS } from "../app/constants/fog"
 import { bufferFogActivity, type FogMask } from "../app/lib/fog/engine/buffer"
-import { buildBoundedFog } from "../app/lib/fog/engine/aggregate"
+import {
+  buildBoundedFog,
+  simplifyFogForEmission,
+} from "../app/lib/fog/engine/aggregate"
 import { createFogEngine, type FogEngineResult } from "../app/lib/fog/engine"
+import { sanitizeFogInput } from "../app/lib/fog/engine/input"
 import { validateFogRenderData } from "../app/lib/fog/engine/validate"
 import { FOG_PROTOCOL_VERSION, type FogRequest } from "../app/lib/fog/protocol"
 import type { FogWorkerActivity } from "../app/types/activities"
@@ -195,6 +200,13 @@ function percentile(
   return sorted[index]!
 }
 
+function sumCounts(counts: Record<string, number> | undefined): number {
+  return Object.values(counts ?? {}).reduce(
+    (total, count) => total + Math.max(0, Math.floor(count)),
+    0
+  )
+}
+
 function benchmark(
   name: string,
   build: () => GeometryCollection,
@@ -234,7 +246,7 @@ function benchmarkScale(count: number) {
     () => {
       const result = buildBoundedFog(masks, "corridor")
       degraded = result.degraded
-      warningCount = result.warnings.length
+      warningCount = sumCounts(result.warningCounts)
       return result.fogData
     },
     iterations
@@ -249,6 +261,175 @@ function benchmarkScale(count: number) {
       ...safe,
       degraded,
       warningCount,
+    },
+  }
+}
+
+function parsePublicSample(xml: string): FogWorkerActivity {
+  const coordinates: [number, number][] = []
+  for (const match of xml.matchAll(/<trkpt\b([^>]*)>/g)) {
+    const attributes = match[1] ?? ""
+    const latitude = Number(attributes.match(/\blat="([^"]+)"/)?.[1])
+    const longitude = Number(attributes.match(/\blon="([^"]+)"/)?.[1])
+    if (Number.isFinite(latitude) && Number.isFinite(longitude)) {
+      coordinates.push([longitude, latitude])
+    }
+  }
+  if (coordinates.length === 0) {
+    throw new Error("public sample GPX did not contain track points")
+  }
+  return {
+    id: "public-sample-run",
+    name: "public sample run",
+    coordinates,
+  }
+}
+
+function roundedMilliseconds(value: number): number {
+  return Number(value.toFixed(2))
+}
+
+async function benchmarkPublicSample() {
+  const xml = await readFile(
+    new URL("../public/sample-run.gpx", import.meta.url),
+    "utf8"
+  )
+  const activity = parsePublicSample(xml)
+
+  const sanitizeStarted = performance.now()
+  const sanitized = sanitizeFogInput(activity)
+  const sanitizeMs = roundedMilliseconds(performance.now() - sanitizeStarted)
+  if (sanitized.rejected) {
+    throw new Error(`public sample sanitizer rejected: ${sanitized.reason}`)
+  }
+
+  const bufferStarted = performance.now()
+  const buffered = bufferFogActivity(activity)
+  const bufferMs = roundedMilliseconds(performance.now() - bufferStarted)
+  if (buffered.rejected || buffered.masks.length === 0) {
+    throw new Error(`public sample buffer rejected: ${buffered.reason}`)
+  }
+
+  const rawMasks = featureCollection(buffered.masks) as GeometryCollection
+  const emissionStarted = performance.now()
+  const emittedMasks = buffered.masks.map((mask) =>
+    simplifyFogForEmission(mask as GeometryFeature)
+  )
+  const emissionMs = roundedMilliseconds(performance.now() - emissionStarted)
+  const emittedMasksData = featureCollection(emittedMasks) as GeometryCollection
+  const rawValidationStarted = performance.now()
+  const rawValidation = validateFogRenderData(rawMasks, {
+    allowInteriorRings: true,
+  })
+  const rawValidationMs = roundedMilliseconds(
+    performance.now() - rawValidationStarted
+  )
+  const emittedValidationStarted = performance.now()
+  const emittedValidation = validateFogRenderData(emittedMasksData, {
+    allowInteriorRings: true,
+  })
+  const emittedValidationMs = roundedMilliseconds(
+    performance.now() - emittedValidationStarted
+  )
+
+  async function benchmarkMode(mode: "corridor" | "fill") {
+    const aggregateStarted = performance.now()
+    const aggregate = buildBoundedFog(buffered.masks, mode)
+    const aggregateMs = roundedMilliseconds(
+      performance.now() - aggregateStarted
+    )
+
+    const engine = createFogEngine({
+      emitIntervalMs: Number.MAX_SAFE_INTEGER,
+      hooks: {
+        yieldToScheduler: () => Promise.resolve(),
+      },
+    })
+    const engineStarted = performance.now()
+    const result = await engine.process({
+      protocolVersion: FOG_PROTOCOL_VERSION,
+      requestId: `public-sample-${mode}`,
+      generation: mode === "corridor" ? 1 : 2,
+      libraryRevision: 1,
+      mode,
+      kind: "rebuild",
+      activities: [activity],
+    })
+    const engineMs = roundedMilliseconds(performance.now() - engineStarted)
+    const snapshot =
+      result.status === "complete" || result.status === "partial"
+        ? result.snapshot
+        : null
+    if (!snapshot) throw new Error(`public sample engine failed in ${mode}`)
+    const snapshotValidation = validateFogRenderData(snapshot.geometry, {
+      allowInteriorRings: true,
+    })
+    if (!snapshotValidation.ok) {
+      throw new Error(snapshotValidation.errors.join("; "))
+    }
+
+    return {
+      aggregateMs,
+      engineMs,
+      aggregate: {
+        status: aggregate.degraded ? "partial" : "complete",
+        ...geometryMetrics(aggregate.fogData),
+        warningCount: sumCounts(aggregate.warningCounts),
+        infoCount: sumCounts(aggregate.infoCounts),
+        coverageReducedCount: sumCounts(aggregate.coverageReducedCounts),
+        geometryFallbackCount: aggregate.geometryFallbackCount,
+      },
+      engine: {
+        status: snapshot.completeness,
+        ...geometryMetrics(snapshot.geometry),
+        serializedSnapshotBytes: new TextEncoder().encode(
+          JSON.stringify(snapshot)
+        ).byteLength,
+        warningCount: sumCounts(snapshot.diagnostics.warningCounts),
+        infoCount: sumCounts(snapshot.diagnostics.infoCounts),
+        coverageReducedCount: sumCounts(
+          snapshot.diagnostics.coverageReducedCounts
+        ),
+        geometryFallbackCount: snapshot.diagnostics.geometryFallbackCount ?? 0,
+      },
+    }
+  }
+
+  return {
+    fixture: {
+      path: "public/sample-run.gpx",
+      activityCount: 1,
+      inputPoints: sanitized.inputPointCount,
+      sanitizedPoints: sanitized.outputPointCount,
+      maskCount: buffered.masks.length,
+      coalescedPointCount:
+        buffered.warningCounts.coalesced_duplicate_point ?? 0,
+      warningExampleCount: buffered.warnings.length,
+    },
+    stages: {
+      sanitizeMs,
+      bufferMs,
+      emittedSimplificationMs: emissionMs,
+      validationMs: {
+        raw: rawValidationMs,
+        emitted: emittedValidationMs,
+      },
+      rawMask: geometryMetrics(rawMasks),
+      emittedMask: geometryMetrics(emittedMasksData),
+      rawValidation: {
+        status: rawValidation.status,
+        vertexCount: rawValidation.vertexCount,
+        issueCodes: rawValidation.errorCodes,
+      },
+      emittedValidation: {
+        status: emittedValidation.status,
+        vertexCount: emittedValidation.vertexCount,
+        issueCodes: emittedValidation.errorCodes,
+      },
+    },
+    modes: {
+      corridor: await benchmarkMode("corridor"),
+      fill: await benchmarkMode("fill"),
     },
   }
 }
@@ -375,6 +556,7 @@ console.log(
   JSON.stringify(
     {
       baseline,
+      publicSample: await benchmarkPublicSample(),
       scaleTiers: SCALE_TIERS.map(benchmarkScale),
       engineScaleTiers: await Promise.all(
         SCALE_TIERS.map(benchmarkEngineScale)

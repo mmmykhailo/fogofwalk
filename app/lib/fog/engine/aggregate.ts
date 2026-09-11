@@ -1,11 +1,23 @@
 import bbox from "@turf/bbox"
 import { featureCollection } from "@turf/helpers"
+import simplify from "@turf/simplify"
 import union from "@turf/union"
 import type { Feature, MultiPolygon, Polygon } from "geojson"
+import { SIMPLIFY_TOLERANCE } from "~/constants/fog"
 import type { FogMode } from "~/types/activities"
+import {
+  MAX_FOG_DIAGNOSTIC_EXAMPLES,
+  fogDiagnosticSeverity,
+  incrementDiagnosticCount,
+} from "../diagnostics"
 import { FOG_INPUT_DEFAULTS } from "./input"
 import type { FogMask } from "./buffer"
-import { validateFogRenderData, type FogRenderData } from "./validate"
+import {
+  FOG_OUTPUT_DEFAULTS,
+  validateFogRenderData,
+  validateFogRenderFeature,
+  type FogRenderData,
+} from "./validate"
 
 /**
  * Kept as a compatibility surface for callers that used to tune the regional
@@ -24,6 +36,9 @@ export interface FogAggregationResult {
   degraded: boolean
   warnings: string[]
   warningCounts: Record<string, number>
+  infoCounts: Record<string, number>
+  coverageReducedCounts: Record<string, number>
+  errorCounts: Record<string, number>
   geometryFallbackCount: number
   /** Always zero for the positive-mask representation. */
   partitionCount: number
@@ -235,67 +250,245 @@ export interface FogMaskAccumulator {
   dirtyPartitions: Set<string>
   degraded: boolean
   warnings: string[]
+  warningCounts: Record<string, number>
 }
 
-function warningCountKey(message: string): string {
-  return message.startsWith("explored-mask union failed")
-    ? "explored-mask-union-failed"
-    : "geometry-fallback"
+function addExample(examples: string[], message: string): void {
+  if (
+    message.length > 0 &&
+    examples.length < MAX_FOG_DIAGNOSTIC_EXAMPLES &&
+    !examples.includes(message)
+  ) {
+    examples.push(message)
+  }
+}
+
+function serializedByteLength(value: unknown): number {
+  try {
+    const serialized = JSON.stringify(value)
+    if (typeof serialized !== "string") return Number.POSITIVE_INFINITY
+    if (typeof TextEncoder !== "undefined") {
+      return new TextEncoder().encode(serialized).byteLength
+    }
+    return serialized.length
+  } catch {
+    return Number.POSITIVE_INFINITY
+  }
+}
+
+function textByteLength(value: string): number {
+  if (typeof TextEncoder !== "undefined") {
+    return new TextEncoder().encode(value).byteLength
+  }
+  return value.length
+}
+
+/**
+ * Normalize emitted positive geometry after accumulation. This deliberately
+ * lives outside the input sanitizer: activity and fog-output tolerances are
+ * independent contracts.
+ */
+export function simplifyFogForEmission(
+  feature: PolygonFeature
+): PolygonFeature {
+  return simplify(feature, {
+    tolerance: SIMPLIFY_TOLERANCE,
+    highQuality: false,
+    mutate: false,
+  }) as PolygonFeature
+}
+
+interface AcceptedFeature {
+  feature: PolygonFeature
+  sourceIndex: number
+}
+
+function recordValidationFailure(
+  warnings: string[],
+  warningCounts: Record<string, number>,
+  coverageReducedCounts: Record<string, number>,
+  errorCounts: Record<string, number>,
+  sourceIndex: number,
+  code: string
+): void {
+  incrementDiagnosticCount(warningCounts, code)
+  incrementDiagnosticCount(coverageReducedCounts, code)
+  if (fogDiagnosticSeverity(code) === "error") {
+    incrementDiagnosticCount(errorCounts, code)
+  }
+  addExample(
+    warnings,
+    `explored feature ${sourceIndex} was omitted after ${code.replaceAll("_", " ")}`
+  )
 }
 
 function aggregationResult(
-  fogData: FogRenderData,
+  inputFogData: FogRenderData,
   degraded: boolean,
   warnings: string[],
-  geometryFallbackCount = 0
+  geometryFallbackCount = 0,
+  inheritedWarningCounts: Record<string, number> = {}
 ): FogAggregationResult {
-  const validation = validateFogRenderData(fogData, {
+  const accepted: AcceptedFeature[] = []
+  const warningExamples = warnings.slice(0, MAX_FOG_DIAGNOSTIC_EXAMPLES)
+  const warningCounts = { ...inheritedWarningCounts }
+  const infoCounts: Record<string, number> = {}
+  const coverageReducedCounts: Record<string, number> = {}
+  const errorCounts: Record<string, number> = {}
+  for (const [code, count] of Object.entries(inheritedWarningCounts)) {
+    const severity = fogDiagnosticSeverity(code)
+    if (severity === "info") incrementDiagnosticCount(infoCounts, code, count)
+    else if (severity === "coverage_reduced") {
+      incrementDiagnosticCount(coverageReducedCounts, code, count)
+    } else incrementDiagnosticCount(errorCounts, code, count)
+  }
+  let fallbackCount = geometryFallbackCount
+  let vertexCount = 0
+  const collectionPrefixBytes = textByteLength(
+    '{"type":"FeatureCollection","features":['
+  )
+  const collectionSuffixBytes = textByteLength("]}")
+  let serializedBytes = collectionPrefixBytes + collectionSuffixBytes
+
+  for (
+    let sourceIndex = 0;
+    sourceIndex < inputFogData.features.length;
+    sourceIndex += 1
+  ) {
+    const sourceFeature = inputFogData.features[sourceIndex]
+    let normalized: PolygonFeature
+    try {
+      normalized = simplifyFogForEmission(sourceFeature as PolygonFeature)
+    } catch {
+      fallbackCount += 1
+      recordValidationFailure(
+        warningExamples,
+        warningCounts,
+        coverageReducedCounts,
+        errorCounts,
+        sourceIndex,
+        "emission_simplification_failed"
+      )
+      continue
+    }
+    const validation = validateFogRenderFeature(
+      normalized,
+      { allowInteriorRings: true },
+      sourceIndex
+    )
+    if (!validation.ok) {
+      fallbackCount += 1
+      for (const issue of validation.issues) {
+        recordValidationFailure(
+          warningExamples,
+          warningCounts,
+          coverageReducedCounts,
+          errorCounts,
+          sourceIndex,
+          issue.code
+        )
+      }
+      continue
+    }
+
+    if (accepted.length >= FOG_OUTPUT_DEFAULTS.maxFeatures) {
+      fallbackCount += 1
+      recordValidationFailure(
+        warningExamples,
+        warningCounts,
+        coverageReducedCounts,
+        errorCounts,
+        sourceIndex,
+        "feature_budget_exceeded"
+      )
+      continue
+    }
+    if (
+      vertexCount + validation.vertexCount >
+      FOG_OUTPUT_DEFAULTS.maxVertices
+    ) {
+      fallbackCount += 1
+      recordValidationFailure(
+        warningExamples,
+        warningCounts,
+        coverageReducedCounts,
+        errorCounts,
+        sourceIndex,
+        "vertex_budget_exceeded"
+      )
+      continue
+    }
+    const featureBytes = serializedByteLength(normalized)
+    const candidateBytes =
+      serializedBytes +
+      (accepted.length > 0 ? textByteLength(",") : 0) +
+      featureBytes
+    if (candidateBytes > FOG_OUTPUT_DEFAULTS.maxBytes) {
+      fallbackCount += 1
+      recordValidationFailure(
+        warningExamples,
+        warningCounts,
+        coverageReducedCounts,
+        errorCounts,
+        sourceIndex,
+        "serialized_byte_budget_exceeded"
+      )
+      continue
+    }
+    accepted.push({ feature: normalized, sourceIndex })
+    vertexCount += validation.vertexCount
+    serializedBytes = candidateBytes
+  }
+
+  const fogData: FogRenderData = featureCollection(
+    accepted.map(({ feature }) => feature)
+  )
+  const finalValidation = validateFogRenderData(fogData, {
     allowInteriorRings: true,
   })
-  if (!validation.ok) {
-    const validationWarnings = validation.errors.map(
-      (message) => `output: ${message}`
-    )
-    const allWarnings = [...warnings, ...validationWarnings]
-    const warningCounts = allWarnings.reduce<Record<string, number>>(
-      (counts, message) => {
-        const key = warningCountKey(message)
-        counts[key] = (counts[key] ?? 0) + 1
-        return counts
-      },
-      {}
-    )
-    return {
-      fogData: featureCollection([]),
-      degraded: true,
-      warnings: [...allWarnings, "published the validated full-fog fallback"],
-      warningCounts: {
-        ...warningCounts,
-        "full-fog-fallback": 1,
-      },
-      geometryFallbackCount: 1,
-      partitionCount: 0,
-      featureCount: 0,
-      vertexCount: 0,
+  if (!finalValidation.ok) {
+    // The feature-local checks above should make this unreachable except for a
+    // collection-level safety gate. Keep the safe subset and report the exact
+    // gate instead of replacing unrelated explored features with full fog.
+    for (const issue of finalValidation.issues) {
+      const code = issue.code
+      incrementDiagnosticCount(warningCounts, code)
+      incrementDiagnosticCount(coverageReducedCounts, code)
+      if (fogDiagnosticSeverity(code) === "error") {
+        incrementDiagnosticCount(errorCounts, code)
+      }
+      addExample(
+        warningExamples,
+        `explored output retained only a validated subset after ${code.replaceAll("_", " ")}`
+      )
     }
+    degraded = true
   }
-  const warningCounts = warnings.reduce<Record<string, number>>(
-    (counts, message) => {
-      const key = warningCountKey(message)
-      counts[key] = (counts[key] ?? 0) + 1
-      return counts
-    },
-    {}
-  )
+  if (fallbackCount > geometryFallbackCount) {
+    incrementDiagnosticCount(
+      warningCounts,
+      "geometry-fallback",
+      fallbackCount - geometryFallbackCount
+    )
+    incrementDiagnosticCount(
+      coverageReducedCounts,
+      "geometry-fallback",
+      fallbackCount - geometryFallbackCount
+    )
+  }
+  const outputDegraded = degraded || fallbackCount > 0
   return {
     fogData,
-    degraded,
-    warnings,
+    degraded: outputDegraded,
+    warnings: warningExamples,
     warningCounts,
-    geometryFallbackCount,
+    infoCounts,
+    coverageReducedCounts,
+    errorCounts,
+    geometryFallbackCount: fallbackCount,
     partitionCount: 0,
-    featureCount: validation.featureCount,
-    vertexCount: validation.vertexCount,
+    featureCount: finalValidation.featureCount,
+    vertexCount: finalValidation.vertexCount,
   }
 }
 
@@ -308,6 +501,7 @@ export function createFogMaskAccumulator(mode: FogMode): FogMaskAccumulator {
     dirtyPartitions: new Set(),
     degraded: false,
     warnings: [],
+    warningCounts: {},
   }
 }
 
@@ -406,11 +600,18 @@ function appendFillMask(
   try {
     const merged = union(featureCollection(candidates)) as PolygonFeature | null
     if (!merged) throw new Error("union returned no geometry")
+    const normalizedMerged = stripInteriorRings(merged)
+    const mergedValidation = validateFogRenderFeature(normalizedMerged, {
+      allowInteriorRings: true,
+    })
+    if (!mergedValidation.ok) {
+      throw new Error("union produced geometry that could not be validated")
+    }
     for (const component of components) {
       removeFillComponent(accumulator, component)
     }
-    addFillComponent(accumulator, stripInteriorRings(merged))
-  } catch (error) {
+    addFillComponent(accumulator, normalizedMerged)
+  } catch {
     // Retain the already-published positive components and isolate the new
     // difficult geometry. Future appends remain incremental but stop trying to
     // merge every component after one deterministic union failure.
@@ -419,8 +620,13 @@ function appendFillMask(
     accumulator.fillComponents = []
     accumulator.fillComponentsByPartition.clear()
     accumulator.dirtyPartitions = new Set()
-    accumulator.warnings.push(
-      `explored-mask union failed: ${error instanceof Error ? error.message : String(error)}`
+    addExample(
+      accumulator.warnings,
+      "explored-mask union failed; affected masks remain as separate explored regions"
+    )
+    incrementDiagnosticCount(
+      accumulator.warningCounts,
+      "explored-mask-union-failed"
     )
   }
 }
@@ -459,9 +665,13 @@ export function finalizeFogMaskAccumulator(
   const fogData: FogRenderData = featureCollection(
     accumulator.projectedMasks.map((mask) => unprojectFeature(mask))
   )
-  return aggregationResult(fogData, accumulator.degraded, [
-    ...accumulator.warnings,
-  ])
+  return aggregationResult(
+    fogData,
+    accumulator.degraded,
+    accumulator.warnings,
+    0,
+    accumulator.warningCounts
+  )
 }
 
 /**

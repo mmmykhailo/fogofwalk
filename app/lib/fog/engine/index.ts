@@ -1,6 +1,12 @@
 import type { FogWorkerActivity, FogMode } from "~/types/activities"
 import { FOG_EMIT_INTERVAL_MS } from "~/constants/fog"
 import {
+  MAX_FOG_DIAGNOSTIC_EXAMPLES,
+  fogDiagnosticSeverity,
+  incrementDiagnosticCount,
+  mergeDiagnosticCounts,
+} from "../diagnostics"
+import {
   FOG_ALGORITHM_VERSION,
   FOG_PARTITION_SCHEME_VERSION,
   FOG_PROTOCOL_VERSION,
@@ -49,10 +55,6 @@ interface EngineState {
   completeness: "partial" | "complete"
 }
 
-function safeMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
-}
-
 function emptyDiagnostics(total: number): FogDiagnostics {
   return {
     processed: 0,
@@ -66,6 +68,10 @@ function emptyDiagnostics(total: number): FogDiagnostics {
     degraded: false,
     warningCounts: {},
     errorCounts: {},
+    infoCounts: {},
+    coverageReducedCounts: {},
+    normalizedActivityCount: 0,
+    coverageReducedActivityCount: 0,
     repairedActivityCount: 0,
     rejectedActivityCount: 0,
     geometryFallbackCount: 0,
@@ -89,6 +95,29 @@ function cloneDiagnostics(diagnostics: FogDiagnostics): FogDiagnostics {
     errors: [...diagnostics.errors],
     warningCounts: { ...(diagnostics.warningCounts ?? {}) },
     errorCounts: { ...(diagnostics.errorCounts ?? {}) },
+    infoCounts: { ...(diagnostics.infoCounts ?? {}) },
+    coverageReducedCounts: { ...(diagnostics.coverageReducedCounts ?? {}) },
+  }
+}
+
+function addDiagnosticExample(examples: string[], message: string): void {
+  if (
+    message.length > 0 &&
+    examples.length < MAX_FOG_DIAGNOSTIC_EXAMPLES &&
+    !examples.includes(message)
+  ) {
+    examples.push(message)
+  }
+}
+
+function safeActivityRejectionCode(reason: string | undefined): string {
+  switch (reason) {
+    case "invalid_timestamps":
+    case "no_usable_paths":
+    case "point_budget_exceeded":
+      return reason
+    default:
+      return "geometry_rejected"
   }
 }
 
@@ -203,7 +232,7 @@ export function createFogEngine(options: FogEngineOptions = {}): FogEngine {
     diagnostics.vertexCount = aggregate.vertexCount
     const warnings = [
       ...new Set([...diagnostics.warnings, ...aggregate.warnings]),
-    ]
+    ].slice(0, MAX_FOG_DIAGNOSTIC_EXAMPLES)
     if (aggregate.degraded) currentState.completeness = "partial"
     diagnostics.warningCounts = {
       ...(diagnostics.warningCounts ?? {}),
@@ -214,12 +243,31 @@ export function createFogEngine(options: FogEngineOptions = {}): FogEngine {
         ])
       ),
     }
+    diagnostics.infoCounts = { ...(diagnostics.infoCounts ?? {}) }
+    mergeDiagnosticCounts(diagnostics.infoCounts, aggregate.infoCounts, "max")
+    diagnostics.coverageReducedCounts = {
+      ...(diagnostics.coverageReducedCounts ?? {}),
+    }
+    mergeDiagnosticCounts(
+      diagnostics.coverageReducedCounts,
+      aggregate.coverageReducedCounts,
+      "max"
+    )
+    diagnostics.errorCounts = { ...(diagnostics.errorCounts ?? {}) }
+    mergeDiagnosticCounts(diagnostics.errorCounts, aggregate.errorCounts, "max")
+    for (const warning of aggregate.warnings) {
+      addDiagnosticExample(diagnostics.warnings, warning)
+    }
     diagnostics.geometryFallbackCount = Math.max(
       diagnostics.geometryFallbackCount ?? 0,
       aggregate.geometryFallbackCount
     )
     diagnostics.degraded =
-      currentState.completeness === "partial" || aggregate.degraded
+      currentState.completeness === "partial" ||
+      aggregate.degraded ||
+      Object.keys(diagnostics.coverageReducedCounts ?? {}).length > 0
+    diagnostics.repairedActivityCount =
+      diagnostics.coverageReducedActivityCount ?? 0
     return {
       generation: request.generation,
       libraryRevision: currentState.libraryRevision,
@@ -333,34 +381,86 @@ export function createFogEngine(options: FogEngineOptions = {}): FogEngine {
       currentState.diagnostics.processed += 1
       currentState.diagnostics.inputPoints += result.inputPointCount
       currentState.diagnostics.outputPoints += result.outputPointCount
+      const warningCounts = result.warningCounts ?? {}
+      const infoCount = Object.entries(warningCounts).reduce(
+        (total, [code, count]) =>
+          total +
+          (fogDiagnosticSeverity(code) === "info"
+            ? Math.max(0, Math.floor(count))
+            : 0),
+        0
+      )
+      const coverageReducedCount = Object.entries(warningCounts).reduce(
+        (total, [code, count]) =>
+          total +
+          (fogDiagnosticSeverity(code) === "coverage_reduced"
+            ? Math.max(0, Math.floor(count))
+            : 0),
+        0
+      )
+      if (infoCount > 0) {
+        currentState.diagnostics.normalizedActivityCount =
+          (currentState.diagnostics.normalizedActivityCount ?? 0) + 1
+      }
+      if (coverageReducedCount > 0) {
+        currentState.diagnostics.coverageReducedActivityCount =
+          (currentState.diagnostics.coverageReducedActivityCount ?? 0) + 1
+        currentState.diagnostics.repairedActivityCount =
+          currentState.diagnostics.coverageReducedActivityCount
+        currentState.completeness = "partial"
+      }
+      for (const [code, count] of Object.entries(warningCounts)) {
+        incrementDiagnosticCount(
+          (currentState.diagnostics.warningCounts ??= {}),
+          code,
+          count
+        )
+        const severity = fogDiagnosticSeverity(code)
+        if (severity === "info") {
+          incrementDiagnosticCount(
+            (currentState.diagnostics.infoCounts ??= {}),
+            code,
+            count
+          )
+        } else if (severity === "coverage_reduced") {
+          incrementDiagnosticCount(
+            (currentState.diagnostics.coverageReducedCounts ??= {}),
+            code,
+            count
+          )
+        } else {
+          incrementDiagnosticCount(
+            (currentState.diagnostics.errorCounts ??= {}),
+            code,
+            count
+          )
+          currentState.completeness = "partial"
+        }
+      }
+      for (const warning of result.warnings) {
+        addDiagnosticExample(currentState.diagnostics.warnings, warning.message)
+        addDiagnosticExample(diagnostics.warnings, warning.message)
+      }
       if (result.rejected) {
-        const reason = result.reason ?? "activity geometry was rejected"
-        const message = `${activity.id}: ${reason}`
-        diagnostics.errors.push(message)
-        currentState.diagnostics.errors.push(message)
+        if (result.masks.length > 0) {
+          appendFogMasks(currentState.accumulator, result.masks)
+        }
+        const rejectionCode = safeActivityRejectionCode(result.reason)
+        const message =
+          rejectionCode === "no_usable_paths"
+            ? "Activity had no usable paths."
+            : "Activity geometry was rejected."
+        addDiagnosticExample(diagnostics.errors, message)
+        addDiagnosticExample(currentState.diagnostics.errors, message)
         currentState.diagnostics.errorCounts = incrementCount(
           currentState.diagnostics.errorCounts,
-          `activity:${reason}`
+          `activity:${rejectionCode}`
         )
         currentState.diagnostics.rejectedActivityCount =
           (currentState.diagnostics.rejectedActivityCount ?? 0) + 1
         currentState.completeness = "partial"
-        emitError(request, message, false, activity.id)
       } else {
         appendFogMasks(currentState.accumulator, result.masks)
-        if (result.warnings.length > 0) {
-          currentState.diagnostics.repairedActivityCount =
-            (currentState.diagnostics.repairedActivityCount ?? 0) + 1
-        }
-        for (const warning of result.warnings) {
-          const message = `${activity.id}: ${warning.message}`
-          diagnostics.warnings.push(message)
-          currentState.diagnostics.warnings.push(message)
-          currentState.diagnostics.warningCounts = incrementCount(
-            currentState.diagnostics.warningCounts,
-            warning.code
-          )
-        }
       }
       diagnostics.processed += 1
       emitProgress(request, diagnostics, "buffering")

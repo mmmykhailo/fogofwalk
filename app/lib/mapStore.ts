@@ -136,6 +136,11 @@ export interface FogProjectionStatus {
   retryable: boolean
   warningCounts: Record<string, number>
   errorCounts: Record<string, number>
+  infoCounts: Record<string, number>
+  coverageReducedCounts: Record<string, number>
+  normalizedActivityCount: number
+  coverageReducedActivityCount: number
+  /** Compatibility alias for coverageReducedActivityCount. */
   repairedActivityCount: number
   rejectedActivityCount: number
   geometryFallbackCount: number
@@ -236,6 +241,10 @@ let fogStatus: FogProjectionStatus = {
   retryable: false,
   warningCounts: {},
   errorCounts: {},
+  infoCounts: {},
+  coverageReducedCounts: {},
+  normalizedActivityCount: 0,
+  coverageReducedActivityCount: 0,
   repairedActivityCount: 0,
   rejectedActivityCount: 0,
   geometryFallbackCount: 0,
@@ -271,6 +280,11 @@ function updateFogStatus(
     next.total === fogStatus.total &&
     next.error === fogStatus.error &&
     next.recoveryAttempts === fogStatus.recoveryAttempts &&
+    sameCounts(next.infoCounts, fogStatus.infoCounts) &&
+    sameCounts(next.coverageReducedCounts, fogStatus.coverageReducedCounts) &&
+    next.normalizedActivityCount === fogStatus.normalizedActivityCount &&
+    next.coverageReducedActivityCount ===
+      fogStatus.coverageReducedActivityCount &&
     next.retryable === fogStatus.retryable &&
     next.repairedActivityCount === fogStatus.repairedActivityCount &&
     next.rejectedActivityCount === fogStatus.rejectedActivityCount &&
@@ -289,6 +303,8 @@ function updateFogStatus(
     warnings: [...next.warnings],
     warningCounts: { ...next.warningCounts },
     errorCounts: { ...next.errorCounts },
+    infoCounts: { ...next.infoCounts },
+    coverageReducedCounts: { ...next.coverageReducedCounts },
   }
   for (const listener of fogStatusListeners) listener()
 }
@@ -346,6 +362,10 @@ export const fogCoordinator = createFogCoordinator(
         retryable: false,
         warningCounts: {},
         errorCounts: {},
+        infoCounts: {},
+        coverageReducedCounts: {},
+        normalizedActivityCount: 0,
+        coverageReducedActivityCount: 0,
         repairedActivityCount: 0,
         rejectedActivityCount: 0,
         geometryFallbackCount: 0,
@@ -443,6 +463,13 @@ export const fogCoordinator = createFogCoordinator(
           ? {
               warningCounts: terminal.snapshot.diagnostics.warningCounts,
               errorCounts: terminal.snapshot.diagnostics.errorCounts,
+              infoCounts: terminal.snapshot.diagnostics.infoCounts,
+              coverageReducedCounts:
+                terminal.snapshot.diagnostics.coverageReducedCounts,
+              normalizedActivityCount:
+                terminal.snapshot.diagnostics.normalizedActivityCount,
+              coverageReducedActivityCount:
+                terminal.snapshot.diagnostics.coverageReducedActivityCount,
               repairedActivityCount:
                 terminal.snapshot.diagnostics.repairedActivityCount,
               rejectedActivityCount:
@@ -469,6 +496,13 @@ export const fogCoordinator = createFogCoordinator(
           retryable: false,
           warningCounts: { ...(diagnostics.warningCounts ?? {}) },
           errorCounts: { ...(diagnostics.errorCounts ?? {}) },
+          infoCounts: { ...(diagnostics.infoCounts ?? {}) },
+          coverageReducedCounts: {
+            ...(diagnostics.coverageReducedCounts ?? {}),
+          },
+          normalizedActivityCount: diagnostics.normalizedActivityCount ?? 0,
+          coverageReducedActivityCount:
+            diagnostics.coverageReducedActivityCount ?? 0,
           repairedActivityCount: diagnostics.repairedActivityCount ?? 0,
           rejectedActivityCount: diagnostics.rejectedActivityCount ?? 0,
           geometryFallbackCount: diagnostics.geometryFallbackCount ?? 0,
@@ -487,6 +521,10 @@ export const fogCoordinator = createFogCoordinator(
           retryable: false,
           warningCounts: {},
           errorCounts: {},
+          infoCounts: {},
+          coverageReducedCounts: {},
+          normalizedActivityCount: 0,
+          coverageReducedActivityCount: 0,
           repairedActivityCount: 0,
           rejectedActivityCount: 0,
           geometryFallbackCount: 0,
@@ -636,7 +674,10 @@ export function getFogStatus(): FogProjectionStatus {
   return fogStatus
 }
 
-export function recordFogSnapshot(snapshot: FogSnapshot): void {
+export function recordFogSnapshot(
+  snapshot: FogSnapshot,
+  terminal = true
+): void {
   if (
     snapshot.generation !== mapStore.runId ||
     snapshot.libraryRevision !== mapStore.libraryRevision ||
@@ -646,29 +687,40 @@ export function recordFogSnapshot(snapshot: FogSnapshot): void {
   }
   setFogProcessedCount(snapshot.diagnostics.processed)
   const diagnostics = snapshot.diagnostics
+  const coverageReducedActivityCount =
+    diagnostics.coverageReducedActivityCount ??
+    diagnostics.repairedActivityCount ??
+    0
+  const isCompleteSnapshot =
+    snapshot.completeness === "complete" &&
+    !diagnostics.degraded &&
+    coverageReducedActivityCount === 0 &&
+    (diagnostics.rejectedActivityCount ?? 0) === 0 &&
+    (diagnostics.geometryFallbackCount ?? 0) === 0 &&
+    diagnostics.errors.length === 0
   updateFogStatus({
-    phase:
-      snapshot.completeness === "complete" &&
-      !diagnostics.degraded &&
-      (diagnostics.repairedActivityCount ?? 0) === 0 &&
-      (diagnostics.rejectedActivityCount ?? 0) === 0 &&
-      (diagnostics.geometryFallbackCount ?? 0) === 0
-        ? "idle"
-        : "degraded",
+    phase: !terminal ? "processing" : isCompleteSnapshot ? "idle" : "degraded",
     generation: snapshot.generation,
     libraryRevision: snapshot.libraryRevision,
     mode: snapshot.mode,
     processed: snapshot.diagnostics.processed,
     total: snapshot.diagnostics.total,
-    error:
-      diagnostics.errors[0] ??
-      (diagnostics.degraded ? "Fog was rebuilt with reduced coverage." : null),
+    error: terminal
+      ? (diagnostics.errors[0] ??
+        (diagnostics.degraded
+          ? "Fog was rebuilt with reduced coverage."
+          : null))
+      : null,
     warnings: [...diagnostics.warnings, ...diagnostics.errors],
     recoveryAttempts: 0,
     retryable: false,
     warningCounts: { ...(diagnostics.warningCounts ?? {}) },
     errorCounts: { ...(diagnostics.errorCounts ?? {}) },
-    repairedActivityCount: diagnostics.repairedActivityCount ?? 0,
+    infoCounts: { ...(diagnostics.infoCounts ?? {}) },
+    coverageReducedCounts: { ...(diagnostics.coverageReducedCounts ?? {}) },
+    normalizedActivityCount: diagnostics.normalizedActivityCount ?? 0,
+    coverageReducedActivityCount,
+    repairedActivityCount: coverageReducedActivityCount,
     rejectedActivityCount: diagnostics.rejectedActivityCount ?? 0,
     geometryFallbackCount: diagnostics.geometryFallbackCount ?? 0,
   })
@@ -708,6 +760,10 @@ export function startFogRun(): number {
     retryable: false,
     warningCounts: {},
     errorCounts: {},
+    infoCounts: {},
+    coverageReducedCounts: {},
+    normalizedActivityCount: 0,
+    coverageReducedActivityCount: 0,
     repairedActivityCount: 0,
     rejectedActivityCount: 0,
     geometryFallbackCount: 0,
@@ -798,6 +854,10 @@ export function rebuildFogProjection(
       retryable: false,
       warningCounts: {},
       errorCounts: {},
+      infoCounts: {},
+      coverageReducedCounts: {},
+      normalizedActivityCount: 0,
+      coverageReducedActivityCount: 0,
       repairedActivityCount: 0,
       rejectedActivityCount: 0,
       geometryFallbackCount: 0,

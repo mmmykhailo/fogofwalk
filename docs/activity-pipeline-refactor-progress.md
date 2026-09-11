@@ -1,6 +1,9 @@
 # Activity pipeline refactor progress
 
-Status: implementation complete; deployment-dependent gates remain
+Status: fog validation/warning remediation implemented; verification complete
+
+Review follow-up:
+[activity pipeline refactor review and fix plan](activity-pipeline-refactor-review-and-fix-plan.md)
 
 This file is the continuation point for the implementation of
 `activity-pipeline-refactor-plan.md`. Each completed slice is committed on its
@@ -12,11 +15,44 @@ untouched.
 
 - Branch: `refactor/fog-processing`
 - Started: 2026-09-11
-- Current phase: implementation handoff across Phases 0–8
+- Current phase: post-implementation fog validation and warning remediation
 - Last completed commit: `f787515 record refactor verification`
-- Current working slice: none; implementation and local verification are complete
-- Next action: if continuing, capture the failing browser console/network trace
-  for the unreproduced blank-body report or run the production rollout gates
+- Current working slice: none; implementation and verification are complete
+- Next action: if continuing, capture production rollout evidence or address
+  any newly observed browser-specific regression
+
+## Fog validation and warning remediation slice
+
+- Restored emitted-mask simplification with `SIMPLIFY_TOLERANCE`, independent of
+  `ACTIVITY_SIMPLIFY_TOLERANCE`, and bumped the fog algorithm/protocol versions.
+- Replaced the quadratic ring scan with a bounding-box sweep that still detects
+  non-adjacent touching, crossing, and collinear-overlap segments. Validation
+  now distinguishes valid, invalid, technical-budget, and cancelled outcomes.
+- Validated and budgeted emitted features independently so one bad component no
+  longer erases unrelated explored regions. Partial projections remain
+  renderable but cannot seed appends or complete-cache writes.
+- Replaced unbounded per-point warning strings with exact coded counters and
+  bounded examples. Informational normalization no longer selects degraded UI
+  status; coverage-reduced and rejected outcomes remain visible.
+- Added public-sample regression coverage, adversarial validator cases,
+  feature-local fallback tests, and a staged benchmark for sanitization,
+  buffering, emission simplification, validation, serialized snapshots, and
+  total engine time.
+
+### Verification
+
+- `bun test`: 232 tests passed.
+- `bun run typecheck`: passed.
+- `bun run build`: passed; the existing large-chunk warning remains non-fatal.
+- `bun run bench:fog`: passed. The public sample measured 82,364 input points,
+  298 sanitized points, 3,061 informational coalesces, 776 corridor vertices,
+  377 fill vertices, valid emitted geometry, and complete engine snapshots in
+  both modes. The 100/1,000/10,000 activity tiers also completed without
+  degradation or geometry fallback.
+- `bun run test:activity-pipeline-gate`: all six regression checks passed,
+  including the DPR 1/2 MapLibre fog visual suite. The gate requires a local
+  server bind, so it was run with the approved elevated local-server
+  permission.
 
 ## A1 activity contract slice
 
@@ -458,15 +494,15 @@ untouched.
 | `9876758` | Pace and retry activity uploads                                      | Four rate-limit E2E cases pass; client typecheck pass            |
 | `e9ecde6` | Align bounded fog browser assertions                                 | Serverless cache/style and suspension E2E cases pass             |
 | `772ff96` | Update visibility sync browser test                                  | Public-profile publishing E2E case passes                        |
-| `99c69d8` | Project fog booleans in Mercator | Focused fog suite and typecheck pass |
-| `1cb9576` | Add fog tile regression harness | Historical/positive tile checks pass; typecheck pass |
-| `1eef831` | Measure fog representation scales | Baseline and 100/1k/10k benchmark pass |
-| `96904c5` | Version projected fog snapshots | 50 focused fog/storage tests and typecheck pass |
-| `f6779d6` | Document sync cancellation coverage | E2E documentation updated |
-| `f0aee35` | List all E2E specs | Nine-spec E2E documentation corrected |
-| `bf7f792` | Scope saved-point state by account | Saved-point state tests and typecheck pass |
-| `8980c62` | Serialize saved-point sync | Server sync tests and typecheck pass |
-| `359ca9d` | Test saved-point account isolation | Focused regression passes; full 42-test E2E matrix passes |
+| `99c69d8` | Project fog booleans in Mercator                                     | Focused fog suite and typecheck pass                             |
+| `1cb9576` | Add fog tile regression harness                                      | Historical/positive tile checks pass; typecheck pass             |
+| `1eef831` | Measure fog representation scales                                    | Baseline and 100/1k/10k benchmark pass                           |
+| `96904c5` | Version projected fog snapshots                                      | 50 focused fog/storage tests and typecheck pass                  |
+| `f6779d6` | Document sync cancellation coverage                                  | E2E documentation updated                                        |
+| `f0aee35` | List all E2E specs                                                   | Nine-spec E2E documentation corrected                            |
+| `bf7f792` | Scope saved-point state by account                                   | Saved-point state tests and typecheck pass                       |
+| `8980c62` | Serialize saved-point sync                                           | Server sync tests and typecheck pass                             |
+| `359ca9d` | Test saved-point account isolation                                   | Focused regression passes; full 42-test E2E matrix passes        |
 
 ## Phase checklist
 

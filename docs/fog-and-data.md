@@ -2,13 +2,50 @@
 
 This is the detailed companion to [AGENTS.md](../AGENTS.md). It documents invariants that are easy to break while changing the map, parsers, persistence, photos, laps, or offline support.
 
+The modular redesign and its exhaustive edge-case catalog are in the
+[activity pipeline refactoring plan](activity-pipeline-refactor-plan.md) and
+[activity pipeline test matrix](activity-pipeline-test-matrix.md). The
+validation and warning remediation is tracked in the
+[fog validation and warning fix plan](fog-validation-and-warning-fix-plan.md).
+The invariants below describe the current implementation.
+
 ## Processing pipeline
 
-Files are parsed into `ParsedActivity[]` on the main thread, then posted to `workers/fogWorker.ts`. The worker simplifies each activity at `ACTIVITY_SIMPLIFY_TOLERANCE`, buffers it, reports lightweight progress every five activities, and emits an updated fog polygon every 300 ms. Corridor mode also flushes after five pending buffers so a fast buffering pass cannot leave one long final clipping operation. `MapView` writes that GeoJSON directly to the fog source.
+Files are parsed into `ParsedActivity[]` on the main thread, then posted to `workers/fogWorker.ts`. The worker simplifies each activity at `ACTIVITY_SIMPLIFY_TOLERANCE`, buffers it, reports lightweight progress every five activities, and emits an updated positive explored-mask collection every 300 ms. `MapView` writes that GeoJSON to the fog custom layer, which supplies the world stencil.
 
 There are two distinct simplification tolerances. `ACTIVITY_SIMPLIFY_TOLERANCE` (0.0005, about 55 m) applies before buffering; `SIMPLIFY_TOLERANCE` (0.0001, about 11 m) applies to emitted fog. Swapping them visibly degrades the fog boundary or wastes a large vertex budget.
 
-Corridor mode clears only the buffered route. Fill mode unions all activity buffers, strips inner rings, and removes the resulting filled shape from world fog, so closed loops clear their interiors.
+Corridor mode clears only the buffered route. Fill mode unions intersecting activity buffers, strips inner rings, and emits the resulting positive explored shape, so closed loops clear their interiors without constructing a world-minus-route polygon.
+
+The previous world-minus-mask representation had a confirmed MapLibre failure
+mode: `geojson-vt` could clip a long route-shaped interior ring against source
+tile bounds and Earcut could emit overlapping triangles. The current custom
+positive-mask layer avoids that inverse topology. Do not reintroduce the
+world-minus-route polygon or treat `maxzoom` freezing and source-option tuning
+as production fixes.
+
+After accumulation, every emitted Polygon/MultiPolygon is transformed back to
+geographic coordinates and simplified with `SIMPLIFY_TOLERANCE`. This stage is
+deliberately separate from input simplification and never mutates the worker
+accumulator. Each feature is then checked for finite bounded coordinates,
+closed non-zero-area rings, topology, and independent feature, vertex, and
+serialized-byte limits. The validator reports `valid`, `invalid`,
+`budget_exceeded`, or `cancelled`; a work-budget result is not treated as proof
+that the geometry is invalid.
+
+Validation and aggregation are feature-local. If one explored component cannot
+be validated or exceeds a technical budget, it is omitted while unrelated
+validated components remain visible. The resulting snapshot is `partial`, is
+not a cache or append base, and is not written as a complete cache. Only a
+complete snapshot with a current library/mode/algorithm identity can seed an
+append or be cached.
+
+Input normalization retains exact coded event counts and only a bounded set of
+redacted examples. Duplicate coalescing and antimeridian splitting are
+coverage-neutral informational events; dropped points/paths, input budgets,
+validation failures, and geometry fallbacks are coverage-reduced outcomes.
+The UI reads these coded counters rather than the bounded example-array length,
+so a normal complete run with thousands of duplicate GPS points stays quiet.
 
 Every worker message carries a `runId`. Only call `startFogRun()` when discarding existing work (mode toggle, delete, clear all), and always follow it with `RESET`. Adding activities and restore reprocessing join the existing run. The worker yields a macrotask between activities and serializes same-run batches, so resets cannot land mid-activity.
 

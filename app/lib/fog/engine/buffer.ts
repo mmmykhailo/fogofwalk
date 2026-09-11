@@ -11,6 +11,7 @@ export interface FogActivityMaskResult {
   activityName: string
   masks: FogMask[]
   warnings: FogInputWarning[]
+  warningCounts: Record<string, number>
   inputPointCount: number
   outputPointCount: number
   rejected: boolean
@@ -45,6 +46,7 @@ export function bufferFogActivity(
       activityName: activity.name,
       masks,
       warnings: input.warnings,
+      warningCounts: input.warningCounts,
       inputPointCount: input.inputPointCount,
       outputPointCount: input.outputPointCount,
       rejected: true,
@@ -65,6 +67,7 @@ export function bufferFogActivity(
         activityName: activity.name,
         masks,
         warnings: input.warnings,
+        warningCounts: input.warningCounts,
         inputPointCount: input.inputPointCount,
         outputPointCount: input.outputPointCount,
         rejected: true,
@@ -78,6 +81,7 @@ export function bufferFogActivity(
     activityName: activity.name,
     masks,
     warnings: input.warnings,
+    warningCounts: input.warningCounts,
     inputPointCount: input.inputPointCount,
     outputPointCount: input.outputPointCount,
     rejected: masks.length === 0,
