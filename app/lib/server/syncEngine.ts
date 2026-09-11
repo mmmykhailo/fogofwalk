@@ -44,41 +44,27 @@ import { IndexedDbSyncRepository } from "./sync/repository"
 import { ActivitySyncExecutor } from "./sync/executor"
 import { SyncScheduler } from "./sync/scheduler"
 import {
+  describeSyncStatus,
+  getSyncStatus,
+  subscribeSyncStatus,
+  applySyncOutboxSummary,
+  setSyncStatus,
+  summarizeSyncOutbox,
+  useSyncStatus,
+  type SyncStatus,
+  type SyncStatusUpdate,
+} from "./sync/status"
+import {
   createActivityDeleteOutboxItem,
   createActivityUploadOutboxItem,
 } from "./sync/activityEffects"
 
 // ─── Status, published to the drawer ──────────────────────────────────────────
 
-export type SyncStatus =
-  | { phase: "idle"; lastSyncAt: number | null }
-  | { phase: "syncing"; done: number; total: number }
-  | { phase: "error"; message: string; lastSyncAt: number | null }
-
-let status: SyncStatus = { phase: "idle", lastSyncAt: null }
-const listeners = new Set<() => void>()
-
-function notify() {
-  for (const listener of listeners) listener()
-}
-
-function subscribe(listener: () => void): () => void {
-  listeners.add(listener)
-  return () => listeners.delete(listener)
-}
-
-function setStatus(next: SyncStatus) {
-  status = next
-  notify()
-}
-
-export function useSyncStatus(): SyncStatus {
-  return useSyncExternalStore(
-    subscribe,
-    () => status,
-    () => status
-  )
-}
+export type { SyncStatus }
+export { describeSyncStatus, useSyncStatus }
+const setStatus = setSyncStatus
+if (!isServerEnabled) setStatus({ phase: "disabled" })
 
 // ─── Suspension ───────────────────────────────────────────────────────────────
 
@@ -100,7 +86,7 @@ export function isAutoSyncSuspended(): boolean {
 
 export function useIsAutoSyncSuspended(): boolean {
   return useSyncExternalStore(
-    subscribe,
+    subscribeSyncStatus,
     () => isSuspended,
     () => isSuspended
   )
@@ -111,7 +97,10 @@ export function suspendAutoSync(reason: string): void {
   if (isSuspended) return
   isSuspended = true
   console.debug("[sync] auto-sync suspended:", reason)
-  notify()
+  setStatus({
+    phase: "suspended",
+    message: "Sync paused after a local change.",
+  })
 }
 
 /** Resume. Only ever called by an explicit user action. */
@@ -119,7 +108,7 @@ export function resumeAutoSync(): void {
   if (!isSuspended) return
   isSuspended = false
   console.debug("[sync] auto-sync resumed")
-  notify()
+  setStatus({ phase: "idle", message: null })
 }
 
 // ─── Change notification ──────────────────────────────────────────────────────
@@ -151,20 +140,6 @@ export function setSyncChangeHandler(
   onChanged = handler
 }
 
-/** Drawer subtitle for the current status. Null when there is nothing to say. */
-export function describeSyncStatus(s: SyncStatus): string | null {
-  if (s.phase === "syncing") return `Syncing ${s.done} of ${s.total}…`
-  if (s.phase === "error") return s.message
-  if (s.lastSyncAt === null) return null
-  const ageMs = Date.now() - s.lastSyncAt
-  if (ageMs < 60_000) return "Synced just now"
-  const minutes = Math.floor(ageMs / 60_000)
-  if (minutes < 60) return `Synced ${minutes} min ago`
-  const hours = Math.floor(minutes / 60)
-  if (hours < 24) return `Synced ${hours}h ago`
-  return `Synced ${Math.floor(hours / 24)}d ago`
-}
-
 // ─── Run loop ─────────────────────────────────────────────────────────────────
 
 // Do not construct sync resources in a serverless build. Besides keeping the
@@ -176,6 +151,27 @@ const activitySyncRepository = isServerEnabled
   : null
 const syncOwner = isServerEnabled ? `sync-tab:${createUuid()}` : null
 const SYNC_LEASE_MS = 90_000
+let nextSyncRunId = 0
+
+async function publishOutboxStatus(
+  update: SyncStatusUpdate
+): Promise<ReturnType<typeof summarizeSyncOutbox> | null> {
+  if (!activitySyncRepository) {
+    setStatus(update)
+    return null
+  }
+  try {
+    const summary = summarizeSyncOutbox(
+      await activitySyncRepository.loadOutbox()
+    )
+    applySyncOutboxSummary(summary, update)
+    return summary
+  } catch {
+    // Keep the operation result visible even if the status read itself fails.
+    setStatus(update)
+    return null
+  }
+}
 
 async function acquireSyncLeadership(
   run: () => Promise<void>
@@ -214,10 +210,13 @@ const syncScheduler = isServerEnabled
       acquireLeadership: acquireSyncLeadership,
       onError: (error) => {
         console.warn("[sync] scheduler failed:", error)
-        setStatus({
+        void publishOutboxStatus({
           phase: "error",
           message: friendlyMessage(error),
-          lastSyncAt: status.phase === "syncing" ? null : status.lastSyncAt,
+          lastSyncAt:
+            getSyncStatus().phase === "syncing"
+              ? null
+              : getSyncStatus().lastSyncAt,
         })
       },
     })
@@ -294,7 +293,19 @@ export function startSyncScheduler(): () => void {
 
 async function syncOnce(reason: string): Promise<void> {
   if (!isServerEnabled || !activitySyncRepository || !syncTransport) return
-  const lastSyncAt = status.phase === "syncing" ? null : status.lastSyncAt
+  const previousStatus = getSyncStatus()
+  const lastSyncAt =
+    previousStatus.phase === "syncing" ? null : previousStatus.lastSyncAt
+  const runId = ++nextSyncRunId
+  setStatus({
+    phase: "syncing",
+    runId,
+    trigger: reason,
+    done: 0,
+    total: 0,
+    cursorHeld: false,
+    message: null,
+  })
   console.debug("[sync] start", reason)
 
   try {
@@ -323,7 +334,12 @@ async function syncOnce(reason: string): Promise<void> {
     return
   } catch (err) {
     console.warn("[sync] failed:", err)
-    setStatus({ phase: "error", message: friendlyMessage(err), lastSyncAt })
+    await publishOutboxStatus({
+      phase: "error",
+      message: friendlyMessage(err),
+      lastSyncAt,
+      cursorHeld: false,
+    })
   }
 }
 
@@ -352,20 +368,36 @@ async function runActivitySync(lastSyncAt: number | null): Promise<void> {
 
   if (result.failures.length > 0) {
     const permanent = result.failures.find((failure) => !failure.retryable)
-    setStatus({
-      phase: "error",
-      message:
-        permanent?.message ??
-        (result.cursorHeld
-          ? "Some activities couldn't be received"
-          : "Some activities couldn't be uploaded"),
+    const message =
+      permanent?.message ??
+      (result.cursorHeld
+        ? "Some activities couldn't be received"
+        : "Some activities couldn't be uploaded")
+    const summary = await publishOutboxStatus({
+      phase: result.cursorHeld ? "partial" : "waiting",
+      message,
       lastSyncAt:
         result.state.lastSyncAt > 0 ? result.state.lastSyncAt : lastSyncAt,
+      cursorHeld: result.cursorHeld,
     })
+    if (permanent || summary?.permanentCount) {
+      setStatus({ phase: "permanent" })
+    }
     return
   }
 
-  setStatus({ phase: "idle", lastSyncAt: result.state.lastSyncAt })
+  const summary = await publishOutboxStatus({
+    phase: "idle",
+    lastSyncAt: result.state.lastSyncAt,
+    cursorHeld: false,
+    message: null,
+  })
+  if (summary?.permanentCount) {
+    setStatus({
+      phase: "permanent",
+      message: "Some local changes cannot be synced.",
+    })
+  }
   console.debug("[sync] done")
 }
 
