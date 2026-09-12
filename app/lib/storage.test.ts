@@ -18,6 +18,7 @@ import {
   saveActivities,
   type StoredActivity,
 } from "./storage"
+import { createIndexedDbActivityLibraryRepository } from "./activities/repository"
 
 type StoreName =
   | "activities"
@@ -188,7 +189,8 @@ class FakeObjectStore {
 
   put(value: unknown): IDBRequest<unknown> {
     return this.tx.enqueue(() => {
-      const id = (value as { id?: unknown }).id
+      const record = value as { id?: unknown; key?: unknown }
+      const id = record.id ?? record.key
       if (typeof id !== "string") throw new Error("missing key")
       this.tx.readStore(this.name).set(id, structuredClone(value))
       return id
@@ -396,6 +398,32 @@ describe("activity summary storage recovery", () => {
     await expect(loadActivitySummaries()).resolves.toEqual(loaded)
     expect(fakeIndexedDb.database!.metrics.activityGetAll).toBe(0)
     expect(fakeIndexedDb.database!.metrics.activityGetAllKeys).toBe(1)
+  })
+
+  test("persists legacy library metadata during the summary-only migration", async () => {
+    const first = activity("first", 100)
+    await saveActivities([first])
+    fakeIndexedDb.database!.raw("library-meta").set("library", {
+      key: "library",
+      schemaVersion: 1,
+      revision: 6,
+    })
+    fakeIndexedDb.database!.resetMetrics()
+
+    const repository = createIndexedDbActivityLibraryRepository()
+    await expect(repository.loadSummarySnapshot()).resolves.toMatchObject({
+      revision: 6,
+      coverageRevision: 6,
+    })
+    expect(fakeIndexedDb.database!.raw("library-meta").get("library")).toEqual(
+      {
+        key: "library",
+        schemaVersion: 2,
+        revision: 6,
+        coverageRevision: 6,
+      }
+    )
+    expect(fakeIndexedDb.database!.metrics.activityGetAll).toBe(0)
   })
 
   test("repairs an orphan and missing summary when counts still match", async () => {

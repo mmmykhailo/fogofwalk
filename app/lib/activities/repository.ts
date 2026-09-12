@@ -628,10 +628,7 @@ function readMeta(value: unknown): StoredLibraryMeta {
   }
   return {
     key: LIBRARY_META_KEY,
-    schemaVersion:
-      typeof (value as { schemaVersion?: unknown }).schemaVersion === "number"
-        ? (value as { schemaVersion: number }).schemaVersion
-        : LIBRARY_SCHEMA_VERSION,
+    schemaVersion: LIBRARY_SCHEMA_VERSION,
     revision: (value as { revision: number }).revision,
     coverageRevision:
       typeof (value as { coverageRevision?: unknown }).coverageRevision ===
@@ -676,6 +673,15 @@ export function createIndexedDbActivityLibraryRepository(): IndexedDbActivityLib
         summaries.push(summary)
       }
       const meta = readMeta(rawMeta)
+      if (
+        !rawMeta ||
+        rawMeta.schemaVersion !== LIBRARY_SCHEMA_VERSION ||
+        rawMeta.coverageRevision === undefined
+      ) {
+        const migration = db.transaction("library-meta", "readwrite")
+        migration.objectStore("library-meta").put(meta)
+        await transactionResult(migration)
+      }
       return {
         revision: meta.revision,
         coverageRevision: meta.coverageRevision,
