@@ -458,6 +458,7 @@ async function moveMouseGesture(
   for (let index = 1; index <= moves; index++) {
     const progress = index / moves
     await page.mouse.move(startX + (endX - startX) * progress, y)
+    await page.waitForTimeout(1_000 / moves)
   }
   await page.mouse.up()
 }
@@ -467,66 +468,73 @@ async function dispatchTouchGesture(
   bounds: { x: number; y: number; width: number; height: number },
   rotate: boolean
 ): Promise<void> {
-  await page.evaluate(
-    ({ bounds, rotate }) => {
-      const canvas = document.querySelector(".maplibregl-canvas")
-      if (!(canvas instanceof HTMLElement)) {
-        throw new Error("Map canvas is not available")
-      }
-      const centerY = bounds.y + bounds.height * 0.5
-      const makeEvent = (
-        type: string,
-        pointerId: number,
-        clientX: number,
-        clientY: number
-      ) =>
-        new PointerEvent(type, {
-          bubbles: true,
-          cancelable: true,
-          pointerId,
-          pointerType: "touch",
-          isPrimary: pointerId === 1,
-          clientX,
-          clientY,
-          buttons: type === "pointerup" ? 0 : 1,
-        })
+  const client = await page.context().newCDPSession(page)
+  const send = (
+    type: "touchStart" | "touchMove" | "touchEnd",
+    touchPoints: {
+      x: number
+      y: number
+      id: number
+      radiusX: number
+      radiusY: number
+      force: number
+    }[]
+  ) =>
+    client.send("Input.dispatchTouchEvent", {
+      type,
+      touchPoints,
+    })
+  const point = (x: number, y: number, id: number) => ({
+    x,
+    y,
+    id,
+    radiusX: 1,
+    radiusY: 1,
+    force: 1,
+  })
 
-      const primaryX = bounds.x + bounds.width * 0.65
-      const endX = bounds.x + bounds.width * 0.35
-      canvas.dispatchEvent(makeEvent("pointerdown", 1, primaryX, centerY))
-      for (let index = 1; index <= 80; index++) {
-        const progress = index / 80
-        canvas.dispatchEvent(
-          makeEvent(
-            "pointermove",
-            1,
-            primaryX + (endX - primaryX) * progress,
-            centerY
-          )
-        )
-      }
-      canvas.dispatchEvent(makeEvent("pointerup", 1, endX, centerY))
+  try {
+    const centerY = bounds.y + bounds.height * 0.5
+    const primaryX = bounds.x + bounds.width * 0.65
+    const endX = bounds.x + bounds.width * 0.35
+    await send("touchStart", [point(primaryX, centerY, 1)])
+    for (let index = 1; index <= 80; index++) {
+      const progress = index / 80
+      await page.waitForTimeout(1_000 / 80)
+      await send("touchMove", [
+        point(primaryX + (endX - primaryX) * progress, centerY, 1),
+      ])
+    }
+    await send("touchEnd", [])
 
-      if (!rotate) return
-      const secondStartX = bounds.x + bounds.width * 0.55
-      const secondStartY = bounds.y + bounds.height * 0.45
-      canvas.dispatchEvent(
-        makeEvent("pointerdown", 2, secondStartX, secondStartY)
+    if (!rotate) return
+    const centerX = bounds.x + bounds.width * 0.5
+    const rotateCenterY = bounds.y + bounds.height * 0.5
+    const radius = Math.min(bounds.width, bounds.height) * 0.18
+    const startAngle = -Math.PI * 0.35
+    const endAngle = Math.PI * 0.35
+    const rotatedPoint = (angle: number, sign: 1 | -1, id: number) =>
+      point(
+        centerX + Math.cos(angle) * radius * sign,
+        rotateCenterY + Math.sin(angle) * radius * sign,
+        id
       )
-      for (let index = 1; index <= 30; index++) {
-        const angle = (index / 30) * Math.PI * 0.35
-        const dx = Math.cos(angle) * bounds.width * 0.1
-        const dy = Math.sin(angle) * bounds.height * 0.1
-        canvas.dispatchEvent(
-          makeEvent("pointermove", 2, secondStartX + dx, secondStartY + dy)
-        )
-      }
-      canvas.dispatchEvent(
-        makeEvent("pointerup", 2, secondStartX, secondStartY)
-      )
-    },
-    { bounds, rotate }
-  )
+    await send("touchStart", [
+      rotatedPoint(startAngle, 1, 1),
+      rotatedPoint(startAngle, -1, 2),
+    ])
+    for (let index = 1; index <= 30; index++) {
+      const angle = startAngle + ((endAngle - startAngle) * index) / 30
+      await page.waitForTimeout(1_000 / 30)
+      await send("touchMove", [
+        rotatedPoint(angle, 1, 1),
+        rotatedPoint(angle, -1, 2),
+      ])
+    }
+    await send("touchEnd", [])
+  } finally {
+    await client.detach().catch(() => undefined)
+  }
 }
 
 export async function sampleMapGesture(

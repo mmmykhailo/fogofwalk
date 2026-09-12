@@ -81,6 +81,23 @@ async function reportMetrics(
   })
 }
 
+function expectNoMapDataWork(
+  delta: ReturnType<typeof diffPerformanceCounters>
+): void {
+  expect(delta.homeLoaderStarts).toBe(0)
+  expect(delta.fullActivityLoads).toBe(0)
+  expect(delta.uniqueDistanceWorkerRequests).toBe(0)
+  expect(delta.fogWorkerRebuildRequests).toBe(0)
+  expect(delta.fogWorkerAppendRequests).toBe(0)
+  expect(delta.mapSourceSetDataCalls).toBe(0)
+  expect(delta.activityPaintUpdates).toBe(0)
+  expect(delta.mapUiNavigations).toBe(0)
+  expect(delta.idbGetAllCalls.activities ?? 0).toBe(0)
+  expect(delta.idbGetCalls.activities ?? 0).toBe(0)
+  expect(delta.idbGetAllCalls.photos ?? 0).toBe(0)
+  expect(delta.idbGetAllCalls["saved-points"] ?? 0).toBe(0)
+}
+
 test.describe("map interaction performance fixture", () => {
   test.describe.configure({ mode: "serial" })
 
@@ -104,16 +121,26 @@ test.describe("map interaction performance fixture", () => {
       const canvas = page.locator(".maplibregl-canvas").first()
       const canvasBounds = await canvas.boundingBox()
       if (!canvasBounds) throw new Error("Map canvas is not visible")
-      await page.mouse.click(
-        canvasBounds.x + canvasBounds.width * 0.08,
-        canvasBounds.y + canvasBounds.height * 0.08
+      const baselineUrl = page.url()
+      for (let click = 0; click < 3; click++) {
+        await page.mouse.click(
+          canvasBounds.x + canvasBounds.width * 0.08,
+          canvasBounds.y + canvasBounds.height * 0.08
+        )
+      }
+      await page.waitForTimeout(100)
+      const emptyClickDelta = diffPerformanceCounters(
+        baseline,
+        await readPerformanceCounters(page)
       )
-      await expect
-        .poll(async () => {
-          const current = await readPerformanceCounters(page)
-          return diffPerformanceCounters(baseline, current).homeLoaderStarts
-        })
-        .toBeGreaterThanOrEqual(1)
+      expect(page.url()).toBe(baselineUrl)
+      expectNoMapDataWork(emptyClickDelta)
+      expect(emptyClickDelta.mapRouteCommits).toBe(0)
+      expect(emptyClickDelta.mapDialogCommits).toBe(0)
+      await reportMetrics(testInfo, reports, "empty-click-no-dialog", {
+        observedPostFixBaseline: emptyClickDelta,
+        prePhase2ExpectedHomeLoaderStarts: ">=1",
+      })
 
       for (const variant of [
         { name: "activities-on-fog-on", activities: true, fog: true },
@@ -169,8 +196,19 @@ test.describe("map interaction performance fixture", () => {
         openDialogMetrics
       )
 
+      const beforeActivityClose = await readPerformanceCounters(page)
       await page.getByRole("button", { name: "Close" }).first().click()
       await expect(page).toHaveURL(/\/map$/)
+      const activityCloseDelta = diffPerformanceCounters(
+        beforeActivityClose,
+        await readPerformanceCounters(page)
+      )
+      expect(activityCloseDelta.homeLoaderStarts).toBe(0)
+      expect(activityCloseDelta.fullActivityLoads).toBe(0)
+      expect(activityCloseDelta.uniqueDistanceWorkerRequests).toBe(0)
+      expect(activityCloseDelta.fogWorkerRebuildRequests).toBe(0)
+      expect(activityCloseDelta.fogWorkerAppendRequests).toBe(0)
+      expect(activityCloseDelta.mapUiNavigations).toBe(1)
       const closedDialogMetrics = await sampleMapGesture(page)
       expect(closedDialogMetrics.finalCenter).not.toEqual(
         closedDialogMetrics.initialCenter
@@ -214,7 +252,28 @@ test.describe("map interaction performance fixture", () => {
       rotate: true,
     })
     expect(metrics.finalCenter).not.toEqual(metrics.initialCenter)
-    await reportMetrics(testInfo, [], "mobile-touch-pan-rotate", metrics)
+    expect(
+      Math.abs(metrics.finalBearing - metrics.initialBearing)
+    ).toBeGreaterThan(1)
+    await reportMetrics(testInfo, [], "mobile-touch-pan-rotate", {
+      commit: process.env.GITHUB_SHA ?? "working-tree",
+      browser: testInfo.project.name,
+      viewport: { width: 390, height: 844 },
+      hardwareConcurrency: await page.evaluate(
+        () => navigator.hardwareConcurrency
+      ),
+      dataset: {
+        count: activities.length,
+        kind: "compact",
+        pointCount: activities.reduce(
+          (sum, activity) => sum + activity.coordinates.length,
+          0
+        ),
+        featureCount: activities.length,
+      },
+      cpuThrottling: false,
+      ...metrics,
+    })
   })
 
   test("coalesces desktop dialog pointer moves", async ({ page }) => {
