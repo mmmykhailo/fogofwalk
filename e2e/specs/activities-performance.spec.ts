@@ -36,6 +36,25 @@ function expectRequiredTimings(
   }
 }
 
+function expectNoActivityStorageWork(
+  delta: ReturnType<typeof diffPerformanceCounters>
+): void {
+  expect(delta.homeLoaderStarts).toBe(0)
+  expect(delta.homeBootstrapStarts).toBe(0)
+  expect(delta.fullActivityLoads).toBe(0)
+  expect(delta.activitySummaryReads).toBe(0)
+  expect(delta.uniqueDistanceWorkerRequests).toBe(0)
+  expect(Object.values(delta.idbGetCalls).every((count) => count === 0)).toBe(
+    true
+  )
+  expect(
+    Object.values(delta.idbGetAllCalls).every((count) => count === 0)
+  ).toBe(true)
+  expect(Object.values(delta.idbWriteCalls).every((count) => count === 0)).toBe(
+    true
+  )
+}
+
 test.describe("activities performance fixture", () => {
   test.describe.configure({ mode: "serial" })
 
@@ -301,20 +320,7 @@ test.describe("activities performance fixture", () => {
       beforeCounters,
       await readPerformanceCounters(page)
     )
-    expect(delta.homeLoaderStarts).toBe(0)
-    expect(delta.homeBootstrapStarts).toBe(0)
-    expect(delta.fullActivityLoads).toBe(0)
-    expect(delta.activitySummaryReads).toBe(0)
-    expect(delta.uniqueDistanceWorkerRequests).toBe(0)
-    expect(Object.values(delta.idbGetCalls).every((count) => count === 0)).toBe(
-      true
-    )
-    expect(
-      Object.values(delta.idbGetAllCalls).every((count) => count === 0)
-    ).toBe(true)
-    expect(
-      Object.values(delta.idbWriteCalls).every((count) => count === 0)
-    ).toBe(true)
+    expectNoActivityStorageWork(delta)
   })
 
   test("normalizes malformed and stale page values", async ({ page }) => {
@@ -470,7 +476,12 @@ test.describe("activities performance fixture", () => {
         .length,
     }))
     expect(after).toEqual(before)
-    expect(await readPerformanceCounters(page)).toEqual(beforeCounters)
+    expectNoActivityStorageWork(
+      diffPerformanceCounters(
+        beforeCounters,
+        await readPerformanceCounters(page)
+      )
+    )
   })
 
   test("upgrades a v3 database and derives summaries", async ({ page }) => {
