@@ -48,6 +48,7 @@ export type FogEngineResult =
 interface EngineState {
   generation: number
   libraryRevision: number
+  coverageRevision: number
   mode: FogMode
   accumulator: FogMaskAccumulator
   processedActivityIds: Set<string>
@@ -127,11 +128,17 @@ function safeActivityRejectionCode(reason: string | undefined): string {
  * Worker. A request either extends the exact base revision or is rejected.
  */
 export interface FogEngine {
-  reset(generation: number, libraryRevision: number, mode: FogMode): void
+  reset(
+    generation: number,
+    libraryRevision: number,
+    coverageRevision: number,
+    mode: FogMode
+  ): void
   cancel(generation: number): void
   getState(): Readonly<{
     generation: number
     libraryRevision: number
+    coverageRevision: number
     mode: FogMode
     activityCount: number
     completeness: "partial" | "complete"
@@ -156,12 +163,14 @@ export function createFogEngine(options: FogEngineOptions = {}): FogEngine {
   function reset(
     generation: number,
     libraryRevision: number,
+    coverageRevision: number,
     mode: FogMode
   ): void {
     cancelledGenerations.delete(generation)
     state = {
       generation,
       libraryRevision,
+      coverageRevision,
       mode,
       accumulator: createFogMaskAccumulator(mode),
       processedActivityIds: new Set(),
@@ -177,6 +186,7 @@ export function createFogEngine(options: FogEngineOptions = {}): FogEngine {
   function getState(): Readonly<{
     generation: number
     libraryRevision: number
+    coverageRevision: number
     mode: FogMode
     activityCount: number
     completeness: "partial" | "complete"
@@ -185,6 +195,7 @@ export function createFogEngine(options: FogEngineOptions = {}): FogEngine {
     return {
       generation: state.generation,
       libraryRevision: state.libraryRevision,
+      coverageRevision: state.coverageRevision,
       mode: state.mode,
       activityCount: state.processedActivityIds.size,
       completeness: state.completeness,
@@ -201,6 +212,12 @@ export function createFogEngine(options: FogEngineOptions = {}): FogEngine {
     ) {
       return "Fog library revision is invalid."
     }
+    if (
+      !Number.isSafeInteger(request.coverageRevision) ||
+      request.coverageRevision < 0
+    ) {
+      return "Fog coverage revision is invalid."
+    }
     if (request.kind === "append") {
       if (state?.generation !== request.generation) {
         return "Fog append rejected because its generation is stale."
@@ -208,13 +225,16 @@ export function createFogEngine(options: FogEngineOptions = {}): FogEngine {
       if (state.mode !== request.mode) {
         return "Fog append rejected because its mode does not match the base."
       }
-      if (request.baseLibraryRevision !== state.libraryRevision) {
+      if (
+        request.baseLibraryRevision !== state.libraryRevision ||
+        request.baseCoverageRevision !== state.coverageRevision
+      ) {
         return "Fog append rejected because its base revision does not match."
       }
       if (state.completeness !== "complete") {
         return "Fog append rejected because the current base is partial; rebuild is required."
       }
-      if (request.libraryRevision < state.libraryRevision) {
+      if (request.coverageRevision < state.coverageRevision) {
         return "Fog append rejected because its revision is older than the base."
       }
     }
@@ -271,6 +291,7 @@ export function createFogEngine(options: FogEngineOptions = {}): FogEngine {
     return {
       generation: request.generation,
       libraryRevision: currentState.libraryRevision,
+      coverageRevision: currentState.coverageRevision,
       mode: currentState.mode,
       algorithmVersion: FOG_ALGORITHM_VERSION,
       partitionSchemeVersion: FOG_PARTITION_SCHEME_VERSION,
@@ -301,6 +322,7 @@ export function createFogEngine(options: FogEngineOptions = {}): FogEngine {
       requestId: request.requestId,
       generation: request.generation,
       libraryRevision: request.libraryRevision,
+      coverageRevision: request.coverageRevision,
       mode: request.mode,
       processed: diagnostics.processed,
       total: request.activities.length,
@@ -320,6 +342,7 @@ export function createFogEngine(options: FogEngineOptions = {}): FogEngine {
       requestId: request.requestId,
       generation: request.generation,
       libraryRevision: request.libraryRevision,
+      coverageRevision: request.coverageRevision,
       mode: request.mode,
       ...(activityId ? { activityId } : {}),
       fatal,
@@ -340,13 +363,19 @@ export function createFogEngine(options: FogEngineOptions = {}): FogEngine {
     }
 
     if (request.kind === "rebuild") {
-      reset(request.generation, request.libraryRevision, request.mode)
+      reset(
+        request.generation,
+        request.libraryRevision,
+        request.coverageRevision,
+        request.mode
+      )
     } else if (!state) {
       const message = "Fog append rejected because no worker base exists."
       emitError(request, message, true)
       return { status: "rejected", snapshot: null, message }
     } else {
       state.libraryRevision = request.libraryRevision
+      state.coverageRevision = request.coverageRevision
     }
 
     const currentState = state!

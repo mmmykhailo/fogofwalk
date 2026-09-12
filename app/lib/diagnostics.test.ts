@@ -48,7 +48,7 @@ describe("local diagnostics", () => {
 
     const exported = exportDiagnostics(123)
     expect(exported).toEqual({
-      schemaVersion: 3,
+      schemaVersion: 4,
       exportedAt: 123,
       events: [
         expect.objectContaining({

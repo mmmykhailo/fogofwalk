@@ -42,7 +42,11 @@ function activity(id: string, contentHash = `hash-${id}`): ParsedActivity {
 describe("activity library command repository", () => {
   test("deduplicates an import by content hash without advancing revision", () => {
     const first = activity("first", "same")
-    const initial = { revision: 0, activities: [] as ParsedActivity[] }
+    const initial = {
+      revision: 0,
+      coverageRevision: 0,
+      activities: [] as ParsedActivity[],
+    }
     const added = applyLibraryCommand(initial, {
       type: "import",
       operationId: "op-1",
@@ -55,7 +59,9 @@ describe("activity library command repository", () => {
     })
 
     expect(added.snapshot.revision).toBe(1)
+    expect(added.snapshot.coverageRevision).toBe(1)
     expect(duplicate.snapshot.revision).toBe(1)
+    expect(duplicate.snapshot.coverageRevision).toBe(1)
     expect(duplicate.change.duplicates).toEqual([
       {
         activityId: "second",
@@ -309,6 +315,76 @@ describe("activity library command repository", () => {
     })
     expect(noOp.snapshot.revision).toBe(1)
     expect(noOp.change.updated).toHaveLength(0)
+  })
+
+  test("keeps metadata revisions separate from coverage revisions", () => {
+    const first = activity("local")
+    const imported = applyLibraryCommand(
+      { revision: 0, coverageRevision: 0, activities: [] },
+      { type: "import", operationId: "import", activities: [first] }
+    )
+
+    const metadata = applyLibraryCommand(imported.snapshot, {
+      type: "updateMetadata",
+      operationId: "metadata",
+      patches: [{ id: first.id, isPublic: true, activityType: "walking" }],
+    })
+
+    expect(metadata.snapshot.revision).toBe(2)
+    expect(metadata.snapshot.coverageRevision).toBe(1)
+    expect(metadata.change.domains).toEqual({
+      membership: false,
+      geometry: false,
+      metadata: true,
+      statistics: false,
+    })
+    expect(metadata.snapshot.activities[0]).toMatchObject({
+      id: first.id,
+      isPublic: true,
+      activityType: "walking",
+    })
+
+    const noOp = applyLibraryCommand(metadata.snapshot, {
+      type: "updateMetadata",
+      operationId: "metadata-no-op",
+      patches: [{ id: first.id, isPublic: true }],
+    })
+    expect(noOp.snapshot.revision).toBe(2)
+    expect(noOp.snapshot.coverageRevision).toBe(1)
+    expect(noOp.change.domains).toEqual({
+      membership: false,
+      geometry: false,
+      metadata: false,
+      statistics: false,
+    })
+  })
+
+  test("rejects geometry fields and duplicate metadata targets", () => {
+    expect(() =>
+      applyLibraryCommand(
+        { revision: 0, coverageRevision: 0, activities: [] },
+        {
+          type: "updateMetadata",
+          operationId: "invalid",
+          patches: [
+            {
+              id: "one",
+              coordinates: [] as never,
+            } as never,
+          ],
+        }
+      )
+    ).toThrow()
+    expect(() =>
+      applyLibraryCommand(
+        { revision: 0, coverageRevision: 0, activities: [] },
+        {
+          type: "updateMetadata",
+          operationId: "duplicate",
+          patches: [{ id: "one", isPublic: true }, { id: "one", isPublic: false }],
+        }
+      )
+    ).toThrow()
   })
 
   test("refresh publishes a newer repository snapshot to listeners", async () => {

@@ -25,6 +25,7 @@ function request(overrides: Partial<FogRequest> = {}): FogRequest {
     requestId: "request-1",
     generation: 1,
     libraryRevision: 1,
+    coverageRevision: 1,
     mode: "corridor",
     kind: "rebuild",
     activities: [activity("one")],
@@ -179,6 +180,7 @@ describe("FogEngine", () => {
         kind: "append",
         libraryRevision: 2,
         baseLibraryRevision: 0,
+        baseCoverageRevision: 0,
       })
     )
     expect(staleRevision.status).toBe("rejected")
@@ -189,6 +191,7 @@ describe("FogEngine", () => {
         kind: "append",
         libraryRevision: 2,
         baseLibraryRevision: 1,
+        baseCoverageRevision: 1,
         mode: "fill",
       })
     )
@@ -233,6 +236,7 @@ describe("FogEngine", () => {
         kind: "append",
         libraryRevision: 2,
         baseLibraryRevision: 1,
+        baseCoverageRevision: 1,
         activities: [activity("two")],
       })
     )

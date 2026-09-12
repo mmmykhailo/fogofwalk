@@ -104,6 +104,7 @@ interface MapStore {
   fogSnapshot: {
     generation: number
     libraryRevision: number
+    coverageRevision: number
     mode: FogMode
     algorithmVersion: number
     partitionSchemeVersion: number
@@ -114,6 +115,8 @@ interface MapStore {
   libraryRevision: number
   /** Revision for which unique-distance values have been applied to this projection. */
   uniqueDistanceProjectionRevision: number | null
+  /** Activity membership/geometry revision projected into the fog map. */
+  coverageRevision: number
   /** True once MapView is ready to receive fog-worker replies. */
   isFogWorkerListenerReady: boolean
   /**
@@ -139,6 +142,7 @@ export interface FogProjectionStatus {
   phase: FogProjectionPhase
   generation: number
   libraryRevision: number
+  coverageRevision: number
   mode: FogMode
   processed: number
   total: number
@@ -175,6 +179,7 @@ export const mapStore: MapStore = {
   renderSourceRevision: null,
   libraryRevision: 0,
   uniqueDistanceProjectionRevision: null,
+  coverageRevision: 0,
   isFogWorkerListenerReady: false,
   shareCardCache: null,
 }
@@ -292,6 +297,7 @@ let fogStatus: FogProjectionStatus = {
   phase: "idle",
   generation: mapStore.runId,
   libraryRevision: mapStore.libraryRevision,
+  coverageRevision: mapStore.coverageRevision,
   mode: mapStore.fogMode,
   processed: 0,
   total: 0,
@@ -335,6 +341,7 @@ function updateFogStatus(
     next.phase === fogStatus.phase &&
     next.generation === fogStatus.generation &&
     next.libraryRevision === fogStatus.libraryRevision &&
+    next.coverageRevision === fogStatus.coverageRevision &&
     next.mode === fogStatus.mode &&
     next.processed === fogStatus.processed &&
     next.total === fogStatus.total &&
@@ -377,16 +384,33 @@ let activityLibrarySubscription: (() => void) | null = null
 export const uniqueDistanceProjection = createUniqueDistanceProjection(
   {},
   {
-    onError: ({ revision, error }) =>
+    onError: ({ coverageRevision, error }) =>
       console.warn(
-        `[projection] unique distance failed for library revision ${revision}:`,
+        `[projection] unique distance failed for coverage revision ${coverageRevision}:`,
         error
       ),
-    onComplete: ({ revision, activities }) => {
-      if (mapStore.libraryRevision === revision) {
-        mapStore.activities = cloneActivities(activities)
-        mapStore.uniqueDistanceProjectionRevision = revision
-      }
+    onComplete: ({ coverageRevision, activities }) => {
+      if (mapStore.coverageRevision !== coverageRevision) return
+      const projectedById = new Map(
+        activities.map((activity) => [activity.id, activity])
+      )
+      mapStore.activities = mapStore.activities.map((activity) => {
+        const projected = projectedById.get(activity.id)
+        if (
+          !projected ||
+          projected.stats.uniqueDistanceKm === activity.stats.uniqueDistanceKm
+        ) {
+          return activity
+        }
+        return {
+          ...activity,
+          stats: {
+            ...activity.stats,
+            uniqueDistanceKm: projected.stats.uniqueDistanceKm,
+          },
+        }
+      })
+      mapStore.uniqueDistanceProjectionRevision = coverageRevision
     },
   }
 )
@@ -414,6 +438,7 @@ export const fogCoordinator = createFogCoordinator(
         phase: "processing",
         generation: request.generation,
         libraryRevision: request.libraryRevision,
+        coverageRevision: request.coverageRevision,
         mode: request.mode,
         processed: 0,
         total: request.activities.length,
@@ -445,6 +470,7 @@ export const fogCoordinator = createFogCoordinator(
         phase: fogStatus.phase === "degraded" ? "degraded" : "processing",
         generation: context.request.generation,
         libraryRevision: context.request.libraryRevision,
+        coverageRevision: context.request.coverageRevision,
         mode: context.request.mode,
         processed: progress.processed,
         total: progress.total,
@@ -495,6 +521,7 @@ export const fogCoordinator = createFogCoordinator(
         phase: "recovering",
         generation: context.request.generation,
         libraryRevision: context.request.libraryRevision,
+        coverageRevision: context.request.coverageRevision,
         mode: context.request.mode,
         processed: 0,
         total: context.request.activities.length,
@@ -633,26 +660,90 @@ function toFogWorkerActivity(activity: FogWorkerActivity): FogWorkerActivity {
   }
 }
 
-function applyLibrarySnapshot(snapshot: LibrarySnapshot): void {
-  if (mapStore.uniqueDistanceProjectionRevision !== snapshot.revision) {
+function mergeMetadataSnapshot(
+  currentActivities: readonly ParsedActivity[],
+  snapshotActivities: readonly ParsedActivity[]
+): ParsedActivity[] {
+  const nextById = new Map(
+    snapshotActivities.map((activity) => [activity.id, activity])
+  )
+  return currentActivities.map((activity) => {
+    const next = nextById.get(activity.id)
+    if (!next) return activity
+    if (
+      activity.name === next.name &&
+      activity.startedAtMs === next.startedAtMs &&
+      activity.activityType === next.activityType &&
+      activity.startSunPhase === next.startSunPhase &&
+      activity.contentHash === next.contentHash &&
+      activity.isPublic === next.isPublic
+    ) {
+      return activity
+    }
+    return {
+      ...activity,
+      name: next.name,
+      startedAtMs: next.startedAtMs,
+      activityType: next.activityType,
+      startSunPhase: next.startSunPhase,
+      contentHash: next.contentHash,
+      isPublic: next.isPublic,
+    }
+  })
+}
+
+function applyLibrarySnapshot(
+  snapshot: LibrarySnapshot,
+  change?: LibraryChange
+): void {
+  const coverageChanged =
+    mapStore.coverageRevision !== snapshot.coverageRevision
+  if (
+    mapStore.activityHydration !== "full" ||
+    coverageChanged ||
+    change?.domains.geometry ||
+    change?.domains.membership
+  ) {
     mapStore.activities = cloneActivities(snapshot.activities)
     mapStore.uniqueDistanceProjectionRevision = null
+  } else if (change?.domains.metadata) {
+    mapStore.activities = mergeMetadataSnapshot(
+      mapStore.activities,
+      snapshot.activities
+    )
+  } else if (change?.domains.statistics) {
+    const statsById = new Map(
+      snapshot.activities.map((activity) => [activity.id, activity.stats])
+    )
+    mapStore.activities = mapStore.activities.map((activity) => {
+      const stats = statsById.get(activity.id)
+      return stats ? { ...activity, stats } : activity
+    })
   }
   mapStore.activitySummaries = []
   mapStore.activityHydration = "full"
   mapStore.libraryRevision = snapshot.revision
-  uniqueDistanceProjection.schedule(snapshot)
+  mapStore.coverageRevision = snapshot.coverageRevision
+  if (
+    coverageChanged ||
+    mapStore.uniqueDistanceProjectionRevision !== snapshot.coverageRevision
+  ) {
+    uniqueDistanceProjection.schedule(snapshot)
+  }
 }
 
 function applyFogLibraryChange(
   snapshot: LibrarySnapshot,
   change: LibraryChange
 ): void {
-  const hasChanges =
-    change.added.length > 0 ||
-    change.updated.length > 0 ||
-    change.removed.length > 0
-  if (!hasChanges) return
+  if (
+    change.domains.statistics &&
+    !change.domains.membership &&
+    !change.domains.geometry
+  ) {
+    return
+  }
+  if (!change.domains.membership && !change.domains.geometry) return
   if (!mapStore.worker) {
     if (change.updated.length > 0 || change.removed.length > 0) {
       rebuildFogProjection(mapStore.fogMode)
@@ -661,6 +752,7 @@ function applyFogLibraryChange(
         phase: "failed",
         generation: mapStore.runId,
         libraryRevision: snapshot.revision,
+        coverageRevision: snapshot.coverageRevision,
         mode: mapStore.fogMode,
         total: snapshot.activities.length,
         error: "Fog processing is unavailable. Retry to clear the new route.",
@@ -687,6 +779,7 @@ function applyFogLibraryChange(
     mode: mapStore.fogMode,
     kind: "append",
     libraryRevision: snapshot.revision,
+    coverageRevision: snapshot.coverageRevision,
   })
 }
 
@@ -695,7 +788,7 @@ export async function initializeActivityLibrary(): Promise<ParsedActivity[]> {
   if (!activityLibrarySubscription) {
     activityLibrarySubscription = activityLibrary.subscribe(
       (snapshot, change) => {
-        applyLibrarySnapshot(snapshot)
+        applyLibrarySnapshot(snapshot, change)
         applyFogLibraryChange(snapshot, change)
       }
     )
@@ -742,7 +835,7 @@ export function recordFogSnapshot(
 ): void {
   if (
     snapshot.generation !== mapStore.runId ||
-    snapshot.libraryRevision !== mapStore.libraryRevision ||
+    snapshot.coverageRevision !== mapStore.coverageRevision ||
     snapshot.mode !== mapStore.fogMode
   ) {
     return
@@ -764,6 +857,7 @@ export function recordFogSnapshot(
     phase: !terminal ? "processing" : isCompleteSnapshot ? "idle" : "degraded",
     generation: snapshot.generation,
     libraryRevision: snapshot.libraryRevision,
+    coverageRevision: snapshot.coverageRevision,
     mode: snapshot.mode,
     processed: snapshot.diagnostics.processed,
     total: snapshot.diagnostics.total,
@@ -813,6 +907,7 @@ export function startFogRun(): number {
     phase: "processing",
     generation: mapStore.runId,
     libraryRevision: mapStore.libraryRevision,
+    coverageRevision: mapStore.coverageRevision,
     mode: mapStore.fogMode,
     processed: 0,
     total: mapStore.activities.length,
@@ -840,12 +935,13 @@ export function postToFogWorker(msg: FogWorkerCommand): boolean {
     if (!worker) return false
 
     const libraryRevision = msg.libraryRevision ?? mapStore.libraryRevision
+    const coverageRevision = msg.coverageRevision ?? mapStore.coverageRevision
     const completed = fogCoordinator.completedSnapshot
     const hasCompatibleBase =
       completed !== null &&
       completed.generation === mapStore.runId &&
       completed.mode === msg.mode &&
-      completed.libraryRevision < libraryRevision
+      completed.coverageRevision < coverageRevision
     const kind = msg.kind ?? (hasCompatibleBase ? "append" : "rebuild")
     // ParsedActivity contains timestamps, laps, statistics, and other metadata.
     // Project at the worker boundary so structured cloning only copies what fog
@@ -857,6 +953,7 @@ export function postToFogWorker(msg: FogWorkerCommand): boolean {
         {
           generation: mapStore.runId,
           libraryRevision,
+          coverageRevision,
           mode: msg.mode,
           activities: allActivities,
         },
@@ -879,6 +976,7 @@ export function postToFogWorker(msg: FogWorkerCommand): boolean {
     fogCoordinator.reset({
       generation: mapStore.runId,
       libraryRevision: mapStore.libraryRevision,
+      coverageRevision: mapStore.coverageRevision,
       mode: mapStore.fogMode,
     })
     return true
@@ -900,6 +998,7 @@ export function rebuildFogProjection(
       phase: "failed",
       generation,
       libraryRevision: mapStore.libraryRevision,
+      coverageRevision: mapStore.coverageRevision,
       mode,
       error: "Fog processing is unavailable. Retry to rebuild the map.",
       retryable: true,
@@ -932,6 +1031,7 @@ export function rebuildFogProjection(
     mode,
     kind: "rebuild",
     libraryRevision: mapStore.libraryRevision,
+    coverageRevision: mapStore.coverageRevision,
   })
   if (!scheduled) {
     updateFogStatus({
@@ -977,6 +1077,7 @@ export function queueAddedActivitiesForFog(
     mode,
     kind: "append",
     libraryRevision: mapStore.libraryRevision,
+    coverageRevision: mapStore.coverageRevision,
   })
 }
 

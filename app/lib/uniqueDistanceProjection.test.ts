@@ -38,7 +38,7 @@ function snapshot(
   revision: number,
   activities: ParsedActivity[]
 ): LibrarySnapshot {
-  return { revision, activities }
+  return { revision, coverageRevision: revision, activities }
 }
 
 async function waitFor(
@@ -58,8 +58,8 @@ describe("UniqueDistanceProjection", () => {
   test("keys the projection marker by revision and activity identity", () => {
     const activities = [activity("one"), activity("two")]
     const state = {
-      version: 2,
-      libraryRevision: 12,
+      version: 3,
+      coverageRevision: 12,
       activityIds: ["two", "one"],
     }
 
@@ -91,8 +91,14 @@ describe("UniqueDistanceProjection", () => {
         return new Map(activities.map(({ id }) => [id, id === "new" ? 9 : 3]))
       },
       save: async (activities, options) => {
-        saved.push({ revision: options.libraryRevision!, activities })
-        return { status: "saved", libraryRevision: options.libraryRevision! }
+        saved.push({
+          revision: options.coverageRevision!,
+          activities,
+        })
+        return {
+          status: "saved",
+          coverageRevision: options.coverageRevision!,
+        }
       },
     })
 
@@ -114,9 +120,9 @@ describe("UniqueDistanceProjection", () => {
     ).toBe(9)
     expect(projection.getStatus()).toMatchObject({
       state: "idle",
-      activeRevision: null,
-      queuedRevision: null,
-      completedRevision: 3,
+      activeCoverageRevision: null,
+      queuedCoverageRevision: null,
+      completedCoverageRevision: 3,
       error: null,
     } satisfies Partial<UniqueDistanceProjectionStatus>)
   })
@@ -128,8 +134,8 @@ describe("UniqueDistanceProjection", () => {
         compute: async () => new Map([["one", 2]]),
         save: async (_, options) => ({
           status: "stale",
-          expectedLibraryRevision: options.libraryRevision!,
-          actualLibraryRevision: options.libraryRevision! + 1,
+          expectedCoverageRevision: options.coverageRevision!,
+          actualCoverageRevision: options.coverageRevision! + 1,
         }),
       },
       { onError: ({ error }) => errors.push(error) }
@@ -141,13 +147,13 @@ describe("UniqueDistanceProjection", () => {
     expect(errors).toEqual([])
     expect(projection.getStatus()).toMatchObject({
       state: "idle",
-      completedRevision: null,
+      completedCoverageRevision: null,
       error: null,
     })
   })
 
   test("keeps a recoverable failure status and reports the revision", async () => {
-    const failures: Array<{ revision: number; error: unknown }> = []
+    const failures: Array<{ coverageRevision: number; error: unknown }> = []
     const projection = createUniqueDistanceProjection(
       {
         compute: async () => {
@@ -161,11 +167,11 @@ describe("UniqueDistanceProjection", () => {
     await projection.waitForIdle()
 
     expect(failures).toHaveLength(1)
-    expect(failures[0]?.revision).toBe(8)
+    expect(failures[0]?.coverageRevision).toBe(8)
     expect(projection.getStatus()).toMatchObject({
       state: "failed",
-      activeRevision: null,
-      queuedRevision: null,
+      activeCoverageRevision: null,
+      queuedCoverageRevision: null,
       error: expect.any(Error),
     })
 

@@ -16,6 +16,7 @@ export interface FogCoordinatorTransport {
 export interface FogCoordinatorInput {
   generation: number
   libraryRevision: number
+  coverageRevision: number
   mode: FogMode
   activities: readonly FogWorkerActivity[]
 }
@@ -117,7 +118,7 @@ function sameSchedule(
 ): boolean {
   return (
     first.generation === second.generation &&
-    first.libraryRevision === second.libraryRevision &&
+    first.coverageRevision === second.coverageRevision &&
     first.mode === second.mode
   )
 }
@@ -136,7 +137,8 @@ function validRevision(value: number): boolean {
 function validInput(input: FogCoordinatorInput): void {
   if (
     !validRevision(input.generation) ||
-    !validRevision(input.libraryRevision)
+    !validRevision(input.libraryRevision) ||
+    !validRevision(input.coverageRevision)
   ) {
     throw new RangeError(
       "Fog generation and library revision must be safe integers"
@@ -161,6 +163,7 @@ export interface FogCoordinator {
   reset(input: {
     generation: number
     libraryRevision: number
+    coverageRevision: number
     mode: FogMode
   }): FogCoordinatorRequestContext
   handleWorkerFailure(reason?: unknown): void
@@ -192,6 +195,13 @@ export function createFogCoordinator(
     }
 
     if (active) {
+      if (
+        sameSchedule(active.context.input, next.input) &&
+        !next.forceRebuild &&
+        next.appendActivities.length === 0
+      ) {
+        return null
+      }
       queued = coalesce(queued, next)
       return null
     }
@@ -222,6 +232,7 @@ export function createFogCoordinator(
       requestId: requestId(),
       generation: previous.context.request.generation,
       libraryRevision: previous.context.request.libraryRevision,
+      coverageRevision: previous.context.request.coverageRevision,
       mode: previous.context.request.mode,
       kind: "cancel",
       activities: [],
@@ -244,6 +255,7 @@ export function createFogCoordinator(
   function reset(input: {
     generation: number
     libraryRevision: number
+    coverageRevision: number
     mode: FogMode
   }): FogCoordinatorRequestContext {
     validInput({ ...input, activities: [] })
@@ -257,6 +269,7 @@ export function createFogCoordinator(
       requestId: requestId(),
       generation: input.generation,
       libraryRevision: input.libraryRevision,
+      coverageRevision: input.coverageRevision,
       mode: input.mode,
       kind: "cancel",
       activities: [],
@@ -359,6 +372,7 @@ export function createFogCoordinator(
     if (reply.type === "PROGRESS") {
       if (
         reply.libraryRevision !== current.context.request.libraryRevision ||
+        reply.coverageRevision !== current.context.request.coverageRevision ||
         reply.mode !== current.context.request.mode
       ) {
         return ignored
@@ -390,6 +404,7 @@ export function createFogCoordinator(
     if (reply.type === "CANCELLED") {
       if (
         reply.libraryRevision !== current.context.request.libraryRevision ||
+        reply.coverageRevision !== current.context.request.coverageRevision ||
         reply.mode !== current.context.request.mode
       ) {
         return ignored
@@ -448,7 +463,7 @@ export function createFogCoordinator(
     if (
       previous.input.generation !== next.input.generation ||
       previous.input.mode !== next.input.mode ||
-      next.input.libraryRevision <= previous.input.libraryRevision
+      next.input.coverageRevision <= previous.input.coverageRevision
     ) {
       return next
     }
@@ -476,15 +491,19 @@ export function createFogCoordinator(
       completed !== null &&
       completed.input.generation === next.input.generation &&
       completed.input.mode === next.input.mode &&
-      next.input.libraryRevision > completed.input.libraryRevision
+      next.input.coverageRevision > completed.input.coverageRevision
 
     const request: FogRequest = {
       protocolVersion: FOG_PROTOCOL_VERSION,
       requestId: requestId(),
       generation: next.input.generation,
       libraryRevision: next.input.libraryRevision,
+      coverageRevision: next.input.coverageRevision,
       ...(append && completed
-        ? { baseLibraryRevision: completed.input.libraryRevision }
+        ? {
+            baseLibraryRevision: completed.input.libraryRevision,
+            baseCoverageRevision: completed.input.coverageRevision,
+          }
         : {}),
       mode: next.input.mode,
       kind: append ? "append" : "rebuild",
@@ -522,6 +541,7 @@ export function createFogCoordinator(
     return (
       snapshot.generation === request.generation &&
       snapshot.libraryRevision === request.libraryRevision &&
+      snapshot.coverageRevision === request.coverageRevision &&
       snapshot.mode === request.mode &&
       snapshot.algorithmVersion === FOG_ALGORITHM_VERSION &&
       snapshot.partitionSchemeVersion === FOG_PARTITION_SCHEME_VERSION

@@ -31,7 +31,9 @@ export type FogWorkerCommand =
       mode: FogMode
       kind?: "rebuild" | "append"
       libraryRevision?: number
+      coverageRevision?: number
       baseLibraryRevision?: number
+      baseCoverageRevision?: number
     }
   | { type: "RESET" }
 

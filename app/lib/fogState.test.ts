@@ -29,6 +29,7 @@ const originalFogMode = mapStore.fogMode
 const originalRenderSourceRevision = mapStore.renderSourceRevision
 const originalActivities = mapStore.activities
 const originalLibraryRevision = mapStore.libraryRevision
+const originalCoverageRevision = mapStore.coverageRevision
 const originalUniqueDistanceProjectionRevision =
   mapStore.uniqueDistanceProjectionRevision
 const originalProcessedCount = mapStore.processedCount
@@ -47,6 +48,7 @@ afterEach(() => {
   mapStore.renderSourceRevision = originalRenderSourceRevision
   mapStore.activities = originalActivities
   mapStore.libraryRevision = originalLibraryRevision
+  mapStore.coverageRevision = originalCoverageRevision
   mapStore.uniqueDistanceProjectionRevision =
     originalUniqueDistanceProjectionRevision
   mapStore.processedCount = originalProcessedCount
@@ -108,6 +110,7 @@ describe("fog worker run state", () => {
     recordFogSnapshot({
       generation,
       libraryRevision: mapStore.libraryRevision,
+      coverageRevision: mapStore.coverageRevision,
       mode: "corridor",
       algorithmVersion: FOG_ALGORITHM_VERSION,
       partitionSchemeVersion: FOG_PARTITION_SCHEME_VERSION,
@@ -142,6 +145,7 @@ describe("fog worker run state", () => {
     recordFogSnapshot({
       generation,
       libraryRevision: mapStore.libraryRevision,
+      coverageRevision: mapStore.coverageRevision,
       mode: "corridor",
       algorithmVersion: FOG_ALGORITHM_VERSION,
       partitionSchemeVersion: FOG_PARTITION_SCHEME_VERSION,
@@ -334,6 +338,7 @@ describe("fog worker run state", () => {
     mapStore.activities = [first]
     mapStore.runId = 4
     mapStore.libraryRevision = 1
+    mapStore.coverageRevision = 1
 
     postToFogWorker({
       type: "PROCESS_ACTIVITIES",
@@ -341,6 +346,7 @@ describe("fog worker run state", () => {
       mode: "fill",
       kind: "rebuild",
       libraryRevision: 1,
+      coverageRevision: 1,
     })
     const initialRequest = messages[0] as {
       protocolVersion: typeof FOG_PROTOCOL_VERSION
@@ -355,6 +361,7 @@ describe("fog worker run state", () => {
       snapshot: {
         generation: 4,
         libraryRevision: 1,
+        coverageRevision: 1,
         mode: "fill",
         algorithmVersion: FOG_ALGORITHM_VERSION,
         partitionSchemeVersion: FOG_PARTITION_SCHEME_VERSION,
@@ -375,6 +382,7 @@ describe("fog worker run state", () => {
     })
     mapStore.activities = [first, second]
     mapStore.libraryRevision = 2
+    mapStore.coverageRevision = 2
 
     queueAddedActivitiesForFog([second], "fill")
 
@@ -400,6 +408,7 @@ describe("fog worker run state", () => {
     } as unknown as Worker
     mapStore.activities = [first, second]
     mapStore.libraryRevision = 1
+    mapStore.coverageRevision = 1
 
     postToFogWorker({
       type: "PROCESS_ACTIVITIES",
@@ -407,6 +416,7 @@ describe("fog worker run state", () => {
       mode: "corridor",
       kind: "rebuild",
       libraryRevision: 1,
+      coverageRevision: 1,
     })
 
     queueAddedActivitiesForFog([second], "corridor")
@@ -424,7 +434,7 @@ describe("fog worker run state", () => {
 describe("fog cache validity", () => {
   const cache: FogCache = {
     activityIds: ["a", "b"],
-    libraryRevision: 2,
+    coverageRevision: 2,
     fogMode: "corridor",
     algorithmVersion: FOG_ALGORITHM_VERSION,
     partitionSchemeVersion: FOG_PARTITION_SCHEME_VERSION,

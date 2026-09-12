@@ -50,6 +50,7 @@ function postCancelled(request: FogRequest): void {
     requestId: request.requestId,
     generation: request.generation,
     libraryRevision: request.libraryRevision,
+    coverageRevision: request.coverageRevision,
     mode: request.mode,
   } satisfies FogReply)
 }
@@ -71,6 +72,7 @@ function postFatal(request: FogRequest, error: unknown): void {
     requestId: request.requestId,
     generation: request.generation,
     libraryRevision: request.libraryRevision,
+    coverageRevision: request.coverageRevision,
     mode: request.mode,
     fatal: true,
     message: error instanceof Error ? error.message : String(error),
@@ -94,6 +96,12 @@ function invalidRequestEnvelope(value: unknown): FogRequest {
     candidate.libraryRevision >= 0
       ? candidate.libraryRevision
       : 0
+  const coverageRevision =
+    typeof candidate.coverageRevision === "number" &&
+    Number.isSafeInteger(candidate.coverageRevision) &&
+    candidate.coverageRevision >= 0
+      ? candidate.coverageRevision
+      : 0
   return {
     protocolVersion: FOG_PROTOCOL_VERSION,
     requestId:
@@ -102,6 +110,7 @@ function invalidRequestEnvelope(value: unknown): FogRequest {
         : "invalid-request",
     generation,
     libraryRevision,
+    coverageRevision,
     mode: candidate.mode === "fill" ? "fill" : "corridor",
     kind: "cancel",
     activities: [],

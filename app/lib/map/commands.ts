@@ -64,7 +64,7 @@ export function applyFogDataToMap(
   map: maplibregl.Map,
   data = mapStore.fogData ?? worldFogGeoJSON(),
   revision = mapStore.fogData
-    ? (mapStore.fogSnapshot?.libraryRevision ?? mapStore.libraryRevision)
+    ? (mapStore.fogSnapshot?.coverageRevision ?? mapStore.coverageRevision)
     : null
 ): boolean {
   if (!mapStore.sourcesReady) return false

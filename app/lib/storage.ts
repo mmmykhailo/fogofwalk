@@ -26,7 +26,7 @@ interface StoredPhoto {
 
 export interface FogCache {
   activityIds: string[]
-  libraryRevision: number
+  coverageRevision: number
   fogMode: FogMode
   algorithmVersion: typeof FOG_ALGORITHM_VERSION
   partitionSchemeVersion: typeof FOG_PARTITION_SCHEME_VERSION
@@ -43,28 +43,28 @@ interface PrefEntry {
 export interface UniqueDistanceState {
   version: number
   activityIds: string[]
-  /** Canonical activity-library revision represented by the marker. */
-  libraryRevision: number
+  /** Activity membership/geometry revision represented by the marker. */
+  coverageRevision: number
 }
 
 export type UniqueDistanceSaveResult =
-  | { status: "saved"; libraryRevision: number }
+  | { status: "saved"; coverageRevision: number }
   | {
       status: "stale"
-      expectedLibraryRevision: number
-      actualLibraryRevision: number | null
+      expectedCoverageRevision: number
+      actualCoverageRevision: number | null
     }
   | { status: "unavailable"; error: Error }
   | { status: "failed"; error: unknown }
 
 export interface SaveUniqueDistancesOptions {
-  /** Only write when library-meta still has this revision. */
-  libraryRevision?: number
+  /** Only write when library-meta still has this coverage revision. */
+  coverageRevision?: number
   /** Compatibility cleanup for callers that still pass a deleted id. */
   deletedActivityId?: string
 }
 
-const UNIQUE_DISTANCE_VERSION = 2
+const UNIQUE_DISTANCE_VERSION = 3
 const START_SUN_PHASES = [
   "before_sunrise",
   "daylight",
@@ -642,12 +642,13 @@ export async function loadUniqueDistanceState(): Promise<UniqueDistanceState | n
 export function areUniqueDistancesCurrent(
   activities: ParsedActivity[],
   state: UniqueDistanceState | null,
-  libraryRevision?: number
+  coverageRevision?: number
 ): boolean {
   if (
     state?.version !== UNIQUE_DISTANCE_VERSION ||
     state.activityIds.length !== activities.length ||
-    (libraryRevision !== undefined && state.libraryRevision !== libraryRevision)
+    (coverageRevision !== undefined &&
+      state.coverageRevision !== coverageRevision)
   ) {
     return false
   }
@@ -656,7 +657,7 @@ export function areUniqueDistancesCurrent(
   return activities.every((_, index) => activityIds[index] === savedIds[index])
 }
 
-/** Atomically persists recalculated values, summaries, their marker, and an optional deletion. */
+/** Atomically persists recalculated values, their marker, and an optional deletion. */
 export async function saveUniqueDistances(
   activities: ParsedActivity[],
   options: SaveUniqueDistancesOptions = {}
@@ -671,55 +672,47 @@ export async function saveUniqueDistances(
   }
   let tx: IDBTransaction | null = null
   try {
-    tx = db.transaction(
-      ["activities", "activity-summaries", "prefs", "library-meta"],
-      "readwrite"
-    )
+    tx = db.transaction(["activities", "prefs", "library-meta"], "readwrite")
     const activityStore = tx.objectStore("activities")
-    const summaryStore = tx.objectStore("activity-summaries")
     const metaStore = tx.objectStore("library-meta")
     const rawMeta = await promisifyRequest<
-      { key?: unknown; revision?: unknown } | undefined
+      { key?: unknown; coverageRevision?: unknown } | undefined
     >(metaStore.get("library"))
-    const actualLibraryRevision =
-      typeof rawMeta?.revision === "number" &&
-      Number.isSafeInteger(rawMeta.revision) &&
-      rawMeta.revision >= 0
-        ? rawMeta.revision
+    const actualCoverageRevision =
+      typeof rawMeta?.coverageRevision === "number" &&
+      Number.isSafeInteger(rawMeta.coverageRevision) &&
+      rawMeta.coverageRevision >= 0
+        ? rawMeta.coverageRevision
         : null
     if (
-      options.libraryRevision !== undefined &&
+      options.coverageRevision !== undefined &&
       !isUniqueDistanceRevisionCurrent(
-        options.libraryRevision,
-        actualLibraryRevision
+        options.coverageRevision,
+        actualCoverageRevision
       )
     ) {
       tx.abort()
       return {
         status: "stale",
-        expectedLibraryRevision: options.libraryRevision,
-        actualLibraryRevision,
+        expectedCoverageRevision: options.coverageRevision,
+        actualCoverageRevision,
       }
     }
     if (options.deletedActivityId) {
       activityStore.delete(options.deletedActivityId)
-      summaryStore.delete(options.deletedActivityId)
     }
-    for (const activity of activities) {
-      activityStore.put(activity)
-      summaryStore.put(activityToSummary(activity))
-    }
-    const revision = options.libraryRevision ?? actualLibraryRevision ?? 0
+    for (const activity of activities) activityStore.put(activity)
+    const revision = options.coverageRevision ?? actualCoverageRevision ?? 0
     tx.objectStore("prefs").put({
       key: "uniqueDistanceState",
       value: {
         version: UNIQUE_DISTANCE_VERSION,
-        libraryRevision: revision,
+        coverageRevision: revision,
         activityIds: activities.map((activity) => activity.id).sort(),
       } satisfies UniqueDistanceState,
     } satisfies PrefEntry)
     await waitForTransaction(tx)
-    return { status: "saved", libraryRevision: revision }
+    return { status: "saved", coverageRevision: revision }
   } catch (err) {
     abortTransaction(tx)
     console.warn("[storage] saveUniqueDistances failed:", err)
@@ -1004,7 +997,9 @@ export async function loadFogCache(): Promise<FogCache | null> {
   const activityIds = cache.activityIds ?? cache.trackIds
   if (
     !activityIds ||
-    typeof cache.libraryRevision !== "number" ||
+    typeof cache.coverageRevision !== "number" ||
+    !Number.isSafeInteger(cache.coverageRevision) ||
+    cache.coverageRevision < 0 ||
     cache.algorithmVersion !== FOG_ALGORITHM_VERSION ||
     cache.partitionSchemeVersion !== FOG_PARTITION_SCHEME_VERSION ||
     cache.completeness !== "complete" ||
@@ -1019,7 +1014,7 @@ export async function loadFogCache(): Promise<FogCache | null> {
   if (!validation.ok) return null
   return {
     activityIds,
-    libraryRevision: cache.libraryRevision,
+    coverageRevision: cache.coverageRevision,
     fogMode: cache.fogMode,
     algorithmVersion: FOG_ALGORITHM_VERSION,
     partitionSchemeVersion: FOG_PARTITION_SCHEME_VERSION,
@@ -1040,12 +1035,12 @@ export function isFogCacheValid(
   cache: FogCache,
   currentActivityIds: string[],
   currentFogMode: FogMode,
-  currentLibraryRevision?: number
+  currentCoverageRevision?: number
 ): boolean {
   if (cache.fogMode !== currentFogMode) return false
   if (
-    currentLibraryRevision !== undefined &&
-    cache.libraryRevision !== currentLibraryRevision
+    currentCoverageRevision !== undefined &&
+    cache.coverageRevision !== currentCoverageRevision
   ) {
     return false
   }

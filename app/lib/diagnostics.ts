@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from "react"
 
-export const DIAGNOSTICS_SCHEMA_VERSION = 3
+export const DIAGNOSTICS_SCHEMA_VERSION = 4
 export const MAX_DIAGNOSTIC_EVENTS = 200
 
 export type DiagnosticSubsystem =
@@ -39,6 +39,7 @@ export interface DiagnosticEvent {
   subsystem: DiagnosticSubsystem
   operationId: string
   libraryRevision: number | null
+  coverageRevision: number | null
   stage: string
   durationMs: number | null
   itemCount: number | null
@@ -63,6 +64,7 @@ export interface DiagnosticEventInput {
   subsystem: DiagnosticSubsystem
   operationId?: string | null
   libraryRevision?: number | null
+  coverageRevision?: number | null
   stage: string
   durationMs?: number | null
   itemCount?: number | null
@@ -168,6 +170,7 @@ export function recordDiagnostic(input: DiagnosticEventInput): DiagnosticEvent {
     subsystem: input.subsystem,
     operationId: safeToken(input.operationId, "unknown"),
     libraryRevision: safeRevision(input.libraryRevision),
+    coverageRevision: safeRevision(input.coverageRevision),
     stage: safeToken(input.stage, "unknown"),
     durationMs: safeDuration(input.durationMs),
     itemCount: safeCount(input.itemCount),

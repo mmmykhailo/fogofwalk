@@ -11,21 +11,21 @@ export type UniqueDistanceProjectionState = "idle" | "running" | "failed"
 
 export interface UniqueDistanceProjectionStatus {
   state: UniqueDistanceProjectionState
-  activeRevision: number | null
-  queuedRevision: number | null
-  completedRevision: number | null
+  activeCoverageRevision: number | null
+  queuedCoverageRevision: number | null
+  completedCoverageRevision: number | null
   error: unknown | null
 }
 
 export interface UniqueDistanceProjectionError {
-  revision: number
+  coverageRevision: number
   error: unknown
 }
 
 export interface UniqueDistanceProjectionEvents {
   onError?: (failure: UniqueDistanceProjectionError) => void
   onComplete?: (result: {
-    revision: number
+    coverageRevision: number
     activities: ParsedActivity[]
   }) => void
 }
@@ -52,6 +52,7 @@ function cloneActivities(
 function cloneSnapshot(snapshot: LibrarySnapshot): LibrarySnapshot {
   return {
     revision: snapshot.revision,
+    coverageRevision: snapshot.coverageRevision,
     activities: cloneActivities(snapshot.activities),
   }
 }
@@ -70,10 +71,10 @@ function errorFromSaveResult(result: UniqueDistanceSaveResult): unknown {
 }
 
 /**
- * Computes unique-distance values for committed library revisions in order.
+ * Computes unique-distance values for committed coverage revisions in order.
  *
  * A newer snapshot replaces the queued work. Results are persisted only with
- * the revision they were computed from; storage performs the final atomic
+ * the coverage revision they were computed from; storage performs the final atomic
  * library-meta check so a projection can never backdate a newer commit.
  */
 export interface UniqueDistanceProjection {
@@ -89,7 +90,8 @@ export function createUniqueDistanceProjection(
 ): UniqueDistanceProjection {
   const compute =
     dependencies.compute ??
-    ((activities: ParsedActivity[]) => computeUniqueDistancesInWorker(activities))
+    ((activities: ParsedActivity[]) =>
+      computeUniqueDistancesInWorker(activities))
   const save =
     dependencies.save ??
     ((activities: ParsedActivity[], options: SaveUniqueDistancesOptions) =>
@@ -99,9 +101,9 @@ export function createUniqueDistanceProjection(
   let running: Promise<void> | null = null
   let status: UniqueDistanceProjectionStatus = {
     state: "idle",
-    activeRevision: null,
-    queuedRevision: null,
-    completedRevision: null,
+    activeCoverageRevision: null,
+    queuedCoverageRevision: null,
+    completedCoverageRevision: null,
     error: null,
   }
 
@@ -126,9 +128,9 @@ export function createUniqueDistanceProjection(
     return () => listeners.delete(listener)
   }
 
-  function fail(revision: number, error: unknown): void {
+  function fail(coverageRevision: number, error: unknown): void {
     status = { ...status, state: "failed", error }
-    const failure = { revision, error }
+    const failure = { coverageRevision, error }
     try {
       events.onError?.(failure)
     } catch {
@@ -144,8 +146,8 @@ export function createUniqueDistanceProjection(
       status = {
         ...status,
         state: "running",
-        activeRevision: snapshot.revision,
-        queuedRevision: null,
+        activeCoverageRevision: snapshot.coverageRevision,
+        queuedCoverageRevision: null,
       }
       emitStatus()
 
@@ -155,7 +157,8 @@ export function createUniqueDistanceProjection(
         // A newer commit arrived while the worker was running. Do not spend
         // an IDB write on a result that is already obsolete.
         const queued = pending as LibrarySnapshot | null
-        if (queued && queued.revision > snapshot.revision) continue
+        if (queued && queued.coverageRevision > snapshot.coverageRevision)
+          continue
 
         const projected = snapshot.activities.map((activity) => ({
           ...activity,
@@ -166,30 +169,30 @@ export function createUniqueDistanceProjection(
           },
         }))
         const result = await save(projected, {
-          libraryRevision: snapshot.revision,
+          coverageRevision: snapshot.coverageRevision,
         })
         if (result.status === "stale") continue
         if (result.status !== "saved") {
-          fail(snapshot.revision, errorFromSaveResult(result))
+          fail(snapshot.coverageRevision, errorFromSaveResult(result))
           continue
         }
         status = {
           ...status,
-          completedRevision: result.libraryRevision,
+          completedCoverageRevision: result.coverageRevision,
           error: null,
         }
         try {
           events.onComplete?.({
-            revision: snapshot.revision,
+            coverageRevision: snapshot.coverageRevision,
             activities: cloneActivities(projected),
           })
         } catch {
           // A render projection consumer cannot invalidate a durable save.
         }
       } catch (error) {
-        fail(snapshot.revision, error)
+        fail(snapshot.coverageRevision, error)
       } finally {
-        status = { ...status, activeRevision: null }
+        status = { ...status, activeCoverageRevision: null }
         emitStatus()
       }
     }
@@ -200,15 +203,18 @@ export function createUniqueDistanceProjection(
     running = drain().finally(() => {
       running = null
       if (pending) {
-        status = { ...status, queuedRevision: pending.revision }
+        status = {
+          ...status,
+          queuedCoverageRevision: pending.coverageRevision,
+        }
         emitStatus()
         startDrain()
       } else {
         status = {
           ...status,
           state: status.state === "failed" ? "failed" : "idle",
-          activeRevision: null,
-          queuedRevision: null,
+          activeCoverageRevision: null,
+          queuedCoverageRevision: null,
         }
         emitStatus()
       }
@@ -218,18 +224,19 @@ export function createUniqueDistanceProjection(
 
   function schedule(snapshot: LibrarySnapshot): void {
     if (
-      (status.activeRevision !== null &&
-        snapshot.revision <= status.activeRevision) ||
-      (pending !== null && snapshot.revision <= pending.revision) ||
+      (status.activeCoverageRevision !== null &&
+        snapshot.coverageRevision <= status.activeCoverageRevision) ||
+      (pending !== null &&
+        snapshot.coverageRevision <= pending.coverageRevision) ||
       (status.state !== "failed" &&
-        status.completedRevision !== null &&
-        snapshot.revision <= status.completedRevision)
+        status.completedCoverageRevision !== null &&
+        snapshot.coverageRevision <= status.completedCoverageRevision)
     )
       return
     pending = cloneSnapshot(snapshot)
     status = {
       ...status,
-      queuedRevision: snapshot.revision,
+      queuedCoverageRevision: snapshot.coverageRevision,
       error: null,
     }
     emitStatus()

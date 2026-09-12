@@ -25,6 +25,7 @@ function cloneSnapshot(snapshot: LibrarySnapshot): LibrarySnapshot {
       : JSON.parse(JSON.stringify(snapshot.activities))
   return {
     revision: snapshot.revision,
+    coverageRevision: snapshot.coverageRevision,
     activities: Object.freeze(
       (activities as unknown[]).map((activity) => Object.freeze(activity))
     ) as LibrarySnapshot["activities"],
@@ -63,6 +64,24 @@ function changeBetween(
   const removed = previous.activities.filter(
     (activity) => !nextById.has(activity.id)
   )
+  const domains = {
+    membership: added.length > 0 || removed.length > 0,
+    geometry: added.length > 0 || removed.length > 0,
+    metadata: false,
+    statistics: false,
+  }
+  for (const activity of updated) {
+    const old = previousById.get(activity.id)
+    if (
+      old?.contentHash &&
+      activity.contentHash &&
+      old.contentHash === activity.contentHash
+    ) {
+      domains.metadata = true
+    } else {
+      domains.geometry = true
+    }
+  }
   return cloneChange({
     operationId: `external:${next.revision}`,
     fromRevision: previous.revision,
@@ -71,6 +90,7 @@ function changeBetween(
     updated: [...updated],
     removed: [...removed],
     duplicates: [],
+    domains,
   })
 }
 
@@ -100,8 +120,7 @@ export interface ActivityLibrary {
 }
 
 export function createActivityLibrary(
-  repository: ActivityLibraryRepository =
-    createIndexedDbActivityLibraryRepository()
+  repository: ActivityLibraryRepository = createIndexedDbActivityLibraryRepository()
 ): ActivityLibrary {
   let snapshot: LibrarySnapshot | null = null
   let queue: Promise<unknown> = Promise.resolve()

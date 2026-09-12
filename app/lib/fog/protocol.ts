@@ -1,7 +1,7 @@
 import type { FeatureCollection, MultiPolygon, Polygon } from "geojson"
 import type { FogMode, FogWorkerActivity } from "~/types/activities"
 
-export const FOG_PROTOCOL_VERSION = 2
+export const FOG_PROTOCOL_VERSION = 3
 // The algorithm and render representation changed from world-minus-route
 // polygons to positive explored masks rendered through the fog custom layer.
 // Keep these values in this protocol module so cache, worker, and coordinator
@@ -16,8 +16,10 @@ export interface FogRequest {
   requestId: string
   generation: number
   libraryRevision: number
+  coverageRevision: number
   /** Required for append; identifies the exact worker base being extended. */
   baseLibraryRevision?: number
+  baseCoverageRevision?: number
   mode: FogMode
   kind: FogRequestKind
   activities: FogWorkerActivity[]
@@ -62,6 +64,7 @@ export interface FogDiagnostics {
 export interface FogSnapshot {
   generation: number
   libraryRevision: number
+  coverageRevision: number
   mode: FogMode
   algorithmVersion: typeof FOG_ALGORITHM_VERSION
   partitionSchemeVersion: typeof FOG_PARTITION_SCHEME_VERSION
@@ -77,6 +80,7 @@ export type FogReply =
       requestId: string
       generation: number
       libraryRevision: number
+      coverageRevision: number
       mode: FogMode
       processed: number
       total: number
@@ -95,6 +99,7 @@ export type FogReply =
       requestId: string
       generation: number
       libraryRevision: number
+      coverageRevision: number
       mode: FogMode
       activityId?: string
       partitionId?: string
@@ -114,6 +119,7 @@ export type FogReply =
       requestId: string
       generation: number
       libraryRevision: number
+      coverageRevision: number
       mode: FogMode
     }
 
@@ -150,6 +156,9 @@ export function isFogRequest(value: unknown): value is FogRequest {
     typeof request.libraryRevision === "number" &&
     Number.isSafeInteger(request.libraryRevision) &&
     request.libraryRevision >= 0 &&
+    typeof request.coverageRevision === "number" &&
+    Number.isSafeInteger(request.coverageRevision) &&
+    request.coverageRevision >= 0 &&
     (request.mode === "corridor" || request.mode === "fill") &&
     (request.kind === "rebuild" ||
       request.kind === "append" ||
@@ -157,7 +166,10 @@ export function isFogRequest(value: unknown): value is FogRequest {
     (request.kind !== "append" ||
       (typeof request.baseLibraryRevision === "number" &&
         Number.isSafeInteger(request.baseLibraryRevision) &&
-        request.baseLibraryRevision! >= 0)) &&
+        request.baseLibraryRevision! >= 0 &&
+        typeof request.baseCoverageRevision === "number" &&
+        Number.isSafeInteger(request.baseCoverageRevision) &&
+        request.baseCoverageRevision! >= 0)) &&
     Array.isArray(activities) &&
     activities.every(hasActivityShape)
   )

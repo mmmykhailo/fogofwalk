@@ -19,8 +19,10 @@ import {
   toActivityStorageError,
 } from "./errors"
 import type {
+  ActivityMetadataPatch,
   DuplicateReason,
   LibraryChange,
+  LibraryChangeDomains,
   LibraryCommand,
   LibraryCommit,
   LibraryRevision,
@@ -28,13 +30,14 @@ import type {
   RemoteChange,
 } from "./libraryEvents"
 
-export const LIBRARY_SCHEMA_VERSION = 1
+export const LIBRARY_SCHEMA_VERSION = 2
 export const LIBRARY_META_KEY = "library"
 
 interface StoredLibraryMeta {
   key: typeof LIBRARY_META_KEY
   schemaVersion: number
   revision: LibraryRevision
+  coverageRevision: LibraryRevision
 }
 
 export interface ActivityLibraryRepository {
@@ -65,12 +68,14 @@ function clone<T>(value: T): T {
 
 function immutableSnapshot(
   revision: LibraryRevision,
+  coverageRevision: LibraryRevision,
   activities: ParsedActivity[]
 ): LibrarySnapshot {
   // Clone before freezing so callers cannot mutate repository-owned records.
   const records = clone(activities)
   return {
     revision,
+    coverageRevision,
     activities: Object.freeze(
       records.map((activity) => Object.freeze(activity))
     ),
@@ -226,12 +231,17 @@ function applyRemote(
   added: ParsedActivity[],
   updated: ParsedActivity[],
   removed: ParsedActivity[],
-  duplicates: DuplicateReason[]
+  duplicates: DuplicateReason[],
+  domains: LibraryChangeDomains
 ): ParsedActivity[] {
   for (const change of changes) {
     if (change.type === "delete") {
       const index = findByHash(activities, change.contentHash)
-      if (index >= 0) removed.push(...activities.splice(index, 1))
+      if (index >= 0) {
+        removed.push(...activities.splice(index, 1))
+        domains.membership = true
+        domains.geometry = true
+      }
       continue
     }
 
@@ -254,6 +264,15 @@ function applyRemote(
       if (!sameActivity(current, merged)) {
         activities[index] = merged
         updated.push(clone(merged))
+        if (
+          current.contentHash &&
+          incoming.contentHash &&
+          current.contentHash === incoming.contentHash
+        ) {
+          domains.metadata = true
+        } else {
+          domains.geometry = true
+        }
       }
       continue
     }
@@ -264,8 +283,119 @@ function applyRemote(
     }
     activities.push(incoming)
     added.push(clone(incoming))
+    domains.membership = true
+    domains.geometry = true
   }
   return activities
+}
+
+function metadataPatchValueIsValid(
+  patch: ActivityMetadataPatch,
+  key: keyof ActivityMetadataPatch
+): boolean {
+  if (!(key in patch)) return true
+  const value = patch[key]
+  if (key === "name") return typeof value === "string"
+  if (key === "isPublic") return typeof value === "boolean"
+  if (key === "activityType") {
+    return (
+      value === null ||
+      value === "walking" ||
+      value === "running" ||
+      value === "cycling" ||
+      value === "kayaking" ||
+      value === "swimming" ||
+      value === "other"
+    )
+  }
+  return (
+    value === null ||
+    value === "before_sunrise" ||
+    value === "daylight" ||
+    value === "after_sunset" ||
+    value === "unknown"
+  )
+}
+
+export function assertValidActivityMetadataPatches(
+  patches: readonly ActivityMetadataPatch[]
+): void {
+  if (patches.length === 0) {
+    throw new Error("At least one activity metadata patch is required.")
+  }
+  const ids = new Set<string>()
+  for (const patch of patches) {
+    if (
+      !patch ||
+      typeof patch.id !== "string" ||
+      patch.id.length === 0 ||
+      ids.has(patch.id)
+    ) {
+      throw new Error("Activity metadata patches must have unique IDs.")
+    }
+    ids.add(patch.id)
+    const keys = Object.keys(patch).filter((key) => key !== "id")
+    if (
+      keys.length === 0 ||
+      keys.some(
+        (key) =>
+          key !== "name" &&
+          key !== "isPublic" &&
+          key !== "activityType" &&
+          key !== "startSunPhase"
+      )
+    ) {
+      throw new Error("Activity metadata patches contain an unsupported field.")
+    }
+    for (const key of [
+      "name",
+      "isPublic",
+      "activityType",
+      "startSunPhase",
+    ] as const) {
+      if (!metadataPatchValueIsValid(patch, key)) {
+        throw new Error("Activity metadata patches contain an invalid value.")
+      }
+    }
+  }
+}
+
+function applyMetadata(
+  activities: ParsedActivity[],
+  patches: readonly ActivityMetadataPatch[],
+  updated: ParsedActivity[]
+): void {
+  assertValidActivityMetadataPatches(patches)
+  for (const patch of patches) {
+    const index = findById(activities, patch.id)
+    if (index < 0) continue
+    const current = activities[index]!
+    let next: ParsedActivity | null = null
+    if (patch.name !== undefined && patch.name !== current.name) {
+      next = { ...(next ?? current), name: patch.name }
+    }
+    if (
+      patch.isPublic !== undefined &&
+      patch.isPublic !== (current.isPublic ?? false)
+    ) {
+      next = { ...(next ?? current), isPublic: patch.isPublic }
+    }
+    if ("activityType" in patch) {
+      const nextType = patch.activityType ?? undefined
+      if (nextType !== current.activityType) {
+        next = { ...(next ?? current), activityType: nextType }
+      }
+    }
+    if ("startSunPhase" in patch) {
+      const nextPhase = patch.startSunPhase ?? undefined
+      if (nextPhase !== current.startSunPhase) {
+        next = { ...(next ?? current), startSunPhase: nextPhase }
+      }
+    }
+    if (!next) continue
+    activities[index] = next
+    updated.push(clone(next))
+  }
 }
 
 export function applyLibraryCommand(
@@ -277,6 +407,12 @@ export function applyLibraryCommand(
   const updated: ParsedActivity[] = []
   const removed: ParsedActivity[] = []
   const duplicates: DuplicateReason[] = []
+  const domains: LibraryChangeDomains = {
+    membership: false,
+    geometry: false,
+    metadata: false,
+    statistics: false,
+  }
 
   switch (command.type) {
     case "import":
@@ -290,6 +426,10 @@ export function applyLibraryCommand(
             !current.activities.some((existing) => existing.id === activity.id)
         )
       )
+      if (added.length > 0) {
+        domains.membership = true
+        domains.geometry = true
+      }
       break
     case "applyRemote":
       applyRemote(
@@ -298,24 +438,40 @@ export function applyLibraryCommand(
         added,
         updated,
         removed,
-        duplicates
+        duplicates,
+        domains
       )
       break
     case "delete": {
       const index = activities.findIndex(
         (activity) => activity.id === command.activityId
       )
-      if (index >= 0) removed.push(...activities.splice(index, 1))
+      if (index >= 0) {
+        removed.push(...activities.splice(index, 1))
+        domains.membership = true
+        domains.geometry = true
+      }
       break
     }
     case "clearLocal":
       removed.push(...activities.splice(0, activities.length))
+      if (removed.length > 0) {
+        domains.membership = true
+        domains.geometry = true
+      }
+      break
+    case "updateMetadata":
+      applyMetadata(activities, command.patches, updated)
+      if (updated.length > 0) domains.metadata = true
       break
   }
 
   const changed = added.length > 0 || updated.length > 0 || removed.length > 0
   const revision = current.revision + (changed ? 1 : 0)
-  const snapshot = immutableSnapshot(revision, activities)
+  const coverageRevision =
+    current.coverageRevision +
+    (changed && (domains.membership || domains.geometry) ? 1 : 0)
+  const snapshot = immutableSnapshot(revision, coverageRevision, activities)
   const change: LibraryChange = {
     operationId: command.operationId,
     fromRevision: current.revision,
@@ -324,6 +480,7 @@ export function applyLibraryCommand(
     updated: clone(updated),
     removed: clone(removed),
     duplicates: clone(duplicates),
+    domains,
   }
   return { snapshot, change }
 }
@@ -353,6 +510,7 @@ function readMeta(value: unknown): StoredLibraryMeta {
       key: LIBRARY_META_KEY,
       schemaVersion: LIBRARY_SCHEMA_VERSION,
       revision: 0,
+      coverageRevision: 0,
     }
   }
   if (
@@ -361,7 +519,14 @@ function readMeta(value: unknown): StoredLibraryMeta {
     (value as { key?: unknown }).key !== LIBRARY_META_KEY ||
     typeof (value as { revision?: unknown }).revision !== "number" ||
     !Number.isSafeInteger((value as { revision: number }).revision) ||
-    (value as { revision: number }).revision < 0
+    (value as { revision: number }).revision < 0 ||
+    ((value as { coverageRevision?: unknown }).coverageRevision !== undefined &&
+      (typeof (value as { coverageRevision?: unknown }).coverageRevision !==
+        "number" ||
+        !Number.isSafeInteger(
+          (value as { coverageRevision: number }).coverageRevision
+        ) ||
+        (value as { coverageRevision: number }).coverageRevision < 0))
   ) {
     throw createActivityStorageError(
       "schema",
@@ -376,6 +541,11 @@ function readMeta(value: unknown): StoredLibraryMeta {
         ? (value as { schemaVersion: number }).schemaVersion
         : LIBRARY_SCHEMA_VERSION,
     revision: (value as { revision: number }).revision,
+    coverageRevision:
+      typeof (value as { coverageRevision?: unknown }).coverageRevision ===
+      "number"
+        ? (value as { coverageRevision: number }).coverageRevision
+        : (value as { revision: number }).revision,
   }
 }
 
@@ -409,10 +579,17 @@ export function createIndexedDbActivityLibraryRepository(): IndexedDbActivityLib
         requestResult<StoredLibraryMeta | undefined>(metaRequest),
       ])
       const meta = readMeta(rawMeta)
-      if (!rawMeta) transaction.objectStore("library-meta").put(meta)
+      if (
+        !rawMeta ||
+        rawMeta.schemaVersion !== LIBRARY_SCHEMA_VERSION ||
+        rawMeta.coverageRevision === undefined
+      ) {
+        transaction.objectStore("library-meta").put(meta)
+      }
       await transactionResult(transaction)
       return immutableSnapshot(
         meta.revision,
+        meta.coverageRevision,
         overlayActivitySummaries(activities, summaries)
       )
     } catch (error) {
@@ -467,6 +644,7 @@ export function createIndexedDbActivityLibraryRepository(): IndexedDbActivityLib
 
       const current = immutableSnapshot(
         meta.revision,
+        meta.coverageRevision,
         overlayActivitySummaries(activities, summaries)
       )
       const result = applyLibraryCommand(current, command)
@@ -487,6 +665,7 @@ export function createIndexedDbActivityLibraryRepository(): IndexedDbActivityLib
           key: LIBRARY_META_KEY,
           schemaVersion: LIBRARY_SCHEMA_VERSION,
           revision: result.snapshot.revision,
+          coverageRevision: result.snapshot.coverageRevision,
         } satisfies StoredLibraryMeta)
       }
       const resolvedOutbox = outboxInputs(options, result)
@@ -528,7 +707,7 @@ export function createMemoryActivityLibraryRepository(
   activities: ParsedActivity[] = [],
   revision = 0
 ): MemoryActivityLibraryRepository {
-  let state = immutableSnapshot(revision, activities)
+  let state = immutableSnapshot(revision, revision, activities)
   let failure: unknown = null
   const outbox = new Map<string, SyncOutboxItem>()
 
@@ -542,7 +721,9 @@ export function createMemoryActivityLibraryRepository(
       failure = null
       throw error
     }
-    return immutableSnapshot(state.revision, [...state.activities])
+    return immutableSnapshot(state.revision, state.coverageRevision, [
+      ...state.activities,
+    ])
   }
 
   async function commit(

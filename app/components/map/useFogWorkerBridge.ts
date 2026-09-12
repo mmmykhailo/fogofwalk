@@ -29,7 +29,7 @@ type ProcessingComplete = () => void
 function isCurrentSnapshot(snapshot: FogSnapshot): boolean {
   return (
     snapshot.generation === mapStore.runId &&
-    snapshot.libraryRevision === mapStore.libraryRevision &&
+    snapshot.coverageRevision === mapStore.coverageRevision &&
     snapshot.mode === mapStore.fogMode &&
     snapshot.algorithmVersion === FOG_ALGORITHM_VERSION &&
     snapshot.partitionSchemeVersion === FOG_PARTITION_SCHEME_VERSION &&
@@ -166,6 +166,7 @@ export function useFogWorkerBridge(onProcessingComplete?: ProcessingComplete): {
       mapStore.fogSnapshot = {
         generation: snapshot.generation,
         libraryRevision: snapshot.libraryRevision,
+        coverageRevision: snapshot.coverageRevision,
         mode: snapshot.mode,
         algorithmVersion: snapshot.algorithmVersion,
         partitionSchemeVersion: snapshot.partitionSchemeVersion,
@@ -175,7 +176,7 @@ export function useFogWorkerBridge(onProcessingComplete?: ProcessingComplete): {
 
       const map = mapStore.map
       if (!map || !mapStore.sourcesReady) return true
-      applyFogDataToMap(map, snapshot.geometry, snapshot.libraryRevision)
+      applyFogDataToMap(map, snapshot.geometry, snapshot.coverageRevision)
 
       const activitiesKey =
         `${mapStore.libraryRevision}:` +
@@ -267,7 +268,7 @@ export function useFogWorkerBridge(onProcessingComplete?: ProcessingComplete): {
           activityIds: mapStore.activities
             .map((activity) => activity.id)
             .sort(),
-          libraryRevision: snapshot.libraryRevision,
+          coverageRevision: snapshot.coverageRevision,
           fogMode: snapshot.mode,
           algorithmVersion: snapshot.algorithmVersion,
           partitionSchemeVersion: snapshot.partitionSchemeVersion,

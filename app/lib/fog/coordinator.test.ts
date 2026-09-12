@@ -30,13 +30,20 @@ function input(
   mode: "corridor" | "fill" = "corridor",
   activities: FogWorkerActivity[] = [activity("one")]
 ) {
-  return { generation, libraryRevision, mode, activities }
+  return {
+    generation,
+    libraryRevision,
+    coverageRevision: libraryRevision,
+    mode,
+    activities,
+  }
 }
 
 function snapshot(request: FogRequest): FogSnapshot {
   return {
     generation: request.generation,
     libraryRevision: request.libraryRevision,
+    coverageRevision: request.coverageRevision,
     mode: request.mode,
     algorithmVersion: FOG_ALGORITHM_VERSION,
     partitionSchemeVersion: FOG_PARTITION_SCHEME_VERSION,
@@ -138,6 +145,21 @@ describe("FogCoordinator", () => {
     expect(snapshots.map((value) => value.libraryRevision)).toEqual([3])
   })
 
+  test("does not supersede active fog work for a metadata-only revision", () => {
+    const { coordinator, requests, snapshots } = setup()
+    coordinator.schedule(input(1, 1))
+    const active = requests[0]!
+
+    coordinator.schedule({
+      ...input(1, 2),
+      coverageRevision: 1,
+    })
+    expect(coordinator.queuedSnapshot).toBeNull()
+
+    coordinator.handleReply(reply(active))
+    expect(snapshots).toHaveLength(1)
+  })
+
   test("handles cancellation and ignores all old-generation replies", () => {
     const { coordinator, requests, terminals, snapshots } = setup()
     coordinator.schedule(input(7, 20), { forceRebuild: true })
@@ -153,6 +175,7 @@ describe("FogCoordinator", () => {
       requestId: cancellation.request.requestId,
       generation: cancellation.request.generation,
       libraryRevision: cancellation.request.libraryRevision,
+      coverageRevision: cancellation.request.coverageRevision,
       mode: cancellation.request.mode,
     })
     expect(terminals.map(({ status }) => status)).toEqual(["cancelled"])
@@ -167,6 +190,7 @@ describe("FogCoordinator", () => {
     const reset = coordinator.reset({
       generation: 3,
       libraryRevision: 6,
+      coverageRevision: 6,
       mode: "fill",
     })
 

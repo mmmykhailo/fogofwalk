@@ -1,7 +1,26 @@
-import type { ParsedActivity } from "~/types/activities"
+import type {
+  ActivityType,
+  ParsedActivity,
+  StartSunPhase,
+} from "~/types/activities"
 
 export type LibraryRevision = number
 export type OperationId = string
+
+export interface ActivityMetadataPatch {
+  id: string
+  name?: string
+  isPublic?: boolean
+  activityType?: ActivityType | null
+  startSunPhase?: StartSunPhase | null
+}
+
+export interface LibraryChangeDomains {
+  membership: boolean
+  geometry: boolean
+  metadata: boolean
+  statistics: boolean
+}
 
 export type DuplicateReasonCode =
   | "content-hash"
@@ -43,6 +62,11 @@ export type LibraryCommand =
       type: "clearLocal"
       operationId: OperationId
     }
+  | {
+      type: "updateMetadata"
+      operationId: OperationId
+      patches: ActivityMetadataPatch[]
+    }
 
 export interface LibraryChange {
   operationId: OperationId
@@ -52,10 +76,12 @@ export interface LibraryChange {
   updated: ParsedActivity[]
   removed: ParsedActivity[]
   duplicates: DuplicateReason[]
+  domains: LibraryChangeDomains
 }
 
 export interface LibrarySnapshot {
   revision: LibraryRevision
+  coverageRevision: LibraryRevision
   activities: readonly ParsedActivity[]
 }
 

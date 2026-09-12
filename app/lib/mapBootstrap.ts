@@ -50,7 +50,7 @@ function restoreFogCache(
       fogCache,
       activities.map((activity) => activity.id).sort(),
       fogMode,
-      mapStore.libraryRevision
+      mapStore.coverageRevision
     )
   ) {
     mapStore.fogData = fogCache.fogData

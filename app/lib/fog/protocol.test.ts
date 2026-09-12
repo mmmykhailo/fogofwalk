@@ -1,9 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import {
-  FOG_PROTOCOL_VERSION,
-  isFogRequest,
-  type FogRequest,
-} from "./protocol"
+import { FOG_PROTOCOL_VERSION, isFogRequest, type FogRequest } from "./protocol"
 
 function request(overrides: Partial<FogRequest> = {}): FogRequest {
   return {
@@ -11,6 +7,7 @@ function request(overrides: Partial<FogRequest> = {}): FogRequest {
     requestId: "request-1",
     generation: 3,
     libraryRevision: 7,
+    coverageRevision: 7,
     mode: "corridor",
     kind: "rebuild",
     activities: [
@@ -35,6 +32,7 @@ describe("fog worker protocol validation", () => {
         request({
           kind: "append",
           baseLibraryRevision: 6,
+          baseCoverageRevision: 6,
         })
       )
     ).toBe(true)
