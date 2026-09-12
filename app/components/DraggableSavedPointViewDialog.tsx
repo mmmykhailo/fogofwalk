@@ -93,7 +93,7 @@ export function DraggableSavedPointViewDialog({
       className="z-20 w-96 max-w-[calc(100vw-1.5rem)]"
     >
       {({ onMouseDown, onTouchStart }) => (
-        <Card className="bg-background/80 backdrop-blur-md">
+        <Card className="map-glass-surface bg-background/80 backdrop-blur-md">
           <CardHeader
             onMouseDown={onMouseDown}
             onTouchStart={onTouchStart}

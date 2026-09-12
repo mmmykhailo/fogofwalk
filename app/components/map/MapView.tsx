@@ -75,7 +75,7 @@ export function MapView({
     onPhotoSelect,
     ensurePhotoObjectUrl
   )
-  const { containerRef, bearing, zoomIn, zoomOut, resetOrientation } =
+  const { containerRef, map, zoomIn, zoomOut, resetOrientation } =
     useMapLifecycle({
       mapMode,
       showActivities,
@@ -113,7 +113,7 @@ export function MapView({
       />
       <div ref={containerRef} className="absolute inset-0 h-screen" />
       <MapCompass
-        bearing={bearing}
+        map={map}
         onZoomIn={zoomIn}
         onZoomOut={zoomOut}
         onReset={resetOrientation}

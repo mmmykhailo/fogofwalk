@@ -25,7 +25,7 @@ export function FogProgressIndicator({
   const processedCount = useFogProcessedCount()
 
   return (
-    <div className="flex h-8 items-center gap-2 border border-border bg-background/80 px-2.5 backdrop-blur-md">
+    <div className="map-glass-surface flex h-8 items-center gap-2 border border-border bg-background/80 px-2.5 backdrop-blur-md">
       <span className="text-xs text-muted-foreground tabular-nums">
         {processedCount}/{activityCount}
       </span>
@@ -86,7 +86,7 @@ export function FogStatusNotice({ onRetry }: { onRetry: () => void }) {
     <div
       data-testid="fog-status"
       role="alert"
-      className="flex max-w-[min(28rem,calc(100vw-1.5rem))] items-center gap-2 border border-border bg-background/90 px-2.5 py-2 text-xs shadow-sm backdrop-blur-md"
+      className="map-glass-surface flex max-w-[min(28rem,calc(100vw-1.5rem))] items-center gap-2 border border-border bg-background/90 px-2.5 py-2 text-xs shadow-sm backdrop-blur-md"
     >
       <WarningIcon
         weight="duotone"

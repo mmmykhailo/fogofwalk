@@ -147,7 +147,7 @@ export function DraggablePhotoDialog({
   return (
     <DraggableDialog className="z-20 w-80">
       {({ onMouseDown, onTouchStart }) => (
-        <Card className="overflow-hidden bg-background/80 backdrop-blur-md">
+        <Card className="map-glass-surface overflow-hidden bg-background/80 backdrop-blur-md">
           <CardHeader
             onMouseDown={onMouseDown}
             onTouchStart={onTouchStart}

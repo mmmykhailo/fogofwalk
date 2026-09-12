@@ -105,7 +105,7 @@ export function ControlPanel({
         <Button
           variant="outline"
           size="icon"
-          className="border-0 bg-background/80 shadow-sm backdrop-blur-md"
+          className="map-glass-surface border-0 bg-background/80 shadow-sm backdrop-blur-md"
           onClick={() => setIsDrawerOpen(true)}
           aria-label="Open controls"
         >

@@ -38,7 +38,7 @@ interface MapLifecycleOptions extends MapPresentationState {
 
 interface MapLifecycleResult {
   containerRef: RefObject<HTMLDivElement | null>
-  bearing: number
+  map: maplibregl.Map | null
   zoomIn: () => void
   zoomOut: () => void
   resetOrientation: () => void
@@ -52,7 +52,7 @@ export function useMapLifecycle(
   optionsRef.current = options
   const pendingStyleLoadRef = useRef<(() => void) | null>(null)
   const isInitialStyleLoadedRef = useRef(false)
-  const [bearing, setBearing] = useState(0)
+  const [mapInstance, setMapInstance] = useState<maplibregl.Map | null>(null)
 
   const currentPresentation = (): MapPresentationState => ({
     showActivities: optionsRef.current.showActivities,
@@ -82,9 +82,12 @@ export function useMapLifecycle(
       attributionControl: { compact: false },
     })
     mapStore.map = map
+    setMapInstance(map)
     if (import.meta.env.VITE_E2E === "1") {
       window.__fogofwalkE2eMap = map
     }
+    const mapSurface =
+      container.closest<HTMLElement>("[data-map-cache]") ?? container
 
     const rehydrateAfterContextRestore = () => {
       if (disposed) return
@@ -137,11 +140,20 @@ export function useMapLifecycle(
     map.on("webglcontextlost", handleContextLost)
     map.on("webglcontextrestored", handleContextRestored)
 
-    map.on("rotate", () => setBearing(map.getBearing()))
-    map.on("moveend", () => {
+    const handleMoveStart = () => {
+      mapSurface.dataset.mapMoving = ""
+    }
+    const handleMoveEnd = () => {
+      delete mapSurface.dataset.mapMoving
       const center = map.getCenter()
       saveMapPosition([center.lng, center.lat], map.getZoom())
-    })
+    }
+    const handleMapRemove = () => {
+      delete mapSurface.dataset.mapMoving
+    }
+    map.on("movestart", handleMoveStart)
+    map.on("moveend", handleMoveEnd)
+    map.on("remove", handleMapRemove)
 
     const detachMapInteractions = attachMapInteractions(map, {
       isShowingSavedPoints: () => optionsRef.current.showSavedPoints,
@@ -173,9 +185,14 @@ export function useMapLifecycle(
       detachMapInteractions()
       map.off("webglcontextlost", handleContextLost)
       map.off("webglcontextrestored", handleContextRestored)
+      map.off("movestart", handleMoveStart)
+      map.off("moveend", handleMoveEnd)
+      map.off("remove", handleMapRemove)
+      delete mapSurface.dataset.mapMoving
       mapStore.sourcesReady = false
       mapStore.renderSourceRevision = null
       mapStore.map = null
+      setMapInstance(null)
       if (window.__fogofwalkE2eMap === map) {
         delete window.__fogofwalkE2eMap
       }
@@ -222,7 +239,7 @@ export function useMapLifecycle(
 
   return {
     containerRef,
-    bearing,
+    map: mapInstance,
     zoomIn: () => mapStore.map?.zoomIn(),
     zoomOut: () => mapStore.map?.zoomOut(),
     resetOrientation: () =>

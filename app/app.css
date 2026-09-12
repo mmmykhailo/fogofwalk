@@ -222,3 +222,12 @@
   margin-bottom: 0;
   border-radius: 0%;
 }
+
+/* Map overlays are translucent at rest, but sampling the WebGL canvas through
+ * a blur during a gesture makes every map frame pay a compositor cost. */
+[data-map-cache][data-map-moving] .map-glass-surface {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  background-color: var(--background);
+  background-color: color-mix(in oklch, var(--background) 95%, transparent);
+}
