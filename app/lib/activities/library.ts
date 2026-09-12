@@ -33,8 +33,25 @@ function cloneSnapshot(snapshot: LibrarySnapshot): LibrarySnapshot {
     revision: snapshot.revision,
     coverageRevision: snapshot.coverageRevision,
     activities: Object.freeze(
-      (activities as unknown[]).map((activity) => Object.freeze(activity))
+      (activities as ParsedActivity[]).map((activity) =>
+        freezeActivity(activity)
+      )
     ) as LibrarySnapshot["activities"],
+  }
+}
+
+function freezeActivity(activity: ParsedActivity): ParsedActivity {
+  return Object.isFrozen(activity) ? activity : Object.freeze(activity)
+}
+
+/** Keep the canonical full snapshot structurally shared across metadata edits. */
+function shareSnapshot(snapshot: LibrarySnapshot): LibrarySnapshot {
+  return {
+    revision: snapshot.revision,
+    coverageRevision: snapshot.coverageRevision,
+    activities: Object.freeze(
+      snapshot.activities.map((activity) => freezeActivity(activity))
+    ),
   }
 }
 
@@ -149,7 +166,7 @@ function applySummaryMetadata(
     if (summary.startSunPhase === undefined) delete next.startSunPhase
     else next.startSunPhase = summary.startSunPhase
   }
-  return next ?? activity
+  return next ? freezeActivity(next) : activity
 }
 
 function reconcileMetadataCommit(
@@ -160,10 +177,13 @@ function reconcileMetadataCommit(
   const summariesById = new Map(
     metadata.updated.map((summary) => [summary.id, summary])
   )
+  const activitiesById = new Map(
+    base.activities.map((activity) => [activity.id, activity])
+  )
   const changedById = new Map<string, LibrarySnapshot["activities"][number]>()
   for (const patch of command.patches as readonly ActivityMetadataPatch[]) {
     const summary = summariesById.get(patch.id)
-    const current = base.activities.find((activity) => activity.id === patch.id)
+    const current = activitiesById.get(patch.id)
     if (!summary || !current) continue
     const next = applySummaryMetadata(current, summary)
     if (next !== current) changedById.set(current.id, next)
@@ -175,11 +195,11 @@ function reconcileMetadataCommit(
     const activity = changedById.get(summary.id)
     return activity ? [activity] : []
   })
-  const snapshot: LibrarySnapshot = {
+  const snapshot = shareSnapshot({
     revision: metadata.revision,
     coverageRevision: metadata.coverageRevision,
-    activities: Object.freeze(activities),
-  }
+    activities,
+  })
   return {
     snapshot,
     change: {
@@ -364,10 +384,10 @@ export function createActivityLibrary(
       return false
     }
     const result = applyMetadataCommitToFullSnapshot(snapshot, commit)
-    snapshot = cloneSnapshot(result.snapshot)
+    snapshot = result.snapshot
     for (const listener of listeners) {
       listener(
-        cloneSnapshot(snapshot),
+        snapshot,
         cloneChange(metadataChange(commit.fromRevision, commit, result.updated))
       )
     }
@@ -608,10 +628,10 @@ export function createActivityLibrary(
       if (!metadata) continue
 
       const commit = reconcileMetadataCommit(base, command, metadata)
-      snapshot = cloneSnapshot(commit.snapshot)
+      snapshot = commit.snapshot
       if (metadata.updated.length > 0) {
         for (const listener of listeners) {
-          listener(cloneSnapshot(commit.snapshot), cloneChange(commit.change))
+          listener(commit.snapshot, cloneChange(commit.change))
         }
         postMetadataBroadcast(metadata)
       }

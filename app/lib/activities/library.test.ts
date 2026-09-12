@@ -117,4 +117,40 @@ describe("activity library metadata broadcasts", () => {
       TestBroadcastChannel.instances.clear()
     }
   })
+
+  test("shares untouched activity records across full metadata commits", async () => {
+    const library = createActivityLibrary(
+      createMemoryActivityLibraryRepository([activity("one"), activity("two")])
+    )
+    await library.initialize()
+
+    const snapshots: Array<Awaited<ReturnType<typeof library.initialize>>> = []
+    library.subscribe((snapshot) => snapshots.push(snapshot))
+
+    await library.dispatchMetadata({
+      type: "updateMetadata",
+      operationId: "metadata-one",
+      patches: [{ id: "one", name: "renamed.gpx" }],
+    })
+    await library.dispatchMetadata({
+      type: "updateMetadata",
+      operationId: "metadata-two",
+      patches: [{ id: "two", isPublic: true }],
+    })
+
+    expect(snapshots).toHaveLength(2)
+    const first = snapshots[0]!
+    const second = snapshots[1]!
+    expect(second.activities[0]).toBe(first.activities[0])
+    expect(second.activities[0]?.coordinates).toBe(
+      first.activities[0]?.coordinates
+    )
+    expect(second.activities[0]?.stats).toBe(first.activities[0]?.stats)
+    expect(second.activities[1]).not.toBe(first.activities[1])
+    expect(second.activities[1]?.coordinates).toBe(
+      first.activities[1]?.coordinates
+    )
+    expect(second.activities[1]?.stats).toBe(first.activities[1]?.stats)
+    library.close()
+  })
 })
