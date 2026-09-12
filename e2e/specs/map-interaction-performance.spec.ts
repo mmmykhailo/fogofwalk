@@ -43,6 +43,25 @@ async function waitForMapReady(page: Page): Promise<void> {
     return Boolean(map && window.__fogofwalkE2eMapStore?.sourcesReady)
   })
   await waitForMapIdle(page)
+  await page.waitForFunction(() => {
+    const counters = window.__fogofwalkE2ePerformanceCounters
+    if (!counters) return false
+    return new Promise<boolean>((resolve) => {
+      let previous = counters.mapRouteCommits ?? 0
+      let stableFrames = 0
+      const check = () => {
+        const current = counters.mapRouteCommits ?? 0
+        if (current === previous) stableFrames++
+        else {
+          previous = current
+          stableFrames = 0
+        }
+        if (stableFrames >= 5) resolve(true)
+        else requestAnimationFrame(check)
+      }
+      requestAnimationFrame(check)
+    })
+  })
 }
 
 async function setMapSwitch(

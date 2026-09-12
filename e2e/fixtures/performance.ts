@@ -671,8 +671,10 @@ function makeActivity(index: number, kind: PerformanceActivityKind) {
     activityType: index % 3 === 0 ? "running" : "walking",
     isPublic: false,
     stats: {
-      distanceKm: pointCount <= 8 ? 1 + (index % 10) / 10 : 6.4,
-      uniqueDistanceKm: pointCount <= 8 ? 1 + (index % 10) / 10 : 6.4,
+      distanceKm:
+        pointCount <= 8 ? 1 + (index % 10) / 10 + index / 10_000 : 6.4,
+      uniqueDistanceKm:
+        pointCount <= 8 ? 1 + (index % 10) / 10 + index / 10_000 : 6.4,
       elevationGainM: pointCount <= 8 ? 0 : 120 + (index % 20),
       elevationLossM: pointCount <= 8 ? 0 : 95 + (index % 20),
       hasElevation: pointCount > 8,
