@@ -574,11 +574,11 @@ async function runActivitySync(
   }).run()
   throwIfSyncAborted(signal)
 
-  if (
-    result.downloadedCount > 0 ||
-    result.updatedCount > 0 ||
-    result.deletedIds.length > 0
-  ) {
+  // Metadata-only manifest echoes already reach every live projection through
+  // ActivityLibrary. Notify the route only for membership changes that it
+  // must reconcile locally; otherwise Home would revalidate its bootstrap
+  // loader for a change that cannot affect map geometry.
+  if (result.downloadedCount > 0 || result.deletedIds.length > 0) {
     onChanged?.({
       downloadedCount: result.downloadedCount,
       updatedCount: result.updatedCount,
