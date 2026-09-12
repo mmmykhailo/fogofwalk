@@ -43,12 +43,26 @@ async function pushSavedPointQuery(app: AppPage, id: string) {
       typeof history.state === "object" && history.state !== null
         ? history.state
         : {}
-    history.pushState(
-      { ...currentState, key: Math.random().toString(36).slice(2, 10) },
-      "",
-      `/map?savedPoint=${encodeURIComponent(savedPointId)}`
-    )
-    window.dispatchEvent(new PopStateEvent("popstate"))
+    const currentIndex =
+      typeof currentState.idx === "number" ? currentState.idx : 0
+    const targetKey = Math.random().toString(36).slice(2, 10)
+    return new Promise<void>((resolve) => {
+      const onPopState = () => {
+        if (history.state?.key === targetKey) {
+          window.removeEventListener("popstate", onPopState)
+          resolve()
+          return
+        }
+        history.go(1)
+      }
+      window.addEventListener("popstate", onPopState)
+      history.pushState(
+        { ...currentState, idx: currentIndex + 1, key: targetKey },
+        "",
+        `/map?savedPoint=${encodeURIComponent(savedPointId)}`
+      )
+      history.go(-1)
+    })
   }, id)
 }
 
@@ -338,8 +352,20 @@ test("ignores delayed public saved-point responses after dismissal and query cha
   await app.page.goto(`/map?savedPoint=${encodeURIComponent(PUBLIC_POINT_ID)}`)
   await app.waitUntilReady()
   await firstRequest
+  const initialHistoryKey = await app.page.evaluate(
+    () => (history.state as { key?: unknown } | null)?.key ?? null
+  )
   await app.clickMapBackground()
   await expect(app.page).toHaveURL(/\/map$/)
+  await expect
+    .poll(
+      () =>
+        app.page.evaluate(
+          () => (history.state as { key?: unknown } | null)?.key ?? null
+        ),
+      { message: "map dismissal navigation did not commit" }
+    )
+    .not.toBe(initialHistoryKey)
   releaseFirst()
   await firstCompletion
   await expect(
