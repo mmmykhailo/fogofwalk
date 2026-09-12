@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import type maplibregl from "maplibre-gl"
 import type { FogRenderData } from "~/lib/fog/protocol"
 import { buildFogMaskVertices, createFogMaskLayer } from "./fogMaskLayer"
 
@@ -70,5 +71,95 @@ describe("positive fog mask layer", () => {
     })
     expect(typeof layer.setData).toBe("function")
     layer.setData({ type: "FeatureCollection", features: [] })
+  })
+
+  test("resolves shader handles once per resource set", () => {
+    const lookups = { uniforms: 0, attributes: 0 }
+    const gl = {
+      VERTEX_SHADER: 1,
+      FRAGMENT_SHADER: 2,
+      COMPILE_STATUS: 3,
+      LINK_STATUS: 4,
+      ARRAY_BUFFER: 5,
+      STATIC_DRAW: 6,
+      FLOAT: 7,
+      TRIANGLES: 8,
+      BLEND: 9,
+      DEPTH_TEST: 10,
+      STENCIL_TEST: 11,
+      ALWAYS: 12,
+      EQUAL: 13,
+      KEEP: 14,
+      REPLACE: 15,
+      ONE: 16,
+      ONE_MINUS_SRC_ALPHA: 17,
+      createShader: () => ({}) as WebGLShader,
+      shaderSource: () => {},
+      compileShader: () => {},
+      getShaderParameter: () => true,
+      getShaderInfoLog: () => null,
+      deleteShader: () => {},
+      createProgram: () => ({}) as WebGLProgram,
+      attachShader: () => {},
+      linkProgram: () => {},
+      getProgramParameter: () => true,
+      getProgramInfoLog: () => null,
+      deleteProgram: () => {},
+      createBuffer: () => ({}) as WebGLBuffer,
+      deleteBuffer: () => {},
+      bindBuffer: () => {},
+      bufferData: () => {},
+      getUniformLocation: () => {
+        lookups.uniforms++
+        return {} as WebGLUniformLocation
+      },
+      getAttribLocation: () => {
+        lookups.attributes++
+        return 0
+      },
+      useProgram: () => {},
+      uniformMatrix4fv: () => {},
+      disable: () => {},
+      depthMask: () => {},
+      enable: () => {},
+      stencilMask: () => {},
+      colorMask: () => {},
+      stencilFunc: () => {},
+      stencilOp: () => {},
+      uniform4f: () => {},
+      vertexAttribPointer: () => {},
+      enableVertexAttribArray: () => {},
+      drawArrays: () => {},
+      disableVertexAttribArray: () => {},
+      blendFunc: () => {},
+    } as unknown as WebGLRenderingContext
+    const handlers = new Map<string, () => void>()
+    const map = {
+      on(event: string, handler: () => void) {
+        handlers.set(event, handler)
+      },
+      off(event: string) {
+        handlers.delete(event)
+      },
+      triggerRepaint() {},
+    } as unknown as maplibregl.Map
+    const layer = createFogMaskLayer({
+      type: "FeatureCollection",
+      features: [],
+    })
+    const renderArgs = {
+      defaultProjectionData: { mainMatrix: new Float32Array(16) },
+    } as never
+
+    layer.onAdd?.(map, gl)
+    layer.render?.(gl, renderArgs)
+    layer.render?.(gl, renderArgs)
+    layer.render?.(gl, renderArgs)
+    expect(lookups).toEqual({ uniforms: 2, attributes: 1 })
+
+    layer.onRemove?.(map, gl)
+    layer.onAdd?.(map, gl)
+    layer.render?.(gl, renderArgs)
+    expect(lookups).toEqual({ uniforms: 4, attributes: 2 })
   })
 })

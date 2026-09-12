@@ -6,6 +6,18 @@ import type { FogRenderData } from "~/lib/fog/protocol"
 
 const MAX_RENDER_LATITUDE = 85.05112878
 const WORLD_VERTICES = new Float32Array([-1, 0, 2, 0, 2, 1, -1, 0, 2, 1, -1, 1])
+const FOG_RGBA: readonly [number, number, number, number] = (() => {
+  const value = FOG_COLOR.replace("#", "")
+  const red = Number.parseInt(value.slice(0, 2), 16) / 255
+  const green = Number.parseInt(value.slice(2, 4), 16) / 255
+  const blue = Number.parseInt(value.slice(4, 6), 16) / 255
+  return [
+    red * FOG_OPACITY,
+    green * FOG_OPACITY,
+    blue * FOG_OPACITY,
+    FOG_OPACITY,
+  ]
+})()
 
 type PolygonGeometry = Polygon | MultiPolygon
 type GL = WebGLRenderingContext | WebGL2RenderingContext
@@ -152,19 +164,6 @@ function createProgram(gl: GL): WebGLProgram {
   return program
 }
 
-function fogColor(): [number, number, number, number] {
-  const value = FOG_COLOR.replace("#", "")
-  const red = Number.parseInt(value.slice(0, 2), 16) / 255
-  const green = Number.parseInt(value.slice(2, 4), 16) / 255
-  const blue = Number.parseInt(value.slice(4, 6), 16) / 255
-  return [
-    red * FOG_OPACITY,
-    green * FOG_OPACITY,
-    blue * FOG_OPACITY,
-    FOG_OPACITY,
-  ]
-}
-
 function drawBuffer(
   gl: GL,
   buffer: WebGLBuffer,
@@ -191,6 +190,9 @@ export function createFogMaskLayer(initialData: FogRenderData): FogMaskLayer {
   let program: WebGLProgram | null = null
   let positiveBuffer: WebGLBuffer | null = null
   let worldBuffer: WebGLBuffer | null = null
+  let matrixLocation: WebGLUniformLocation | null = null
+  let colorLocation: WebGLUniformLocation | null = null
+  let positionLocation = -1
   let positiveVertexCount = 0
   let contextLostHandler: (() => void) | null = null
   let contextRestoredHandler: (() => void) | null = null
@@ -201,6 +203,9 @@ export function createFogMaskLayer(initialData: FogRenderData): FogMaskLayer {
     program = null
     positiveBuffer = null
     worldBuffer = null
+    matrixLocation = null
+    colorLocation = null
+    positionLocation = -1
     glContext = null
     positiveVertexCount = 0
   }
@@ -223,9 +228,29 @@ export function createFogMaskLayer(initialData: FogRenderData): FogMaskLayer {
       throw new Error("Fog mask vertex buffers could not be created.")
     }
 
+    const nextMatrixLocation = nextGl.getUniformLocation(
+      nextProgram,
+      "u_matrix"
+    )
+    const nextColorLocation = nextGl.getUniformLocation(nextProgram, "u_color")
+    const nextPositionLocation = nextGl.getAttribLocation(nextProgram, "a_pos")
+    if (
+      nextMatrixLocation === null ||
+      nextColorLocation === null ||
+      nextPositionLocation < 0
+    ) {
+      nextGl.deleteProgram(nextProgram)
+      nextGl.deleteBuffer(nextPositiveBuffer)
+      nextGl.deleteBuffer(nextWorldBuffer)
+      throw new Error("Fog mask shader locations could not be resolved.")
+    }
+
     program = nextProgram
     positiveBuffer = nextPositiveBuffer
     worldBuffer = nextWorldBuffer
+    matrixLocation = nextMatrixLocation
+    colorLocation = nextColorLocation
+    positionLocation = nextPositionLocation
     glContext = nextGl
     nextGl.bindBuffer(nextGl.ARRAY_BUFFER, worldBuffer)
     nextGl.bufferData(nextGl.ARRAY_BUFFER, WORLD_VERTICES, nextGl.STATIC_DRAW)
@@ -288,17 +313,26 @@ export function createFogMaskLayer(initialData: FogRenderData): FogMaskLayer {
     },
     render(nextGl, { defaultProjectionData }) {
       ensureResources(nextGl)
-      if (!program || !positiveBuffer || !worldBuffer) return
-      const matrix = nextGl.getUniformLocation(program, "u_matrix")
-      const color = nextGl.getUniformLocation(program, "u_color")
-      const position = nextGl.getAttribLocation(program, "a_pos")
-      if (!matrix || !color || position < 0) return
+      if (
+        !program ||
+        !positiveBuffer ||
+        !worldBuffer ||
+        !matrixLocation ||
+        !colorLocation ||
+        positionLocation < 0
+      ) {
+        return
+      }
 
       nextGl.useProgram(program)
       // MapLibre's modelViewProjectionMatrix uses world-size coordinates. The
       // custom-layer projection data supplies the equivalent matrix scaled for
       // normalized Web Mercator coordinates in the [0, 1] range.
-      nextGl.uniformMatrix4fv(matrix, false, defaultProjectionData.mainMatrix)
+      nextGl.uniformMatrix4fv(
+        matrixLocation,
+        false,
+        defaultProjectionData.mainMatrix
+      )
       nextGl.disable(nextGl.BLEND)
       nextGl.disable(nextGl.DEPTH_TEST)
       nextGl.depthMask(false)
@@ -310,19 +344,34 @@ export function createFogMaskLayer(initialData: FogRenderData): FogMaskLayer {
       nextGl.colorMask(false, false, false, false)
       nextGl.stencilFunc(nextGl.ALWAYS, 0, 0xff)
       nextGl.stencilOp(nextGl.KEEP, nextGl.KEEP, nextGl.REPLACE)
-      drawBuffer(nextGl, worldBuffer, position, WORLD_VERTICES.length / 2)
+      drawBuffer(
+        nextGl,
+        worldBuffer,
+        positionLocation,
+        WORLD_VERTICES.length / 2
+      )
 
       nextGl.stencilFunc(nextGl.ALWAYS, 1, 0xff)
-      drawBuffer(nextGl, positiveBuffer, position, positiveVertexCount)
+      drawBuffer(nextGl, positiveBuffer, positionLocation, positiveVertexCount)
 
       nextGl.colorMask(true, true, true, true)
       nextGl.stencilFunc(nextGl.EQUAL, 0, 0xff)
       nextGl.stencilOp(nextGl.KEEP, nextGl.KEEP, nextGl.KEEP)
       nextGl.enable(nextGl.BLEND)
       nextGl.blendFunc(nextGl.ONE, nextGl.ONE_MINUS_SRC_ALPHA)
-      const [red, green, blue, alpha] = fogColor()
-      nextGl.uniform4f(color, red, green, blue, alpha)
-      drawBuffer(nextGl, worldBuffer, position, WORLD_VERTICES.length / 2)
+      nextGl.uniform4f(
+        colorLocation,
+        FOG_RGBA[0],
+        FOG_RGBA[1],
+        FOG_RGBA[2],
+        FOG_RGBA[3]
+      )
+      drawBuffer(
+        nextGl,
+        worldBuffer,
+        positionLocation,
+        WORLD_VERTICES.length / 2
+      )
 
       nextGl.disable(nextGl.STENCIL_TEST)
       nextGl.disable(nextGl.BLEND)
