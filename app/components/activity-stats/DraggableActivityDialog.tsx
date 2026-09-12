@@ -29,6 +29,7 @@ import {
 } from "~/components/ui/drawer"
 import { useIsMobile } from "~/lib/useIsMobile"
 import { DraggableDialog } from "~/components/DraggableDialog"
+import { PerformanceCommitMarker } from "~/components/PerformanceCommitMarker"
 import { computeCompositeStats } from "~/lib/shareCard"
 import { DeleteActivityDialog } from "./DeleteActivityDialog"
 import { MultiActivityStats } from "./MultiActivityStats"
@@ -221,6 +222,10 @@ export function DraggableActivityDialog({
     <DraggableDialog className="z-10 w-80">
       {({ onMouseDown, onTouchStart }) => (
         <>
+          <PerformanceCommitMarker
+            counter="mapDialogCommits"
+            mark="map:dialog:commit"
+          />
           <Card className="bg-background/80 backdrop-blur-md">
             <CardHeader
               onMouseDown={onMouseDown}

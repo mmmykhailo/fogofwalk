@@ -5,6 +5,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "~/components/ui/select"
+import { PerformanceCommitMarker } from "~/components/PerformanceCommitMarker"
 import { cn } from "~/lib/utils"
 
 const PRIVATE = "Private"
@@ -52,6 +53,10 @@ export function VisibilitySelect({
 
   return (
     <>
+      <PerformanceCommitMarker
+        counter="visibilityControlCommits"
+        mark="visibility-control:commit"
+      />
       <Select
         value={mixed ? null : isPublic ? PUBLIC : PRIVATE}
         onValueChange={(value) => {

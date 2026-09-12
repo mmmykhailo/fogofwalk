@@ -22,6 +22,7 @@ import {
 } from "~/lib/fog/protocol"
 import { validateFogRenderData } from "~/lib/fog/engine/validate"
 import { createFogWorkerWatchdog } from "~/lib/fog/watchdog"
+import { incrementPerformanceCounter } from "~/lib/performance"
 
 type ProcessingComplete = () => void
 
@@ -190,7 +191,10 @@ export function useFogWorkerBridge(onProcessingComplete?: ProcessingComplete): {
         const activitiesSource = map.getSource(MAP_SOURCE_IDS.activities) as
           | maplibregl.GeoJSONSource
           | undefined
-        activitiesSource?.setData(cachedActivitiesGeoJSON.current)
+        if (activitiesSource) {
+          incrementPerformanceCounter("mapSourceSetDataCalls")
+          activitiesSource.setData(cachedActivitiesGeoJSON.current)
+        }
       }
       return true
     }

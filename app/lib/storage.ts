@@ -11,6 +11,7 @@ import type { PhotoEntry } from "~/types/photos"
 import type { SavedPoint } from "~shared/saved-points"
 import type { ActivitySummary } from "~/types/activitySummary"
 import type { ActivityType, StartSunPhase } from "~/types/activities"
+import { incrementPerformanceCounter } from "~/lib/performance"
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -807,6 +808,7 @@ export async function savePhotos(photos: PhotoEntry[]): Promise<void> {
  * Returns [] on any error.
  */
 export async function loadPhotos(): Promise<PhotoEntry[]> {
+  incrementPerformanceCounter("photoStoreReads")
   const db = await getDb()
   if (!db) return []
   try {
@@ -871,6 +873,7 @@ export async function saveSavedPoints(points: SavedPoint[]): Promise<void> {
 
 /** Load all saved points. Returns [] on any error. */
 export async function loadSavedPoints(): Promise<SavedPoint[]> {
+  incrementPerformanceCounter("savedPointStoreReads")
   const db = await getDb()
   if (!db) return []
   try {
@@ -945,6 +948,7 @@ async function prefSet(
 }
 
 async function prefGet<T>(key: string): Promise<T | null> {
+  incrementPerformanceCounter("preferenceStoreReads")
   const db = await getDb()
   if (!db) return null
   try {

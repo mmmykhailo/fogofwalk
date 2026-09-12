@@ -24,6 +24,13 @@ import type { FogSnapshot } from "~/lib/fog/protocol"
 import { recordDiagnostic } from "~/lib/diagnostics"
 import type { ActivitySummary } from "~/types/activitySummary"
 
+declare global {
+  interface Window {
+    /** Test-only readiness seam for deterministic map interaction fixtures. */
+    __fogofwalkE2eMapStore?: Pick<MapStore, "sourcesReady">
+  }
+}
+
 // ─── Map position persistence (localStorage — synchronous, survives page unload) ──
 
 const MAP_POSITION_KEY = "fogofwalk:mapPosition"
@@ -170,6 +177,10 @@ export const mapStore: MapStore = {
   uniqueDistanceProjectionRevision: null,
   isFogWorkerListenerReady: false,
   shareCardCache: null,
+}
+
+if (import.meta.env.VITE_E2E === "1" && typeof window !== "undefined") {
+  window.__fogofwalkE2eMapStore = mapStore
 }
 
 function detachFogWorker(worker: Worker): void {

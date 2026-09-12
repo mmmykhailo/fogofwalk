@@ -11,6 +11,7 @@ import { activitiesFeatureCollection } from "~/lib/map/geojson"
 import { MAP_SOURCE_IDS, setupMapLayers } from "~/lib/map/layers"
 import { mapStore, saveMapPosition } from "~/lib/mapStore"
 import { styleForMapMode } from "~/lib/map/styles"
+import { incrementPerformanceCounter } from "~/lib/performance"
 import type { MapMode } from "~/types/activities"
 
 declare global {
@@ -92,9 +93,12 @@ export function useMapLifecycle(
       const activitiesSource = map.getSource(MAP_SOURCE_IDS.activities) as
         | maplibregl.GeoJSONSource
         | undefined
-      activitiesSource?.setData(
-        activitiesFeatureCollection(mapStore.activities)
-      )
+      if (activitiesSource) {
+        incrementPerformanceCounter("mapSourceSetDataCalls")
+        activitiesSource.setData(
+          activitiesFeatureCollection(mapStore.activities)
+        )
+      }
       optionsRef.current.invalidateActivitiesCache()
       rehydrateMapPresentation(map, currentPresentation())
       applyFogDataToMap(map)

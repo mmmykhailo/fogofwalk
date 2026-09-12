@@ -89,7 +89,11 @@ import {
 import { useMyLocation } from "~/lib/useMyLocation"
 import { useActivityVisibility } from "~/lib/useActivityVisibility"
 import { socialMeta } from "~/lib/socialMeta"
-import { markPerformance, measurePerformance } from "~/lib/performance"
+import {
+  incrementPerformanceCounter,
+  markPerformance,
+  measurePerformance,
+} from "~/lib/performance"
 import { isActivitiesViewOnlyNavigation } from "~/lib/activitiesRoute"
 import type { FogMode, MapMode, ParsedActivity } from "~/types/activities"
 import type { ActivitySummary } from "~/types/activitySummary"
@@ -152,9 +156,11 @@ export async function clientLoader({
   restoredFogMode: FogMode
   viewedSavedPoint: SavedPoint | null
 }> {
+  incrementPerformanceCounter("homeLoaderStarts")
   markPerformance("home:loader:start")
   const pathname = new URL(request.url).pathname
   const isMapRoute = pathname === "/map"
+  if (isMapRoute) incrementPerformanceCounter("homeBootstrapStarts")
   if (isMapRoute && !mapStore.worker) {
     console.debug("[clientLoader] creating worker")
     createFogWorker()
@@ -189,6 +195,7 @@ export async function clientLoader({
     loadFogCache(),
   ])
   markPerformance("home:idb-load:end")
+  if (isMapRoute) incrementPerformanceCounter("homeBootstrapCompletions")
   measurePerformance(
     "home:idb-load",
     "home:idb-load:start",
@@ -641,6 +648,7 @@ export default function Home() {
   >(null)
 
   function clearSearchParam(name: string) {
+    incrementPerformanceCounter("mapUiNavigations")
     setSearchParams(
       (prev) => {
         const next = new URLSearchParams(prev)
@@ -680,6 +688,7 @@ export default function Home() {
     setEditingSavedPointId(null)
     setNewSavedPointCoordinate(null)
     setViewingSavedPoint(null)
+    incrementPerformanceCounter("mapUiNavigations")
     setSearchParams(
       (prev) => {
         const next = new URLSearchParams(prev)

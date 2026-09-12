@@ -22,6 +22,7 @@ import type { FogMaskLayer } from "~/lib/map/fogMaskLayer"
 import type { ActivityCoords } from "~/types/activities"
 import type { SavedPoint } from "~shared/saved-points"
 import { mapStore, worldFogGeoJSON } from "~/lib/mapStore"
+import { incrementPerformanceCounter } from "~/lib/performance"
 
 export interface MapPresentationState {
   showActivities: boolean
@@ -78,6 +79,7 @@ export function applyFogDataToMap(
       })
     | undefined
   if (layer && typeof layer.setData === "function") {
+    incrementPerformanceCounter("mapSourceSetDataCalls")
     layer.setData(data)
     mapStore.renderSourceRevision = revision
     return true
@@ -86,6 +88,7 @@ export function applyFogDataToMap(
     layer?.implementation &&
     typeof layer.implementation.setData === "function"
   ) {
+    incrementPerformanceCounter("mapSourceSetDataCalls")
     layer.implementation.setData(data)
     mapStore.renderSourceRevision = revision
     return true
@@ -94,6 +97,7 @@ export function applyFogDataToMap(
     | maplibregl.GeoJSONSource
     | undefined
   if (!source) return false
+  incrementPerformanceCounter("mapSourceSetDataCalls")
   source.setData(data)
   mapStore.renderSourceRevision = revision
   return true
@@ -107,7 +111,10 @@ export function setSavedPointsPresentation(
   const source = map.getSource(MAP_SOURCE_IDS.savedPoints) as
     | maplibregl.GeoJSONSource
     | undefined
-  source?.setData(savedPointsFeatureCollection(savedPoints))
+  if (source) {
+    incrementPerformanceCounter("mapSourceSetDataCalls")
+    source.setData(savedPointsFeatureCollection(savedPoints))
+  }
   for (const layerId of SAVED_POINT_LAYER_IDS) {
     setLayerVisibility(map, layerId, isVisible)
   }
@@ -118,6 +125,7 @@ export function applyActivitySelectionPaint(
   selectedActivityIds: string[],
   isLapActive: boolean
 ): void {
+  incrementPerformanceCounter("activityPaintUpdates")
   if (selectedActivityIds.length === 0) {
     map.setPaintProperty(
       MAP_LAYER_IDS.activities,
@@ -162,7 +170,10 @@ export function setLapHighlightData(
   const source = map.getSource(MAP_SOURCE_IDS.lap) as
     | maplibregl.GeoJSONSource
     | undefined
-  source?.setData(lapFeatureCollection(coordinates))
+  if (source) {
+    incrementPerformanceCounter("mapSourceSetDataCalls")
+    source.setData(lapFeatureCollection(coordinates))
+  }
 }
 
 /** Restores everything setStyle removes before sourcesReady becomes true. */
@@ -191,6 +202,9 @@ export function clearRenderedActivityState(): void {
   const activitiesSource = map.getSource(MAP_SOURCE_IDS.activities) as
     | maplibregl.GeoJSONSource
     | undefined
-  activitiesSource?.setData(activitiesFeatureCollection([]))
+  if (activitiesSource) {
+    incrementPerformanceCounter("mapSourceSetDataCalls")
+    activitiesSource.setData(activitiesFeatureCollection([]))
+  }
   setLapHighlightData(map, null)
 }

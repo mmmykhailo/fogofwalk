@@ -5,9 +5,55 @@
  */
 const isE2ePerformanceBuild = import.meta.env.VITE_E2E === "1"
 
+export type PerformanceCounterName =
+  | "homeLoaderStarts"
+  | "homeBootstrapStarts"
+  | "homeBootstrapCompletions"
+  | "photoStoreReads"
+  | "savedPointStoreReads"
+  | "preferenceStoreReads"
+  | "fogWorkerRebuildRequests"
+  | "fogWorkerAppendRequests"
+  | "mapSourceSetDataCalls"
+  | "activityPaintUpdates"
+  | "mapRouteCommits"
+  | "mapDialogCommits"
+  | "visibilityControlCommits"
+  | "mapUiNavigations"
+
+declare global {
+  interface Window {
+    /** Installed by the performance fixture before an E2E page loads. */
+    __fogofwalkE2ePerformanceCounters?: Record<string, number>
+  }
+}
+
 function getPerformance(): Performance | null {
   if (!isE2ePerformanceBuild || typeof window === "undefined") return null
   return window.performance
+}
+
+/** Increment a fixture-owned counter without adding normal-build state. */
+export function incrementPerformanceCounter(
+  name: PerformanceCounterName,
+  amount = 1
+): void {
+  if (!isE2ePerformanceBuild || typeof window === "undefined") return
+  const counters = window.__fogofwalkE2ePerformanceCounters
+  if (!counters) return
+  counters[name] = (counters[name] ?? 0) + amount
+}
+
+/** Mark a React commit from a leaf effect, never during render. */
+export function markPerformanceCommit(
+  counter: Extract<
+    PerformanceCounterName,
+    "mapRouteCommits" | "mapDialogCommits" | "visibilityControlCommits"
+  >,
+  markName: string
+): void {
+  incrementPerformanceCounter(counter)
+  markPerformance(markName)
 }
 
 export function markPerformance(name: string): void {

@@ -3,6 +3,7 @@ import type { MapMode, ActivityCoords } from "~/types/activities"
 import type { PhotoEntry, PhotoGroup } from "~/types/photos"
 import type { SavedPoint } from "~shared/saved-points"
 import { MapCompass } from "~/components/map/MapCompass"
+import { PerformanceCommitMarker } from "~/components/PerformanceCommitMarker"
 import { useFogWorkerBridge } from "~/components/map/useFogWorkerBridge"
 import { useMapLifecycle } from "~/components/map/useMapLifecycle"
 import { useMapPresentation } from "~/components/map/useMapPresentation"
@@ -103,6 +104,10 @@ export function MapView({
 
   return (
     <>
+      <PerformanceCommitMarker
+        counter="mapRouteCommits"
+        mark="map:route:commit"
+      />
       <div ref={containerRef} className="absolute inset-0 h-screen" />
       <MapCompass
         bearing={bearing}

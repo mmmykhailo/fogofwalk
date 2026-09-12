@@ -2,7 +2,7 @@ import { defineConfig, devices } from "@playwright/test"
 
 export default defineConfig({
   testDir: "./specs",
-  testMatch: /activities-performance\.spec\.ts/,
+  testMatch: /(?:activities|map-interaction)-performance\.spec\.ts/,
   timeout: 120_000,
   expect: { timeout: 60_000 },
   fullyParallel: false,
@@ -24,8 +24,7 @@ export default defineConfig({
     },
   },
   webServer: {
-    command:
-      "bun run build && PORT=4173 node e2e/fixtures/serve-static.mjs",
+    command: "bun run build && PORT=4173 node e2e/fixtures/serve-static.mjs",
     cwd: "..",
     url: "http://127.0.0.1:4173",
     reuseExistingServer: false,

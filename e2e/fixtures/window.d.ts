@@ -15,6 +15,7 @@ declare global {
 
   interface Window {
     __fogofwalkE2eMap?: FogofwalkE2eMap
+    __fogofwalkE2eMapStore?: { sourcesReady: boolean }
     __fogofwalkE2eShareGeometry?: {
       type?: string
       coordinates?: unknown
