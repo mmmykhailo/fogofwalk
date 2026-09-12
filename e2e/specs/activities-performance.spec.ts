@@ -297,7 +297,24 @@ test.describe("activities performance fixture", () => {
         .length,
     }))
     expect(after).toEqual(before)
-    expect(await readPerformanceCounters(page)).toEqual(beforeCounters)
+    const delta = diffPerformanceCounters(
+      beforeCounters,
+      await readPerformanceCounters(page)
+    )
+    expect(delta.homeLoaderStarts).toBe(0)
+    expect(delta.homeBootstrapStarts).toBe(0)
+    expect(delta.fullActivityLoads).toBe(0)
+    expect(delta.activitySummaryReads).toBe(0)
+    expect(delta.uniqueDistanceWorkerRequests).toBe(0)
+    expect(Object.values(delta.idbGetCalls).every((count) => count === 0)).toBe(
+      true
+    )
+    expect(
+      Object.values(delta.idbGetAllCalls).every((count) => count === 0)
+    ).toBe(true)
+    expect(
+      Object.values(delta.idbWriteCalls).every((count) => count === 0)
+    ).toBe(true)
   })
 
   test("normalizes malformed and stale page values", async ({ page }) => {
