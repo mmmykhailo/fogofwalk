@@ -554,25 +554,10 @@ export const uniqueDistanceProjection = createUniqueDistanceProjection(
       ),
     onComplete: ({ coverageRevision, activities }) => {
       if (mapStore.coverageRevision !== coverageRevision) return
-      const projectedById = new Map(
-        activities.map((activity) => [activity.id, activity])
+      mapStore.activities = mergeUniqueDistanceStats(
+        mapStore.activities,
+        activities
       )
-      mapStore.activities = mapStore.activities.map((activity) => {
-        const projected = projectedById.get(activity.id)
-        if (
-          !projected ||
-          projected.stats.uniqueDistanceKm === activity.stats.uniqueDistanceKm
-        ) {
-          return activity
-        }
-        return {
-          ...activity,
-          stats: {
-            ...activity.stats,
-            uniqueDistanceKm: projected.stats.uniqueDistanceKm,
-          },
-        }
-      })
       mapStore.uniqueDistanceProjectionRevision = coverageRevision
     },
   }
@@ -862,6 +847,32 @@ function mergeMetadataSnapshot(
       startSunPhase: next.startSunPhase,
       contentHash: next.contentHash,
       isPublic: next.isPublic,
+    }
+  })
+}
+
+/** Merge only derived unique-distance values into the latest activity projection. */
+export function mergeUniqueDistanceStats(
+  currentActivities: readonly ParsedActivity[],
+  projectedActivities: readonly ParsedActivity[]
+): ParsedActivity[] {
+  const projectedById = new Map(
+    projectedActivities.map((activity) => [activity.id, activity])
+  )
+  return currentActivities.map((activity) => {
+    const projected = projectedById.get(activity.id)
+    if (
+      !projected ||
+      projected.stats.uniqueDistanceKm === activity.stats.uniqueDistanceKm
+    ) {
+      return activity
+    }
+    return {
+      ...activity,
+      stats: {
+        ...activity.stats,
+        uniqueDistanceKm: projected.stats.uniqueDistanceKm,
+      },
     }
   })
 }
