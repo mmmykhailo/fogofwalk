@@ -685,7 +685,12 @@ function makeActivity(index: number, kind: PerformanceActivityKind) {
       elevationProfile:
         pointCount <= 8
           ? []
-          : coordinates.map((_, pointIndex) => 100 + (pointIndex % 30)),
+          : coordinates.map((_, pointIndex) => ({
+              distanceKm:
+                (pointIndex / Math.max(1, pointCount - 1)) *
+                (pointCount <= 8 ? 1 : 6.4),
+              elevationM: 100 + (pointIndex % 30),
+            })),
     },
   }
 }

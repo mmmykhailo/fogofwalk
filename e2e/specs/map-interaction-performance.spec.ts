@@ -42,6 +42,7 @@ async function waitForMapReady(page: Page): Promise<void> {
     const map = window.__fogofwalkE2eMap
     return Boolean(map && window.__fogofwalkE2eMapStore?.sourcesReady)
   })
+  await waitForMapIdle(page)
 }
 
 async function setMapSwitch(
