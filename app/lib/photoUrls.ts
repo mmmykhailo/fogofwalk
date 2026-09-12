@@ -15,6 +15,7 @@ export interface PhotoUrlOwner {
 interface OwnedPhotoUrl {
   file: File
   url: string
+  photo: PhotoEntry
 }
 
 /** Owns the document-session object URLs used by map markers and dialogs. */
@@ -25,6 +26,7 @@ export function createPhotoUrlOwner(urlApi: PhotoUrlApi = URL): PhotoUrlOwner {
     const owned = ownedUrls.get(photoId)
     if (!owned) return
     ownedUrls.delete(photoId)
+    if (owned.photo.objectUrl === owned.url) owned.photo.objectUrl = undefined
     urlApi.revokeObjectURL(owned.url)
   }
 
@@ -38,7 +40,7 @@ export function createPhotoUrlOwner(urlApi: PhotoUrlApi = URL): PhotoUrlOwner {
       if (current) revoke(photo.id)
 
       const url = photo.objectUrl ?? urlApi.createObjectURL(photo.file)
-      ownedUrls.set(photo.id, { file: photo.file, url })
+      ownedUrls.set(photo.id, { file: photo.file, url, photo })
       photo.objectUrl = url
       return url
     },

@@ -68,6 +68,20 @@ describe("photo object URL ownership", () => {
     expect(revoked).toEqual(["blob:1", "blob:2"])
   })
 
+  test("does not reuse an object URL after the owner revokes it", () => {
+    let next = 0
+    const owner = createPhotoUrlOwner({
+      createObjectURL: () => `blob:${++next}`,
+      revokeObjectURL: () => undefined,
+    })
+    const entry = photo("reused")
+
+    expect(owner.ensurePhotoObjectUrl(entry)).toBe("blob:1")
+    owner.revokeAll()
+    expect(entry.objectUrl).toBeUndefined()
+    expect(owner.ensurePhotoObjectUrl(entry)).toBe("blob:2")
+  })
+
   test("adopts an existing URL without creating a second one", () => {
     const created: string[] = []
     const revoked: string[] = []
