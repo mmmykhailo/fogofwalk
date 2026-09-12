@@ -11,6 +11,23 @@ bun run build
 bun run test
 ```
 
+### Interaction performance verification
+
+The interaction benchmark runs against the production build and is the source
+of timing comparisons. It covers dense and compact activity libraries, fog and
+activity overlay combinations, map dialogs, desktop pointer gestures, and
+mobile touch pan/rotate:
+
+```bash
+cd e2e && bun run test:performance
+```
+
+The benchmark currently runs 22 scenarios. Deterministic work-count and
+long-task assertions are the gates; raw frame gaps are diagnostic because the
+Chromium renderer and SwiftShader performance vary between hosts. Regression
+runs retain their JSON metrics and Playwright traces in the E2E test-results
+directory rather than committing machine-specific baselines.
+
 Run `bun run typecheck` after every application change. The repository has Prettier drift, so format only the files you changed with `bunx prettier --write <paths>` rather than `bun run format`.
 
 The sync server and E2E suite are independent packages:
