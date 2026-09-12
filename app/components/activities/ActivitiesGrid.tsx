@@ -1,6 +1,7 @@
 import { LocalActivityCard } from "~/components/activities/LocalActivityCard"
 import { Grid } from "~/components/Grid"
 import type { ActivitySummary } from "~/types/activitySummary"
+import type { ActivityMetadataValue } from "~/lib/useActivityMetadataMutation"
 
 interface ActivitiesGridProps {
   activities: ActivitySummary[]
@@ -9,6 +10,12 @@ interface ActivitiesGridProps {
   showActivitySettings: boolean
   canEditVisibility: boolean
   visibilityDisabledDescription: string
+  onMetadataOptimisticChange?: (
+    activityId: string,
+    value: ActivityMetadataValue
+  ) => void
+  onMetadataSuccess?: (activityId: string, value: ActivityMetadataValue) => void
+  onMetadataFailure?: (activityId: string) => void
 }
 
 export function ActivitiesGrid({
@@ -18,6 +25,9 @@ export function ActivitiesGrid({
   showActivitySettings,
   canEditVisibility,
   visibilityDisabledDescription,
+  onMetadataOptimisticChange,
+  onMetadataSuccess,
+  onMetadataFailure,
 }: ActivitiesGridProps) {
   return (
     <Grid
@@ -35,6 +45,9 @@ export function ActivitiesGrid({
           canEditVisibility={canEditVisibility}
           visibilityDisabledDescription={visibilityDisabledDescription}
           onSelectionChange={onSelectionChange}
+          onMetadataOptimisticChange={onMetadataOptimisticChange}
+          onMetadataSuccess={onMetadataSuccess}
+          onMetadataFailure={onMetadataFailure}
         />
       ))}
     </Grid>

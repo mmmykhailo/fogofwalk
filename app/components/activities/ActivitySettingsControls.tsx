@@ -1,20 +1,33 @@
 import { VisibilitySelect } from "~/components/activity-stats/VisibilitySelect"
 import { ActivityTypeSelect } from "~/components/activities/ActivityTypeSelect"
-import { useActivityMetadataMutation } from "~/lib/useActivityMetadataMutation"
+import {
+  useActivityMetadataMutation,
+  type ActivityMetadataValue,
+} from "~/lib/useActivityMetadataMutation"
 import type { ActivitySummary } from "~/types/activitySummary"
 
 interface ActivitySettingsControlsProps {
   activity: ActivitySummary
   canEditVisibility: boolean
   visibilityDisabledDescription: string
+  onOptimisticChange?: (value: ActivityMetadataValue) => void
+  onSuccess?: (value: ActivityMetadataValue) => void
+  onFailure?: () => void
 }
 
 export function ActivitySettingsControls({
   activity,
   canEditVisibility,
   visibilityDisabledDescription,
+  onOptimisticChange,
+  onSuccess,
+  onFailure,
 }: ActivitySettingsControlsProps) {
-  const mutation = useActivityMetadataMutation(activity)
+  const mutation = useActivityMetadataMutation(activity, {
+    onOptimisticChange,
+    onSuccess,
+    onFailure,
+  })
   const visibilityAvailable = canEditVisibility && Boolean(activity.contentHash)
   const errorId = `activity-settings-error-${activity.id}`
 

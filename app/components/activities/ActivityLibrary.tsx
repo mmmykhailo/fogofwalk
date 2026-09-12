@@ -20,6 +20,7 @@ import {
 } from "~/lib/activitySettings"
 import { useAuth } from "~/lib/server/authStore"
 import type { ActivitySummary } from "~/types/activitySummary"
+import type { ActivityMetadataValue } from "~/lib/useActivityMetadataMutation"
 import type { clientAction } from "~/routes/activities"
 import {
   markPerformance,
@@ -45,16 +46,37 @@ export function ActivityLibrary({ activities }: ActivityLibraryProps) {
     useState<BulkActivityUpdateProposal | null>(null)
   const [dialogError, setDialogError] = useState<string | null>(null)
   const [isAwaitingResult, setIsAwaitingResult] = useState(false)
+  const bulkRollbackRef = useRef<Map<string, ActivityMetadataValue> | null>(
+    null
+  )
   const [searchParams, setSearchParams] = useSearchParams()
   const shouldFocusGridAfterPageChange = useRef(false)
   const didMarkFirstGridCommit = useRef(false)
   const fetcher = useFetcher<typeof clientAction>()
   const auth = useAuth()
+  const [optimisticMetadata, setOptimisticMetadata] = useState<
+    Map<string, ActivityMetadataValue>
+  >(() => new Map())
 
   const sortOption = getCanonicalActivitiesQuery(searchParams).sortOption
+  const displayedActivities = useMemo(
+    () =>
+      activities.map((activity) => {
+        const optimistic = optimisticMetadata.get(activity.id)
+        if (!optimistic) return activity
+        return {
+          ...activity,
+          isPublic: optimistic.isPublic,
+          ...(optimistic.activityType !== undefined
+            ? { activityType: optimistic.activityType }
+            : {}),
+        }
+      }),
+    [activities, optimisticMetadata]
+  )
   const sortedActivities = useMemo(
-    () => sortActivitiesBy(activities, sortOption),
-    [activities, sortOption]
+    () => sortActivitiesBy(displayedActivities, sortOption),
+    [displayedActivities, sortOption]
   )
 
   useEffect(() => {
@@ -84,8 +106,9 @@ export function ActivityLibrary({ activities }: ActivityLibraryProps) {
     [pageActivities]
   )
   const activityById = useMemo(
-    () => new Map(activities.map((activity) => [activity.id, activity])),
-    [activities]
+    () =>
+      new Map(displayedActivities.map((activity) => [activity.id, activity])),
+    [displayedActivities]
   )
   const selectedActivities = useMemo(
     () =>
@@ -106,6 +129,71 @@ export function ActivityLibrary({ activities }: ActivityLibraryProps) {
     auth.status === "signedIn" && !auth.canSync
       ? "Visibility editing requires sync access."
       : "Visibility editing requires a synced activity and sync access."
+
+  const canonicalActivityById = useMemo(
+    () => new Map(activities.map((activity) => [activity.id, activity])),
+    [activities]
+  )
+
+  const handleMetadataOptimisticChange = useCallback(
+    (activityId: string, value: ActivityMetadataValue) => {
+      setOptimisticMetadata((previous) => {
+        const next = new Map(previous)
+        next.set(activityId, value)
+        return next
+      })
+    },
+    []
+  )
+
+  const handleMetadataSuccess = useCallback(
+    (activityId: string, value: ActivityMetadataValue) => {
+      const canonical = canonicalActivityById.get(activityId)
+      if (
+        !canonical ||
+        (canonical.isPublic ?? false) !== value.isPublic ||
+        (value.activityType !== undefined &&
+          canonical.activityType !== value.activityType)
+      ) {
+        return
+      }
+      setOptimisticMetadata((previous) => {
+        if (!previous.has(activityId)) return previous
+        const next = new Map(previous)
+        next.delete(activityId)
+        return next
+      })
+    },
+    [canonicalActivityById]
+  )
+
+  const handleMetadataFailure = useCallback((activityId: string) => {
+    setOptimisticMetadata((previous) => {
+      if (!previous.has(activityId)) return previous
+      const next = new Map(previous)
+      next.delete(activityId)
+      return next
+    })
+  }, [])
+
+  useEffect(() => {
+    setOptimisticMetadata((previous) => {
+      let next: Map<string, ActivityMetadataValue> | null = null
+      for (const [activityId, value] of previous) {
+        const canonical = canonicalActivityById.get(activityId)
+        if (
+          canonical &&
+          (canonical.isPublic ?? false) === value.isPublic &&
+          (value.activityType === undefined ||
+            canonical.activityType === value.activityType)
+        ) {
+          next ??= new Map(previous)
+          next.delete(activityId)
+        }
+      }
+      return next ?? previous
+    })
+  }, [canonicalActivityById])
 
   useEffect(() => {
     const activityIds = new Set(activities.map((activity) => activity.id))
@@ -137,8 +225,20 @@ export function ActivityLibrary({ activities }: ActivityLibraryProps) {
     if (fetcher.data.ok) {
       setPendingProposal(null)
       setDialogError(null)
+      bulkRollbackRef.current = null
     } else {
+      const rollback = bulkRollbackRef.current
+      if (rollback) {
+        setOptimisticMetadata((previous) => {
+          const next = new Map(previous)
+          for (const [activityId, value] of rollback) {
+            next.set(activityId, value)
+          }
+          return next
+        })
+      }
       setDialogError(fetcher.data.error)
+      bulkRollbackRef.current = null
     }
     setIsAwaitingResult(false)
   }, [fetcher.data, fetcher.state, isAwaitingResult])
@@ -222,6 +322,31 @@ export function ActivityLibrary({ activities }: ActivityLibraryProps) {
 
   const confirmUpdate = useCallback(() => {
     if (!pendingProposal || selectedActivities.length === 0) return
+    const rollback = new Map<string, ActivityMetadataValue>()
+    const nextValues = new Map<string, ActivityMetadataValue>()
+    for (const activity of selectedActivities) {
+      const current: ActivityMetadataValue = {
+        isPublic: activity.isPublic ?? false,
+        ...(activity.activityType
+          ? { activityType: activity.activityType }
+          : {}),
+      }
+      rollback.set(activity.id, current)
+      nextValues.set(
+        activity.id,
+        pendingProposal.setting === "visibility"
+          ? { ...current, isPublic: pendingProposal.value }
+          : { ...current, activityType: pendingProposal.value }
+      )
+    }
+    bulkRollbackRef.current = rollback
+    setOptimisticMetadata((previous) => {
+      const next = new Map(previous)
+      for (const [activityId, value] of nextValues) {
+        next.set(activityId, value)
+      }
+      return next
+    })
     setIsAwaitingResult(true)
     fetcher.submit(
       createActivitySettingsFormData({
@@ -289,6 +414,9 @@ export function ActivityLibrary({ activities }: ActivityLibraryProps) {
         showActivitySettings={!hasSelection}
         canEditVisibility={canEditActivityVisibility}
         visibilityDisabledDescription={rowVisibilityDisabledDescription}
+        onMetadataOptimisticChange={handleMetadataOptimisticChange}
+        onMetadataSuccess={handleMetadataSuccess}
+        onMetadataFailure={handleMetadataFailure}
       />
       <ActivitiesPagination
         activityCount={sortedActivities.length}

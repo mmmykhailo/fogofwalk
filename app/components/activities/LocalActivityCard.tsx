@@ -3,6 +3,7 @@ import { ActivityCard } from "~/components/activity/ActivityCard"
 import { ActivitySettingsControls } from "~/components/activities/ActivitySettingsControls"
 import { Checkbox } from "~/components/ui/checkbox"
 import type { ActivitySummary } from "~/types/activitySummary"
+import type { ActivityMetadataValue } from "~/lib/useActivityMetadataMutation"
 
 interface LocalActivityCardProps {
   activity: ActivitySummary
@@ -11,6 +12,12 @@ interface LocalActivityCardProps {
   canEditVisibility: boolean
   visibilityDisabledDescription: string
   onSelectionChange: (activityId: string, isSelected: boolean) => void
+  onMetadataOptimisticChange?: (
+    activityId: string,
+    value: ActivityMetadataValue
+  ) => void
+  onMetadataSuccess?: (activityId: string, value: ActivityMetadataValue) => void
+  onMetadataFailure?: (activityId: string) => void
 }
 
 export const LocalActivityCard = memo(function LocalActivityCard({
@@ -20,6 +27,9 @@ export const LocalActivityCard = memo(function LocalActivityCard({
   canEditVisibility,
   visibilityDisabledDescription,
   onSelectionChange,
+  onMetadataOptimisticChange,
+  onMetadataSuccess,
+  onMetadataFailure,
 }: LocalActivityCardProps) {
   const handleSelectionChange = useCallback(
     (checked: boolean) => onSelectionChange(activity.id, checked),
@@ -56,6 +66,11 @@ export const LocalActivityCard = memo(function LocalActivityCard({
       activity={activity}
       canEditVisibility={canEditVisibility}
       visibilityDisabledDescription={visibilityDisabledDescription}
+      onOptimisticChange={(value) =>
+        onMetadataOptimisticChange?.(activity.id, value)
+      }
+      onSuccess={(value) => onMetadataSuccess?.(activity.id, value)}
+      onFailure={() => onMetadataFailure?.(activity.id)}
     />
   ) : undefined
 

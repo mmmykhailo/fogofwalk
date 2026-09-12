@@ -9,9 +9,15 @@ import type { ActivityType } from "~/types/activities"
 import type { ActivitySummary } from "~/types/activitySummary"
 import { createUuid } from "~/lib/uuid"
 
-interface ActivityMetadataValue {
+export interface ActivityMetadataValue {
   isPublic: boolean
   activityType?: ActivityType
+}
+
+export interface ActivityMetadataMutationCallbacks {
+  onOptimisticChange?: (value: ActivityMetadataValue) => void
+  onSuccess?: (value: ActivityMetadataValue) => void
+  onFailure?: () => void
 }
 
 interface PendingMetadataMutation {
@@ -48,7 +54,8 @@ function sameValue(
  * action confirms the local summary transaction; sync happens separately.
  */
 export function useActivityMetadataMutation(
-  activity: ActivitySummary
+  activity: ActivitySummary,
+  callbacks: ActivityMetadataMutationCallbacks = {}
 ): ActivityMetadataMutationResult {
   const fetcher = useFetcher<typeof clientAction>()
   const initialValue = valueFromActivity(activity)
@@ -58,6 +65,8 @@ export function useActivityMetadataMutation(
   const valueRef = useRef(value)
   const confirmedRef = useRef(initialValue)
   const pendingRef = useRef<PendingMetadataMutation | null>(null)
+  const callbacksRef = useRef(callbacks)
+  callbacksRef.current = callbacks
 
   useEffect(() => {
     const pending = pendingRef.current
@@ -84,6 +93,7 @@ export function useActivityMetadataMutation(
       setIsPending(false)
       setError(null)
       setValue(next)
+      callbacksRef.current.onSuccess?.(next)
       return
     }
 
@@ -93,6 +103,7 @@ export function useActivityMetadataMutation(
     setIsPending(false)
     setValue(rollback)
     setError(result.error)
+    callbacksRef.current.onFailure?.()
   }, [activity.id, fetcher.data, fetcher.state])
 
   const submit = useCallback(
@@ -103,6 +114,7 @@ export function useActivityMetadataMutation(
       const operationId = createUuid()
       pendingRef.current = { operationId, value: next }
       valueRef.current = next
+      callbacksRef.current.onOptimisticChange?.(next)
       setValue(next)
       setError(null)
       setIsPending(true)
