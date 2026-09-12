@@ -92,20 +92,18 @@ test.describe("public profile", () => {
     await app.page.goto(`/map?activity=${encodeURIComponent(id)}`)
     await app.waitUntilReady()
 
-    // Toggle visibility from Private to Public and wait for the debounced
-    // canonical activity upload to actually land, rather than sleeping a
-    // guessed delay.
-    const visibilityUpload = app.page.waitForResponse(
+    // Toggle visibility from Private to Public and wait for the compact
+    // metadata update to actually land, rather than sleeping a guessed delay.
+    const visibilityUpdate = app.page.waitForResponse(
       (res) =>
-        res.request().method() === "PUT" &&
-        res.url().includes("/api/activities/") &&
-        !res.url().includes("/manifest")
+        res.request().method() === "PATCH" &&
+        res.url().endsWith("/api/activities/metadata")
     )
     await app.page
       .getByRole("combobox", { name: "Visibility for t1.gpx" })
       .click()
     await app.page.getByRole("option", { name: "Public" }).click()
-    await visibilityUpload
+    await visibilityUpdate
 
     // Publish should show on the public profile.
     await app.page.goto(PUBLIC_PROFILE_URL(login))
