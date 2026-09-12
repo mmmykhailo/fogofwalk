@@ -160,8 +160,12 @@ test.describe("activities performance fixture", () => {
     expect(statsCounters.fullActivityLoads).toBe(1)
     expect(statsCounters.uniqueDistanceWorkerRequests).toBe(1)
     expect(statsCounters.activitySummaryReads).toBeGreaterThanOrEqual(1)
-    const statsMetrics = await readPerformanceMetrics(page, "metadata", 100)
-    expect(statsMetrics.uniqueDistanceMs).not.toBeNull()
+    await expect
+      .poll(
+        async () =>
+          (await readPerformanceMetrics(page, "metadata", 100)).uniqueDistanceMs
+      )
+      .not.toBeNull()
   })
 
   test("keeps global sort order and selection across pages", async ({

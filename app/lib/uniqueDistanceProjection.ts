@@ -6,6 +6,7 @@ import {
   type UniqueDistanceSaveResult,
 } from "~/lib/storage"
 import { computeUniqueDistancesInWorker } from "~/lib/uniqueDistanceWorkerClient"
+import { measurePerformanceDuration, performanceNow } from "~/lib/performance"
 
 export type UniqueDistanceProjectionState = "idle" | "running" | "failed"
 
@@ -152,7 +153,15 @@ export function createUniqueDistanceProjection(
       emitStatus()
 
       try {
+        const startedAt = performanceNow()
         const distances = await compute(cloneActivities(snapshot.activities))
+        const finishedAt = performanceNow()
+        if (startedAt !== null && finishedAt !== null) {
+          measurePerformanceDuration(
+            "activities:unique-distance",
+            Math.max(0, finishedAt - startedAt)
+          )
+        }
 
         // A newer commit arrived while the worker was running. Do not spend
         // an IDB write on a result that is already obsolete.
