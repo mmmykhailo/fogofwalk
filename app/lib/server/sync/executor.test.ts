@@ -360,7 +360,7 @@ describe("ActivitySyncExecutor", () => {
     expect(first.state.cursor).toBe(0)
     expect(first.cursorHeld).toBe(true)
     expect(first.failures[0]).toMatchObject({ retryable: true })
-    expect(library.getSnapshot().activities).toHaveLength(0)
+    expect(library.getSummarySnapshot().summaries).toHaveLength(0)
     expect((await repository.loadOutbox())[0]).toMatchObject({
       status: "retryable",
     })
@@ -512,14 +512,14 @@ describe("ActivitySyncExecutor", () => {
         },
       }
     )
-    library.subscribe((snapshot) => events.push(snapshot.revision))
+    library.subscribeMetadata((snapshot) => events.push(snapshot.revision))
 
     const result = await executor.run()
 
     expect(result.state.cursor).toBe(6)
     expect(result.updatedCount).toBe(1)
     expect(events).toEqual([1])
-    expect(library.getSnapshot().activities[0]?.name).toBe("a.gpx")
+    expect(library.getSummarySnapshot().summaries[0]?.name).toBe("a.gpx")
     expect(await repository.loadOutbox()).toMatchObject([
       { operation: "metadata", status: "complete" },
     ])

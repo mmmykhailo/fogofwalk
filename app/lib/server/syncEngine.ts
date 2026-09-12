@@ -476,26 +476,33 @@ async function syncOnce(reason: string): Promise<void> {
     // outside activity upload pacing. Reconcile them before activities.
     await withSavedPointSyncLock(() => syncSavedPoints(signal, auth.user.id))
     throwIfSyncAborted(signal)
-    await initializeActivityLibrary()
+    await activityLibrary.initializeSummarySnapshot()
     throwIfSyncAborted(signal)
 
-    // Activities imported before sync existed have no hash yet.
-    const backfillCandidates = activityLibrary
-      .getSnapshot()
-      .activities.map((activity) => structuredClone(activity))
-    const backfilled = await backfillContentHashes(backfillCandidates)
-    throwIfSyncAborted(signal)
-    if (backfilled.length > 0) {
+    // Activities imported before sync existed have no hash yet. Hash
+    // backfill is the exceptional path that genuinely needs full geometry;
+    // an ordinary metadata sync stays summary-only.
+    const summaries = activityLibrary.getSummarySnapshot().summaries
+    if (summaries.some((activity) => !activity.contentHash)) {
+      await initializeActivityLibrary()
       throwIfSyncAborted(signal)
-      await activityLibrary.dispatch({
-        type: "applyRemote",
-        operationId: createUuid(),
-        changes: backfilled.map((activity) => ({
-          type: "upsert" as const,
-          activity,
-        })),
-      })
+      const backfillCandidates = activityLibrary
+        .getSnapshot()
+        .activities.map((activity) => structuredClone(activity))
+      const backfilled = await backfillContentHashes(backfillCandidates)
       throwIfSyncAborted(signal)
+      if (backfilled.length > 0) {
+        throwIfSyncAborted(signal)
+        await activityLibrary.dispatch({
+          type: "applyRemote",
+          operationId: createUuid(),
+          changes: backfilled.map((activity) => ({
+            type: "upsert" as const,
+            activity,
+          })),
+        })
+        throwIfSyncAborted(signal)
+      }
     }
 
     const excludedLocalHashes = await foreignActivityHashes(auth.user.id)

@@ -6,6 +6,8 @@ import type {
   ActivityMetadataPatch,
   LibraryCommand,
   LibraryCommit,
+  LibraryMetadataCommit,
+  LibrarySummarySnapshot,
   LibrarySnapshot,
   RemoteChange,
 } from "~/lib/activities/libraryEvents"
@@ -47,8 +49,13 @@ const EMPTY_SYNC_STATE: SyncState = {
 
 export interface ActivityLibraryPort {
   initialize(): Promise<LibrarySnapshot>
+  initializeSummarySnapshot(): Promise<LibrarySummarySnapshot>
   getSnapshot(): LibrarySnapshot
+  getSummarySnapshot(): LibrarySummarySnapshot
   dispatch(command: LibraryCommand): Promise<LibraryCommit>
+  dispatchMetadata(
+    command: Extract<LibraryCommand, { type: "updateMetadata" }>
+  ): Promise<LibraryMetadataCommit>
 }
 
 export interface SyncExecutorProgress {
@@ -200,10 +207,17 @@ function clone<T>(value: T): T {
 }
 
 function localMetadata(
-  snapshot: LibrarySnapshot,
+  activities: readonly {
+    id: string
+    name: string
+    contentHash?: string
+    isPublic?: boolean
+    activityType?: LocalActivityMetadata["activityType"]
+    startSunPhase?: LocalActivityMetadata["startSunPhase"]
+  }[],
   excludedHashes: ReadonlySet<string> = new Set()
 ): LocalActivityMetadata[] {
-  return snapshot.activities
+  return activities
     .filter(
       (activity) =>
         !activity.contentHash || !excludedHashes.has(activity.contentHash)
@@ -228,6 +242,18 @@ function activityFor(
       (activityId !== undefined && activity.id === activityId) ||
       activity.contentHash === contentHash
   )
+}
+
+function activityIdFor(
+  snapshot: LibrarySummarySnapshot,
+  activityId: string | undefined,
+  contentHash: string
+): string | undefined {
+  return snapshot.summaries.find(
+    (activity) =>
+      (activityId !== undefined && activity.id === activityId) ||
+      activity.contentHash === contentHash
+  )?.id
 }
 
 function metadataKey(activity: UploadActivityIntent): string {
@@ -613,7 +639,10 @@ export function createActivitySyncExecutor(
 
   async function run(): Promise<SyncExecutorResult> {
     throwIfSyncAborted(signal)
-    await options.library.initialize()
+    // Planning and local metadata effects need only the summary projection.
+    // Upgrade to the full activity snapshot below only when a geometry-bearing
+    // effect actually needs it.
+    await options.library.initializeSummarySnapshot()
     throwIfSyncAborted(signal)
     let state =
       (await options.repository.loadState()) ?? clone(EMPTY_SYNC_STATE)
@@ -661,7 +690,7 @@ export function createActivitySyncExecutor(
       throwIfSyncAborted(signal)
       const plan = planActivitySync({
         localActivities: localMetadata(
-          options.library.getSnapshot(),
+          options.library.getSummarySnapshot().summaries,
           excludedLocalHashes
         ),
         state,
@@ -683,6 +712,8 @@ export function createActivitySyncExecutor(
 
       if (pageResult.changes.length > 0) {
         throwIfSyncAborted(signal)
+        await options.library.initialize()
+        throwIfSyncAborted(signal)
         const commit = await options.library.dispatch({
           type: "applyRemote",
           operationId: createUuid(),
@@ -696,13 +727,13 @@ export function createActivitySyncExecutor(
       }
       if (pageResult.metadataPatches.length > 0) {
         throwIfSyncAborted(signal)
-        const commit = await options.library.dispatch({
+        const commit = await options.library.dispatchMetadata({
           type: "updateMetadata",
           operationId: createUuid(),
           patches: pageResult.metadataPatches,
         })
         throwIfSyncAborted(signal)
-        updatedCount += commit.change.updated.length
+        updatedCount += commit.updated.length
       }
 
       const nextState = stateAfterPage(
@@ -792,7 +823,11 @@ export function createActivitySyncExecutor(
     alreadyUploaded: ReadonlySet<string> = new Set()
   ): Promise<ExecutedPage> {
     throwIfSyncAborted(signal)
-    const libraryRevision = options.library.getSnapshot().revision
+    if (plan.intents.some((intent) => intent.type === "upload")) {
+      await options.library.initialize()
+      throwIfSyncAborted(signal)
+    }
+    const libraryRevision = options.library.getSummarySnapshot().revision
     const items = await enqueueEffects(plan, libraryRevision, alreadyUploaded)
     const effectIntents = plan.intents.filter(
       (intent) => effectOperation(intent) !== null
@@ -840,6 +875,10 @@ export function createActivitySyncExecutor(
             ? payload.contentHash
             : undefined,
       })
+    }
+    if (work.some(({ operation }) => operation === "upload")) {
+      await options.library.initialize()
+      throwIfSyncAborted(signal)
     }
     return executeEffects(work)
   }
@@ -1006,20 +1045,20 @@ export function createActivitySyncExecutor(
         return { change: null, addedServerHash: payload.contentHash }
       }
       case "download": {
-        const snapshot = options.library.getSnapshot()
+        const snapshot = options.library.getSummarySnapshot()
         const result = await options.transport.downloadActivity(
           payload.contentHash,
           signal
         )
         throwIfSyncAborted(signal)
-        const local = activityFor(snapshot, undefined, payload.contentHash)
+        const localId = activityIdFor(snapshot, undefined, payload.contentHash)
         const coordinates =
           result.payload.coordinates ??
           flattenActivityPaths(result.payload.paths ?? [])
         const activity: ParsedActivity = {
           ...result.payload,
           coordinates,
-          id: local?.id ?? createUuid(),
+          id: localId ?? createUuid(),
           contentHash: payload.contentHash,
           name: payload.remote.name,
           isPublic: payload.remote.isPublic,
@@ -1031,17 +1070,17 @@ export function createActivitySyncExecutor(
         return { change: { type: "upsert", activity } }
       }
       case "metadata": {
-        const snapshot = options.library.getSnapshot()
-        const local = activityFor(
+        const snapshot = options.library.getSummarySnapshot()
+        const localId = activityIdFor(
           snapshot,
           payload.localId,
           payload.contentHash
         )
-        if (!local) return { change: null }
+        if (!localId) return { change: null }
         return {
           change: null,
           metadataPatch: {
-            id: local.id,
+            id: localId,
             name: payload.remote.name,
             isPublic: payload.remote.isPublic,
             activityType: payload.remote.activityType ?? null,

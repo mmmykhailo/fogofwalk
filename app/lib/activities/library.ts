@@ -294,6 +294,7 @@ export interface ActivityLibrary {
   initialize(): Promise<LibrarySnapshot>
   initializeSummarySnapshot(): Promise<LibrarySummarySnapshot>
   getSnapshot(): LibrarySnapshot
+  getSummarySnapshot(): LibrarySummarySnapshot
   subscribe(listener: LibraryListener): () => void
   subscribeMetadata(listener: LibraryMetadataListener): () => void
   dispatch(
@@ -597,6 +598,23 @@ export function createActivityLibrary(
     return cloneSnapshot(snapshot)
   }
 
+  function getSummarySnapshot(): LibrarySummarySnapshot {
+    if (snapshot) {
+      return cloneSummarySnapshot({
+        revision: snapshot.revision,
+        coverageRevision: snapshot.coverageRevision,
+        summaries: snapshot.activities.map(activityToSummary),
+      })
+    }
+    if (!summarySnapshot) {
+      throw createActivityStorageError(
+        "unavailable",
+        "The activity summaries have not finished loading."
+      )
+    }
+    return cloneSummarySnapshot(summarySnapshot)
+  }
+
   function subscribe(listener: LibraryListener): () => void {
     listeners.add(listener)
     return () => listeners.delete(listener)
@@ -758,6 +776,7 @@ export function createActivityLibrary(
     initialize,
     initializeSummarySnapshot,
     getSnapshot,
+    getSummarySnapshot,
     subscribe,
     subscribeMetadata,
     dispatch,

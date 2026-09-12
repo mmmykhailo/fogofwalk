@@ -33,7 +33,10 @@ function activity(
       avgMovingPaceMinPerKm: 5.8,
       avgSpeedKmh: 10,
       avgMovingSpeedKmh: 10.2,
-      elevationProfile: [1, 2],
+      elevationProfile: [
+        { distanceKm: 0, elevationM: 1 },
+        { distanceKm: 1, elevationM: 2 },
+      ],
     },
   }
 }
