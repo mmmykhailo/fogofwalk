@@ -58,6 +58,7 @@ import { createActivityUploadOutboxItem } from "~/lib/server/sync/activityEffect
 import { createActivityDeleteOutboxItem } from "~/lib/server/sync/activityEffects"
 import { buildLapActivity, lapSubtitle } from "~/lib/laps"
 import { processPhotoFiles } from "~/lib/photos"
+import { createPhotoUrlOwner, type PhotoUrlOwner } from "~/lib/photoUrls"
 import {
   loadActivitySummaries,
   activityToSummary,
@@ -645,6 +646,15 @@ export default function Home() {
   } = mapSurface
   const [showShareDialog, setShowShareDialog] = useState(false)
   const [photos, setPhotos] = useState<PhotoEntry[]>(_restoredPhotos)
+  const photoUrlOwnerRef = useRef<PhotoUrlOwner | null>(null)
+  if (!photoUrlOwnerRef.current) {
+    photoUrlOwnerRef.current = createPhotoUrlOwner()
+  }
+  const photoUrlOwner = photoUrlOwnerRef.current
+  useEffect(() => {
+    photoUrlOwner.reconcile(photos)
+  }, [photos, photoUrlOwner])
+  useEffect(() => () => photoUrlOwner.revokeAll(), [photoUrlOwner])
   const [showPhotos, setShowPhotos] = useState(true)
   const [savedPoints, setSavedPoints] =
     useState<SavedPoint[]>(_restoredSavedPoints)
@@ -1107,9 +1117,7 @@ export default function Home() {
   }
 
   function handleClearAll() {
-    photos.forEach((p) => {
-      if (p.objectUrl) URL.revokeObjectURL(p.objectUrl)
-    })
+    photoUrlOwner.revokeAll()
     // Release the cached share-card map bitmap so the GPU memory is freed
     if (mapStore.shareCardCache) {
       mapStore.shareCardCache.baseMap.close()
@@ -1278,6 +1286,7 @@ export default function Home() {
               mapMode={mapMode}
               photos={photos}
               showPhotos={showPhotos}
+              ensurePhotoObjectUrl={photoUrlOwner.ensurePhotoObjectUrl}
               onPhotoSelect={(group) =>
                 group
                   ? dispatchMapSurface({ type: "selectPhoto", group })
@@ -1409,6 +1418,7 @@ export default function Home() {
               <DraggablePhotoDialog
                 group={selectedGroup}
                 onClose={() => dispatchMapSurface({ type: "closePhoto" })}
+                ensurePhotoObjectUrl={photoUrlOwner.ensurePhotoObjectUrl}
               />
               {selectedActivities.length > 0 && (
                 <ErrorBoundary

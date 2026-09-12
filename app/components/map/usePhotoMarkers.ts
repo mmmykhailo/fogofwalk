@@ -55,7 +55,8 @@ export function computePhotoClusters(
 
 function createPhotoMarkerElement(
   group: PhotoGroup,
-  onSelect: () => void
+  onSelect: () => void,
+  ensurePhotoObjectUrl: (photo: PhotoEntry) => string
 ): HTMLDivElement {
   const half = 18
   const element = document.createElement("div")
@@ -69,7 +70,7 @@ function createPhotoMarkerElement(
     "border-radius:50%;border:2px solid white;box-sizing:border-box;" +
     "overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,0.4);"
   const image = document.createElement("img")
-  image.src = group.photos[0].objectUrl!
+  image.src = ensurePhotoObjectUrl(group.photos[0]!)
   image.style.cssText = "width:100%;height:100%;object-fit:cover;display:block;"
   circle.appendChild(image)
   element.appendChild(circle)
@@ -95,7 +96,8 @@ function createPhotoMarkerElement(
 export function usePhotoMarkers(
   photos: PhotoEntry[],
   showPhotos: boolean,
-  onPhotoSelect: (group: PhotoGroup | null) => void
+  onPhotoSelect: (group: PhotoGroup | null) => void,
+  ensurePhotoObjectUrl: (photo: PhotoEntry) => string
 ): { rebuildPhotoMarkers: () => void } {
   const markersRef = useRef<Map<string, maplibregl.Marker>>(new Map())
   const clusterCacheRef = useRef<Map<number, PhotoGroup[]>>(new Map())
@@ -125,17 +127,19 @@ export function usePhotoMarkers(
 
     for (const cluster of clusters) {
       for (const photo of cluster.photos) {
-        if (!photo.objectUrl) photo.objectUrl = URL.createObjectURL(photo.file)
+        ensurePhotoObjectUrl(photo)
       }
-      const element = createPhotoMarkerElement(cluster, () =>
-        onPhotoSelectRef.current(cluster)
+      const element = createPhotoMarkerElement(
+        cluster,
+        () => onPhotoSelectRef.current(cluster),
+        ensurePhotoObjectUrl
       )
       const marker = new maplibregl.Marker({ element })
         .setLngLat([cluster.lng, cluster.lat])
         .addTo(map)
       markersRef.current.set(cluster.id, marker)
     }
-  }, [])
+  }, [ensurePhotoObjectUrl])
 
   useEffect(() => {
     clusterCacheRef.current.clear()

@@ -17,18 +17,21 @@ import {
 } from "~/components/ui/drawer"
 import { useIsMobile } from "~/lib/useIsMobile"
 import { DraggableDialog } from "~/components/DraggableDialog"
-import type { PhotoGroup } from "~/types/photos"
+import type { PhotoEntry, PhotoGroup } from "~/types/photos"
 
 interface DraggablePhotoDialogProps {
   group: PhotoGroup | null
   onClose: () => void
+  ensurePhotoObjectUrl: (photo: PhotoEntry) => string
 }
 
 export function DraggablePhotoDialog({
   group,
   onClose,
+  ensurePhotoObjectUrl,
 }: DraggablePhotoDialogProps) {
   const [idx, setIdx] = useState(0)
+  const [photoUrl, setPhotoUrl] = useState<string | null>(null)
   const [isOpen, setIsOpen] = useState(true)
   const isDismissingRef = useRef(false)
   const isMobile = useIsMobile()
@@ -36,6 +39,15 @@ export function DraggablePhotoDialog({
   useEffect(() => {
     setIdx(0)
   }, [group?.id])
+
+  const photo = group?.photos[idx]
+  useEffect(() => {
+    if (!photo) {
+      setPhotoUrl(null)
+      return
+    }
+    setPhotoUrl(ensurePhotoObjectUrl(photo))
+  }, [ensurePhotoObjectUrl, photo])
 
   // Reset dismiss guard when a new group is shown
   useEffect(() => {
@@ -45,7 +57,7 @@ export function DraggablePhotoDialog({
 
   if (!group) return null
 
-  const photo = group.photos[idx]
+  const renderedPhotoUrl = photo?.objectUrl ?? photoUrl
   const count = group.photos.length
 
   function handleDismiss() {
@@ -102,7 +114,7 @@ export function DraggablePhotoDialog({
           <DrawerHeader>
             <div className="flex items-center justify-between gap-2">
               <DrawerTitle className="truncate text-xs">
-                {new Date(photo.takenAtMs).toLocaleString()}
+                {photo ? new Date(photo.takenAtMs).toLocaleString() : ""}
               </DrawerTitle>
               <Button
                 variant="ghost"
@@ -117,9 +129,9 @@ export function DraggablePhotoDialog({
           </DrawerHeader>
           <div className="pb-4">
             <div className="aspect-[4/3] w-full">
-              {photo.objectUrl && (
+              {renderedPhotoUrl && (
                 <img
-                  src={photo.objectUrl}
+                  src={renderedPhotoUrl}
                   alt="Photo"
                   className="block size-full object-contain"
                 />
@@ -142,7 +154,7 @@ export function DraggablePhotoDialog({
             className="cursor-grab select-none active:cursor-grabbing"
           >
             <CardTitle className="truncate text-xs">
-              {new Date(photo.takenAtMs).toLocaleString()}
+              {photo ? new Date(photo.takenAtMs).toLocaleString() : ""}
             </CardTitle>
             <CardAction>
               <Button
@@ -158,9 +170,9 @@ export function DraggablePhotoDialog({
           </CardHeader>
           <CardContent className="p-0">
             <div className="aspect-[4/3] w-full">
-              {photo.objectUrl && (
+              {renderedPhotoUrl && (
                 <img
-                  src={photo.objectUrl}
+                  src={renderedPhotoUrl}
                   alt="Photo"
                   className="block size-full object-contain"
                 />

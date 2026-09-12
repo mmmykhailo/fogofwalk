@@ -23,6 +23,7 @@ interface MapViewProps {
   mapMode: MapMode
   photos: PhotoEntry[]
   showPhotos: boolean
+  ensurePhotoObjectUrl: (photo: PhotoEntry) => string
   onPhotoSelect: (group: PhotoGroup | null) => void
   showMyLocation: boolean
   /** Current geolocation as [lng, lat], or null while unavailable. */
@@ -54,6 +55,7 @@ export function MapView({
   mapMode,
   photos,
   showPhotos,
+  ensurePhotoObjectUrl,
   onPhotoSelect,
   showMyLocation,
   myLocation,
@@ -70,7 +72,8 @@ export function MapView({
   const { rebuildPhotoMarkers } = usePhotoMarkers(
     photos,
     showPhotos,
-    onPhotoSelect
+    onPhotoSelect,
+    ensurePhotoObjectUrl
   )
   const { containerRef, bearing, zoomIn, zoomOut, resetOrientation } =
     useMapLifecycle({

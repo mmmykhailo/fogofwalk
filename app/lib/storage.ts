@@ -803,10 +803,7 @@ export async function savePhotos(photos: PhotoEntry[]): Promise<void> {
   }
 }
 
-/**
- * Load all persisted photos, recreating objectUrl for each File.
- * Returns [] on any error.
- */
+/** Load all persisted photos without allocating document-owned object URLs. */
 export async function loadPhotos(): Promise<PhotoEntry[]> {
   incrementPerformanceCounter("photoStoreReads")
   const db = await getDb()
@@ -822,7 +819,6 @@ export async function loadPhotos(): Promise<PhotoEntry[]> {
       takenAtMs: s.takenAtMs,
       lng: s.lng,
       lat: s.lat,
-      objectUrl: URL.createObjectURL(s.file),
     }))
   } catch (err) {
     console.warn("[storage] loadPhotos failed:", err)
