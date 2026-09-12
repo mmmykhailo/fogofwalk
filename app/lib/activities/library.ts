@@ -8,10 +8,12 @@ import {
   type ActivityLibraryRepository,
 } from "./repository"
 import type {
+  ActivityMetadataPatch,
   LibraryCommand,
   LibraryCommit,
   LibraryChange,
   LibraryListener,
+  LibraryMetadataCommit,
   LibrarySnapshot,
 } from "./libraryEvents"
 
@@ -35,6 +37,79 @@ function cloneSnapshot(snapshot: LibrarySnapshot): LibrarySnapshot {
 function cloneChange(change: LibraryChange): LibraryChange {
   if (typeof structuredClone === "function") return structuredClone(change)
   return JSON.parse(JSON.stringify(change)) as LibraryChange
+}
+
+function applySummaryMetadata(
+  activity: LibrarySnapshot["activities"][number],
+  summary: LibraryMetadataCommit["updated"][number]
+): LibrarySnapshot["activities"][number] {
+  let next: LibrarySnapshot["activities"][number] | null = null
+  if (summary.name !== activity.name) {
+    next = { ...(next ?? activity), name: summary.name }
+  }
+  const isPublic = summary.isPublic ?? false
+  if (isPublic !== (activity.isPublic ?? false)) {
+    next = { ...(next ?? activity), isPublic }
+  }
+  if (summary.activityType !== activity.activityType) {
+    next = { ...(next ?? activity) }
+    if (summary.activityType === undefined) delete next.activityType
+    else next.activityType = summary.activityType
+  }
+  if (summary.startSunPhase !== activity.startSunPhase) {
+    next = { ...(next ?? activity) }
+    if (summary.startSunPhase === undefined) delete next.startSunPhase
+    else next.startSunPhase = summary.startSunPhase
+  }
+  return next ?? activity
+}
+
+function reconcileMetadataCommit(
+  base: LibrarySnapshot,
+  command: Extract<LibraryCommand, { type: "updateMetadata" }>,
+  metadata: LibraryMetadataCommit
+): LibraryCommit {
+  const summariesById = new Map(
+    metadata.updated.map((summary) => [summary.id, summary])
+  )
+  const changedById = new Map<string, LibrarySnapshot["activities"][number]>()
+  for (const patch of command.patches as readonly ActivityMetadataPatch[]) {
+    const summary = summariesById.get(patch.id)
+    const current = base.activities.find((activity) => activity.id === patch.id)
+    if (!summary || !current) continue
+    const next = applySummaryMetadata(current, summary)
+    if (next !== current) changedById.set(current.id, next)
+  }
+  const activities = base.activities.map(
+    (activity) => changedById.get(activity.id) ?? activity
+  )
+  const updated = metadata.updated.flatMap((summary) => {
+    const activity = changedById.get(summary.id)
+    return activity ? [activity] : []
+  })
+  const snapshot: LibrarySnapshot = {
+    revision: metadata.revision,
+    coverageRevision: metadata.coverageRevision,
+    activities: Object.freeze(activities),
+  }
+  return {
+    snapshot,
+    change: {
+      operationId: metadata.operationId,
+      fromRevision: metadata.fromRevision,
+      revision: metadata.revision,
+      added: [],
+      updated,
+      removed: [],
+      duplicates: [],
+      domains: {
+        membership: false,
+        geometry: false,
+        metadata: metadata.updated.length > 0,
+        statistics: false,
+      },
+    },
+  }
 }
 
 function sameActivity(
@@ -210,6 +285,36 @@ export function createActivityLibrary(
   ): Promise<LibraryCommit> {
     return enqueue(async () => {
       if (!snapshot) snapshot = cloneSnapshot(await repository.load())
+
+      if (command.type === "updateMetadata") {
+        let attempt = 0
+        while (attempt < 2) {
+          attempt++
+          const base = snapshot!
+          const metadata = await withWriteLock(() =>
+            repository.commitMetadata(command, base.revision, options)
+          ).catch(async (error: unknown) => {
+            if (!isActivityLibraryConflictError(error) || attempt >= 2) {
+              throw error
+            }
+            snapshot = cloneSnapshot(await repository.load())
+            return null
+          })
+          if (!metadata) continue
+
+          const commit = reconcileMetadataCommit(base, command, metadata)
+          snapshot = cloneSnapshot(commit.snapshot)
+          for (const listener of listeners) {
+            listener(cloneSnapshot(commit.snapshot), cloneChange(commit.change))
+          }
+          channel?.postMessage({ revision: commit.snapshot.revision })
+          return {
+            snapshot: cloneSnapshot(commit.snapshot),
+            change: cloneChange(commit.change),
+          }
+        }
+        throw new Error("Activity library conflict did not resolve")
+      }
 
       let attempt = 0
       while (attempt < 2) {

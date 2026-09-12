@@ -128,7 +128,7 @@ export function activityToSummary(
   }
 }
 
-function isActivitySummary(value: unknown): value is ActivitySummary {
+export function isActivitySummary(value: unknown): value is ActivitySummary {
   if (value == null || typeof value !== "object") return false
   const summary = value as Partial<ActivitySummary>
   const stats = summary.stats

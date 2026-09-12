@@ -3,6 +3,7 @@ import type {
   ParsedActivity,
   StartSunPhase,
 } from "~/types/activities"
+import type { ActivitySummary } from "~/types/activitySummary"
 
 export type LibraryRevision = number
 export type OperationId = string
@@ -88,6 +89,14 @@ export interface LibrarySnapshot {
 export interface LibraryCommit {
   snapshot: LibrarySnapshot
   change: LibraryChange
+}
+
+export interface LibraryMetadataCommit {
+  operationId: OperationId
+  fromRevision: LibraryRevision
+  revision: LibraryRevision
+  coverageRevision: LibraryRevision
+  updated: ActivitySummary[]
 }
 
 export type LibraryListener = (

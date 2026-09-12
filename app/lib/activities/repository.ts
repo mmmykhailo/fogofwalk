@@ -2,6 +2,8 @@ import type { ParsedActivity } from "~/types/activities"
 import type { ActivitySummary } from "~/types/activitySummary"
 import {
   activityToSummary,
+  isActivitySummary,
+  loadActivitySummaries,
   migrateStoredActivity,
   openStorageDatabase,
   type StoredActivity,
@@ -25,6 +27,7 @@ import type {
   LibraryChangeDomains,
   LibraryCommand,
   LibraryCommit,
+  LibraryMetadataCommit,
   LibraryRevision,
   LibrarySnapshot,
   RemoteChange,
@@ -47,6 +50,11 @@ export interface ActivityLibraryRepository {
     expectedRevision: number,
     options?: ActivityLibraryCommitOptions
   ): Promise<LibraryCommit>
+  commitMetadata(
+    command: Extract<LibraryCommand, { type: "updateMetadata" }>,
+    expectedRevision: number,
+    options?: ActivityLibraryCommitOptions
+  ): Promise<LibraryMetadataCommit>
 }
 
 /** Durable effects that must be committed with a canonical library mutation. */
@@ -59,6 +67,10 @@ export interface ActivityLibraryCommitOptions {
   outbox?:
     | readonly SyncOutboxItemInput[]
     | ((commit: LibraryCommit) => readonly SyncOutboxItemInput[])
+  /** A targeted metadata mutation can enqueue its compact effect atomically. */
+  metadataOutbox?: (
+    commit: LibraryMetadataCommit
+  ) => readonly SyncOutboxItemInput[]
 }
 
 function clone<T>(value: T): T {
@@ -129,6 +141,16 @@ function outboxInputs(
   return inputs
     .filter((input) => effectMatchesChange(input, commit.change))
     .map((input) => withCommittedRevision(input, commit.snapshot.revision))
+}
+
+function metadataOutboxInputs(
+  options: ActivityLibraryCommitOptions,
+  commit: LibraryMetadataCommit
+): readonly SyncOutboxItemInput[] {
+  if (!options.metadataOutbox || commit.updated.length === 0) return []
+  return options
+    .metadataOutbox(commit)
+    .map((input) => withCommittedRevision(input, commit.revision))
 }
 
 function effectMatchesChange(
@@ -398,6 +420,52 @@ function applyMetadata(
   }
 }
 
+function applyMetadataToSummary(
+  summary: ActivitySummary,
+  patch: ActivityMetadataPatch
+): ActivitySummary | null {
+  let next: ActivitySummary | null = null
+  if (patch.name !== undefined && patch.name !== summary.name) {
+    next = { ...(next ?? summary), name: patch.name }
+  }
+  if (
+    patch.isPublic !== undefined &&
+    patch.isPublic !== (summary.isPublic ?? false)
+  ) {
+    next = { ...(next ?? summary), isPublic: patch.isPublic }
+  }
+  if ("activityType" in patch) {
+    const nextType = patch.activityType ?? undefined
+    if (nextType !== summary.activityType) {
+      next = { ...(next ?? summary) }
+      if (nextType === undefined) delete next.activityType
+      else next.activityType = nextType
+    }
+  }
+  if ("startSunPhase" in patch) {
+    const nextPhase = patch.startSunPhase ?? undefined
+    if (nextPhase !== summary.startSunPhase) {
+      next = { ...(next ?? summary) }
+      if (nextPhase === undefined) delete next.startSunPhase
+      else next.startSunPhase = nextPhase
+    }
+  }
+  return next
+}
+
+function metadataCommitFromLibraryCommit(
+  operationId: string,
+  commit: LibraryCommit
+): LibraryMetadataCommit {
+  return {
+    operationId,
+    fromRevision: commit.change.fromRevision,
+    revision: commit.snapshot.revision,
+    coverageRevision: commit.snapshot.coverageRevision,
+    updated: commit.change.updated.map(activityToSummary),
+  }
+}
+
 export function applyLibraryCommand(
   current: LibrarySnapshot,
   command: LibraryCommand
@@ -502,6 +570,28 @@ function transactionResult(transaction: IDBTransaction): Promise<void> {
       )
     transaction.onerror = () => reject(transaction.error)
   })
+}
+
+async function abortAndWait(transaction: IDBTransaction): Promise<void> {
+  try {
+    transaction.abort()
+  } catch {
+    // The transaction may already have completed or aborted.
+  }
+  try {
+    await transactionResult(transaction)
+  } catch {
+    // The caller is responsible for reporting the reason for the abort.
+  }
+}
+
+class ActivitySummaryRecoveryRequired extends Error {
+  constructor() {
+    super(
+      "The activity summary store is incomplete; it must be recovered before metadata can be changed."
+    )
+    this.name = "ActivitySummaryRecoveryRequired"
+  }
 }
 
 function readMeta(value: unknown): StoredLibraryMeta {
@@ -694,7 +784,138 @@ export function createIndexedDbActivityLibraryRepository(): IndexedDbActivityLib
     }
   }
 
-  return { load, commit }
+  async function commitMetadataTransaction(
+    db: IDBDatabase,
+    command: Extract<LibraryCommand, { type: "updateMetadata" }>,
+    expectedRevision: number,
+    options: ActivityLibraryCommitOptions
+  ): Promise<LibraryMetadataCommit> {
+    const hasOutbox = typeof options.metadataOutbox === "function"
+    const transaction = db.transaction(
+      hasOutbox
+        ? ["library-meta", "activity-summaries", "sync-outbox"]
+        : ["library-meta", "activity-summaries"],
+      "readwrite"
+    )
+    const metaStore = transaction.objectStore("library-meta")
+    const summaryStore = transaction.objectStore("activity-summaries")
+    const outboxStore = hasOutbox
+      ? transaction.objectStore("sync-outbox")
+      : null
+
+    // Issue one point lookup per requested id. In particular, do not touch the
+    // geometry store on this path: activity-summaries owns mutable presentation
+    // metadata and full activity loads overlay it when geometry is needed.
+    const rawMetaRequest = metaStore.get(LIBRARY_META_KEY)
+    const summaryRequests = command.patches.map((patch) =>
+      summaryStore.get(patch.id)
+    )
+    const [rawMeta, ...rawSummaries] = await Promise.all([
+      requestResult<StoredLibraryMeta | undefined>(rawMetaRequest),
+      ...summaryRequests.map((request) => requestResult<unknown>(request)),
+    ])
+    const meta = readMeta(rawMeta)
+    if (meta.revision !== expectedRevision) {
+      await abortAndWait(transaction)
+      throw createActivityLibraryConflictError(expectedRevision, meta.revision)
+    }
+
+    const summaries: ActivitySummary[] = []
+    for (const summary of rawSummaries) {
+      if (!isActivitySummary(summary)) {
+        await abortAndWait(transaction)
+        throw new ActivitySummaryRecoveryRequired()
+      }
+      summaries.push(summary)
+    }
+    const updated: ActivitySummary[] = []
+    for (const [index, patch] of command.patches.entries()) {
+      const next = applyMetadataToSummary(summaries[index]!, patch)
+      if (!next) continue
+      updated.push(next)
+      summaryStore.put(next)
+    }
+
+    const result: LibraryMetadataCommit = {
+      operationId: command.operationId,
+      fromRevision: meta.revision,
+      revision: meta.revision + (updated.length > 0 ? 1 : 0),
+      coverageRevision: meta.coverageRevision,
+      updated: clone(updated),
+    }
+    if (
+      result.revision !== meta.revision ||
+      !rawMeta ||
+      rawMeta.schemaVersion !== LIBRARY_SCHEMA_VERSION ||
+      rawMeta.coverageRevision === undefined
+    ) {
+      metaStore.put({
+        key: LIBRARY_META_KEY,
+        schemaVersion: LIBRARY_SCHEMA_VERSION,
+        revision: result.revision,
+        coverageRevision: result.coverageRevision,
+      } satisfies StoredLibraryMeta)
+    }
+
+    const resolvedOutbox = metadataOutboxInputs(options, result)
+    if (outboxStore && resolvedOutbox.length > 0) {
+      const existing = await requestResult<SyncOutboxItem[]>(
+        outboxStore.getAll()
+      )
+      const byDedupeKey = new Map(
+        existing.map((item) => [item.dedupeKey, item])
+      )
+      const now = Date.now()
+      for (const input of resolvedOutbox) {
+        const currentItem = byDedupeKey.get(input.dedupeKey)
+        const next = currentItem
+          ? mergeSyncOutboxItem(currentItem, input, now)
+          : normaliseSyncOutboxItem(input, now)
+        outboxStore.put(next)
+        byDedupeKey.set(next.dedupeKey, next)
+      }
+    }
+
+    await transactionResult(transaction)
+    return result
+  }
+
+  async function commitMetadata(
+    command: Extract<LibraryCommand, { type: "updateMetadata" }>,
+    expectedRevision: number,
+    options: ActivityLibraryCommitOptions = {}
+  ): Promise<LibraryMetadataCommit> {
+    assertValidActivityMetadataPatches(command.patches)
+    const db = await openStorageDatabase()
+    if (!db) {
+      throw createActivityStorageError(
+        "unavailable",
+        "Browser storage is unavailable; the activity metadata was not saved."
+      )
+    }
+
+    let recovered = false
+    for (;;) {
+      try {
+        return await commitMetadataTransaction(
+          db,
+          command,
+          expectedRevision,
+          options
+        )
+      } catch (error) {
+        if (error instanceof ActivitySummaryRecoveryRequired && !recovered) {
+          recovered = true
+          await loadActivitySummaries()
+          continue
+        }
+        if (isActivityLibraryConflictError(error)) throw error
+        throw toActivityStorageError(error, "saving activity metadata")
+      }
+    }
+  }
+
+  return { load, commit, commitMetadata }
 }
 
 /** Deterministic repository for service tests and non-browser adapters. */
@@ -754,9 +975,42 @@ export function createMemoryActivityLibraryRepository(
     return result
   }
 
+  async function commitMetadata(
+    command: Extract<LibraryCommand, { type: "updateMetadata" }>,
+    expectedRevision: number,
+    options: ActivityLibraryCommitOptions = {}
+  ): Promise<LibraryMetadataCommit> {
+    assertValidActivityMetadataPatches(command.patches)
+    if (failure !== null) {
+      const error = failure
+      failure = null
+      throw error
+    }
+    if (expectedRevision !== state.revision) {
+      throw createActivityLibraryConflictError(expectedRevision, state.revision)
+    }
+    const result = applyLibraryCommand(state, command)
+    state = result.snapshot
+    const metadataCommit = metadataCommitFromLibraryCommit(
+      command.operationId,
+      result
+    )
+    for (const input of metadataOutboxInputs(options, metadataCommit)) {
+      const existing = [...outbox.values()].find(
+        (item) => item.dedupeKey === input.dedupeKey
+      )
+      const now = Date.now()
+      const next = existing
+        ? mergeSyncOutboxItem(existing, input, now)
+        : normaliseSyncOutboxItem(input, now)
+      outbox.set(next.id, next)
+    }
+    return metadataCommit
+  }
+
   function getOutbox(): SyncOutboxItem[] {
     return [...outbox.values()].map(clone)
   }
 
-  return { load, commit, failNext, getOutbox }
+  return { load, commit, commitMetadata, failNext, getOutbox }
 }

@@ -359,6 +359,87 @@ describe("activity library command repository", () => {
     })
   })
 
+  test("commits targeted metadata and its compact outbox effect", async () => {
+    const first = activity("first")
+    const repository = createMemoryActivityLibraryRepository([first], 4)
+    const library = createActivityLibrary(repository)
+    await library.initialize()
+
+    const result = await library.dispatch(
+      {
+        type: "updateMetadata",
+        operationId: "metadata-targeted",
+        patches: [{ id: first.id, isPublic: true }],
+      },
+      {
+        metadataOutbox: (commit) => [
+          {
+            dedupeKey: "activity:metadata:hash-first:visibility",
+            operation: "metadata",
+            payload: {
+              kind: "local-metadata",
+              source: "local",
+              activityId: first.id,
+              contentHash: first.contentHash,
+              patch: { isPublic: true },
+              libraryRevision: commit.revision - 1,
+            },
+          },
+        ],
+      }
+    )
+
+    expect(result.snapshot.revision).toBe(5)
+    expect(result.snapshot.coverageRevision).toBe(4)
+    expect(result.change.domains).toEqual({
+      membership: false,
+      geometry: false,
+      metadata: true,
+      statistics: false,
+    })
+    expect(result.change.updated[0]).toMatchObject({
+      id: first.id,
+      isPublic: true,
+    })
+    expect(repository.getOutbox()[0]?.payload).toMatchObject({
+      activityId: first.id,
+      libraryRevision: 5,
+    })
+    library.close()
+  })
+
+  test("retries a targeted metadata conflict with the same operation", async () => {
+    const repository = createMemoryActivityLibraryRepository(
+      [activity("first")],
+      1
+    )
+    const library = createActivityLibrary(repository)
+    await library.initialize()
+    await repository.commit(
+      {
+        type: "updateMetadata",
+        operationId: "other-metadata",
+        patches: [{ id: "first", name: "other-name" }],
+      },
+      1
+    )
+
+    const result = await library.dispatch({
+      type: "updateMetadata",
+      operationId: "local-metadata",
+      patches: [{ id: "first", isPublic: true }],
+    })
+
+    expect(result.snapshot.revision).toBe(3)
+    expect(result.snapshot.coverageRevision).toBe(1)
+    expect(result.snapshot.activities[0]).toMatchObject({
+      id: "first",
+      name: "other-name",
+      isPublic: true,
+    })
+    library.close()
+  })
+
   test("rejects geometry fields and duplicate metadata targets", () => {
     expect(() =>
       applyLibraryCommand(
@@ -381,7 +462,10 @@ describe("activity library command repository", () => {
         {
           type: "updateMetadata",
           operationId: "duplicate",
-          patches: [{ id: "one", isPublic: true }, { id: "one", isPublic: false }],
+          patches: [
+            { id: "one", isPublic: true },
+            { id: "one", isPublic: false },
+          ],
         }
       )
     ).toThrow()
