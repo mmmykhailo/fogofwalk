@@ -2,7 +2,7 @@ import type { Page } from "@playwright/test"
 import { test, expect } from "../fixtures/app"
 import { makeGpx } from "../fixtures/gpx"
 
-const PROTOCOL_VERSION = 2
+const PROTOCOL_VERSION = 3
 const ALGORITHM_VERSION = 3
 const PARTITION_SCHEME_VERSION = 3
 
@@ -20,6 +20,7 @@ const resetRequest = {
   requestId: "reset-1",
   generation: 1,
   libraryRevision: 1,
+  coverageRevision: 1,
   mode: "corridor",
   kind: "cancel",
   activities: [],
@@ -64,6 +65,7 @@ test("[F-039] stamps the current fog identity through a real worker", async ({
         requestId: "rebuild-1",
         generation: 1,
         libraryRevision: 1,
+        coverageRevision: 1,
         mode: "corridor",
         kind: "rebuild",
         activities: [
@@ -79,11 +81,21 @@ test("[F-039] stamps the current fog identity through a real worker", async ({
       }
 
       return new Promise<unknown>((resolve, reject) => {
+        const errors: string[] = []
         const timer = window.setTimeout(() => {
           worker.terminate()
           reject(new Error("fog worker did not finish the rebuild"))
         }, 15_000)
         worker.onmessage = (event) => {
+          if (event.data?.type === "ERROR") {
+            errors.push(event.data.message)
+            if (event.data.fatal) {
+              window.clearTimeout(timer)
+              worker.terminate()
+              reject(new Error(`fog worker failed: ${errors.join("; ")}`))
+              return
+            }
+          }
           if (
             event.data?.type === "DONE" &&
             event.data.requestId === processRequest.requestId
@@ -105,9 +117,11 @@ test("[F-039] stamps the current fog identity through a real worker", async ({
     { reset: resetRequest, protocolVersion: PROTOCOL_VERSION }
   )
 
+  expect(snapshot).not.toBeNull()
   expect(snapshot).toMatchObject({
     generation: 1,
     libraryRevision: 1,
+    coverageRevision: 1,
     mode: "corridor",
     algorithmVersion: ALGORITHM_VERSION,
     partitionSchemeVersion: PARTITION_SCHEME_VERSION,
@@ -144,6 +158,7 @@ test("[F-040] keeps a rejected rebuild partial and blocks append-after-partial",
         requestId: "rebuild-partial",
         generation: 1,
         libraryRevision: 1,
+        coverageRevision: 1,
         mode: "corridor",
         kind: "rebuild",
         activities: [
@@ -163,7 +178,9 @@ test("[F-040] keeps a rejected rebuild partial and blocks append-after-partial",
         requestId: "append-after-partial",
         generation: 1,
         libraryRevision: 2,
+        coverageRevision: 2,
         baseLibraryRevision: 1,
+        baseCoverageRevision: 1,
         mode: "corridor",
         kind: "append",
         activities: [
@@ -220,6 +237,11 @@ test("[F-040] keeps a rejected rebuild partial and blocks append-after-partial",
     { reset: resetRequest, protocolVersion: PROTOCOL_VERSION }
   )
 
+  if (result.partial === null) {
+    throw new Error(
+      `fog worker returned no partial snapshot: ${JSON.stringify(result.errors)}`
+    )
+  }
   expect(result.partial).toMatchObject({
     completeness: "partial",
     diagnostics: { rejectedActivityCount: 1 },
