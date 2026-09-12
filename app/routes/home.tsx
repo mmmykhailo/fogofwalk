@@ -690,6 +690,9 @@ export default function Home() {
   }
 
   function closeSavedPointDialog() {
+    if (savedPointQueryId) {
+      dismissedSavedPointQueryRef.current = savedPointQueryId
+    }
     publicSavedPointRequestRef.current = null
     dispatchMapSurface({ type: "closeSavedPoint" })
     clearSearchParams(["savedPoint"])
@@ -745,6 +748,10 @@ export default function Home() {
   // remain retryable after reload instead of losing the shared files.
   const pendingShareRequestsRef = useRef<Request[]>([])
   const publicSavedPointRequestRef = useRef<{ id: string } | null>(null)
+  // Saving an owned point updates the local collection before the replace
+  // navigation removes ?savedPoint. Ignore that one stale query so the
+  // just-closed editor is not reopened for the updated point.
+  const dismissedSavedPointQueryRef = useRef<string | null>(null)
 
   // A fresh OAuth sign-in can start syncing while this loader is still reading
   // IndexedDB. In that case its first result contains no activities, then the
@@ -804,6 +811,12 @@ export default function Home() {
   useEffect(() => {
     if (!mapReady) return
     publicSavedPointRequestRef.current = null
+
+    const dismissedQueryId = dismissedSavedPointQueryRef.current
+    if (dismissedQueryId !== null) {
+      if (savedPointQueryId === dismissedQueryId) return
+      dismissedSavedPointQueryRef.current = null
+    }
 
     if (!savedPointQueryId) {
       // A public point is the only surface that can exist without a local
