@@ -14,10 +14,10 @@ interface DraggableDialogProps {
 }
 
 interface DraggableDialogHandleProps {
-  onPointerDown: PointerEventHandler<HTMLDivElement>
-  onPointerMove: PointerEventHandler<HTMLDivElement>
-  onPointerUp: PointerEventHandler<HTMLDivElement>
-  onPointerCancel: PointerEventHandler<HTMLDivElement>
+  onPointerDownCapture: PointerEventHandler<HTMLDivElement>
+  onPointerMoveCapture: PointerEventHandler<HTMLDivElement>
+  onPointerUpCapture: PointerEventHandler<HTMLDivElement>
+  onPointerCancelCapture: PointerEventHandler<HTMLDivElement>
 }
 
 /** A fixed-position desktop dialog with an opt-in draggable handle. */
@@ -31,10 +31,10 @@ export function DraggableDialog({
   const {
     style,
     ref,
-    onPointerDown,
-    onPointerMove,
-    onPointerUp,
-    onPointerCancel,
+    onPointerDownCapture,
+    onPointerMoveCapture,
+    onPointerUpCapture,
+    onPointerCancelCapture,
   } = useDraggable({
     x,
     y,
@@ -44,10 +44,10 @@ export function DraggableDialog({
   return (
     <div ref={ref} className={cn("absolute", className)} style={style}>
       {children({
-        onPointerDown,
-        onPointerMove,
-        onPointerUp,
-        onPointerCancel,
+        onPointerDownCapture,
+        onPointerMoveCapture,
+        onPointerUpCapture,
+        onPointerCancelCapture,
       })}
     </div>
   )

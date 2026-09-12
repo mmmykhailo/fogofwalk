@@ -5,6 +5,7 @@ import {
   readPerformanceCounters,
   sampleMapGesture,
   seedPerformanceDatabase,
+  waitForMapIdle,
 } from "../fixtures/performance"
 
 const OFFLINE_STYLE = {
@@ -214,5 +215,118 @@ test.describe("map interaction performance fixture", () => {
     })
     expect(metrics.finalCenter).not.toEqual(metrics.initialCenter)
     await reportMetrics(testInfo, [], "mobile-touch-pan-rotate", metrics)
+  })
+
+  test("coalesces desktop dialog pointer moves", async ({ page }) => {
+    await stubMapTiles(page)
+    await page.setViewportSize({ width: 1280, height: 900 })
+    const activity = makePerformanceActivities(1, "compact")[0]!
+    await seedPerformanceDatabase(page, [activity], true)
+    await page.goto(`/map?activity=${encodeURIComponent(activity.id)}`)
+    await waitForMapReady(page)
+
+    const card = page.locator('[data-slot="card"]').first()
+    const handle = card.locator('[data-slot="card-header"]')
+    await expect(handle).toBeVisible()
+    await waitForMapIdle(page)
+    const draggable = card.locator("xpath=..")
+    const beforeBox = await draggable.boundingBox()
+    const handleBox = await handle.boundingBox()
+    if (!beforeBox || !handleBox)
+      throw new Error("Activity dialog is not laid out")
+
+    const initialCenter = await page.evaluate(() => {
+      const map = window.__fogofwalkE2eMap
+      if (!map) throw new Error("MapLibre test handle is unavailable")
+      const center = (
+        map as unknown as { getCenter: () => { lng: number; lat: number } }
+      ).getCenter()
+      return [center.lng, center.lat]
+    })
+    const beforeCounters = await readPerformanceCounters(page)
+
+    await page.mouse.move(
+      handleBox.x + handleBox.width / 2,
+      handleBox.y + handleBox.height / 2
+    )
+    await page.mouse.down()
+    const pointerId = await page.evaluate(() => {
+      const handle = document.querySelector('[data-slot="card-header"]')
+      if (!(handle instanceof HTMLElement)) {
+        throw new Error("Activity dialog handle is unavailable")
+      }
+      for (let candidate = 1; candidate <= 8; candidate++) {
+        if (handle.hasPointerCapture(candidate)) return candidate
+      }
+      throw new Error("Dialog did not capture the pointer")
+    })
+    await page.evaluate(
+      ({ pointerId, handleBox }) => {
+        const handle = document.querySelector('[data-slot="card-header"]')
+        if (!(handle instanceof HTMLElement)) {
+          throw new Error("Activity dialog handle is unavailable")
+        }
+        const endX = 0
+        const endY = window.innerHeight
+        for (let index = 1; index <= 240; index++) {
+          const progress = index / 240
+          handle.dispatchEvent(
+            new PointerEvent("pointermove", {
+              bubbles: true,
+              cancelable: true,
+              pointerId,
+              pointerType: "mouse",
+              isPrimary: true,
+              clientX:
+                handleBox.x +
+                handleBox.width / 2 -
+                (handleBox.x + handleBox.width / 2 - endX) * progress,
+              clientY:
+                handleBox.y +
+                handleBox.height / 2 +
+                (endY - (handleBox.y + handleBox.height / 2)) * progress,
+              buttons: 1,
+            })
+          )
+        }
+        handle.dispatchEvent(
+          new PointerEvent("pointerup", {
+            bubbles: true,
+            cancelable: true,
+            pointerId,
+            pointerType: "mouse",
+            isPrimary: true,
+            clientX: endX,
+            clientY: endY,
+            buttons: 0,
+          })
+        )
+      },
+      { pointerId, handleBox }
+    )
+    await page.mouse.up()
+    await waitForMapIdle(page)
+
+    const afterCounters = await readPerformanceCounters(page)
+    const delta = diffPerformanceCounters(beforeCounters, afterCounters)
+    const afterBox = await draggable.boundingBox()
+    if (!afterBox) throw new Error("Activity dialog disappeared after drag")
+    expect(delta.draggableTransformWrites).toBeGreaterThan(0)
+    expect(delta.draggableTransformWrites).toBeLessThan(20)
+    expect(afterBox.x).toBeGreaterThanOrEqual(12)
+    expect(afterBox.y).toBeGreaterThanOrEqual(12)
+    expect(afterBox.x + afterBox.width).toBeLessThanOrEqual(1280 - 12)
+    expect(afterBox.y + afterBox.height).toBeLessThanOrEqual(900 - 12)
+
+    const finalCenter = await page.evaluate(() => {
+      const map = window.__fogofwalkE2eMap
+      if (!map) throw new Error("MapLibre test handle is unavailable")
+      const center = (
+        map as unknown as { getCenter: () => { lng: number; lat: number } }
+      ).getCenter()
+      return [center.lng, center.lat]
+    })
+    expect(finalCenter).toEqual(initialCenter)
+    expect(afterBox.x !== beforeBox.x || afterBox.y !== beforeBox.y).toBe(true)
   })
 })

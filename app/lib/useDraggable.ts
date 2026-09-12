@@ -6,6 +6,7 @@ import {
   type PointerEventHandler,
   type RefCallback,
 } from "react"
+import { incrementPerformanceCounter } from "~/lib/performance"
 
 interface DraggableOptions {
   /** `Infinity` aligns with the far edge; a negative value offsets from it. */
@@ -35,6 +36,14 @@ function samePosition(first: Position, second: Position): boolean {
 
 export function formatDraggableTransform({ x, y }: Position): string {
   return `translate3d(${x}px, ${y}px, 0)`
+}
+
+function writeDraggableTransform(
+  element: HTMLElement,
+  position: Position
+): void {
+  element.style.transform = formatDraggableTransform(position)
+  incrementPerformanceCounter("draggableTransformWrites")
 }
 
 export function constrainDraggablePosition(
@@ -123,7 +132,7 @@ export function useDraggable({ x, y, padding = 0 }: DraggableOptions) {
     if (!element) return
     positionRef.current = position
     pendingPositionRef.current = position
-    element.style.transform = formatDraggableTransform(position)
+    writeDraggableTransform(element, position)
   }, [])
 
   const applyPendingPosition = useCallback(() => {
@@ -137,7 +146,7 @@ export function useDraggable({ x, y, padding = 0 }: DraggableOptions) {
     )
     if (samePosition(positionRef.current, nextPosition)) return
     positionRef.current = nextPosition
-    element.style.transform = formatDraggableTransform(nextPosition)
+    writeDraggableTransform(element, nextPosition)
   }, [])
 
   const schedulePositionWrite = useCallback(() => {
@@ -224,6 +233,7 @@ export function useDraggable({ x, y, padding = 0 }: DraggableOptions) {
       }
       schedulePositionWrite()
       event.preventDefault()
+      event.stopPropagation()
     },
     [schedulePositionWrite]
   )
@@ -287,9 +297,9 @@ export function useDraggable({ x, y, padding = 0 }: DraggableOptions) {
       top: 0,
     } satisfies CSSProperties,
     ref: setElement,
-    onPointerDown,
-    onPointerMove,
-    onPointerUp: finishPointer,
-    onPointerCancel: finishPointer,
+    onPointerDownCapture: onPointerDown,
+    onPointerMoveCapture: onPointerMove,
+    onPointerUpCapture: finishPointer,
+    onPointerCancelCapture: finishPointer,
   }
 }

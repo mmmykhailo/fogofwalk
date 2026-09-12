@@ -26,6 +26,7 @@ export interface PerformanceCounters {
   mapRouteCommits: number
   mapDialogCommits: number
   visibilityControlCommits: number
+  draggableTransformWrites: number
   mapUiNavigations: number
   idbGetCalls: Record<string, number>
   idbGetAllCalls: Record<string, number>
@@ -99,6 +100,7 @@ export async function installPerformanceCounters(page: Page): Promise<void> {
       mapRouteCommits: 0,
       mapDialogCommits: 0,
       visibilityControlCommits: 0,
+      draggableTransformWrites: 0,
       mapUiNavigations: 0,
       idbGetCalls: {},
       idbGetAllCalls: {},
@@ -276,6 +278,8 @@ export async function readPerformanceCounters(
       window.__fogofwalkE2ePerformanceCounters?.mapDialogCommits ?? 0,
     visibilityControlCommits:
       window.__fogofwalkE2ePerformanceCounters?.visibilityControlCommits ?? 0,
+    draggableTransformWrites:
+      window.__fogofwalkE2ePerformanceCounters?.draggableTransformWrites ?? 0,
     mapUiNavigations:
       window.__fogofwalkE2ePerformanceCounters?.mapUiNavigations ?? 0,
     idbGetCalls: {
@@ -337,6 +341,8 @@ export function diffPerformanceCounters(
     mapDialogCommits: after.mapDialogCommits - before.mapDialogCommits,
     visibilityControlCommits:
       after.visibilityControlCommits - before.visibilityControlCommits,
+    draggableTransformWrites:
+      after.draggableTransformWrites - before.draggableTransformWrites,
     mapUiNavigations: after.mapUiNavigations - before.mapUiNavigations,
     idbGetCalls: subtractStoreCounters(after.idbGetCalls, before.idbGetCalls),
     idbGetAllCalls: subtractStoreCounters(
@@ -357,7 +363,7 @@ export async function readPerformanceCounterDelta(
   return diffPerformanceCounters(before, await readPerformanceCounters(page))
 }
 
-async function waitForMapIdle(page: Page): Promise<void> {
+export async function waitForMapIdle(page: Page): Promise<void> {
   await page.waitForFunction(() => {
     const map = window.__fogofwalkE2eMap
     return Boolean(map && window.__fogofwalkE2eMapStore?.sourcesReady)
@@ -382,6 +388,32 @@ async function waitForMapIdle(page: Page): Promise<void> {
       map.triggerRepaint?.()
       if (!map.once) finish()
       window.setTimeout(finish, 2_000)
+    })
+  })
+  await page.waitForFunction(() => {
+    const map = window.__fogofwalkE2eMap as
+      | (FogofwalkE2eMap & {
+          getCenter?: () => { lng: number; lat: number }
+          isMoving?: () => boolean
+        })
+      | undefined
+    if (!map?.getCenter) return false
+    return new Promise<boolean>((resolve) => {
+      let previous: { lng: number; lat: number } | null = null
+      let stableFrames = 0
+      const check = () => {
+        const center = map.getCenter!()
+        const stable =
+          !map.isMoving?.() &&
+          previous !== null &&
+          Math.abs(center.lng - previous.lng) < 1e-12 &&
+          Math.abs(center.lat - previous.lat) < 1e-12
+        stableFrames = stable ? stableFrames + 1 : 0
+        previous = center
+        if (stableFrames >= 3) resolve(true)
+        else requestAnimationFrame(check)
+      }
+      requestAnimationFrame(check)
     })
   })
 }

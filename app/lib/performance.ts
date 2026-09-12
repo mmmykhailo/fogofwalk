@@ -19,6 +19,7 @@ export type PerformanceCounterName =
   | "mapRouteCommits"
   | "mapDialogCommits"
   | "visibilityControlCommits"
+  | "draggableTransformWrites"
   | "mapUiNavigations"
 
 declare global {
