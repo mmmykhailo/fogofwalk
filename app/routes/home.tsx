@@ -1,4 +1,11 @@
-import { useState, useEffect, useMemo, useReducer, useRef } from "react"
+import {
+  useState,
+  useEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useCallback,
+} from "react"
 import {
   Outlet,
   useFetcher,
@@ -61,18 +68,18 @@ import { processPhotoFiles } from "~/lib/photos"
 import { createPhotoUrlOwner, type PhotoUrlOwner } from "~/lib/photoUrls"
 import {
   loadActivitySummaries,
-  activityToSummary,
   savePhotos,
-  loadPhotos,
   saveFogMode,
-  loadFogMode,
-  loadFogCache,
   clearAll,
   loadSavedPoints,
   saveSavedPoint,
   deleteSavedPoint as deleteStoredSavedPoint,
-  isFogCacheValid,
 } from "~/lib/storage"
+import {
+  ensureMapBootstrap,
+  updateMapBootstrapActivityCount,
+  updateMapBootstrapCache,
+} from "~/lib/mapBootstrap"
 import { clearMapPosition } from "~/lib/mapStore"
 import { clearRenderedActivityState } from "~/lib/map/commands"
 import { activitiesFeatureCollection } from "~/lib/map/geojson"
@@ -101,7 +108,6 @@ import {
   mapSurfaceReducer,
 } from "~/lib/map/mapSurfaceState"
 import type { FogMode, MapMode, ParsedActivity } from "~/types/activities"
-import type { ActivitySummary } from "~/types/activitySummary"
 import type { PhotoEntry } from "~/types/photos"
 import {
   isSavedPointColor,
@@ -164,12 +170,12 @@ export async function clientLoader({
   initialized: boolean
   restoredActivityCount: number
   restoredFogMode: FogMode
+  bootstrapGeneration: number | null
 }> {
   incrementPerformanceCounter("homeLoaderStarts")
   markPerformance("home:loader:start")
   const pathname = new URL(request.url).pathname
   const isMapRoute = pathname === "/map"
-  if (isMapRoute) incrementPerformanceCounter("homeBootstrapStarts")
   if (isMapRoute && !mapStore.worker) {
     console.debug("[clientLoader] creating worker")
     createFogWorker()
@@ -184,74 +190,32 @@ export async function clientLoader({
   // server exists.
   if (isMapRoute) void initAuth()
 
-  // Restore persisted data in parallel
-  markPerformance("home:idb-load:start")
-  const [
-    loadedActivities,
-    loadedSummaries,
-    photos,
-    savedPoints,
-    fogMode,
-    fogCache,
-  ] = await Promise.all([
-    isMapRoute ? initializeActivityLibrary() : Promise.resolve(null),
-    !isMapRoute && mapStore.activityHydration !== "full"
-      ? loadActivitySummaries()
-      : Promise.resolve(null),
-    loadPhotos(),
-    loadSavedPoints(),
-    loadFogMode(),
-    loadFogCache(),
-  ])
-  markPerformance("home:idb-load:end")
-  if (isMapRoute) incrementPerformanceCounter("homeBootstrapCompletions")
-  measurePerformance(
-    "home:idb-load",
-    "home:idb-load:start",
-    "home:idb-load:end"
-  )
-
-  const restoredFogMode: FogMode = fogMode ?? "corridor"
-  let activities: ParsedActivity[] = mapStore.activities
-  let summaries: ActivitySummary[] = mapStore.activitySummaries
+  let bootstrap: Awaited<ReturnType<typeof ensureMapBootstrap>> | null = null
+  let loadedSummaries = null as Awaited<
+    ReturnType<typeof loadActivitySummaries>
+  > | null
   if (isMapRoute) {
-    activities = loadedActivities ?? mapStore.activities
+    bootstrap = await ensureMapBootstrap()
+    _restoredPhotos = bootstrap.photos
+    _restoredSavedPoints = bootstrap.savedPoints
   } else if (mapStore.activityHydration !== "full") {
-    summaries = loadedSummaries ?? []
-    setActivitySummaries(summaries)
-  } else {
-    summaries = activities.map(activityToSummary)
+    markPerformance("home:idb-load:start")
+    loadedSummaries = await loadActivitySummaries()
+    markPerformance("home:idb-load:end")
+    measurePerformance(
+      "home:idb-load",
+      "home:idb-load:start",
+      "home:idb-load:end"
+    )
   }
-  mapStore.fogMode = restoredFogMode
-  _restoredPhotos = photos
-  _restoredSavedPoints = savedPoints
-  if (isMapRoute && activities.length > 0) {
-    const activityIds = activities.map((t) => t.id).sort()
-    if (
-      fogCache &&
-      isFogCacheValid(
-        fogCache,
-        activityIds,
-        restoredFogMode,
-        mapStore.libraryRevision
-      )
-    ) {
-      // Cache hit: restore fog directly — setupMapLayers will use mapStore.fogData
-      mapStore.fogData = fogCache.fogData
-      console.debug(
-        "[clientLoader] restored fog cache for",
-        activities.length,
-        "activities"
-      )
-    } else {
-      // Cache miss: fog will be null, world fog shown until worker reprocesses
-      mapStore.fogData = null
-      console.debug(
-        "[clientLoader] fog cache stale/absent — will reprocess",
-        activities.length,
-        "activities"
-      )
-    }
+  const restoredFogMode = bootstrap?.fogMode ?? mapStore.fogMode
+  const activities = mapStore.activities
+  const summaries =
+    mapStore.activityHydration === "full"
+      ? mapStore.activities
+      : (loadedSummaries ?? mapStore.activitySummaries)
+  if (!isMapRoute && mapStore.activityHydration !== "full") {
+    setActivitySummaries(summaries)
   }
 
   // initialCenter/initialZoom are already loaded from localStorage at mapStore module init time.
@@ -261,7 +225,7 @@ export async function clientLoader({
     "[clientLoader] restored",
     activities.length,
     "activities,",
-    photos.length,
+    _restoredPhotos.length,
     "photos"
   )
   markPerformance("home:loader:end")
@@ -270,6 +234,7 @@ export async function clientLoader({
     initialized: true,
     restoredActivityCount: isMapRoute ? activities.length : summaries.length,
     restoredFogMode,
+    bootstrapGeneration: bootstrap?.generation ?? null,
   }
 }
 clientLoader.hydrate = true as const
@@ -646,6 +611,12 @@ export default function Home() {
   } = mapSurface
   const [showShareDialog, setShowShareDialog] = useState(false)
   const [photos, setPhotos] = useState<PhotoEntry[]>(_restoredPhotos)
+  const photosRef = useRef(photos)
+  const replacePhotos = useCallback((nextPhotos: PhotoEntry[]): void => {
+    photosRef.current = nextPhotos
+    setPhotos(nextPhotos)
+    updateMapBootstrapCache({ photos: nextPhotos })
+  }, [])
   const photoUrlOwnerRef = useRef<PhotoUrlOwner | null>(null)
   if (!photoUrlOwnerRef.current) {
     photoUrlOwnerRef.current = createPhotoUrlOwner()
@@ -658,6 +629,42 @@ export default function Home() {
   const [showPhotos, setShowPhotos] = useState(true)
   const [savedPoints, setSavedPoints] =
     useState<SavedPoint[]>(_restoredSavedPoints)
+  const savedPointsRef = useRef(savedPoints)
+  const replaceSavedPoints = useCallback(
+    (nextSavedPoints: SavedPoint[]): void => {
+      savedPointsRef.current = nextSavedPoints
+      setSavedPoints(nextSavedPoints)
+      updateMapBootstrapCache({ savedPoints: nextSavedPoints })
+    },
+    []
+  )
+  const [adoptedBootstrapGeneration, setAdoptedBootstrapGeneration] = useState<
+    number | null
+  >(isMapRoute ? loaderData.bootstrapGeneration : null)
+
+  useEffect(() => {
+    const generation = loaderData.bootstrapGeneration
+    if (
+      !isMapRoute ||
+      generation == null ||
+      adoptedBootstrapGeneration === generation
+    ) {
+      return
+    }
+    setActivityCount(loaderData.restoredActivityCount)
+    setFogMode(loaderData.restoredFogMode)
+    replacePhotos(_restoredPhotos)
+    replaceSavedPoints(_restoredSavedPoints)
+    setAdoptedBootstrapGeneration(generation)
+  }, [
+    adoptedBootstrapGeneration,
+    isMapRoute,
+    loaderData.bootstrapGeneration,
+    loaderData.restoredActivityCount,
+    loaderData.restoredFogMode,
+    replacePhotos,
+    replaceSavedPoints,
+  ])
   const [showSavedPoints, setShowSavedPoints] = useState(true)
   const displayedSavedPoints = useMemo(
     () =>
@@ -1004,6 +1011,7 @@ export default function Home() {
       if (data.newActivitiesCount > 0) {
         isNewUploadRef.current = true // triggers fitBounds in the isProcessing effect below
         setActivityCount(data.activityCount)
+        updateMapBootstrapCache({ activityCount: data.activityCount })
       }
       if (data.failedFiles.length > 0) {
         setMissingActivityTypeCount(data.missingActivityTypeCount)
@@ -1022,16 +1030,19 @@ export default function Home() {
     }
     if (data.intent === "clear-all") {
       setActivityCount(0)
+      updateMapBootstrapCache({ activityCount: 0 })
       dispatchMapSurface({ type: "dismissAll" })
       setShowShareDialog(false)
-      setPhotos([])
+      replacePhotos([])
+      replaceSavedPoints([])
     }
     if (data.intent === "delete-activity") {
       dispatchMapSurface({ type: "closeActivity" })
       setShowShareDialog(false)
       setActivityCount(data.activityCount)
+      updateMapBootstrapCache({ activityCount: data.activityCount })
     }
-  }, [fetcher.data])
+  }, [fetcher.data, replacePhotos, replaceSavedPoints])
 
   // The library subscription updates the activity projection; reconcile the
   // route-only state that the sync engine cannot reach.
@@ -1048,16 +1059,18 @@ export default function Home() {
         deletedSavedPointIds = [],
       }) => {
         setActivityCount(mapStore.activities.length)
+        updateMapBootstrapActivityCount(mapStore.activities)
 
         if (syncedSavedPoints.length > 0 || deletedSavedPointIds.length > 0) {
-          setSavedPoints((current) => [
-            ...current.filter(
+          const nextSavedPoints = [
+            ...savedPointsRef.current.filter(
               (point) =>
                 !deletedSavedPointIds.includes(point.id) &&
                 !syncedSavedPoints.some((saved) => saved.id === point.id)
             ),
             ...syncedSavedPoints,
-          ])
+          ]
+          replaceSavedPoints(nextSavedPoints)
         }
 
         if (deletedIds.length > 0) {
@@ -1087,7 +1100,7 @@ export default function Home() {
       }
     )
     return () => setSyncChangeHandler(null)
-  }, [isMapRoute, revalidator])
+  }, [isMapRoute, replaceSavedPoints, revalidator])
 
   // Fires on a restored session and on a fresh sign-in alike, then keeps the
   // map current. Navigation away from /map tears down the scheduler so other
@@ -1143,7 +1156,7 @@ export default function Home() {
       photos
     )
     if (newEntries.length > 0) {
-      setPhotos((prev) => [...prev, ...newEntries])
+      replacePhotos([...photosRef.current, ...newEntries])
       setShowPhotos(true)
       savePhotos(newEntries) // fire-and-forget; quota-aware
     } else {
@@ -1171,6 +1184,7 @@ export default function Home() {
   function handleFogModeChange(newMode: FogMode) {
     setFogMode(newMode)
     mapStore.fogMode = newMode
+    updateMapBootstrapCache({ fogMode: newMode })
     saveFogMode(newMode) // fire-and-forget
     // The old cache carries its mode and is rejected on reload. Do not delete it
     // asynchronously here: that deletion can otherwise race and erase the fresh
@@ -1183,6 +1197,7 @@ export default function Home() {
 
   function handleProcessingComplete() {
     setActivityCount(mapStore.activities.length)
+    updateMapBootstrapActivityCount(mapStore.activities)
     // fitBounds is handled by the useEffect([isProcessing]) above:
     // it fires after React re-renders, when map state is fully settled.
   }
@@ -1347,18 +1362,22 @@ export default function Home() {
                   coordinate={newSavedPointCoordinate}
                   onClose={closeSavedPointDialog}
                   onSave={(point) => {
-                    setSavedPoints((points) => [
-                      ...points.filter((saved) => saved.id !== point.id),
+                    const nextSavedPoints = [
+                      ...savedPointsRef.current.filter(
+                        (saved) => saved.id !== point.id
+                      ),
                       point,
-                    ])
+                    ]
+                    replaceSavedPoints(nextSavedPoints)
                     closeSavedPointDialog()
                   }}
                   onDelete={
                     editingSavedPointId
                       ? (id) => {
-                          setSavedPoints((points) =>
-                            points.filter((point) => point.id !== id)
+                          const nextSavedPoints = savedPointsRef.current.filter(
+                            (point) => point.id !== id
                           )
+                          replaceSavedPoints(nextSavedPoints)
                           closeSavedPointDialog()
                         }
                       : undefined
