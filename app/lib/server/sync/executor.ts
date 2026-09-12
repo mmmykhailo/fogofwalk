@@ -206,6 +206,36 @@ function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T
 }
 
+function orderLocalOutbox(items: readonly SyncOutboxItem[]): SyncOutboxItem[] {
+  const predecessorBySuccessor = new Map<string, SyncOutboxItem>()
+  for (const item of items) {
+    if (item.supersededBy) {
+      predecessorBySuccessor.set(item.supersededBy, item)
+    }
+  }
+  const depthCache = new Map<string, number>()
+  const depthOf = (
+    item: SyncOutboxItem,
+    visiting: ReadonlySet<string> = new Set()
+  ): number => {
+    const cached = depthCache.get(item.id)
+    if (cached !== undefined) return cached
+    if (visiting.has(item.id)) return 0
+    const predecessor = predecessorBySuccessor.get(item.id)
+    const depth = predecessor
+      ? depthOf(predecessor, new Set([...visiting, item.id])) + 1
+      : 0
+    depthCache.set(item.id, depth)
+    return depth
+  }
+  const positions = new Map(items.map((item, index) => [item.id, index]))
+  return [...items].sort(
+    (first, second) =>
+      depthOf(first) - depthOf(second) ||
+      (positions.get(first.id) ?? 0) - (positions.get(second.id) ?? 0)
+  )
+}
+
 function localMetadata(
   activities: readonly {
     id: string
@@ -857,7 +887,9 @@ export function createActivitySyncExecutor(
   async function executeLocalOutbox(): Promise<ExecutedPage> {
     throwIfSyncAborted(signal)
     const work: EffectWork[] = []
-    for (const item of await options.repository.loadOutbox()) {
+    for (const item of orderLocalOutbox(
+      await options.repository.loadOutbox()
+    )) {
       throwIfSyncAborted(signal)
       if (!hasLocalActivityEffectSource(item.payload)) continue
       const payload = item.payload as Partial<
@@ -924,6 +956,7 @@ export function createActivitySyncExecutor(
           retryable: true,
           retryAt: item.leaseUntil,
         })
+        if (item.supersededBy) break
         continue
       }
       if (item.status === "retryable" && item.availableAt > now()) {
@@ -955,6 +988,12 @@ export function createActivitySyncExecutor(
           message: "This sync effect could not acquire a lease.",
           retryable: true,
         })
+        continue
+      }
+
+      if (claimed.supersededBy) {
+        completedIntentIds.add(intentId)
+        completions.push({ id: claimed.id, leaseId: claimed.leaseId })
         continue
       }
 

@@ -11,6 +11,8 @@ import {
 import {
   mergeSyncOutboxItem,
   normaliseSyncOutboxItem,
+  scopedSyncOutboxDedupeKey,
+  splitInFlightLocalMetadata,
   type SyncOutboxItem,
   type SyncOutboxItemInput,
 } from "~/lib/server/sync/repository"
@@ -822,7 +824,9 @@ export function createIndexedDbActivityLibraryRepository(): IndexedDbActivityLib
         )
         const now = Date.now()
         for (const input of resolvedOutbox) {
-          const currentItem = byDedupeKey.get(input.dedupeKey)
+          const currentItem = byDedupeKey.get(
+            scopedSyncOutboxDedupeKey(input.dedupeKey, input.accountId)
+          )
           const next = currentItem
             ? mergeSyncOutboxItem(currentItem, input, now)
             : normaliseSyncOutboxItem(input, now)
@@ -921,7 +925,20 @@ export function createIndexedDbActivityLibraryRepository(): IndexedDbActivityLib
       )
       const now = Date.now()
       for (const input of resolvedOutbox) {
-        const currentItem = byDedupeKey.get(input.dedupeKey)
+        const currentItem = byDedupeKey.get(
+          scopedSyncOutboxDedupeKey(input.dedupeKey, input.accountId)
+        )
+        const split = currentItem
+          ? splitInFlightLocalMetadata(currentItem, input, now)
+          : undefined
+        if (split) {
+          byDedupeKey.delete(currentItem!.dedupeKey)
+          outboxStore.put(split.active)
+          outboxStore.put(split.pending)
+          byDedupeKey.set(split.active.dedupeKey, split.active)
+          byDedupeKey.set(split.pending.dedupeKey, split.pending)
+          continue
+        }
         const next = currentItem
           ? mergeSyncOutboxItem(currentItem, input, now)
           : normaliseSyncOutboxItem(input, now)
@@ -1064,9 +1081,19 @@ export function createMemoryActivityLibraryRepository(
     )
     for (const input of metadataOutboxInputs(options, metadataCommit)) {
       const existing = [...outbox.values()].find(
-        (item) => item.dedupeKey === input.dedupeKey
+        (item) =>
+          item.dedupeKey ===
+          scopedSyncOutboxDedupeKey(input.dedupeKey, input.accountId)
       )
       const now = Date.now()
+      const split = existing
+        ? splitInFlightLocalMetadata(existing, input, now)
+        : undefined
+      if (split) {
+        outbox.set(split.active.id, split.active)
+        outbox.set(split.pending.id, split.pending)
+        continue
+      }
       const next = existing
         ? mergeSyncOutboxItem(existing, input, now)
         : normaliseSyncOutboxItem(input, now)

@@ -342,4 +342,77 @@ describe("MemorySyncRepository", () => {
       )
     ).toHaveLength(1)
   })
+
+  test("queues a latest local metadata value behind an in-flight request", async () => {
+    const repository = createMemorySyncRepository({ now: () => 10 })
+    const first = await repository.enqueueOutbox({
+      dedupeKey: "activity:local-metadata:hash:visibility",
+      operation: "metadata",
+      payload: {
+        kind: "local-metadata",
+        source: "local",
+        intentId: "one",
+        activityId: "activity",
+        contentHash: "hash",
+        patch: { isPublic: true },
+        libraryRevision: 1,
+      },
+    })
+    const [claimed] = await repository.claimOutbox({
+      now: 10,
+      leaseMs: 1_000,
+      owner: "tab-a",
+    })
+
+    const latest = await repository.enqueueOutbox({
+      dedupeKey: "activity:local-metadata:hash:visibility",
+      operation: "metadata",
+      payload: {
+        kind: "local-metadata",
+        source: "local",
+        intentId: "two",
+        activityId: "activity",
+        contentHash: "hash",
+        patch: { isPublic: false },
+        libraryRevision: 2,
+      },
+    })
+
+    expect(latest.id).not.toBe(first.id)
+    expect(latest.status).toBe("pending")
+    expect(latest.payload).toMatchObject({
+      intentId: "two",
+      patch: { isPublic: false },
+    })
+    expect(await repository.loadOutbox()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: first.id,
+          status: "in-flight",
+          payload: expect.objectContaining({
+            intentId: "one",
+            patch: { isPublic: true },
+          }),
+        }),
+        expect.objectContaining({
+          id: latest.id,
+          status: "pending",
+          payload: expect.objectContaining({
+            intentId: "two",
+            patch: { isPublic: false },
+          }),
+        }),
+      ])
+    )
+
+    expect(await repository.completeOutbox(first.id, claimed!.leaseId!)).toBe(
+      true
+    )
+    expect(await repository.loadOutbox()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: first.id, status: "complete" }),
+        expect.objectContaining({ id: latest.id, status: "pending" }),
+      ])
+    )
+  })
 })

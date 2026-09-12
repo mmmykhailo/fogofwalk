@@ -10,12 +10,30 @@ async function queuedActivityUpdates(page: import("@playwright/test").Page) {
       request.onerror = () => reject(request.error)
     })
     const queued = await new Promise<string[]>((resolve) => {
-      const transaction = db.transaction("prefs", "readonly")
-      const request = transaction.objectStore("prefs").get("syncState")
-      request.onsuccess = () =>
+      const transaction = db.transaction("sync-outbox", "readonly")
+      const request = transaction.objectStore("sync-outbox").getAll()
+      request.onsuccess = () => {
+        const items = request.result as {
+          status?: unknown
+          operation?: unknown
+          payload?: {
+            source?: unknown
+            kind?: unknown
+            contentHash?: unknown
+          }
+        }[]
         resolve(
-          Object.keys(request.result?.value?.outboundActivityMetadata ?? {})
+          items.flatMap((item) =>
+            item.status !== "complete" &&
+            item.operation === "metadata" &&
+            item.payload?.source === "local" &&
+            item.payload.kind === "local-metadata" &&
+            typeof item.payload.contentHash === "string"
+              ? [item.payload.contentHash]
+              : []
+          )
         )
+      }
       request.onerror = () => resolve([])
     })
     db.close()

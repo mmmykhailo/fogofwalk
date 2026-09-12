@@ -102,7 +102,7 @@ test.describe("public profile", () => {
         !res.url().includes("/manifest")
     )
     await app.page
-      .getByRole("combobox", { name: "Activity visibility" })
+      .getByRole("combobox", { name: "Visibility for t1.gpx" })
       .click()
     await app.page.getByRole("option", { name: "Public" }).click()
     await visibilityUpload

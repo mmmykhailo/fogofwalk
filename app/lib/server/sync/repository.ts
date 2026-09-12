@@ -33,7 +33,7 @@ export interface SyncOutboxItem {
   id: string
   /** Account that owns this durable effect; absent means legacy/unclaimed work. */
   accountId?: string
-  /** Logical operation key. Enqueueing it twice updates one record. */
+  /** Logical operation key. Enqueueing it twice normally updates one record. */
   dedupeKey: string
   operation: SyncOutboxOperation
   payload: unknown
@@ -45,6 +45,8 @@ export interface SyncOutboxItem {
   leaseId?: string
   leaseOwner?: string
   leaseUntil?: number
+  /** Newer metadata work superseded this leased effect before it settled. */
+  supersededBy?: string
   lastFailure?: SyncOutboxFailure
 }
 
@@ -59,6 +61,7 @@ export type SyncOutboxItemInput = Omit<
   | "leaseId"
   | "leaseOwner"
   | "leaseUntil"
+  | "supersededBy"
   | "lastFailure"
 > & {
   id?: string
@@ -138,6 +141,13 @@ function scopedDedupeKey(dedupeKey: string, accountId?: string): string {
   return dedupeKey.startsWith(prefix) ? dedupeKey : `${prefix}${dedupeKey}`
 }
 
+export function scopedSyncOutboxDedupeKey(
+  dedupeKey: string,
+  accountId?: string
+): string {
+  return scopedDedupeKey(dedupeKey, accountId)
+}
+
 function unscopedDedupeKey(dedupeKey: string, accountId?: string): string {
   if (!accountId) return dedupeKey
   const prefix = accountDedupePrefix(accountId)
@@ -208,6 +218,34 @@ function mergeOutboxForScope(
       ? rebindOutboxItem(existing, accountId)
       : existing
   return mergeSyncOutboxItem(current, prepared, now)
+}
+
+export function splitInFlightLocalMetadata(
+  existing: SyncOutboxItem,
+  input: SyncOutboxItemInput,
+  now: number,
+  idFactory: (prefix: string) => string = randomId
+): { active: SyncOutboxItem; pending: SyncOutboxItem } | undefined {
+  const isChangedLocalMetadata =
+    existing.status === "in-flight" &&
+    isLocalMetadataPayload(existing.payload) &&
+    isLocalMetadataPayload(input.payload) &&
+    JSON.stringify(existing.payload) !== JSON.stringify(input.payload)
+  if (!isChangedLocalMetadata) return undefined
+
+  // The durable store has a unique dedupe-key index. Keep the leased request
+  // under a private key and give the latest edit the canonical key so later
+  // edits continue to merge into that pending successor.
+  const pending = normaliseSyncOutboxItem(
+    { ...input, id: idFactory("outbox") },
+    now
+  )
+  const active: SyncOutboxItem = {
+    ...clone(existing),
+    dedupeKey: `${existing.dedupeKey}:in-flight:${existing.id}`,
+    supersededBy: pending.id,
+  }
+  return { active, pending }
 }
 
 function isSyncState(value: unknown): value is SyncState {
@@ -431,7 +469,29 @@ export function createIndexedDbSyncRepository(
     const byDedupeKey = new Map(existing.map((item) => [item.dedupeKey, item]))
     for (const item of commit.enqueue ?? []) {
       const prepared = prepareOutboxInput(item, accountId)
-      const current = matchingOutboxItem(existing, prepared, accountId)
+      const current = matchingOutboxItem(
+        [...byId.values()],
+        prepared,
+        accountId
+      )
+      const scopedCurrent = current
+        ? accountId && current.accountId === undefined
+          ? rebindOutboxItem(current, accountId)
+          : current
+        : undefined
+      const split = scopedCurrent
+        ? splitInFlightLocalMetadata(scopedCurrent, prepared, now)
+        : undefined
+      if (split) {
+        if (current && current.dedupeKey !== split.active.dedupeKey) {
+          byDedupeKey.delete(current.dedupeKey)
+        }
+        byId.set(split.active.id, split.active)
+        byId.set(split.pending.id, split.pending)
+        byDedupeKey.set(split.active.dedupeKey, split.active)
+        byDedupeKey.set(split.pending.dedupeKey, split.pending)
+        continue
+      }
       const next = current
         ? mergeOutboxForScope(current, prepared, now, accountId)
         : normaliseSyncOutboxItem(prepared, now)
@@ -541,6 +601,20 @@ export function createIndexedDbSyncRepository(
           )
         : undefined
     const current = existing ?? legacy
+    const scopedCurrent = current
+      ? accountId && current.accountId === undefined
+        ? rebindOutboxItem(current, accountId)
+        : current
+      : undefined
+    const split = scopedCurrent
+      ? splitInFlightLocalMetadata(scopedCurrent, prepared, now)
+      : undefined
+    if (split) {
+      store.put(split.active)
+      store.put(split.pending)
+      await transactionResult(tx)
+      return clone(split.pending)
+    }
     const next = current
       ? mergeOutboxForScope(current, prepared, now, accountId)
       : normaliseSyncOutboxItem(prepared, now)
@@ -633,10 +707,16 @@ export function createIndexedDbSyncRepository(
     }
     const next: SyncOutboxItem = {
       ...item,
-      status: failure.retryable ? "retryable" : "permanent",
+      status: item.supersededBy
+        ? "complete"
+        : failure.retryable
+          ? "retryable"
+          : "permanent",
       availableAt: failure.retryAt ?? item.availableAt,
       updatedAt: failure.failedAt,
-      lastFailure: clone(failure),
+      ...(item.supersededBy
+        ? { lastFailure: undefined }
+        : { lastFailure: clone(failure) }),
       leaseId: undefined,
       leaseOwner: undefined,
       leaseUntil: undefined,
@@ -811,6 +891,24 @@ export function createMemorySyncRepository(
         accountId
       )
       const itemNow = input.updatedAt ?? input.createdAt ?? now()
+      const scopedCurrent = current
+        ? accountId && current.accountId === undefined
+          ? rebindOutboxItem(current, accountId)
+          : current
+        : undefined
+      const split = scopedCurrent
+        ? splitInFlightLocalMetadata(
+            scopedCurrent,
+            prepared,
+            itemNow,
+            idFactory
+          )
+        : undefined
+      if (split) {
+        items.set(split.active.id, clone(split.active))
+        items.set(split.pending.id, clone(split.pending))
+        continue
+      }
       const next = current
         ? mergeOutboxForScope(current, prepared, itemNow, accountId)
         : normaliseSyncOutboxItem(
@@ -875,6 +973,19 @@ export function createMemorySyncRepository(
       prepared,
       accountId
     )
+    const scopedExisting = existing
+      ? accountId && existing.accountId === undefined
+        ? rebindOutboxItem(existing, accountId)
+        : existing
+      : undefined
+    const split = scopedExisting
+      ? splitInFlightLocalMetadata(scopedExisting, prepared, itemNow, idFactory)
+      : undefined
+    if (split) {
+      items.set(split.active.id, clone(split.active))
+      items.set(split.pending.id, clone(split.pending))
+      return clone(split.pending)
+    }
     const next = existing
       ? mergeOutboxForScope(existing, prepared, itemNow, accountId)
       : normaliseSyncOutboxItem(
@@ -948,10 +1059,16 @@ export function createMemorySyncRepository(
     }
     const next: SyncOutboxItem = {
       ...item,
-      status: failure.retryable ? "retryable" : "permanent",
+      status: item.supersededBy
+        ? "complete"
+        : failure.retryable
+          ? "retryable"
+          : "permanent",
       availableAt: failure.retryAt ?? item.availableAt,
       updatedAt: failure.failedAt,
-      lastFailure: clone(failure),
+      ...(item.supersededBy
+        ? { lastFailure: undefined }
+        : { lastFailure: clone(failure) }),
       leaseId: undefined,
       leaseOwner: undefined,
       leaseUntil: undefined,
