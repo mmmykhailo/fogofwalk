@@ -146,12 +146,11 @@ export function DraggablePhotoDialog({
 
   return (
     <DraggableDialog className="z-20 w-80">
-      {({ onMouseDown, onTouchStart }) => (
+      {(dragHandleProps) => (
         <Card className="map-glass-surface overflow-hidden bg-background/80 backdrop-blur-md">
           <CardHeader
-            onMouseDown={onMouseDown}
-            onTouchStart={onTouchStart}
-            className="cursor-grab select-none active:cursor-grabbing"
+            {...dragHandleProps}
+            className="cursor-grab touch-none select-none active:cursor-grabbing"
           >
             <CardTitle className="truncate text-xs">
               {photo ? new Date(photo.takenAtMs).toLocaleString() : ""}

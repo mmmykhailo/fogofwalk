@@ -217,7 +217,7 @@ export function DraggableActivityDialog({
 
   return (
     <DraggableDialog className="z-10 w-80">
-      {({ onMouseDown, onTouchStart }) => (
+      {(dragHandleProps) => (
         <>
           <PerformanceCommitMarker
             counter="mapDialogCommits"
@@ -225,9 +225,8 @@ export function DraggableActivityDialog({
           />
           <Card className="map-glass-surface bg-background/80 backdrop-blur-md">
             <CardHeader
-              onMouseDown={onMouseDown}
-              onTouchStart={onTouchStart}
-              className="cursor-grab select-none active:cursor-grabbing"
+              {...dragHandleProps}
+              className="cursor-grab touch-none select-none active:cursor-grabbing"
             >
               <CardTitle className="truncate">{panelTitle}</CardTitle>
               <CardAction>{actionButtons}</CardAction>

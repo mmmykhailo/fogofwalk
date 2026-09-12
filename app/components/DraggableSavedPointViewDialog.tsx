@@ -92,12 +92,11 @@ export function DraggableSavedPointViewDialog({
       x={0}
       className="z-20 w-96 max-w-[calc(100vw-1.5rem)]"
     >
-      {({ onMouseDown, onTouchStart }) => (
+      {(dragHandleProps) => (
         <Card className="map-glass-surface bg-background/80 backdrop-blur-md">
           <CardHeader
-            onMouseDown={onMouseDown}
-            onTouchStart={onTouchStart}
-            className="cursor-grab select-none active:cursor-grabbing"
+            {...dragHandleProps}
+            className="cursor-grab touch-none select-none active:cursor-grabbing"
           >
             <CardTitle>{point.name}</CardTitle>
             <CardAction>
