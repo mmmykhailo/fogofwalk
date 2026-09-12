@@ -3,6 +3,7 @@ import { expect, test } from "@playwright/test"
 import {
   makePerformanceActivities,
   corruptPerformanceSummary,
+  diffPerformanceCounters,
   readPerformanceCounters,
   readPerformanceMetrics,
   readActivityStorage,
@@ -86,6 +87,55 @@ test.describe("activities performance fixture", () => {
       })
     }
   }
+
+  test("commits an activity-type edit through the targeted metadata path", async ({
+    page,
+  }) => {
+    const activities = makePerformanceActivities(100, "metadata")
+    const target = activities.at(-1)!
+    await seedPerformanceDatabase(page, activities, true)
+    await page.goto("/activities?sort=date")
+
+    const typeSelect = page.getByRole("combobox", {
+      name: `Activity type for ${target.name}`,
+    })
+    await expect(typeSelect).toBeVisible()
+    const before = await readPerformanceCounters(page)
+
+    await typeSelect.click()
+    await page.getByRole("option", { name: "Cycling", exact: true }).click()
+    await page.evaluate(
+      () =>
+        new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+    )
+    await expect(typeSelect).toContainText("Cycling")
+    await expect
+      .poll(
+        async () =>
+          ((await readPerformanceCounters(page)).idbWriteCalls[
+            "activity-summaries"
+          ] ?? 0) - (before.idbWriteCalls["activity-summaries"] ?? 0)
+      )
+      .toBe(1)
+
+    const delta = diffPerformanceCounters(
+      before,
+      await readPerformanceCounters(page)
+    )
+    expect(delta.homeLoaderStarts).toBe(0)
+    expect(delta.fullActivityLoads).toBe(0)
+    expect(delta.uniqueDistanceWorkerRequests).toBe(0)
+    expect(delta.fogWorkerRebuildRequests).toBe(0)
+    expect(delta.fogWorkerAppendRequests).toBe(0)
+    expect(delta.mapSourceSetDataCalls).toBe(0)
+    expect(delta.activityPaintUpdates).toBe(0)
+    expect(delta.idbGetAllCalls.activities ?? 0).toBe(0)
+    expect(delta.idbGetCalls.activities ?? 0).toBe(0)
+    expect(delta.idbWriteCalls.activities ?? 0).toBe(0)
+    expect(delta.idbGetCalls["activity-summaries"] ?? 0).toBe(1)
+    expect(delta.idbWriteCalls["activity-summaries"] ?? 0).toBe(1)
+    expect(delta.idbWriteCalls["library-meta"] ?? 0).toBe(1)
+  })
 
   test("repairs stale unique distances on stats, not activities", async ({
     page,
