@@ -7,6 +7,7 @@ import {
   useRevalidator,
   useSearchParams,
 } from "react-router"
+import type { ShouldRevalidateFunction } from "react-router"
 import bbox from "@turf/bbox"
 import type { Route } from "./+types/home"
 import { MapView } from "~/components/map/MapView"
@@ -39,6 +40,7 @@ import {
   createFogWorker,
   initializeActivityLibrary,
   rebuildFogProjection,
+  setActivitySummaries,
   useFogStatus,
 } from "~/lib/mapStore"
 import { createActivityImportService } from "~/lib/activities/import/service"
@@ -57,6 +59,8 @@ import { createActivityDeleteOutboxItem } from "~/lib/server/sync/activityEffect
 import { buildLapActivity, lapSubtitle } from "~/lib/laps"
 import { processPhotoFiles } from "~/lib/photos"
 import {
+  loadActivitySummaries,
+  activityToSummary,
   savePhotos,
   loadPhotos,
   saveFogMode,
@@ -85,7 +89,10 @@ import {
 import { useMyLocation } from "~/lib/useMyLocation"
 import { useActivityVisibility } from "~/lib/useActivityVisibility"
 import { socialMeta } from "~/lib/socialMeta"
+import { markPerformance, measurePerformance } from "~/lib/performance"
+import { isActivitiesViewOnlyNavigation } from "~/lib/activitiesRoute"
 import type { FogMode, MapMode, ParsedActivity } from "~/types/activities"
+import type { ActivitySummary } from "~/types/activitySummary"
 import type { PhotoEntry, PhotoGroup } from "~/types/photos"
 import {
   isSavedPointColor,
@@ -100,6 +107,21 @@ export function meta({}: Route.MetaArgs) {
       "Import your GPX and FIT activity files. Watch the fog of war lift over every trail you've run, every road you've cycled, every path you've ever walked.",
     path: "/map",
   })
+}
+
+export const shouldRevalidate: ShouldRevalidateFunction = ({
+  currentUrl,
+  nextUrl,
+  formMethod,
+  defaultShouldRevalidate,
+}) => {
+  if (
+    (formMethod == null || formMethod === "GET") &&
+    isActivitiesViewOnlyNavigation(currentUrl, nextUrl)
+  ) {
+    return false
+  }
+  return defaultShouldRevalidate
 }
 
 async function loadPublicSavedPoint(id: string): Promise<SavedPoint | null> {
@@ -130,7 +152,10 @@ export async function clientLoader({
   restoredFogMode: FogMode
   viewedSavedPoint: SavedPoint | null
 }> {
-  if (!mapStore.worker) {
+  markPerformance("home:loader:start")
+  const pathname = new URL(request.url).pathname
+  const isMapRoute = pathname === "/map"
+  if (isMapRoute && !mapStore.worker) {
     console.debug("[clientLoader] creating worker")
     createFogWorker()
     console.debug("[clientLoader] worker created", mapStore.worker)
@@ -138,21 +163,49 @@ export async function clientLoader({
 
   // Sync is a map-only concern. The shared layout also wraps the library and
   // informational pages, so avoid even revalidating a stored sync session
-  // while one of those pages is open. Deliberately do not await this: the map
-  // must never wait on the network, and it is a no-op when no server exists.
-  if (new URL(request.url).pathname === "/map") void initAuth()
+  // while one of those pages is open. Routes that render account- or
+  // owner-specific UI initialize auth themselves. Deliberately do not await
+  // this: the map must never wait on the network, and it is a no-op when no
+  // server exists.
+  if (isMapRoute) void initAuth()
 
   // Restore persisted data in parallel
-  const [activities, photos, savedPoints, fogMode, fogCache] =
-    await Promise.all([
-      initializeActivityLibrary(),
-      loadPhotos(),
-      loadSavedPoints(),
-      loadFogMode(),
-      loadFogCache(),
-    ])
+  markPerformance("home:idb-load:start")
+  const [
+    loadedActivities,
+    loadedSummaries,
+    photos,
+    savedPoints,
+    fogMode,
+    fogCache,
+  ] = await Promise.all([
+    isMapRoute ? initializeActivityLibrary() : Promise.resolve(null),
+    !isMapRoute && mapStore.activityHydration !== "full"
+      ? loadActivitySummaries()
+      : Promise.resolve(null),
+    loadPhotos(),
+    loadSavedPoints(),
+    loadFogMode(),
+    loadFogCache(),
+  ])
+  markPerformance("home:idb-load:end")
+  measurePerformance(
+    "home:idb-load",
+    "home:idb-load:start",
+    "home:idb-load:end"
+  )
 
   const restoredFogMode: FogMode = fogMode ?? "corridor"
+  let activities: ParsedActivity[] = mapStore.activities
+  let summaries: ActivitySummary[] = mapStore.activitySummaries
+  if (isMapRoute) {
+    activities = loadedActivities ?? mapStore.activities
+  } else if (mapStore.activityHydration !== "full") {
+    summaries = loadedSummaries ?? []
+    setActivitySummaries(summaries)
+  } else {
+    summaries = activities.map(activityToSummary)
+  }
   mapStore.fogMode = restoredFogMode
   _restoredPhotos = photos
   _restoredSavedPoints = savedPoints
@@ -162,7 +215,7 @@ export async function clientLoader({
       ? await loadPublicSavedPoint(savedPointId)
       : null
 
-  if (activities.length > 0) {
+  if (isMapRoute && activities.length > 0) {
     const activityIds = activities.map((t) => t.id).sort()
     if (
       fogCache &&
@@ -201,9 +254,11 @@ export async function clientLoader({
     photos.length,
     "photos"
   )
+  markPerformance("home:loader:end")
+  measurePerformance("home:loader", "home:loader:start", "home:loader:end")
   return {
     initialized: true,
-    restoredActivityCount: activities.length,
+    restoredActivityCount: isMapRoute ? activities.length : summaries.length,
     restoredFogMode,
     viewedSavedPoint,
   }

@@ -1,4 +1,4 @@
-import type { PublicActivityMeta } from "~shared/api"
+import type { PublicActivityMeta, PublicEarnedAchievement } from "~shared/api"
 import { ACHIEVEMENT_DEFINITIONS } from "./definitions"
 import type { AchievementDefinition, EarnedAchievement } from "./types"
 
@@ -44,6 +44,19 @@ export function computeEarnedAchievements(
         earnedAtMs: earliestQualifyingDate(activities, definition),
       },
     ]
+  })
+}
+
+/** Rehydrates the server's bounded public-profile achievement result. */
+export function toEarnedAchievements(
+  achievements: readonly PublicEarnedAchievement[]
+): EarnedAchievement[] {
+  const definitions = new Map(
+    ACHIEVEMENT_DEFINITIONS.map((definition) => [definition.id, definition])
+  )
+  return achievements.flatMap(({ id, earnedAtMs }) => {
+    const definition = definitions.get(id)
+    return definition ? [{ definition, earnedAtMs }] : []
   })
 }
 

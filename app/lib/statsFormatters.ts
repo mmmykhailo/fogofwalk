@@ -11,6 +11,7 @@ export function formatElevation(m: number): string {
 }
 
 export function formatPace(minPerKm: number): string {
+  if (!Number.isFinite(minPerKm)) return "—"
   const m = Math.floor(minPerKm)
   const s = Math.round((minPerKm - m) * 60)
   return `${m}:${String(s).padStart(2, "0")}/km`

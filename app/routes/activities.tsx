@@ -1,66 +1,154 @@
 import { useLoaderData } from "react-router"
 import { EmptyActivitiesState } from "~/components/activities/EmptyActivitiesState"
-import { ActivitiesGridWithSorting } from "~/components/activities/ActivitiesGridWithSorting"
+import { ActivityLibrary } from "~/components/activities/ActivityLibrary"
 import { PageShell } from "~/components/PageShell"
 import {
   activityLibrary,
   initializeActivityLibrary,
   mapStore,
+  setActivitySummaries,
 } from "~/lib/mapStore"
-import { sortActivitiesNewestFirst } from "~/lib/statsAggregator"
-import { isActivityType } from "~/lib/activityType"
+import { activityToSummary, loadActivitySummaries } from "~/lib/storage"
+import type { ActivitySummary } from "~/types/activitySummary"
+import {
+  parseActivitySettingsUpdate,
+  type ActivitySettingsActionResult,
+} from "~/lib/activitySettings"
+import { canSync, initAuth } from "~/lib/server/authStore"
 import { isServerEnabled } from "~/lib/server/config"
 import { requestSync } from "~/lib/server/syncEngine"
 import { createActivityUploadOutboxItem } from "~/lib/server/sync/activityEffects"
 import { createUuid } from "~/lib/uuid"
-import type { ParsedActivity } from "~/types/activities"
 import type { Route } from "./+types/activities"
+import { markPerformance, measurePerformance } from "~/lib/performance"
+import type { ShouldRevalidateFunction } from "react-router"
+import { isActivitiesViewOnlyNavigation } from "~/lib/activitiesRoute"
 
-export async function clientLoader(): Promise<ParsedActivity[]> {
-  const activities = await initializeActivityLibrary()
-  return sortActivitiesNewestFirst(activities)
+export async function clientLoader(): Promise<ActivitySummary[]> {
+  markPerformance("activities:loader:start")
+  void initAuth()
+  let activities: ActivitySummary[]
+  if (mapStore.activityHydration === "full") {
+    activities = mapStore.activities.map(activityToSummary)
+  } else if (mapStore.activityHydration === "summaries") {
+    activities = mapStore.activitySummaries
+  } else {
+    markPerformance("activities:idb-load:start")
+    activities = await loadActivitySummaries()
+    markPerformance("activities:idb-load:end")
+    measurePerformance(
+      "activities:idb-load",
+      "activities:idb-load:start",
+      "activities:idb-load:end"
+    )
+    setActivitySummaries(activities)
+  }
+  markPerformance("activities:loader:end")
+  measurePerformance(
+    "activities:loader",
+    "activities:loader:start",
+    "activities:loader:end"
+  )
+  return activities
 }
 
-export async function clientAction({ request }: Route.ClientActionArgs) {
+export const shouldRevalidate: ShouldRevalidateFunction = ({
+  currentUrl,
+  nextUrl,
+  formMethod,
+  defaultShouldRevalidate,
+}) => {
+  if (
+    (formMethod == null || formMethod === "GET") &&
+    isActivitiesViewOnlyNavigation(currentUrl, nextUrl)
+  ) {
+    return false
+  }
+  return defaultShouldRevalidate
+}
+
+export async function clientAction({
+  request,
+}: Route.ClientActionArgs): Promise<ActivitySettingsActionResult | null> {
   const formData = await request.formData()
-  if (formData.get("intent") !== "update-activity-type") return null
+  if (formData.get("intent") !== "update-activity-settings") return null
 
-  const activityId = formData.get("activityId")
-  const activityType = formData.get("activityType")
-  if (typeof activityId !== "string" || !isActivityType(activityType)) {
-    return { ok: false as const }
+  const update = parseActivitySettingsUpdate(formData)
+  if (!update.ok) return update
+
+  await initializeActivityLibrary()
+  const activityById = new Map(
+    activityLibrary
+      .getSnapshot()
+      .activities.map((activity) => [activity.id, activity])
+  )
+  const activities = update.activityIds.map((activityId) =>
+    activityById.get(activityId)
+  )
+  if (activities.some((activity) => activity == null)) {
+    return {
+      ok: false as const,
+      error: "One or more activities no longer exist.",
+    }
   }
 
-  const activity = mapStore.activities.find((item) => item.id === activityId)
-  if (!activity) return { ok: false as const }
+  const resolved = activities.filter(
+    (activity): activity is NonNullable<typeof activity> => activity != null
+  )
+  if (
+    update.setting === "visibility" &&
+    (!canSync() || resolved.some((activity) => !activity.contentHash))
+  ) {
+    return {
+      ok: false as const,
+      error: "Visibility can only be changed for synced activities.",
+    }
+  }
 
-  const updatedActivity = {
+  const changed = resolved.filter((activity) =>
+    update.setting === "visibility"
+      ? (activity.isPublic ?? false) !== update.value
+      : activity.activityType !== update.value
+  )
+
+  const changedActivities = changed.map((activity) => ({
     ...activity,
-    activityType,
-  }
+    ...(update.setting === "visibility"
+      ? { isPublic: update.value }
+      : { activityType: update.value }),
+  }))
   const operationId = createUuid()
-  await activityLibrary.dispatch(
+  const commit = await activityLibrary.dispatch(
     {
       type: "applyRemote",
       operationId,
-      changes: [{ type: "upsert", activity: updatedActivity }],
+      changes: changedActivities.map((activity) => ({
+        type: "upsert" as const,
+        activity,
+      })),
     },
     {
       outbox: isServerEnabled
-        ? (commit) =>
-            commit.change.updated.flatMap((nextActivity) => {
+        ? (result) =>
+            result.change.updated.flatMap((activity) => {
               const item = createActivityUploadOutboxItem(
-                nextActivity,
+                activity,
                 operationId,
-                commit.snapshot.revision
+                result.snapshot.revision
               )
               return item ? [item] : []
             })
         : [],
     }
   )
-  requestSync("activity-type-update")
-  return { ok: true as const, activityId, activityType }
+  if (commit.change.updated.length > 0) requestSync("activity-settings-update")
+
+  return {
+    ok: true as const,
+    updatedActivityIds: commit.change.updated.map((activity) => activity.id),
+    setting: update.setting,
+    value: update.value,
+  }
 }
 
 export function meta({}: Route.MetaArgs) {
@@ -78,7 +166,7 @@ export default function MyActivitiesPage() {
       {activities.length === 0 ? (
         <EmptyActivitiesState />
       ) : (
-        <ActivitiesGridWithSorting activities={activities} />
+        <ActivityLibrary activities={activities} />
       )}
     </PageShell>
   )

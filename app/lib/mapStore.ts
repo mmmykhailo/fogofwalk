@@ -22,6 +22,7 @@ import { createActivityUploadOutboxItem } from "~/lib/server/sync/activityEffect
 import { createUniqueDistanceProjection } from "~/lib/uniqueDistanceProjection"
 import type { FogSnapshot } from "~/lib/fog/protocol"
 import { recordDiagnostic } from "~/lib/diagnostics"
+import type { ActivitySummary } from "~/types/activitySummary"
 
 // ─── Map position persistence (localStorage — synchronous, survives page unload) ──
 
@@ -73,11 +74,15 @@ const _savedPosition =
 
 // ─── Store ────────────────────────────────────────────────────────────────────
 
+export type ActivityHydration = "unloaded" | "summaries" | "full"
+
 interface MapStore {
   map: maplibregl.Map | null
   worker: Worker | null
   fogData: FogRenderData | null
   activities: ParsedActivity[]
+  activitySummaries: ActivitySummary[]
+  activityHydration: ActivityHydration
   processedCount: number
   sourcesReady: boolean
   /** Current fog mode — kept in sync with React state so MapView can read it without a prop. */
@@ -151,6 +156,8 @@ export const mapStore: MapStore = {
   worker: null,
   fogData: null,
   activities: [],
+  activitySummaries: [],
+  activityHydration: "unloaded",
   processedCount: 0,
   sourcesReady: false,
   fogMode: "corridor",
@@ -223,6 +230,48 @@ export function replaceFogWorker(
     mapStore.worker = null
     return null
   }
+}
+
+/** Replace the lightweight library used by non-map routes. */
+export function setActivitySummaries(summaries: ActivitySummary[]): void {
+  if (mapStore.activityHydration === "full") return
+  mapStore.activitySummaries = summaries
+  mapStore.activityHydration = "summaries"
+}
+
+/** Update the summary cache after a metadata-only edit. */
+export function updateActivitySummaries(
+  updates: readonly ActivitySummary[]
+): void {
+  if (mapStore.activityHydration !== "summaries") return
+  const byId = new Map(updates.map((activity) => [activity.id, activity]))
+  mapStore.activitySummaries = mapStore.activitySummaries.map(
+    (activity) => byId.get(activity.id) ?? activity
+  )
+}
+
+/** Merge server metadata into the currently hydrated render cache. */
+export function applyActivityMetadata(
+  updates: readonly ActivitySummary[]
+): void {
+  if (mapStore.activityHydration === "full") {
+    const byId = new Map(updates.map((activity) => [activity.id, activity]))
+    mapStore.activities = mapStore.activities.map((activity) => {
+      const summary = byId.get(activity.id)
+      if (!summary) return activity
+      return {
+        ...activity,
+        name: summary.name,
+        startedAtMs: summary.startedAtMs,
+        activityType: summary.activityType,
+        startSunPhase: summary.startSunPhase,
+        contentHash: summary.contentHash,
+        isPublic: summary.isPublic,
+      }
+    })
+    return
+  }
+  updateActivitySummaries(updates)
 }
 
 const fogProgressListeners = new Set<() => void>()
@@ -578,6 +627,8 @@ function applyLibrarySnapshot(snapshot: LibrarySnapshot): void {
     mapStore.activities = cloneActivities(snapshot.activities)
     mapStore.uniqueDistanceProjectionRevision = null
   }
+  mapStore.activitySummaries = []
+  mapStore.activityHydration = "full"
   mapStore.libraryRevision = snapshot.revision
   uniqueDistanceProjection.schedule(snapshot)
 }

@@ -1,5 +1,11 @@
 import type { ParsedActivity } from "~/types/activities"
-import { openStorageDatabase } from "~/lib/storage"
+import type { ActivitySummary } from "~/types/activitySummary"
+import {
+  activityToSummary,
+  migrateStoredActivity,
+  openStorageDatabase,
+  type StoredActivity,
+} from "~/lib/storage"
 import {
   mergeSyncOutboxItem,
   normaliseSyncOutboxItem,
@@ -83,6 +89,27 @@ function findById(activities: ParsedActivity[], activityId: string) {
 
 function sameActivity(first: ParsedActivity, second: ParsedActivity): boolean {
   return JSON.stringify(first) === JSON.stringify(second)
+}
+
+function overlayActivitySummaries(
+  activities: StoredActivity[],
+  summaries: ActivitySummary[]
+): ParsedActivity[] {
+  const byId = new Map(summaries.map((summary) => [summary.id, summary]))
+  return activities.map((storedActivity) => {
+    const activity = migrateStoredActivity(storedActivity)
+    const summary = byId.get(activity.id)
+    if (!summary) return activity
+    return {
+      ...activity,
+      name: summary.name,
+      startedAtMs: summary.startedAtMs,
+      activityType: summary.activityType,
+      startSunPhase: summary.startSunPhase,
+      contentHash: summary.contentHash,
+      isPublic: summary.isPublic ?? false,
+    }
+  })
 }
 
 function outboxInputs(
@@ -366,21 +393,28 @@ export function createIndexedDbActivityLibraryRepository(): IndexedDbActivityLib
 
     try {
       const transaction = db.transaction(
-        ["activities", "library-meta"],
+        ["activities", "activity-summaries", "library-meta"],
         "readwrite"
       )
       const activitiesRequest = transaction.objectStore("activities").getAll()
+      const summariesRequest = transaction
+        .objectStore("activity-summaries")
+        .getAll()
       const metaRequest = transaction
         .objectStore("library-meta")
         .get(LIBRARY_META_KEY)
-      const [activities, rawMeta] = await Promise.all([
-        requestResult<ParsedActivity[]>(activitiesRequest),
+      const [activities, summaries, rawMeta] = await Promise.all([
+        requestResult<StoredActivity[]>(activitiesRequest),
+        requestResult<ActivitySummary[]>(summariesRequest),
         requestResult<StoredLibraryMeta | undefined>(metaRequest),
       ])
       const meta = readMeta(rawMeta)
       if (!rawMeta) transaction.objectStore("library-meta").put(meta)
       await transactionResult(transaction)
-      return immutableSnapshot(meta.revision, activities)
+      return immutableSnapshot(
+        meta.revision,
+        overlayActivitySummaries(activities, summaries)
+      )
     } catch (error) {
       throw toActivityStorageError(error, "loading the activity library")
     }
@@ -405,17 +439,19 @@ export function createIndexedDbActivityLibraryRepository(): IndexedDbActivityLib
         (options.outbox?.length ?? 0) > 0
       const transaction = db.transaction(
         hasOutbox
-          ? ["activities", "library-meta", "sync-outbox"]
-          : ["activities", "library-meta"],
+          ? ["activities", "activity-summaries", "library-meta", "sync-outbox"]
+          : ["activities", "activity-summaries", "library-meta"],
         "readwrite"
       )
       const activityStore = transaction.objectStore("activities")
+      const summaryStore = transaction.objectStore("activity-summaries")
       const metaStore = transaction.objectStore("library-meta")
       const outboxStore = hasOutbox
         ? transaction.objectStore("sync-outbox")
         : null
-      const [activities, rawMeta] = await Promise.all([
-        requestResult<ParsedActivity[]>(activityStore.getAll()),
+      const [activities, summaries, rawMeta] = await Promise.all([
+        requestResult<StoredActivity[]>(activityStore.getAll()),
+        requestResult<ActivitySummary[]>(summaryStore.getAll()),
         requestResult<StoredLibraryMeta | undefined>(
           metaStore.get(LIBRARY_META_KEY)
         ),
@@ -429,12 +465,23 @@ export function createIndexedDbActivityLibraryRepository(): IndexedDbActivityLib
         )
       }
 
-      const current = immutableSnapshot(meta.revision, activities)
+      const current = immutableSnapshot(
+        meta.revision,
+        overlayActivitySummaries(activities, summaries)
+      )
       const result = applyLibraryCommand(current, command)
-      for (const activity of result.change.added) activityStore.put(activity)
-      for (const activity of result.change.updated) activityStore.put(activity)
-      for (const activity of result.change.removed)
+      for (const activity of result.change.added) {
+        activityStore.put(activity)
+        summaryStore.put(activityToSummary(activity))
+      }
+      for (const activity of result.change.updated) {
+        activityStore.put(activity)
+        summaryStore.put(activityToSummary(activity))
+      }
+      for (const activity of result.change.removed) {
         activityStore.delete(activity.id)
+        summaryStore.delete(activity.id)
+      }
       if (result.snapshot.revision !== meta.revision || !rawMeta) {
         metaStore.put({
           key: LIBRARY_META_KEY,

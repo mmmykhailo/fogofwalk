@@ -16,17 +16,22 @@ import type {
   AdminAccessRequest,
   AdminUser,
   ManifestPage,
+  PublicActivitiesPage,
   PublicProfileResponse,
   PublicAchievementPrevalence,
-  PublicActivityMeta,
   ActivityMeta,
+  ActivityMetadataUpdate,
   ActivityTombstone,
   SavedPointManifestPage,
   SavedPointTombstone,
   UserStatus,
 } from "~shared/api"
 import type { SavedPoint, SavedPointColor } from "~shared/saved-points"
-import { SYNC_PAGE_SIZE } from "~shared/constants"
+import {
+  PUBLIC_PROFILE_SAVED_POINT_LIMIT,
+  PUBLIC_PROFILE_WEEKLY_BAR_LIMIT,
+  SYNC_PAGE_SIZE,
+} from "~shared/constants"
 import type {
   ActivityFormat,
   ActivityType,
@@ -38,6 +43,13 @@ import type { Pageable } from "./manifestPaging"
 import { parseActivityUpload } from "../activities/payload"
 import { computePublicAchievementPrevalence } from "../public/achievementPrevalence"
 import { PublicAchievementPrevalenceCache } from "../public/achievementPrevalenceCache"
+import {
+  computePublicEarnedAchievements,
+  computePublicProfileTotals,
+  computePublicWeeklyBars,
+  getPublicRecentDays,
+  toPublicActivitySummary,
+} from "../public/profileSummary"
 import type {
   Identity,
   IdentityInput,
@@ -939,16 +951,68 @@ export class SqliteFsStore implements ServerStore {
     contentHash: string,
     isPublic: boolean
   ): Promise<ActivityMeta | null> {
-    if (!isSafeContentHash(contentHash)) return null
-    const now = Date.now()
-    this.db
-      .query(
-        `UPDATE activities SET is_public = ?, updated_at = ?
-          WHERE user_id = ? AND content_hash = ?`
+    const updated = await this.updateActivityMetadata(userId, [
+      { contentHash, isPublic },
+    ])
+    return updated?.[0] ?? null
+  }
+
+  async updateActivityMetadata(
+    userId: string,
+    updates: readonly ActivityMetadataUpdate[]
+  ): Promise<ActivityMeta[] | null> {
+    if (updates.length === 0) return []
+    const current = await Promise.all(
+      updates.map((update) => this.getActivity(userId, update.contentHash))
+    )
+    if (current.some((meta) => meta == null)) return null
+    const currentMetas = current as ActivityMeta[]
+
+    const changed = currentMetas.some((previous, index) => {
+      const update = updates[index]!
+      return (
+        (update.isPublic !== undefined &&
+          previous.isPublic !== update.isPublic) ||
+        (update.activityType !== undefined &&
+          previous.activityType !== (update.activityType ?? undefined))
       )
-      .run(isPublic ? 1 : 0, now, userId, contentHash)
+    })
+    if (!changed) return currentMetas
+
+    const updatedAt = Date.now()
+    this.db.transaction(() => {
+      for (const [index, update] of updates.entries()) {
+        const previous = currentMetas[index]!
+        this.db
+          .query(
+            `UPDATE activities
+                SET name = ?, is_public = ?, activity_type = ?,
+                    start_sun_phase = ?, updated_at = ?
+              WHERE user_id = ? AND content_hash = ?`
+          )
+          .run(
+            previous.name,
+            update.isPublic === undefined
+              ? previous.isPublic
+                ? 1
+                : 0
+              : update.isPublic
+                ? 1
+                : 0,
+            update.activityType === undefined
+              ? (previous.activityType ?? null)
+              : (update.activityType ?? null),
+            previous.startSunPhase ?? null,
+            updatedAt,
+            userId,
+            update.contentHash
+          )
+      }
+    })()
     this.achievementPrevalenceCache.invalidate()
-    return this.getActivity(userId, contentHash)
+    return Promise.all(
+      updates.map((update) => this.getActivity(userId, update.contentHash))
+    ) as Promise<ActivityMeta[]>
   }
 
   async getActivityBlob(
@@ -1189,7 +1253,10 @@ export class SqliteFsStore implements ServerStore {
     return row ? toUser(row) : null
   }
 
-  async listPublicActivities(userId: string): Promise<PublicProfileResponse> {
+  async getPublicProfile(
+    userId: string,
+    recentLimit: number
+  ): Promise<PublicProfileResponse> {
     const user = await this.getUser(userId)
     if (!user || !user.handle) {
       return {
@@ -1198,9 +1265,16 @@ export class SqliteFsStore implements ServerStore {
           displayName: user?.displayName ?? "",
           avatarUrl: user?.avatarUrl ?? null,
         },
-        activities: [],
         savedPoints: [],
+        savedPointCount: 0,
+        totals: computePublicProfileTotals([]),
+        firstActivityMs: null,
+        latestActivityMs: null,
+        recentDays: [],
+        weekly: [],
+        achievements: [],
         achievementPrevalence: await this.getPublicAchievementPrevalence(),
+        recentActivities: [],
       }
     }
 
@@ -1211,7 +1285,7 @@ export class SqliteFsStore implements ServerStore {
                 t.duration_ms, t.moving_time_ms, t.elevation_gain_m, t.avg_moving_speed_kmh
            FROM activities t
           WHERE t.user_id = ? AND t.is_public = 1
-          ORDER BY (t.started_at_ms IS NULL), t.started_at_ms DESC, t.updated_at DESC`
+          ORDER BY (t.started_at_ms IS NULL), t.started_at_ms DESC, t.updated_at DESC, t.content_hash DESC`
       )
       .all(userId) as ActivityRow[]
 
@@ -1220,16 +1294,63 @@ export class SqliteFsStore implements ServerStore {
     const activities = await Promise.all(
       rows.map((row) => this.hydrateLegacyPublicMeta(userId, row))
     )
+    const summaries = activities.map(toPublicActivitySummary)
+    const datedActivities = summaries
+      .map((activity) => activity.startedAtMs)
+      .filter((startedAtMs): startedAtMs is number => startedAtMs != null)
+      .sort((a, b) => a - b)
 
+    const savedPoints = await this.listPublicSavedPoints(userId)
     return {
       user: {
         handle: user.handle,
         displayName: user.displayName,
         avatarUrl: user.avatarUrl,
       },
-      activities,
-      savedPoints: await this.listPublicSavedPoints(userId),
+      savedPoints: savedPoints.slice(0, PUBLIC_PROFILE_SAVED_POINT_LIMIT),
+      savedPointCount: savedPoints.length,
+      totals: computePublicProfileTotals(summaries),
+      firstActivityMs: datedActivities[0] ?? null,
+      latestActivityMs: datedActivities.at(-1) ?? null,
+      recentDays: getPublicRecentDays(summaries),
+      weekly: computePublicWeeklyBars(
+        summaries,
+        PUBLIC_PROFILE_WEEKLY_BAR_LIMIT
+      ),
+      achievements: computePublicEarnedAchievements(summaries),
       achievementPrevalence: await this.getPublicAchievementPrevalence(),
+      recentActivities: summaries.slice(0, recentLimit),
+    }
+  }
+
+  async listPublicActivities(
+    userId: string,
+    page: number,
+    limit: number
+  ): Promise<PublicActivitiesPage> {
+    const offset = (page - 1) * limit
+    const total = this.db
+      .query(
+        `SELECT COUNT(*) AS count FROM activities WHERE user_id = ? AND is_public = 1`
+      )
+      .get(userId) as { count: number }
+    const rows = this.db
+      .query(
+        `SELECT t.content_hash, t.name, t.is_public, t.format, t.activity_type, t.start_sun_phase, t.started_at_ms,
+                t.distance_km, t.point_count, t.size_bytes, t.updated_at,
+                t.duration_ms, t.moving_time_ms, t.elevation_gain_m, t.avg_moving_speed_kmh
+           FROM activities t
+          WHERE t.user_id = ? AND t.is_public = 1
+          ORDER BY (t.started_at_ms IS NULL), t.started_at_ms DESC, t.updated_at DESC, t.content_hash DESC
+          LIMIT ? OFFSET ?`
+      )
+      .all(userId, limit, offset) as ActivityRow[]
+    const activities = await Promise.all(
+      rows.map((row) => this.hydrateLegacyPublicMeta(userId, row))
+    )
+    return {
+      activities: activities.map(toPublicActivitySummary),
+      totalCount: total.count,
     }
   }
 
@@ -1255,7 +1376,7 @@ export class SqliteFsStore implements ServerStore {
   private async hydrateLegacyPublicMeta(
     userId: string,
     row: ActivityRow
-  ): Promise<PublicActivityMeta> {
+  ): Promise<ActivityMeta> {
     if (
       row.duration_ms !== null ||
       row.moving_time_ms !== null ||

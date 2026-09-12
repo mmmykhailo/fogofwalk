@@ -21,6 +21,19 @@ export interface LifetimeTotals {
   avgMovingPaceMinPerKm: number | null
 }
 
+/**
+ * The subset of an activity required for library and public-profile totals.
+ * Both views use this contract so their weighted averages retain identical
+ * denominator rules.
+ */
+export interface ActivityTotalsInput {
+  startedAtMs: number | null
+  distanceKm: number
+  elevationGainM: number
+  durationMs: number | null
+  movingTimeMs: number | null
+}
+
 export interface WeeklyBar {
   /** ISO week label e.g. "2024-W03" */
   week: string
@@ -91,13 +104,17 @@ function toLocalDateStr(ms: number): string {
 
 // ─── Sort helper ──────────────────────────────────────────────────────────────
 
-/**
- * Returns a new array of activities sorted chronologically by startedAtMs.
- * Activities without a timestamp are placed last.
- * Call this once at the data boundary (clientLoader / clientAction) so that
- * aggregators can iterate in order without re-sorting on every call.
- */
-export function sortActivities(activities: ParsedActivity[]): ParsedActivity[] {
+type ActivitySortItem = Pick<ParsedActivity, "startedAtMs"> & {
+  stats: Pick<
+    ParsedActivity["stats"],
+    "distanceKm" | "durationMs" | "elevationGainM" | "avgMovingSpeedKmh"
+  >
+}
+
+/** Returns a new array sorted chronologically, with undated items last. */
+export function sortActivities<T extends ActivitySortItem>(
+  activities: readonly T[]
+): T[] {
   return [...activities].sort((a, b) => {
     if (a.startedAtMs == null && b.startedAtMs == null) return 0
     if (a.startedAtMs == null) return 1
@@ -107,9 +124,9 @@ export function sortActivities(activities: ParsedActivity[]): ParsedActivity[] {
 }
 
 /** Newest-first activity-library ordering, with undated activities last. */
-export function sortActivitiesNewestFirst(
-  activities: ParsedActivity[]
-): ParsedActivity[] {
+export function sortActivitiesNewestFirst<T extends ActivitySortItem>(
+  activities: readonly T[]
+): T[] {
   return [...activities].sort((a, b) => {
     if (a.startedAtMs == null && b.startedAtMs == null) return 0
     if (a.startedAtMs == null) return 1
@@ -135,15 +152,15 @@ export function isActivitySortOption(
 }
 
 /** Returns activities sorted descending by the selected library metric. */
-export function sortActivitiesBy(
-  activities: ParsedActivity[],
+export function sortActivitiesBy<T extends ActivitySortItem>(
+  activities: readonly T[],
   option: ActivitySortOption
-): ParsedActivity[] {
+): T[] {
   if (option === "date") return sortActivitiesNewestFirst(activities)
 
   const values: Record<
     Exclude<ActivitySortOption, "date">,
-    (activity: ParsedActivity) => number | null
+    (activity: ActivitySortItem) => number | null
   > = {
     distance: (activity) => activity.stats.distanceKm,
     speed: (activity) => activity.stats.avgMovingSpeedKmh,
@@ -164,8 +181,8 @@ export function sortActivitiesBy(
 
 // ─── Aggregators ──────────────────────────────────────────────────────────────
 
-export function computeLifetimeTotals(
-  activities: ParsedActivity[]
+export function computeActivityTotals(
+  activities: readonly ActivityTotalsInput[]
 ): LifetimeTotals {
   let totalDistanceKm = 0
   let totalElevationGainM = 0
@@ -178,10 +195,16 @@ export function computeLifetimeTotals(
   let movingDistanceKm = 0
   const daySet = new Set<string>()
 
-  for (const t of activities) {
-    const { distanceKm, durationMs, movingTimeMs } = t.stats
+  for (const activity of activities) {
+    const {
+      distanceKm,
+      durationMs,
+      movingTimeMs,
+      elevationGainM,
+      startedAtMs,
+    } = activity
     totalDistanceKm += distanceKm
-    totalElevationGainM += t.stats.elevationGainM
+    totalElevationGainM += elevationGainM
     totalMovingTimeMs += movingTimeMs ?? 0
     if (durationMs != null && durationMs > 0) {
       totalDurationMs += durationMs
@@ -190,7 +213,7 @@ export function computeLifetimeTotals(
     if (movingTimeMs != null && movingTimeMs > 0) {
       movingDistanceKm += distanceKm
     }
-    if (t.startedAtMs != null) daySet.add(toLocalDateStr(t.startedAtMs))
+    if (startedAtMs != null) daySet.add(toLocalDateStr(startedAtMs))
   }
 
   const hasElapsed = totalDurationMs > 0 && timedDistanceKm > 0
@@ -215,6 +238,20 @@ export function computeLifetimeTotals(
       ? totalMovingTimeMs / 60_000 / movingDistanceKm
       : null,
   }
+}
+
+export function computeLifetimeTotals(
+  activities: readonly ParsedActivity[]
+): LifetimeTotals {
+  return computeActivityTotals(
+    activities.map((activity) => ({
+      startedAtMs: activity.startedAtMs,
+      distanceKm: activity.stats.distanceKm,
+      elevationGainM: activity.stats.elevationGainM,
+      durationMs: activity.stats.durationMs,
+      movingTimeMs: activity.stats.movingTimeMs,
+    }))
+  )
 }
 
 export function computeWeeklyBars(activities: ParsedActivity[]): WeeklyBar[] {
