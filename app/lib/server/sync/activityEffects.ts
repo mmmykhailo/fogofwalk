@@ -95,7 +95,7 @@ function metadataFieldGroup(patch: ActivityMetadataPatch): string {
 
 /** Build one compact, content-addressed effect per metadata field group. */
 export function createActivityMetadataOutboxItems(
-  activities: readonly ParsedActivity[],
+  activities: readonly Pick<ParsedActivity, "id" | "contentHash">[],
   patches: readonly ActivityMetadataPatch[],
   operationId: string,
   libraryRevision: number

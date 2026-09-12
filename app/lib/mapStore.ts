@@ -23,6 +23,11 @@ import { createUniqueDistanceProjection } from "~/lib/uniqueDistanceProjection"
 import type { FogSnapshot } from "~/lib/fog/protocol"
 import { recordDiagnostic } from "~/lib/diagnostics"
 import type { ActivitySummary } from "~/types/activitySummary"
+import { activityToSummary } from "~/lib/storage"
+import type {
+  LibraryMetadataCommit,
+  LibrarySummarySnapshot,
+} from "~/lib/activities/libraryEvents"
 
 declare global {
   interface Window {
@@ -82,6 +87,25 @@ const _savedPosition =
 // ─── Store ────────────────────────────────────────────────────────────────────
 
 export type ActivityHydration = "unloaded" | "summaries" | "full"
+
+export interface ActivitySummaryStoreSnapshot {
+  hydrated: boolean
+  revision: number
+  coverageRevision: number
+  summaries: readonly ActivitySummary[]
+}
+
+const emptyActivitySummarySnapshot: ActivitySummaryStoreSnapshot = {
+  hydrated: false,
+  revision: 0,
+  coverageRevision: 0,
+  summaries: Object.freeze([]),
+}
+
+let activitySummarySnapshot: ActivitySummaryStoreSnapshot =
+  emptyActivitySummarySnapshot
+let activityMetadataRevision = 0
+const activitySummaryListeners = new Set<() => void>()
 
 interface MapStore {
   map: maplibregl.Map | null
@@ -248,11 +272,86 @@ export function replaceFogWorker(
   }
 }
 
+function freezeActivitySummary(summary: ActivitySummary): ActivitySummary {
+  return Object.freeze({
+    ...summary,
+    stats: Object.freeze({ ...summary.stats }),
+  })
+}
+
+function sameActivitySummary(
+  first: ActivitySummary,
+  second: ActivitySummary
+): boolean {
+  return (
+    first.id === second.id &&
+    first.name === second.name &&
+    first.startedAtMs === second.startedAtMs &&
+    first.activityType === second.activityType &&
+    first.startSunPhase === second.startSunPhase &&
+    first.contentHash === second.contentHash &&
+    first.isPublic === second.isPublic &&
+    first.stats.distanceKm === second.stats.distanceKm &&
+    first.stats.durationMs === second.stats.durationMs &&
+    first.stats.elevationGainM === second.stats.elevationGainM &&
+    first.stats.avgMovingSpeedKmh === second.stats.avgMovingSpeedKmh
+  )
+}
+
+function publishActivitySummarySnapshot(
+  summaries: readonly ActivitySummary[],
+  revision: number,
+  coverageRevision: number,
+  metadataBatch = false
+): void {
+  const nextSummaries = Object.freeze(summaries.map(freezeActivitySummary))
+  const previous = activitySummarySnapshot
+  const unchanged =
+    previous.hydrated &&
+    previous.revision === revision &&
+    previous.coverageRevision === coverageRevision &&
+    previous.summaries.length === nextSummaries.length &&
+    previous.summaries.every((summary, index) =>
+      sameActivitySummary(summary, nextSummaries[index]!)
+    )
+  if (unchanged) return
+
+  activitySummarySnapshot = {
+    hydrated: true,
+    revision,
+    coverageRevision,
+    summaries: nextSummaries,
+  }
+  if (metadataBatch) activityMetadataRevision++
+  for (const listener of activitySummaryListeners) listener()
+}
+
 /** Replace the lightweight library used by non-map routes. */
 export function setActivitySummaries(summaries: ActivitySummary[]): void {
   if (mapStore.activityHydration === "full") return
   mapStore.activitySummaries = summaries
   mapStore.activityHydration = "summaries"
+  publishActivitySummarySnapshot(
+    summaries,
+    mapStore.libraryRevision,
+    mapStore.coverageRevision
+  )
+}
+
+/** Adopt a summary snapshot that already carries canonical revision metadata. */
+export function setActivitySummarySnapshot(
+  snapshot: LibrarySummarySnapshot
+): void {
+  if (mapStore.activityHydration === "full") return
+  mapStore.activitySummaries = [...snapshot.summaries]
+  mapStore.activityHydration = "summaries"
+  mapStore.libraryRevision = snapshot.revision
+  mapStore.coverageRevision = snapshot.coverageRevision
+  publishActivitySummarySnapshot(
+    snapshot.summaries,
+    snapshot.revision,
+    snapshot.coverageRevision
+  )
 }
 
 /** Update the summary cache after a metadata-only edit. */
@@ -261,8 +360,45 @@ export function updateActivitySummaries(
 ): void {
   if (mapStore.activityHydration !== "summaries") return
   const byId = new Map(updates.map((activity) => [activity.id, activity]))
-  mapStore.activitySummaries = mapStore.activitySummaries.map(
+  const summaries = mapStore.activitySummaries.map(
     (activity) => byId.get(activity.id) ?? activity
+  )
+  mapStore.activitySummaries = summaries
+  publishActivitySummarySnapshot(
+    summaries,
+    mapStore.libraryRevision,
+    mapStore.coverageRevision,
+    updates.length > 0
+  )
+}
+
+/** Apply an authoritative summary-only library event without touching geometry. */
+export function applyActivitySummarySnapshot(
+  snapshot: LibrarySummarySnapshot,
+  commit?: LibraryMetadataCommit
+): void {
+  mapStore.libraryRevision = snapshot.revision
+  mapStore.coverageRevision = snapshot.coverageRevision
+  if (mapStore.activityHydration === "full") {
+    mapStore.activities = mergeMetadataSnapshot(
+      mapStore.activities,
+      snapshot.summaries
+    )
+    publishActivitySummarySnapshot(
+      mapStore.activities.map(activityToSummary),
+      snapshot.revision,
+      snapshot.coverageRevision,
+      Boolean(commit?.updated.length)
+    )
+    return
+  }
+  mapStore.activitySummaries = [...snapshot.summaries]
+  mapStore.activityHydration = "summaries"
+  publishActivitySummarySnapshot(
+    snapshot.summaries,
+    snapshot.revision,
+    snapshot.coverageRevision,
+    Boolean(commit?.updated.length)
   )
 }
 
@@ -271,23 +407,47 @@ export function applyActivityMetadata(
   updates: readonly ActivitySummary[]
 ): void {
   if (mapStore.activityHydration === "full") {
-    const byId = new Map(updates.map((activity) => [activity.id, activity]))
-    mapStore.activities = mapStore.activities.map((activity) => {
-      const summary = byId.get(activity.id)
-      if (!summary) return activity
-      return {
-        ...activity,
-        name: summary.name,
-        startedAtMs: summary.startedAtMs,
-        activityType: summary.activityType,
-        startSunPhase: summary.startSunPhase,
-        contentHash: summary.contentHash,
-        isPublic: summary.isPublic,
-      }
-    })
+    mapStore.activities = mergeMetadataSnapshot(mapStore.activities, updates)
+    publishActivitySummarySnapshot(
+      mapStore.activities.map(activityToSummary),
+      mapStore.libraryRevision,
+      mapStore.coverageRevision,
+      updates.length > 0
+    )
     return
   }
   updateActivitySummaries(updates)
+}
+
+export function getActivitySummarySnapshot(): ActivitySummaryStoreSnapshot {
+  return activitySummarySnapshot
+}
+
+export function subscribeActivitySummarySnapshot(
+  listener: () => void
+): () => void {
+  activitySummaryListeners.add(listener)
+  return () => activitySummaryListeners.delete(listener)
+}
+
+export function useActivitySummarySnapshot(): ActivitySummaryStoreSnapshot {
+  return useSyncExternalStore(
+    subscribeActivitySummarySnapshot,
+    getActivitySummarySnapshot,
+    getActivitySummarySnapshot
+  )
+}
+
+export function getActivityMetadataRevision(): number {
+  return activityMetadataRevision
+}
+
+export function useActivityMetadataRevision(): number {
+  return useSyncExternalStore(
+    subscribeActivitySummarySnapshot,
+    getActivityMetadataRevision,
+    getActivityMetadataRevision
+  )
 }
 
 const fogProgressListeners = new Set<() => void>()
@@ -379,6 +539,9 @@ function updateFogStatus(
 /** Canonical activity ownership lives in ActivityLibrary; this is its map projection. */
 export const activityLibrary = createActivityLibrary()
 let activityLibrarySubscription: (() => void) | null = null
+activityLibrary.subscribeMetadata((snapshot, commit) => {
+  applyActivitySummarySnapshot(snapshot, commit)
+})
 
 /** Revision-keyed derived-stat projection; canonical activity commits do not wait for it. */
 export const uniqueDistanceProjection = createUniqueDistanceProjection(
@@ -662,7 +825,18 @@ function toFogWorkerActivity(activity: FogWorkerActivity): FogWorkerActivity {
 
 function mergeMetadataSnapshot(
   currentActivities: readonly ParsedActivity[],
-  snapshotActivities: readonly ParsedActivity[]
+  snapshotActivities: ReadonlyArray<
+    Pick<
+      ParsedActivity,
+      | "id"
+      | "name"
+      | "startedAtMs"
+      | "activityType"
+      | "startSunPhase"
+      | "contentHash"
+      | "isPublic"
+    >
+  >
 ): ParsedActivity[] {
   const nextById = new Map(
     snapshotActivities.map((activity) => [activity.id, activity])
@@ -696,6 +870,7 @@ function applyLibrarySnapshot(
   snapshot: LibrarySnapshot,
   change?: LibraryChange
 ): void {
+  const wasFullyHydrated = mapStore.activityHydration === "full"
   const coverageChanged =
     mapStore.coverageRevision !== snapshot.coverageRevision
   if (
@@ -724,10 +899,16 @@ function applyLibrarySnapshot(
   mapStore.activityHydration = "full"
   mapStore.libraryRevision = snapshot.revision
   mapStore.coverageRevision = snapshot.coverageRevision
-  if (
-    coverageChanged ||
-    mapStore.uniqueDistanceProjectionRevision !== snapshot.coverageRevision
-  ) {
+  publishActivitySummarySnapshot(
+    mapStore.activities.map(activityToSummary),
+    snapshot.revision,
+    snapshot.coverageRevision,
+    Boolean(change?.domains.metadata && change.updated.length > 0)
+  )
+  const coverageDomainChanged = Boolean(
+    change?.domains.membership || change?.domains.geometry
+  )
+  if (!wasFullyHydrated || coverageChanged || coverageDomainChanged) {
     uniqueDistanceProjection.schedule(snapshot)
   }
 }

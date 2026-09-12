@@ -4,11 +4,11 @@ import { ActivityLibrary } from "~/components/activities/ActivityLibrary"
 import { PageShell } from "~/components/PageShell"
 import {
   activityLibrary,
-  initializeActivityLibrary,
   mapStore,
-  setActivitySummaries,
+  setActivitySummarySnapshot,
+  useActivitySummarySnapshot,
 } from "~/lib/mapStore"
-import { activityToSummary, loadActivitySummaries } from "~/lib/storage"
+import { activityToSummary } from "~/lib/storage"
 import type { ActivitySummary } from "~/types/activitySummary"
 import {
   parseActivitySettingsUpdate,
@@ -31,18 +31,17 @@ export async function clientLoader(): Promise<ActivitySummary[]> {
   let activities: ActivitySummary[]
   if (mapStore.activityHydration === "full") {
     activities = mapStore.activities.map(activityToSummary)
-  } else if (mapStore.activityHydration === "summaries") {
-    activities = mapStore.activitySummaries
   } else {
     markPerformance("activities:idb-load:start")
-    activities = await loadActivitySummaries()
+    const summarySnapshot = await activityLibrary.initializeSummarySnapshot()
     markPerformance("activities:idb-load:end")
     measurePerformance(
       "activities:idb-load",
       "activities:idb-load:start",
       "activities:idb-load:end"
     )
-    setActivitySummaries(activities)
+    activities = [...summarySnapshot.summaries]
+    setActivitySummarySnapshot(summarySnapshot)
   }
   markPerformance("activities:loader:end")
   measurePerformance(
@@ -93,11 +92,9 @@ export async function clientAction({
     const update = parseActivitySettingsUpdate(formData)
     if (!update.ok) return { ok: false, operationId, error: update.error }
 
-    await initializeActivityLibrary()
+    const summarySnapshot = await activityLibrary.initializeSummarySnapshot()
     const activityById = new Map(
-      activityLibrary
-        .getSnapshot()
-        .activities.map((activity) => [activity.id, activity])
+      summarySnapshot.summaries.map((activity) => [activity.id, activity])
     )
     const activities = update.activityIds.map((activityId) =>
       activityById.get(activityId)
@@ -129,7 +126,7 @@ export async function clientAction({
         ? { id: activity.id, isPublic: update.value }
         : { id: activity.id, activityType: update.value }
     )
-    const commit = await activityLibrary.dispatch(
+    const commit = await activityLibrary.dispatchMetadata(
       {
         type: "updateMetadata",
         operationId,
@@ -151,16 +148,16 @@ export async function clientAction({
           : undefined,
       }
     )
-    if (commit.change.updated.length > 0 && isServerEnabled) {
+    if (commit.updated.length > 0 && isServerEnabled) {
       requestSync("activity-settings-update")
     }
 
     return {
       ok: true,
       operationId,
-      revision: commit.snapshot.revision,
-      coverageRevision: commit.snapshot.coverageRevision,
-      updated: commit.change.updated.map(activityToSummary),
+      revision: commit.revision,
+      coverageRevision: commit.coverageRevision,
+      updated: commit.updated,
     }
   } catch (error) {
     return {
@@ -182,7 +179,11 @@ export function meta({}: Route.MetaArgs) {
 }
 
 export default function MyActivitiesPage() {
-  const activities = useLoaderData<typeof clientLoader>()
+  const loadedActivities = useLoaderData<typeof clientLoader>()
+  const liveSnapshot = useActivitySummarySnapshot()
+  const activities = liveSnapshot.hydrated
+    ? [...liveSnapshot.summaries]
+    : loadedActivities
 
   return (
     <PageShell title="My activities">

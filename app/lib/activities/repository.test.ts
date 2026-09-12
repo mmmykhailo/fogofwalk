@@ -408,6 +408,44 @@ describe("activity library command repository", () => {
     library.close()
   })
 
+  test("dispatches summary-only metadata without loading geometry", async () => {
+    const first = activity("summary-only")
+    const base = createMemoryActivityLibraryRepository([first], 7)
+    let fullLoads = 0
+    const repository = {
+      load: async () => {
+        fullLoads++
+        throw new Error("full activity load should not run")
+      },
+      loadSummarySnapshot: base.loadSummarySnapshot,
+      commit: base.commit,
+      commitMetadata: base.commitMetadata,
+    }
+    const library = createActivityLibrary(repository)
+    const initial = await library.initializeSummarySnapshot()
+    const events: Array<{ revision: number; ids: string[] }> = []
+    library.subscribeMetadata((snapshot, commit) => {
+      events.push({
+        revision: snapshot.revision,
+        ids: commit.updated.map((summary) => summary.id),
+      })
+    })
+
+    const result = await library.dispatchMetadata({
+      type: "updateMetadata",
+      operationId: "summary-only-metadata",
+      patches: [{ id: first.id, name: "renamed.gpx" }],
+    })
+
+    expect(initial.revision).toBe(7)
+    expect(result.revision).toBe(8)
+    expect(result.coverageRevision).toBe(7)
+    expect(result.updated[0]?.name).toBe("renamed.gpx")
+    expect(events).toEqual([{ revision: 8, ids: [first.id] }])
+    expect(fullLoads).toBe(0)
+    library.close()
+  })
+
   test("retries a targeted metadata conflict with the same operation", async () => {
     const repository = createMemoryActivityLibraryRepository(
       [activity("first")],

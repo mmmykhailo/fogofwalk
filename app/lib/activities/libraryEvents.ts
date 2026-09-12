@@ -99,6 +99,17 @@ export interface LibraryMetadataCommit {
   updated: ActivitySummary[]
 }
 
+export interface LibrarySummarySnapshot {
+  revision: LibraryRevision
+  coverageRevision: LibraryRevision
+  summaries: readonly ActivitySummary[]
+}
+
+export type LibraryMetadataListener = (
+  snapshot: LibrarySummarySnapshot,
+  commit: LibraryMetadataCommit
+) => void
+
 export type LibraryListener = (
   snapshot: LibrarySnapshot,
   change: LibraryChange

@@ -48,6 +48,7 @@ import {
   initializeActivityLibrary,
   rebuildFogProjection,
   setActivitySummaries,
+  useActivitySummarySnapshot,
   useFogStatus,
 } from "~/lib/mapStore"
 import { createActivityImportService } from "~/lib/activities/import/service"
@@ -586,6 +587,7 @@ export default function Home() {
     loaderData.restoredActivityCount
   )
   const fogStatus = useFogStatus()
+  const activitySummarySnapshot = useActivitySummarySnapshot()
   const isProcessing =
     fogStatus.phase === "processing" || fogStatus.phase === "recovering"
   const [showActivities, setShowActivities] = useState(true)
@@ -1213,7 +1215,7 @@ export default function Home() {
       selectedActivityIds
         .map((id) => mapStore.activities.find((t) => t.id === id))
         .filter((t): t is ParsedActivity => t != null),
-    [selectedActivityIds, mapStore.libraryRevision]
+    [activitySummarySnapshot, selectedActivityIds]
   )
 
   // Derived and re-validated every render rather than reset imperatively: a

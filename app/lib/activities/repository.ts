@@ -28,6 +28,7 @@ import type {
   LibraryCommand,
   LibraryCommit,
   LibraryMetadataCommit,
+  LibrarySummarySnapshot,
   LibraryRevision,
   LibrarySnapshot,
   RemoteChange,
@@ -45,6 +46,7 @@ interface StoredLibraryMeta {
 
 export interface ActivityLibraryRepository {
   load(): Promise<LibrarySnapshot>
+  loadSummarySnapshot(): Promise<LibrarySummarySnapshot>
   commit(
     command: LibraryCommand,
     expectedRevision: number,
@@ -642,6 +644,52 @@ function readMeta(value: unknown): StoredLibraryMeta {
 export interface IndexedDbActivityLibraryRepository extends ActivityLibraryRepository {}
 
 export function createIndexedDbActivityLibraryRepository(): IndexedDbActivityLibraryRepository {
+  async function loadSummarySnapshot(
+    recovered = false
+  ): Promise<LibrarySummarySnapshot> {
+    const db = await openStorageDatabase()
+    if (!db) {
+      throw createActivityStorageError(
+        "unavailable",
+        "Browser storage is unavailable; activity summaries were not loaded."
+      )
+    }
+
+    try {
+      const transaction = db.transaction(
+        ["activity-summaries", "library-meta"],
+        "readonly"
+      )
+      const [rawSummaries, rawMeta] = await Promise.all([
+        requestResult<unknown[]>(
+          transaction.objectStore("activity-summaries").getAll()
+        ),
+        requestResult<StoredLibraryMeta | undefined>(
+          transaction.objectStore("library-meta").get(LIBRARY_META_KEY)
+        ),
+      ])
+      const summaries: ActivitySummary[] = []
+      for (const summary of rawSummaries) {
+        if (!isActivitySummary(summary)) {
+          throw new ActivitySummaryRecoveryRequired()
+        }
+        summaries.push(summary)
+      }
+      const meta = readMeta(rawMeta)
+      return {
+        revision: meta.revision,
+        coverageRevision: meta.coverageRevision,
+        summaries: clone(summaries),
+      }
+    } catch (error) {
+      if (error instanceof ActivitySummaryRecoveryRequired && !recovered) {
+        await loadActivitySummaries()
+        return loadSummarySnapshot(true)
+      }
+      throw toActivityStorageError(error, "loading activity summaries")
+    }
+  }
+
   async function load(): Promise<LibrarySnapshot> {
     const db = await openStorageDatabase()
     if (!db) {
@@ -915,7 +963,7 @@ export function createIndexedDbActivityLibraryRepository(): IndexedDbActivityLib
     }
   }
 
-  return { load, commit, commitMetadata }
+  return { load, loadSummarySnapshot, commit, commitMetadata }
 }
 
 /** Deterministic repository for service tests and non-browser adapters. */
@@ -945,6 +993,19 @@ export function createMemoryActivityLibraryRepository(
     return immutableSnapshot(state.revision, state.coverageRevision, [
       ...state.activities,
     ])
+  }
+
+  async function loadSummarySnapshot(): Promise<LibrarySummarySnapshot> {
+    if (failure !== null) {
+      const error = failure
+      failure = null
+      throw error
+    }
+    return {
+      revision: state.revision,
+      coverageRevision: state.coverageRevision,
+      summaries: clone(state.activities.map(activityToSummary)),
+    }
   }
 
   async function commit(
@@ -1012,5 +1073,12 @@ export function createMemoryActivityLibraryRepository(
     return [...outbox.values()].map(clone)
   }
 
-  return { load, commit, commitMetadata, failNext, getOutbox }
+  return {
+    load,
+    loadSummarySnapshot,
+    commit,
+    commitMetadata,
+    failNext,
+    getOutbox,
+  }
 }
