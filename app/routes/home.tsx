@@ -690,6 +690,7 @@ export default function Home() {
   }
 
   function closeSavedPointDialog() {
+    publicSavedPointRequestRef.current = null
     dispatchMapSurface({ type: "closeSavedPoint" })
     clearSearchParams(["savedPoint"])
   }
@@ -701,6 +702,7 @@ export default function Home() {
   } = useMyLocation()
 
   function handleMapBackgroundClick() {
+    publicSavedPointRequestRef.current = null
     dispatchMapSurface({ type: "dismissAll" })
     clearSearchParams(["activity", "savedPoint"])
   }
@@ -853,12 +855,17 @@ export default function Home() {
   useEffect(() => {
     const request = publicSavedPointRequestRef.current
     const point = publicSavedPointFetcher.data?.point
+    const currentUrlSavedPointId =
+      typeof window === "undefined"
+        ? savedPointQueryId
+        : new URL(window.location.href).searchParams.get("savedPoint")
     if (
       !request ||
       publicSavedPointFetcher.state !== "idle" ||
       !point ||
       point.id !== request.id ||
-      savedPointQueryId !== request.id
+      savedPointQueryId !== request.id ||
+      currentUrlSavedPointId !== request.id
     ) {
       return
     }

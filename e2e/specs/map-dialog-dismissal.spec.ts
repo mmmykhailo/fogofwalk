@@ -37,6 +37,21 @@ const PUBLIC_POINT_B = {
   lat: 52.9,
 }
 
+async function pushSavedPointQuery(app: AppPage, id: string) {
+  await app.page.evaluate((savedPointId) => {
+    const currentState =
+      typeof history.state === "object" && history.state !== null
+        ? history.state
+        : {}
+    history.pushState(
+      { ...currentState, key: Math.random().toString(36).slice(2, 10) },
+      "",
+      `/map?savedPoint=${encodeURIComponent(savedPointId)}`
+    )
+    window.dispatchEvent(new PopStateEvent("popstate"))
+  }, id)
+}
+
 function expectNoDismissalWork(
   delta: ReturnType<typeof diffPerformanceCounters>,
   expectedNavigations: number,
@@ -334,15 +349,9 @@ test("ignores delayed public saved-point responses after dismissal and query cha
   // Re-enter the first query in the same document, then change it to B while
   // A is still pending. This exercises the response-id check rather than only
   // relying on a browser navigation to cancel the request.
-  await app.page.evaluate((id) => {
-    history.pushState(null, "", `/map?savedPoint=${encodeURIComponent(id)}`)
-    window.dispatchEvent(new PopStateEvent("popstate"))
-  }, PUBLIC_POINT_ID)
+  await pushSavedPointQuery(app, PUBLIC_POINT_ID)
   await secondRequest
-  await app.page.evaluate((id) => {
-    history.pushState(null, "", `/map?savedPoint=${encodeURIComponent(id)}`)
-    window.dispatchEvent(new PopStateEvent("popstate"))
-  }, PUBLIC_POINT_B.id)
+  await pushSavedPointQuery(app, PUBLIC_POINT_B.id)
   await expect(
     app.page.getByText(PUBLIC_POINT_B.name, { exact: true })
   ).toBeVisible()
