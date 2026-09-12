@@ -493,7 +493,7 @@ test.describe("activities performance fixture", () => {
     await expect
       .poll(() => readActivityStorage(page))
       .toEqual({
-        version: 4,
+        version: 7,
         activityCount: 1,
         summaryCount: 1,
         activityIds: [activity.id],
@@ -513,7 +513,7 @@ test.describe("activities performance fixture", () => {
     await expect
       .poll(() => readActivityStorage(page))
       .toEqual({
-        version: 4,
+        version: 7,
         activityCount: 1,
         summaryCount: 1,
         activityIds: [activity.id],
@@ -521,7 +521,7 @@ test.describe("activities performance fixture", () => {
       })
   })
 
-  test("creates an empty v4 library without phantom summaries", async ({
+  test("creates an empty current library without phantom summaries", async ({
     page,
   }) => {
     await seedPerformanceDatabase(page, [], true)
@@ -532,7 +532,7 @@ test.describe("activities performance fixture", () => {
     await expect
       .poll(() => readActivityStorage(page))
       .toEqual({
-        version: 4,
+        version: 7,
         activityCount: 0,
         summaryCount: 0,
         activityIds: [],
