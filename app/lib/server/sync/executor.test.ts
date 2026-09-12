@@ -13,13 +13,11 @@ import {
   createActivitySyncExecutor,
   isSyncExecutorProtocolError,
 } from "./executor"
-import {
-  createSyncTransportError,
-  type SyncTransport,
-} from "./transport"
+import { createSyncTransportError, type SyncTransport } from "./transport"
 import { isSyncCancellationError } from "./cancellation"
 import {
   createActivityDeleteOutboxItem,
+  createActivityMetadataOutboxItems,
   createActivityUploadOutboxItem,
 } from "./activityEffects"
 
@@ -103,6 +101,7 @@ function transportFor(
   options: {
     download?: (contentHash: string) => Promise<ActivityUploadPayload>
     upload?: (activity: ParsedActivity) => Promise<void>
+    metadata?: (updates: unknown) => Promise<ActivityMeta[]>
   } = {}
 ): SyncTransport {
   return {
@@ -119,6 +118,9 @@ function transportFor(
     },
     async uploadActivity(value) {
       await options.upload?.(value)
+    },
+    async updateActivityMetadata(updates) {
+      return (await options.metadata?.(updates)) ?? []
     },
     async deleteActivity() {
       return 1
@@ -284,6 +286,46 @@ describe("ActivitySyncExecutor", () => {
     expect(result.state.appliedTombstones).toEqual({ [HASH_A]: 9 })
     expect(await repository.loadOutbox()).toMatchObject([
       { operation: "delete", status: "complete" },
+    ])
+  })
+
+  test("drains local metadata without reading or uploading geometry", async () => {
+    const local = activity("local-a", HASH_A)
+    const updates: unknown[] = []
+    const { executor, library, repository } = await createExecutor(
+      [local],
+      transportFor(
+        new Map([
+          [1, { activities: [], deletions: [], cursor: 1, hasMore: false }],
+        ]),
+        {
+          metadata: async (value) => {
+            updates.push(value)
+            return []
+          },
+        }
+      ),
+      {
+        state: { cursor: 1, lastSyncAt: 0, serverHashes: [HASH_A] },
+      }
+    )
+    const [item] = createActivityMetadataOutboxItems(
+      [local],
+      [{ id: local.id, isPublic: true }],
+      "visibility-1",
+      1
+    )
+    await repository.enqueueOutbox(item!)
+    const events: number[] = []
+    library.subscribe((snapshot) => events.push(snapshot.revision))
+
+    const result = await executor.run()
+
+    expect(updates).toEqual([[{ contentHash: HASH_A, isPublic: true }]])
+    expect(events).toEqual([])
+    expect(result.failures).toEqual([])
+    expect(await repository.loadOutbox()).toMatchObject([
+      { operation: "metadata", status: "complete" },
     ])
   })
 

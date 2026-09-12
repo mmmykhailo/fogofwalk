@@ -520,10 +520,13 @@ export class MemoryStore implements ServerStore {
     const changed = stored.some((activity, index) => {
       const update = updates[index]!
       return (
+        (update.name !== undefined && activity.meta.name !== update.name) ||
         (update.isPublic !== undefined &&
           activity.meta.isPublic !== update.isPublic) ||
         (update.activityType !== undefined &&
-          activity.meta.activityType !== (update.activityType ?? undefined))
+          activity.meta.activityType !== (update.activityType ?? undefined)) ||
+        (update.startSunPhase !== undefined &&
+          activity.meta.startSunPhase !== (update.startSunPhase ?? undefined))
       )
     })
     const updatedAt = changed ? Date.now() : null
@@ -533,9 +536,13 @@ export class MemoryStore implements ServerStore {
       const previous = activity.meta
       activity.meta = {
         ...previous,
+        ...(update.name !== undefined ? { name: update.name } : {}),
         ...(update.isPublic !== undefined ? { isPublic: update.isPublic } : {}),
         ...(update.activityType !== undefined
           ? { activityType: update.activityType ?? undefined }
+          : {}),
+        ...(update.startSunPhase !== undefined
+          ? { startSunPhase: update.startSunPhase ?? undefined }
           : {}),
         ...(updatedAt === null ? {} : { updatedAt }),
       }

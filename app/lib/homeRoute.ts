@@ -4,6 +4,17 @@ export interface HomeActionResultLike {
   homeDataReconciled?: boolean
 }
 
+export function isActivityMetadataActionResult(
+  value: unknown
+): value is { ok: boolean; operationId: string } {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as { ok?: unknown }).ok === "boolean" &&
+    typeof (value as { operationId?: unknown }).operationId === "string"
+  )
+}
+
 export interface HomeRevalidationArgs {
   currentUrl: URL
   nextUrl: URL
@@ -59,7 +70,8 @@ export function shouldRevalidateHome({
   defaultShouldRevalidate,
 }: HomeRevalidationArgs): boolean {
   if (!isGetOrNoSubmission(formMethod)) {
-    return isReconciledActionResult(actionResult)
+    return isReconciledActionResult(actionResult) ||
+      isActivityMetadataActionResult(actionResult)
       ? false
       : defaultShouldRevalidate
   }

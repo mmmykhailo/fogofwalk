@@ -971,10 +971,13 @@ export class SqliteFsStore implements ServerStore {
     const changed = currentMetas.some((previous, index) => {
       const update = updates[index]!
       return (
+        (update.name !== undefined && previous.name !== update.name) ||
         (update.isPublic !== undefined &&
           previous.isPublic !== update.isPublic) ||
         (update.activityType !== undefined &&
-          previous.activityType !== (update.activityType ?? undefined))
+          previous.activityType !== (update.activityType ?? undefined)) ||
+        (update.startSunPhase !== undefined &&
+          previous.startSunPhase !== (update.startSunPhase ?? undefined))
       )
     })
     if (!changed) return currentMetas
@@ -991,7 +994,7 @@ export class SqliteFsStore implements ServerStore {
               WHERE user_id = ? AND content_hash = ?`
           )
           .run(
-            previous.name,
+            update.name === undefined ? previous.name : update.name,
             update.isPublic === undefined
               ? previous.isPublic
                 ? 1
@@ -1002,7 +1005,9 @@ export class SqliteFsStore implements ServerStore {
             update.activityType === undefined
               ? (previous.activityType ?? null)
               : (update.activityType ?? null),
-            previous.startSunPhase ?? null,
+            update.startSunPhase === undefined
+              ? (previous.startSunPhase ?? null)
+              : (update.startSunPhase ?? null),
             updatedAt,
             userId,
             update.contentHash

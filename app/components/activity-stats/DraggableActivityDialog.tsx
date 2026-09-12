@@ -31,6 +31,7 @@ import { useIsMobile } from "~/lib/useIsMobile"
 import { DraggableDialog } from "~/components/DraggableDialog"
 import { PerformanceCommitMarker } from "~/components/PerformanceCommitMarker"
 import { computeCompositeStats } from "~/lib/shareCard"
+import { activityToSummary } from "~/lib/storage"
 import { DeleteActivityDialog } from "./DeleteActivityDialog"
 import { MultiActivityStats } from "./MultiActivityStats"
 import { SingleActivityStats } from "./SingleActivityStats"
@@ -45,9 +46,7 @@ interface DraggableActivityDialogProps {
   /** The selected lap, already validated by the parent. Null = whole activity. */
   activeLap?: ActivityLap | null
   onLapSelect?: (lapNumber: number | null) => void
-  /** Called when the user changes the single activity's public/private setting. */
-  onVisibilityChange?: (isPublic: boolean) => void
-  isVisibilityLoading?: boolean
+  canEditVisibility?: boolean
 }
 
 const EMPTY_STATS: ActivityStats = {
@@ -77,8 +76,7 @@ export function DraggableActivityDialog({
   onDelete,
   activeLap = null,
   onLapSelect,
-  onVisibilityChange,
-  isVisibilityLoading,
+  canEditVisibility = false,
 }: DraggableActivityDialogProps) {
   const isMulti = activities.length > 1
   const activity = activities[0]
@@ -167,9 +165,8 @@ export function DraggableActivityDialog({
         laps={activity?.laps}
         activeLap={activeLap}
         onLapSelect={onLapSelect}
-        isPublic={activity?.isPublic}
-        onVisibilityChange={onVisibilityChange}
-        isVisibilityLoading={isVisibilityLoading}
+        activitySummary={activity ? activityToSummary(activity) : undefined}
+        canEditVisibility={canEditVisibility}
       />
     )
 

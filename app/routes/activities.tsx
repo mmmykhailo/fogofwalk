@@ -12,17 +12,18 @@ import { activityToSummary, loadActivitySummaries } from "~/lib/storage"
 import type { ActivitySummary } from "~/types/activitySummary"
 import {
   parseActivitySettingsUpdate,
-  type ActivitySettingsActionResult,
+  type ActivityMetadataActionResult,
 } from "~/lib/activitySettings"
 import { canSync, initAuth } from "~/lib/server/authStore"
 import { isServerEnabled } from "~/lib/server/config"
 import { requestSync } from "~/lib/server/syncEngine"
-import { createActivityUploadOutboxItem } from "~/lib/server/sync/activityEffects"
+import { createActivityMetadataOutboxItems } from "~/lib/server/sync/activityEffects"
 import { createUuid } from "~/lib/uuid"
 import type { Route } from "./+types/activities"
 import { markPerformance, measurePerformance } from "~/lib/performance"
 import type { ShouldRevalidateFunction } from "react-router"
 import { isActivitiesViewOnlyNavigation } from "~/lib/activitiesRoute"
+import { isActivityMetadataActionResult } from "~/lib/homeRoute"
 
 export async function clientLoader(): Promise<ActivitySummary[]> {
   markPerformance("activities:loader:start")
@@ -56,8 +57,16 @@ export const shouldRevalidate: ShouldRevalidateFunction = ({
   currentUrl,
   nextUrl,
   formMethod,
+  actionResult,
   defaultShouldRevalidate,
 }) => {
+  if (
+    formMethod != null &&
+    formMethod !== "GET" &&
+    isActivityMetadataActionResult(actionResult)
+  ) {
+    return false
+  }
   if (
     (formMethod == null || formMethod === "GET") &&
     isActivitiesViewOnlyNavigation(currentUrl, nextUrl)
@@ -69,85 +78,99 @@ export const shouldRevalidate: ShouldRevalidateFunction = ({
 
 export async function clientAction({
   request,
-}: Route.ClientActionArgs): Promise<ActivitySettingsActionResult | null> {
+}: Route.ClientActionArgs): Promise<ActivityMetadataActionResult | null> {
   const formData = await request.formData()
   if (formData.get("intent") !== "update-activity-settings") return null
 
-  const update = parseActivitySettingsUpdate(formData)
-  if (!update.ok) return update
+  const submittedOperationId = formData.get("operationId")
+  const operationId =
+    typeof submittedOperationId === "string" &&
+    submittedOperationId.length > 0 &&
+    submittedOperationId.length <= 200
+      ? submittedOperationId
+      : createUuid()
+  try {
+    const update = parseActivitySettingsUpdate(formData)
+    if (!update.ok) return { ok: false, operationId, error: update.error }
 
-  await initializeActivityLibrary()
-  const activityById = new Map(
-    activityLibrary
-      .getSnapshot()
-      .activities.map((activity) => [activity.id, activity])
-  )
-  const activities = update.activityIds.map((activityId) =>
-    activityById.get(activityId)
-  )
-  if (activities.some((activity) => activity == null)) {
-    return {
-      ok: false as const,
-      error: "One or more activities no longer exist.",
+    await initializeActivityLibrary()
+    const activityById = new Map(
+      activityLibrary
+        .getSnapshot()
+        .activities.map((activity) => [activity.id, activity])
+    )
+    const activities = update.activityIds.map((activityId) =>
+      activityById.get(activityId)
+    )
+    if (activities.some((activity) => activity == null)) {
+      return {
+        ok: false,
+        operationId,
+        error: "One or more activities no longer exist.",
+      }
     }
-  }
 
-  const resolved = activities.filter(
-    (activity): activity is NonNullable<typeof activity> => activity != null
-  )
-  if (
-    update.setting === "visibility" &&
-    (!canSync() || resolved.some((activity) => !activity.contentHash))
-  ) {
-    return {
-      ok: false as const,
-      error: "Visibility can only be changed for synced activities.",
+    const resolved = activities.filter(
+      (activity): activity is NonNullable<typeof activity> => activity != null
+    )
+    if (
+      update.setting === "visibility" &&
+      (!canSync() || resolved.some((activity) => !activity.contentHash))
+    ) {
+      return {
+        ok: false,
+        operationId,
+        error: "Visibility can only be changed for synced activities.",
+      }
     }
-  }
 
-  const changed = resolved.filter((activity) =>
-    update.setting === "visibility"
-      ? (activity.isPublic ?? false) !== update.value
-      : activity.activityType !== update.value
-  )
-
-  const changedActivities = changed.map((activity) => ({
-    ...activity,
-    ...(update.setting === "visibility"
-      ? { isPublic: update.value }
-      : { activityType: update.value }),
-  }))
-  const operationId = createUuid()
-  const commit = await activityLibrary.dispatch(
-    {
-      type: "applyRemote",
-      operationId,
-      changes: changedActivities.map((activity) => ({
-        type: "upsert" as const,
-        activity,
-      })),
-    },
-    {
-      outbox: isServerEnabled
-        ? (result) =>
-            result.change.updated.flatMap((activity) => {
-              const item = createActivityUploadOutboxItem(
-                activity,
-                operationId,
-                result.snapshot.revision
+    const patches = resolved.map((activity) =>
+      update.setting === "visibility"
+        ? { id: activity.id, isPublic: update.value }
+        : { id: activity.id, activityType: update.value }
+    )
+    const commit = await activityLibrary.dispatch(
+      {
+        type: "updateMetadata",
+        operationId,
+        patches,
+      },
+      {
+        metadataOutbox: isServerEnabled
+          ? (result) => {
+              const changedIds = new Set(
+                result.updated.map((activity) => activity.id)
               )
-              return item ? [item] : []
-            })
-        : [],
+              return createActivityMetadataOutboxItems(
+                resolved,
+                patches.filter((patch) => changedIds.has(patch.id)),
+                operationId,
+                result.revision
+              )
+            }
+          : undefined,
+      }
+    )
+    if (commit.change.updated.length > 0 && isServerEnabled) {
+      requestSync("activity-settings-update")
     }
-  )
-  if (commit.change.updated.length > 0) requestSync("activity-settings-update")
 
-  return {
-    ok: true as const,
-    updatedActivityIds: commit.change.updated.map((activity) => activity.id),
-    setting: update.setting,
-    value: update.value,
+    return {
+      ok: true,
+      operationId,
+      revision: commit.snapshot.revision,
+      coverageRevision: commit.snapshot.coverageRevision,
+      updated: commit.change.updated.map(activityToSummary),
+    }
+  } catch (error) {
+    return {
+      ok: false,
+      operationId,
+      error:
+        error instanceof Error
+          ? error.message
+          : "The activity setting could not be saved.",
+    }
   }
 }
 

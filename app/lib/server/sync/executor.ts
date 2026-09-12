@@ -1,8 +1,9 @@
-import type { ActivityMeta } from "~shared/api"
+import type { ActivityMeta, ActivityMetadataUpdate } from "~shared/api"
 import { flattenActivityPaths } from "~shared/activityContract"
 import type { ParsedActivity } from "~/types/activities"
 import type { SyncState } from "~/lib/storage"
 import type {
+  ActivityMetadataPatch,
   LibraryCommand,
   LibraryCommit,
   LibrarySnapshot,
@@ -19,6 +20,7 @@ import {
 import {
   hasLocalActivityEffectSource,
   type LocalActivityDeletePayload,
+  type LocalActivityMetadataPayload,
   type LocalActivityUploadPayload,
 } from "./activityEffects"
 import {
@@ -29,14 +31,8 @@ import {
   type SyncPlan,
   type UploadActivityIntent,
 } from "./planner"
-import {
-  isSyncTransportError,
-  type SyncTransport,
-} from "./transport"
-import {
-  isSyncCancellationError,
-  throwIfSyncAborted,
-} from "./cancellation"
+import { isSyncTransportError, type SyncTransport } from "./transport"
+import { isSyncCancellationError, throwIfSyncAborted } from "./cancellation"
 
 const DEFAULT_LEASE_MS = 60_000
 const DEFAULT_MAX_PAGES = 10_000
@@ -158,6 +154,7 @@ type ActivityEffectPayload =
       kind: "metadata"
       intentId: string
       contentHash: string
+      localId?: string
       remote: ActivityMeta
       libraryRevision: number
     }
@@ -169,6 +166,7 @@ type ActivityEffectPayload =
       libraryRevision: number
     }
   | LocalActivityDeletePayload
+  | LocalActivityMetadataPayload
 
 interface ExecutedPage {
   completedIntentIds: Set<string>
@@ -177,11 +175,13 @@ interface ExecutedPage {
   appliedTombstones: { contentHash: string; deletedAt: number }[]
   addedServerHashes: string[]
   removedServerHashes: string[]
+  metadataPatches: ActivityMetadataPatch[]
   failures: SyncEffectFailure[]
 }
 
 interface EffectExecution {
   change: RemoteChange | null
+  metadataPatch?: ActivityMetadataPatch
   appliedTombstone?: { contentHash: string; deletedAt: number }
   addedServerHash?: string
   removedServerHash?: string
@@ -293,6 +293,7 @@ function effectPayload(
         kind: "metadata",
         intentId: intent.intentId,
         contentHash: intent.contentHash,
+        localId: intent.localId,
         remote: clone(intent.remote),
         libraryRevision,
       }
@@ -311,9 +312,7 @@ function effectPayload(
 
 function intentFromPayload(payload: unknown): ActivityEffectPayload {
   if (!payload || typeof payload !== "object") {
-    throw createPermanentSyncEffectError(
-      "The queued sync effect is malformed."
-    )
+    throw createPermanentSyncEffectError("The queued sync effect is malformed.")
   }
   const candidate = payload as Partial<ActivityEffectPayload>
   if (
@@ -321,9 +320,7 @@ function intentFromPayload(payload: unknown): ActivityEffectPayload {
     typeof candidate.intentId !== "string" ||
     typeof candidate.contentHash !== "string"
   ) {
-    throw createPermanentSyncEffectError(
-      "The queued sync effect is malformed."
-    )
+    throw createPermanentSyncEffectError("The queued sync effect is malformed.")
   }
   if (candidate.kind === "upload") {
     if (typeof candidate.activityId !== "string") {
@@ -342,6 +339,15 @@ function intentFromPayload(payload: unknown): ActivityEffectPayload {
     if (!candidate.remote || typeof candidate.remote !== "object") {
       throw createPermanentSyncEffectError(
         "The queued remote effect is malformed."
+      )
+    }
+    if (
+      candidate.kind === "metadata" &&
+      candidate.localId !== undefined &&
+      typeof candidate.localId !== "string"
+    ) {
+      throw createPermanentSyncEffectError(
+        "The queued remote metadata effect has an invalid local id."
       )
     }
     return candidate as ActivityEffectPayload
@@ -365,7 +371,54 @@ function intentFromPayload(payload: unknown): ActivityEffectPayload {
     }
     return candidate as ActivityEffectPayload
   }
+  if (candidate.kind === "local-metadata") {
+    if (
+      candidate.source !== "local" ||
+      typeof candidate.activityId !== "string" ||
+      !isLocalMetadataPatch(candidate.patch)
+    ) {
+      throw createPermanentSyncEffectError(
+        "The queued local metadata effect is malformed."
+      )
+    }
+    return candidate as ActivityEffectPayload
+  }
   throw createPermanentSyncEffectError("The queued sync effect is malformed.")
+}
+
+function isLocalMetadataPatch(
+  value: unknown
+): value is LocalActivityMetadataPayload["patch"] {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return false
+  }
+  const candidate = value as Record<string, unknown>
+  const allowed = new Set(["name", "isPublic", "activityType", "startSunPhase"])
+  const keys = Object.keys(candidate)
+  if (keys.length === 0 || keys.some((key) => !allowed.has(key))) return false
+  return keys.every((key) => {
+    const entry = candidate[key]
+    if (key === "name") return typeof entry === "string" && entry.length > 0
+    if (key === "isPublic") return typeof entry === "boolean"
+    if (key === "activityType") {
+      return (
+        entry === null ||
+        entry === "walking" ||
+        entry === "running" ||
+        entry === "cycling" ||
+        entry === "kayaking" ||
+        entry === "swimming" ||
+        entry === "other"
+      )
+    }
+    return (
+      entry === null ||
+      entry === "before_sunrise" ||
+      entry === "daylight" ||
+      entry === "after_sunset" ||
+      entry === "unknown"
+    )
+  })
 }
 
 function isRemoteRequiredIntent(intent: SyncIntent): boolean {
@@ -432,8 +485,7 @@ function retryAt(
   random: () => number
 ): number | undefined {
   if (!retryableError(error)) return undefined
-  const retryAfter =
-    isApiRequestError(error) ? error.retryAfterMs : null
+  const retryAfter = isApiRequestError(error) ? error.retryAfterMs : null
   const base = Math.min(
     MAX_RETRY_DELAY_MS,
     1_000 * 2 ** Math.max(0, Math.min(attempts - 1, 14))
@@ -642,6 +694,16 @@ export function createActivitySyncExecutor(
         addedActivities.push(...commit.change.added)
         deletedIds.push(...commit.change.removed.map((activity) => activity.id))
       }
+      if (pageResult.metadataPatches.length > 0) {
+        throwIfSyncAborted(signal)
+        const commit = await options.library.dispatch({
+          type: "updateMetadata",
+          operationId: createUuid(),
+          patches: pageResult.metadataPatches,
+        })
+        throwIfSyncAborted(signal)
+        updatedCount += commit.change.updated.length
+      }
 
       const nextState = stateAfterPage(
         state,
@@ -704,10 +766,7 @@ export function createActivitySyncExecutor(
     const items = new Map<string, SyncOutboxItem>()
     for (const intent of plan.intents) {
       throwIfSyncAborted(signal)
-      if (
-        intent.type === "upload" &&
-        alreadyUploaded.has(intent.contentHash)
-      ) {
+      if (intent.type === "upload" && alreadyUploaded.has(intent.contentHash)) {
         continue
       }
       const operation = effectOperation(intent)
@@ -734,11 +793,7 @@ export function createActivitySyncExecutor(
   ): Promise<ExecutedPage> {
     throwIfSyncAborted(signal)
     const libraryRevision = options.library.getSnapshot().revision
-    const items = await enqueueEffects(
-      plan,
-      libraryRevision,
-      alreadyUploaded
-    )
+    const items = await enqueueEffects(plan, libraryRevision, alreadyUploaded)
     const effectIntents = plan.intents.filter(
       (intent) => effectOperation(intent) !== null
     )
@@ -771,7 +826,9 @@ export function createActivitySyncExecutor(
       throwIfSyncAborted(signal)
       if (!hasLocalActivityEffectSource(item.payload)) continue
       const payload = item.payload as Partial<
-        LocalActivityUploadPayload | LocalActivityDeletePayload
+        | LocalActivityUploadPayload
+        | LocalActivityDeletePayload
+        | LocalActivityMetadataPayload
       >
       work.push({
         item,
@@ -798,6 +855,7 @@ export function createActivitySyncExecutor(
     const appliedTombstones: { contentHash: string; deletedAt: number }[] = []
     const addedServerHashes: string[] = []
     const removedServerHashes: string[] = []
+    const metadataPatches: ActivityMetadataPatch[] = []
     const failures: SyncEffectFailure[] = []
 
     for (const entry of work) {
@@ -865,6 +923,7 @@ export function createActivitySyncExecutor(
         const result = await executeEffect(claimed)
         throwIfSyncAborted(signal)
         if (result.change) changes.push(result.change)
+        if (result.metadataPatch) metadataPatches.push(result.metadataPatch)
         if (result.appliedTombstone)
           appliedTombstones.push(result.appliedTombstone)
         if (result.addedServerHash)
@@ -889,8 +948,7 @@ export function createActivitySyncExecutor(
         }
         await options.repository.failOutbox(claimed.id, claimed.leaseId, {
           code:
-            isSyncTransportError(error) ||
-            isApiRequestError(error)
+            isSyncTransportError(error) || isApiRequestError(error)
               ? error.code
               : "sync-effect-failed",
           message: failure.message,
@@ -912,6 +970,7 @@ export function createActivitySyncExecutor(
       appliedTombstones,
       addedServerHashes,
       removedServerHashes,
+      metadataPatches,
       failures,
     }
   }
@@ -919,9 +978,9 @@ export function createActivitySyncExecutor(
   async function executeEffect(item: SyncOutboxItem): Promise<EffectExecution> {
     throwIfSyncAborted(signal)
     const payload = intentFromPayload(item.payload)
-    const snapshot = options.library.getSnapshot()
     switch (payload.kind) {
       case "upload": {
+        const snapshot = options.library.getSnapshot()
         const activity = activityFor(
           snapshot,
           payload.activityId,
@@ -947,6 +1006,7 @@ export function createActivitySyncExecutor(
         return { change: null, addedServerHash: payload.contentHash }
       }
       case "download": {
+        const snapshot = options.library.getSnapshot()
         const result = await options.transport.downloadActivity(
           payload.contentHash,
           signal
@@ -971,20 +1031,34 @@ export function createActivitySyncExecutor(
         return { change: { type: "upsert", activity } }
       }
       case "metadata": {
-        const local = activityFor(snapshot, undefined, payload.contentHash)
+        const snapshot = options.library.getSnapshot()
+        const local = activityFor(
+          snapshot,
+          payload.localId,
+          payload.contentHash
+        )
         if (!local) return { change: null }
         return {
-          change: {
-            type: "upsert",
-            activity: {
-              ...local,
-              name: payload.remote.name,
-              isPublic: payload.remote.isPublic,
-              activityType: payload.remote.activityType,
-              startSunPhase: payload.remote.startSunPhase,
-            },
+          change: null,
+          metadataPatch: {
+            id: local.id,
+            name: payload.remote.name,
+            isPublic: payload.remote.isPublic,
+            activityType: payload.remote.activityType ?? null,
+            startSunPhase: payload.remote.startSunPhase ?? null,
           },
         }
+      }
+      case "local-metadata": {
+        const updates: ActivityMetadataUpdate[] = [
+          {
+            contentHash: payload.contentHash,
+            ...payload.patch,
+          },
+        ]
+        await options.transport.updateActivityMetadata(updates, signal)
+        throwIfSyncAborted(signal)
+        return { change: null }
       }
       case "tombstone":
         return {

@@ -42,16 +42,24 @@ const visibilitySchema = z.object({
 const activityMetadataUpdateSchema = z
   .object({
     contentHash: z.string(),
+    name: z.string().min(1).max(512).optional(),
     isPublic: z.boolean().optional(),
     activityType: z
       .enum(["walking", "running", "cycling", "kayaking", "swimming", "other"])
+      .nullable()
+      .optional(),
+    startSunPhase: z
+      .enum(["before_sunrise", "daylight", "after_sunset", "unknown"])
       .nullable()
       .optional(),
   })
   .strict()
   .refine(
     (update) =>
-      update.isPublic !== undefined || update.activityType !== undefined,
+      update.name !== undefined ||
+      update.isPublic !== undefined ||
+      update.activityType !== undefined ||
+      update.startSunPhase !== undefined,
     "At least one metadata field is required."
   )
 

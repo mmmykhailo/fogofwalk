@@ -1,5 +1,7 @@
 import type {
   ActivityMeta,
+  ActivityMetadataUpdate,
+  ActivityMetadataUpdateResponse,
   ActivityTombstone,
   ActivityUploadPayload,
   ActivityUploadRequestPayload,
@@ -9,7 +11,7 @@ import { MAX_ACTIVITY_BYTES, SYNC_PAGE_SIZE } from "~shared/constants"
 import type { ParsedActivity } from "~/types/activities"
 import { computeContentHashCandidates } from "~/lib/activityHash"
 import { flattenActivityPaths } from "~shared/activityContract"
-import { apiRaw, apiSend, isApiRequestError } from "../apiClient"
+import { apiPatch, apiRaw, apiSend, isApiRequestError } from "../apiClient"
 import { throwIfSyncAborted } from "./cancellation"
 import {
   acquireUploadSlot,
@@ -355,6 +357,10 @@ export interface SyncTransport {
     signal?: AbortSignal
   ): Promise<{ meta?: ActivityMeta; payload: ActivityUploadPayload }>
   uploadActivity(activity: ParsedActivity, signal?: AbortSignal): Promise<void>
+  updateActivityMetadata(
+    updates: readonly ActivityMetadataUpdate[],
+    signal?: AbortSignal
+  ): Promise<ActivityMeta[]>
   deleteActivity(contentHash: string, signal?: AbortSignal): Promise<number>
 }
 
@@ -484,6 +490,23 @@ export function createApiSyncTransport(): SyncTransport {
           throw error
         }
       }
+    },
+
+    async updateActivityMetadata(updates, signal) {
+      throwIfSyncAborted(signal)
+      const response = await apiPatch<ActivityMetadataUpdateResponse>(
+        "/api/activities/metadata",
+        { updates: [...updates] },
+        { signal }
+      )
+      throwIfSyncAborted(signal)
+      if (!response || !Array.isArray(response.activities)) {
+        throw createSyncTransportError(
+          "invalid-payload",
+          "The server returned an invalid activity metadata response."
+        )
+      }
+      return response.activities
     },
 
     async deleteActivity(contentHash, signal) {

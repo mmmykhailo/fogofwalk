@@ -141,7 +141,9 @@ function scopedDedupeKey(dedupeKey: string, accountId?: string): string {
 function unscopedDedupeKey(dedupeKey: string, accountId?: string): string {
   if (!accountId) return dedupeKey
   const prefix = accountDedupePrefix(accountId)
-  return dedupeKey.startsWith(prefix) ? dedupeKey.slice(prefix.length) : dedupeKey
+  return dedupeKey.startsWith(prefix)
+    ? dedupeKey.slice(prefix.length)
+    : dedupeKey
 }
 
 function prepareOutboxInput(
@@ -189,7 +191,8 @@ function matchingOutboxItem(
   return items.find(
     (item) =>
       item.accountId === undefined &&
-      item.dedupeKey === unscopedDedupeKey(prepared.dedupeKey, prepared.accountId)
+      item.dedupeKey ===
+        unscopedDedupeKey(prepared.dedupeKey, prepared.accountId)
   )
 }
 
@@ -527,10 +530,7 @@ export function createIndexedDbSyncRepository(
     const store = tx.objectStore("sync-outbox")
     const index = store.index("dedupeKey")
     const prepared = prepareOutboxInput(item, accountId)
-    const preparedKey = scopedDedupeKey(
-      prepared.dedupeKey,
-      prepared.accountId
-    )
+    const preparedKey = scopedDedupeKey(prepared.dedupeKey, prepared.accountId)
     const existing = await requestResult<SyncOutboxItem | undefined>(
       index.get(preparedKey)
     )
@@ -587,16 +587,17 @@ export function createIndexedDbSyncRepository(
     return claimed.map(clone)
   }
 
-  async function completeOutbox(
-    id: string,
-    leaseId: string
-  ): Promise<boolean> {
+  async function completeOutbox(id: string, leaseId: string): Promise<boolean> {
     const db = await openStorageDatabase()
     if (!db) return false
     const tx = db.transaction("sync-outbox", "readwrite")
     const store = tx.objectStore("sync-outbox")
     const item = await requestResult<SyncOutboxItem | undefined>(store.get(id))
-    if (!item || !belongsToScope(item, accountId) || !sameLease(item, leaseId)) {
+    if (
+      !item ||
+      !belongsToScope(item, accountId) ||
+      !sameLease(item, leaseId)
+    ) {
       await transactionResult(tx)
       return false
     }
@@ -622,7 +623,11 @@ export function createIndexedDbSyncRepository(
     const tx = db.transaction("sync-outbox", "readwrite")
     const store = tx.objectStore("sync-outbox")
     const item = await requestResult<SyncOutboxItem | undefined>(store.get(id))
-    if (!item || !belongsToScope(item, accountId) || !sameLease(item, leaseId)) {
+    if (
+      !item ||
+      !belongsToScope(item, accountId) ||
+      !sameLease(item, leaseId)
+    ) {
       await transactionResult(tx)
       return null
     }
@@ -696,7 +701,15 @@ export function mergeSyncOutboxItem(
 ): SyncOutboxItem {
   // Replaying an already completed operation is a no-op. Active leases are
   // also preserved so a second tab cannot replace a request another tab owns.
-  if (existing.status === "complete" || existing.status === "in-flight") {
+  if (existing.status === "in-flight") return clone(existing)
+  const existingLocalMetadata = isLocalMetadataPayload(existing.payload)
+  const incomingLocalMetadata = isLocalMetadataPayload(input.payload)
+  if (
+    existing.status === "complete" &&
+    (!existingLocalMetadata ||
+      !incomingLocalMetadata ||
+      JSON.stringify(existing.payload) === JSON.stringify(input.payload))
+  ) {
     return clone(existing)
   }
   const incoming = normaliseSyncOutboxItem(input, now)
@@ -717,6 +730,15 @@ export function mergeSyncOutboxItem(
     updatedAt: now,
     lastFailure: undefined,
   }
+}
+
+function isLocalMetadataPayload(value: unknown): boolean {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    (value as { kind?: unknown }).kind === "local-metadata" &&
+    (value as { source?: unknown }).source === "local"
+  )
 }
 
 export interface MemorySyncRepositoryOptions {
@@ -783,7 +805,11 @@ export function createMemorySyncRepository(
     storage.states.set(stateId(accountId), clone(commit.state))
     for (const input of commit.enqueue ?? []) {
       const prepared = prepareOutboxInput(input, accountId)
-      const current = matchingOutboxItem([...items.values()], prepared, accountId)
+      const current = matchingOutboxItem(
+        [...items.values()],
+        prepared,
+        accountId
+      )
       const itemNow = input.updatedAt ?? input.createdAt ?? now()
       const next = current
         ? mergeOutboxForScope(current, prepared, itemNow, accountId)
@@ -844,7 +870,11 @@ export function createMemorySyncRepository(
   ): Promise<SyncOutboxItem> {
     const prepared = prepareOutboxInput(item, accountId)
     const itemNow = prepared.updatedAt ?? prepared.createdAt ?? now()
-    const existing = matchingOutboxItem([...items.values()], prepared, accountId)
+    const existing = matchingOutboxItem(
+      [...items.values()],
+      prepared,
+      accountId
+    )
     const next = existing
       ? mergeOutboxForScope(existing, prepared, itemNow, accountId)
       : normaliseSyncOutboxItem(
@@ -883,12 +913,13 @@ export function createMemorySyncRepository(
     return claimed.map(clone)
   }
 
-  async function completeOutbox(
-    id: string,
-    leaseId: string
-  ): Promise<boolean> {
+  async function completeOutbox(id: string, leaseId: string): Promise<boolean> {
     const item = items.get(id)
-    if (!item || !belongsToScope(item, accountId) || !sameLease(item, leaseId)) {
+    if (
+      !item ||
+      !belongsToScope(item, accountId) ||
+      !sameLease(item, leaseId)
+    ) {
       return false
     }
     items.set(id, {
@@ -908,7 +939,11 @@ export function createMemorySyncRepository(
     failure: SyncOutboxFailure
   ): Promise<SyncOutboxItem | null> {
     const item = items.get(id)
-    if (!item || !belongsToScope(item, accountId) || !sameLease(item, leaseId)) {
+    if (
+      !item ||
+      !belongsToScope(item, accountId) ||
+      !sameLease(item, leaseId)
+    ) {
       return null
     }
     const next: SyncOutboxItem = {

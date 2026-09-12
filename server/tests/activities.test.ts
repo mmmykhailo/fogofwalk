@@ -316,7 +316,7 @@ describe("upload", () => {
     expect(
       (
         await patch({
-          updates: [{ contentHash: hash, isPublic: true, name: "nope" }],
+          updates: [{ contentHash: hash, isPublic: true, unknown: "nope" }],
         })
       ).status
     ).toBe(400)

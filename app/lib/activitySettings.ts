@@ -1,5 +1,6 @@
 import { isActivityType } from "~/lib/activityType"
 import type { ActivityType, ParsedActivity } from "~/types/activities"
+import type { ActivitySummary } from "~/types/activitySummary"
 
 type ActivitySettingsItem = Pick<ParsedActivity, "isPublic" | "activityType">
 
@@ -60,16 +61,22 @@ export type ParsedActivitySettingsUpdate =
   | ({ ok: true } & ActivitySettingUpdate)
   | { ok: false; error: string }
 
-export type ActivitySettingsActionResult =
-  | ({ ok: true; updatedActivityIds: string[] } & Omit<
-      ActivitySettingUpdate,
-      "activityIds"
-    >)
-  | { ok: false; error: string }
+export type ActivityMetadataActionResult =
+  | {
+      ok: true
+      operationId: string
+      revision: number
+      coverageRevision: number
+      updated: ActivitySummary[]
+    }
+  | { ok: false; operationId: string; error: string }
+
+export type ActivitySettingsActionResult = ActivityMetadataActionResult
 
 /** Serializes the shared card and bulk activity-settings action contract. */
 export function createActivitySettingsFormData(
-  update: ActivitySettingUpdate
+  update: ActivitySettingUpdate,
+  operationId?: string
 ): FormData {
   const formData = new FormData()
   formData.set("intent", "update-activity-settings")
@@ -78,6 +85,7 @@ export function createActivitySettingsFormData(
   }
   formData.set("setting", update.setting)
   formData.set("value", String(update.value))
+  if (operationId) formData.set("operationId", operationId)
   return formData
 }
 

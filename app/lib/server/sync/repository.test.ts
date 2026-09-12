@@ -267,9 +267,9 @@ describe("MemorySyncRepository", () => {
 
     const [claim] = await accountA.claimOutbox({ now: 100, leaseMs: 100 })
     expect(claim).toBeDefined()
-    expect(
-      await accountB.completeOutbox(claim!.id, claim!.leaseId!)
-    ).toBe(false)
+    expect(await accountB.completeOutbox(claim!.id, claim!.leaseId!)).toBe(
+      false
+    )
   })
 
   test("keeps same logical work separate when two accounts enqueue it", async () => {
@@ -300,5 +300,46 @@ describe("MemorySyncRepository", () => {
     expect((await accountA.loadOutbox())[0]?.dedupeKey).not.toBe(
       (await accountB.loadOutbox())[0]?.dedupeKey
     )
+  })
+
+  test("replaces a pending local metadata effect with its latest value", async () => {
+    const repository = createMemorySyncRepository({ now: () => 10 })
+    await repository.enqueueOutbox({
+      dedupeKey: "activity:local-metadata:hash:visibility",
+      operation: "metadata",
+      payload: {
+        kind: "local-metadata",
+        source: "local",
+        intentId: "one",
+        activityId: "activity",
+        contentHash: "hash",
+        patch: { isPublic: true },
+        libraryRevision: 1,
+      },
+    })
+    const latest = await repository.enqueueOutbox({
+      dedupeKey: "activity:local-metadata:hash:visibility",
+      operation: "metadata",
+      payload: {
+        kind: "local-metadata",
+        source: "local",
+        intentId: "two",
+        activityId: "activity",
+        contentHash: "hash",
+        patch: { isPublic: false },
+        libraryRevision: 2,
+      },
+    })
+
+    expect(latest.payload).toMatchObject({
+      intentId: "two",
+      patch: { isPublic: false },
+    })
+    expect(latest.status).toBe("pending")
+    expect(
+      (await repository.loadOutbox()).filter(
+        (item) => item.operation === "metadata"
+      )
+    ).toHaveLength(1)
   })
 })

@@ -95,7 +95,6 @@ import {
   pushSavedPointUpdate,
 } from "~/lib/server/syncEngine"
 import { useMyLocation } from "~/lib/useMyLocation"
-import { useActivityVisibility } from "~/lib/useActivityVisibility"
 import { socialMeta } from "~/lib/socialMeta"
 import {
   incrementPerformanceCounter,
@@ -1113,10 +1112,6 @@ export default function Home() {
     return startSyncScheduler()
   }, [isMapRoute, isSyncEnabled])
 
-  const visibility = useActivityVisibility(() => {
-    void revalidator.revalidate()
-  })
-
   function handleAddFiles(files: FileList, mode: FogMode = fogMode) {
     const formData = new FormData()
     formData.append("intent", "add-files")
@@ -1465,13 +1460,9 @@ export default function Home() {
                     }
                     activeLap={activeLap}
                     onLapSelect={handleLapSelect}
-                    onVisibilityChange={
+                    canEditVisibility={
                       isSyncEnabled && selectedActivities.length === 1
-                        ? (isPublic) =>
-                            visibility.change(selectedActivities[0], isPublic)
-                        : undefined
                     }
-                    isVisibilityLoading={visibility.isLoading}
                   />
                 </ErrorBoundary>
               )}

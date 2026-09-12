@@ -285,9 +285,11 @@ export interface ActivityVisibilityUpdateResponse {
 /** Mutable activity fields that can be synchronized without its geometry. */
 export interface ActivityMetadataPatch {
   contentHash: string
+  name?: string
   isPublic?: boolean
   /** `null` clears legacy metadata; omission leaves it unchanged. */
   activityType?: ActivityType | null
+  startSunPhase?: StartSunPhase | null
 }
 
 export type ActivityMetadataUpdate = ActivityMetadataPatch
