@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from "react"
+import { useState, useEffect, useMemo, useReducer, useRef } from "react"
 import {
   Outlet,
   useFetcher,
@@ -76,7 +76,7 @@ import { clearMapPosition } from "~/lib/mapStore"
 import { clearRenderedActivityState } from "~/lib/map/commands"
 import { activitiesFeatureCollection } from "~/lib/map/geojson"
 import { initAuth, useAuth } from "~/lib/server/authStore"
-import { apiUrl, isServerEnabled } from "~/lib/server/config"
+import { isServerEnabled } from "~/lib/server/config"
 import {
   ignoreActivityLocally,
   requestSync,
@@ -94,10 +94,14 @@ import {
   markPerformance,
   measurePerformance,
 } from "~/lib/performance"
-import { isActivitiesViewOnlyNavigation } from "~/lib/activitiesRoute"
+import { shouldRevalidateHome, withoutSearchParams } from "~/lib/homeRoute"
+import {
+  createInitialMapSurfaceState,
+  mapSurfaceReducer,
+} from "~/lib/map/mapSurfaceState"
 import type { FogMode, MapMode, ParsedActivity } from "~/types/activities"
 import type { ActivitySummary } from "~/types/activitySummary"
-import type { PhotoEntry, PhotoGroup } from "~/types/photos"
+import type { PhotoEntry } from "~/types/photos"
 import {
   isSavedPointColor,
   isValidSavedPointInput,
@@ -117,36 +121,41 @@ export const shouldRevalidate: ShouldRevalidateFunction = ({
   currentUrl,
   nextUrl,
   formMethod,
+  actionResult,
   defaultShouldRevalidate,
-}) => {
-  if (
-    (formMethod == null || formMethod === "GET") &&
-    isActivitiesViewOnlyNavigation(currentUrl, nextUrl)
-  ) {
-    return false
-  }
-  return defaultShouldRevalidate
-}
-
-async function loadPublicSavedPoint(id: string): Promise<SavedPoint | null> {
-  if (!isServerEnabled) return null
-
-  try {
-    const response = await fetch(
-      apiUrl(`/api/public/saved-points/${encodeURIComponent(id)}`)
-    )
-    if (!response.ok) return null
-    const point = (await response.json()) as SavedPoint
-    return isValidSavedPointInput(point) && point.id === id ? point : null
-  } catch {
-    return null
-  }
-}
+}) =>
+  shouldRevalidateHome({
+    currentUrl,
+    nextUrl,
+    formMethod,
+    actionResult,
+    defaultShouldRevalidate,
+  })
 
 // Module-level cache for restored photos — avoids passing File objects through
 // React Router's serialized loader return type (which strips Blob/File methods).
 let _restoredPhotos: PhotoEntry[] = []
 let _restoredSavedPoints: SavedPoint[] = []
+const _publicSavedPointCache = new Map<string, SavedPoint>()
+const PUBLIC_SAVED_POINT_CACHE_LIMIT = 20
+
+function getCachedPublicSavedPoint(id: string): SavedPoint | null {
+  const point = _publicSavedPointCache.get(id)
+  if (!point) return null
+  _publicSavedPointCache.delete(id)
+  _publicSavedPointCache.set(id, point)
+  return point
+}
+
+function cachePublicSavedPoint(point: SavedPoint): void {
+  _publicSavedPointCache.delete(point.id)
+  _publicSavedPointCache.set(point.id, point)
+  while (_publicSavedPointCache.size > PUBLIC_SAVED_POINT_CACHE_LIMIT) {
+    const oldestId = _publicSavedPointCache.keys().next().value
+    if (typeof oldestId !== "string") break
+    _publicSavedPointCache.delete(oldestId)
+  }
+}
 
 export async function clientLoader({
   request,
@@ -154,7 +163,6 @@ export async function clientLoader({
   initialized: boolean
   restoredActivityCount: number
   restoredFogMode: FogMode
-  viewedSavedPoint: SavedPoint | null
 }> {
   incrementPerformanceCounter("homeLoaderStarts")
   markPerformance("home:loader:start")
@@ -216,12 +224,6 @@ export async function clientLoader({
   mapStore.fogMode = restoredFogMode
   _restoredPhotos = photos
   _restoredSavedPoints = savedPoints
-  const savedPointId = new URL(request.url).searchParams.get("savedPoint")
-  const viewedSavedPoint =
-    savedPointId && !savedPoints.some((point) => point.id === savedPointId)
-      ? await loadPublicSavedPoint(savedPointId)
-      : null
-
   if (isMapRoute && activities.length > 0) {
     const activityIds = activities.map((t) => t.id).sort()
     if (
@@ -267,7 +269,6 @@ export async function clientLoader({
     initialized: true,
     restoredActivityCount: isMapRoute ? activities.length : summaries.length,
     restoredFogMode,
-    viewedSavedPoint,
   }
 }
 clientLoader.hydrate = true as const
@@ -417,6 +418,7 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
     ).length
     return {
       intent: "add-files" as const,
+      homeDataReconciled: true as const,
       count: files.length,
       activityCount: mapStore.activities.length,
       // Must be what was ingested, not what was parsed — the progress UI waits
@@ -449,7 +451,11 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
     // clear would undo itself within seconds. It resumes on reload, or when
     // the user asks for it with "Sync now".
     suspendAutoSync("clear-all")
-    return { intent: "clear-all" as const, activityCount: 0 }
+    return {
+      intent: "clear-all" as const,
+      homeDataReconciled: true as const,
+      activityCount: 0,
+    }
   }
 
   if (intent === "delete-activity") {
@@ -499,6 +505,7 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
 
     return {
       intent: "delete-activity" as const,
+      homeDataReconciled: true as const,
       activityCount: mapStore.activities.length,
     }
   }
@@ -562,7 +569,11 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
     }
     await saveSavedPoint(localPoint)
     const point = await pushSavedPointUpdate(localPoint)
-    return { intent: "save-saved-point" as const, point }
+    return {
+      intent: "save-saved-point" as const,
+      homeDataReconciled: true as const,
+      point,
+    }
   }
 
   if (intent === "delete-saved-point") {
@@ -575,7 +586,11 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
     }
     await deleteStoredSavedPoint(id)
     await pushSavedPointDeletion(id)
-    return { intent: "delete-saved-point" as const, id }
+    return {
+      intent: "delete-saved-point" as const,
+      homeDataReconciled: true as const,
+      id,
+    }
   }
 
   return null
@@ -584,7 +599,11 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
 export default function Home() {
   const loaderData = useLoaderData<typeof clientLoader>()
   const fetcher = useFetcher<typeof clientAction>()
+  const publicSavedPointFetcher = useFetcher<{
+    point: SavedPoint | null
+  }>()
   const [searchParams, setSearchParams] = useSearchParams()
+  const savedPointQueryId = searchParams.get("savedPoint")
   const location = useLocation()
   const revalidator = useRevalidator()
   const isMapRoute = location.pathname === "/map"
@@ -610,29 +629,26 @@ export default function Home() {
   const [mapMode, setMapMode] = useState<MapMode>("flat")
   const [showUploadDialog, setShowUploadDialog] = useState(false)
   const [mapReady, setMapReady] = useState(false)
-  const [selectedActivityIds, setSelectedActivityIds] = useState<string[]>([])
-  // Keyed by activity id, not a bare number: a bare number would still match
-  // during the render in which the selection moves to a different activity that
-  // happens to have that lap, flashing the wrong lap and refitting the camera.
-  const [selectedLap, setSelectedLap] = useState<{
-    activityId: string
-    number: number
-  } | null>(null)
-  const [pendingActivityId, setPendingActivityId] = useState<string | null>(
-    null
+  const [mapSurface, dispatchMapSurface] = useReducer(
+    mapSurfaceReducer,
+    undefined,
+    createInitialMapSurfaceState
   )
+  const {
+    selectedActivityIds,
+    selectedLap,
+    pendingActivityId,
+    selectedPhotoGroup: selectedGroup,
+    editingSavedPointId,
+    newSavedPointCoordinate,
+    viewingSavedPoint,
+  } = mapSurface
   const [showShareDialog, setShowShareDialog] = useState(false)
   const [photos, setPhotos] = useState<PhotoEntry[]>(_restoredPhotos)
   const [showPhotos, setShowPhotos] = useState(true)
   const [savedPoints, setSavedPoints] =
     useState<SavedPoint[]>(_restoredSavedPoints)
   const [showSavedPoints, setShowSavedPoints] = useState(true)
-  const [editingSavedPointId, setEditingSavedPointId] = useState<string | null>(
-    null
-  )
-  const [viewingSavedPoint, setViewingSavedPoint] = useState<SavedPoint | null>(
-    null
-  )
   const displayedSavedPoints = useMemo(
     () =>
       viewingSavedPoint
@@ -643,34 +659,21 @@ export default function Home() {
         : savedPoints,
     [savedPoints, viewingSavedPoint]
   )
-  const [newSavedPointCoordinate, setNewSavedPointCoordinate] = useState<
-    [number, number] | null
-  >(null)
-
-  function clearSearchParam(name: string) {
+  function clearSearchParams(names: readonly string[]) {
+    const next = withoutSearchParams(searchParams, names)
+    if (!next) return
     incrementPerformanceCounter("mapUiNavigations")
-    setSearchParams(
-      (prev) => {
-        const next = new URLSearchParams(prev)
-        next.delete(name)
-        return next
-      },
-      { replace: true }
-    )
+    setSearchParams(next, { replace: true })
   }
 
   function closeActivityDialog() {
-    setSelectedActivityIds([])
-    setSelectedLap(null)
-    setPendingActivityId(null)
-    clearSearchParam("activity")
+    dispatchMapSurface({ type: "closeActivity" })
+    clearSearchParams(["activity"])
   }
 
   function closeSavedPointDialog() {
-    setEditingSavedPointId(null)
-    setNewSavedPointCoordinate(null)
-    setViewingSavedPoint(null)
-    clearSearchParam("savedPoint")
+    dispatchMapSurface({ type: "closeSavedPoint" })
+    clearSearchParams(["savedPoint"])
   }
   const {
     showMyLocation,
@@ -678,26 +681,10 @@ export default function Home() {
     position: myLocationPosition,
     toggle: handleShowMyLocationChange,
   } = useMyLocation()
-  const [selectedGroup, setSelectedGroup] = useState<PhotoGroup | null>(null)
 
   function handleMapBackgroundClick() {
-    setSelectedActivityIds([])
-    setSelectedLap(null)
-    setPendingActivityId(null)
-    setSelectedGroup(null)
-    setEditingSavedPointId(null)
-    setNewSavedPointCoordinate(null)
-    setViewingSavedPoint(null)
-    incrementPerformanceCounter("mapUiNavigations")
-    setSearchParams(
-      (prev) => {
-        const next = new URLSearchParams(prev)
-        next.delete("activity")
-        next.delete("savedPoint")
-        return next
-      },
-      { replace: true }
-    )
+    dispatchMapSurface({ type: "dismissAll" })
+    clearSearchParams(["activity", "savedPoint"])
   }
 
   const [photoErrorOpen, setPhotoErrorOpen] = useState(false)
@@ -737,6 +724,7 @@ export default function Home() {
   // a terminal result. Keeping the request keys lets a parse/storage failure
   // remain retryable after reload instead of losing the shared files.
   const pendingShareRequestsRef = useRef<Request[]>([])
+  const publicSavedPointRequestRef = useRef<{ id: string } | null>(null)
 
   // A fresh OAuth sign-in can start syncing while this loader is still reading
   // IndexedDB. In that case its first result contains no activities, then the
@@ -777,7 +765,7 @@ export default function Home() {
     if (!mapReady) return
     const activityId = searchParams.get("activity")
     if (!activityId) return
-    setSelectedActivityIds([activityId])
+    dispatchMapSurface({ type: "openActivityDeepLink", id: activityId })
     const activity = mapStore.activities.find((t) => t.id === activityId)
     if (!activity || !mapStore.map) return
     const fc = activitiesFeatureCollection([activity])
@@ -795,25 +783,80 @@ export default function Home() {
 
   useEffect(() => {
     if (!mapReady) return
-    const id = searchParams.get("savedPoint")
-    if (!id) {
-      // Saving replaces the local point before the URL update commits. That
-      // intermediate render can briefly reselect the point from the stale
-      // query parameter, so an empty URL must actively clear the editor.
-      setEditingSavedPointId(null)
-      setViewingSavedPoint(null)
+    publicSavedPointRequestRef.current = null
+
+    if (!savedPointQueryId) {
+      // A public point is the only surface that can exist without a local
+      // owner when the query disappears; close it without touching other
+      // map-owned state.
+      if (viewingSavedPoint !== null) {
+        dispatchMapSurface({ type: "closeSavedPoint" })
+      }
       return
     }
-    const ownedPoint = savedPoints.find((savedPoint) => savedPoint.id === id)
-    const point = ownedPoint ?? loaderData.viewedSavedPoint
-    if (!point || !mapStore.map) return
-    mapStore.map.easeTo({
-      center: [point.lng, point.lat],
-      zoom: Math.max(mapStore.map.getZoom(), 16),
-    })
-    setEditingSavedPointId(ownedPoint?.id ?? null)
-    setViewingSavedPoint(ownedPoint ? null : point)
-  }, [loaderData.viewedSavedPoint, mapReady, savedPoints, searchParams])
+
+    const ownedPoint = savedPoints.find(
+      (savedPoint) => savedPoint.id === savedPointQueryId
+    )
+    if (ownedPoint) {
+      if (mapStore.map) {
+        mapStore.map.easeTo({
+          center: [ownedPoint.lng, ownedPoint.lat],
+          zoom: Math.max(mapStore.map.getZoom(), 16),
+        })
+      }
+      dispatchMapSurface({ type: "editSavedPoint", id: ownedPoint.id })
+      return
+    }
+
+    const cachedPoint = getCachedPublicSavedPoint(savedPointQueryId)
+    if (cachedPoint) {
+      if (mapStore.map) {
+        mapStore.map.easeTo({
+          center: [cachedPoint.lng, cachedPoint.lat],
+          zoom: Math.max(mapStore.map.getZoom(), 16),
+        })
+      }
+      dispatchMapSurface({ type: "viewSavedPoint", point: cachedPoint })
+      return
+    }
+
+    if (viewingSavedPoint !== null) {
+      dispatchMapSurface({ type: "closeSavedPoint" })
+    }
+    publicSavedPointRequestRef.current = {
+      id: savedPointQueryId,
+    }
+    publicSavedPointFetcher.load(
+      `/resources/public-saved-points/${encodeURIComponent(savedPointQueryId)}`
+    )
+  }, [mapReady, savedPointQueryId, savedPoints])
+
+  useEffect(() => {
+    const request = publicSavedPointRequestRef.current
+    const point = publicSavedPointFetcher.data?.point
+    if (
+      !request ||
+      publicSavedPointFetcher.state !== "idle" ||
+      !point ||
+      point.id !== request.id ||
+      savedPointQueryId !== request.id
+    ) {
+      return
+    }
+    cachePublicSavedPoint(point)
+    if (mapStore.map) {
+      mapStore.map.easeTo({
+        center: [point.lng, point.lat],
+        zoom: Math.max(mapStore.map.getZoom(), 16),
+      })
+    }
+    dispatchMapSurface({ type: "viewSavedPoint", point })
+  }, [
+    publicSavedPointFetcher.data,
+    publicSavedPointFetcher.state,
+    savedPointQueryId,
+  ])
 
   async function drainShareTargetQueue(): Promise<void> {
     if (!("caches" in window)) return
@@ -821,7 +864,7 @@ export default function Home() {
       const cache = await caches.open("share-target-queue")
       const keys = await cache.keys()
       if (keys.length === 0) {
-        clearSearchParam("from-share")
+        clearSearchParams(["from-share"])
         return
       }
       const files: File[] = []
@@ -854,7 +897,7 @@ export default function Home() {
     } catch (error) {
       console.warn("[share-target] queue discard failed:", error)
     } finally {
-      clearSearchParam("from-share")
+      clearSearchParams(["from-share"])
     }
   }
 
@@ -938,7 +981,7 @@ export default function Home() {
             for (const request of pendingShareRequests) {
               await cache.delete(request)
             }
-            setSearchParams({}, { replace: true })
+            clearSearchParams(["from-share"])
           })
           .catch((error) =>
             console.warn("[share-target] queue acknowledgement failed:", error)
@@ -969,15 +1012,12 @@ export default function Home() {
     }
     if (data.intent === "clear-all") {
       setActivityCount(0)
-      setSelectedActivityIds([])
-      setPendingActivityId(null)
+      dispatchMapSurface({ type: "dismissAll" })
       setShowShareDialog(false)
       setPhotos([])
-      setSelectedGroup(null)
     }
     if (data.intent === "delete-activity") {
-      setSelectedActivityIds([])
-      setPendingActivityId(null)
+      dispatchMapSurface({ type: "closeActivity" })
       setShowShareDialog(false)
       setActivityCount(data.activityCount)
     }
@@ -1013,10 +1053,15 @@ export default function Home() {
         if (deletedIds.length > 0) {
           // The library subscription already abandoned/rebuilt the worker run;
           // this callback only reconciles route selection and map sources.
-          setSelectedActivityIds((prev) =>
-            prev.filter((id) => !deletedIds.includes(id))
-          )
-          setPendingActivityId(null)
+          for (const deletedId of deletedIds) {
+            dispatchMapSurface({ type: "removeActivity", id: deletedId })
+          }
+          if (
+            pendingActivityId !== null &&
+            deletedIds.includes(pendingActivityId)
+          ) {
+            dispatchMapSurface({ type: "cancelPendingActivity" })
+          }
           clearRenderedActivityState()
         }
 
@@ -1138,22 +1183,11 @@ export default function Home() {
     // Dropped on every selection change so reopening an activity starts on the
     // whole activity rather than silently restoring a zoomed-in lap. The
     // activityId key on selectedLap covers everything this doesn't reach.
-    setSelectedLap(null)
     if (!id) {
-      setSelectedActivityIds([])
-      setPendingActivityId(null)
+      dispatchMapSurface({ type: "closeActivity" })
       return
     }
-    if (selectedActivityIds.includes(id)) {
-      setSelectedActivityIds((prev) => prev.filter((x) => x !== id))
-      setPendingActivityId(null)
-      return
-    }
-    if (selectedActivityIds.length === 0) {
-      setSelectedActivityIds([id])
-    } else {
-      setPendingActivityId(id)
-    }
+    dispatchMapSurface({ type: "toggleMapActivity", id })
   }
 
   const selectedActivities = useMemo(
@@ -1161,7 +1195,7 @@ export default function Home() {
       selectedActivityIds
         .map((id) => mapStore.activities.find((t) => t.id === id))
         .filter((t): t is ParsedActivity => t != null),
-    [selectedActivityIds, activityCount, loaderData]
+    [selectedActivityIds, mapStore.libraryRevision]
   )
 
   // Derived and re-validated every render rather than reset imperatively: a
@@ -1177,10 +1211,7 @@ export default function Home() {
       : null
 
   function handleLapSelect(lapNumber: number | null) {
-    const activityId = selectedActivities[0]?.id
-    setSelectedLap(
-      lapNumber != null && activityId ? { activityId, number: lapNumber } : null
-    )
+    dispatchMapSurface({ type: "setLap", number: lapNumber })
   }
 
   // Memoized: a fresh object each render would invalidate ShareDialog's
@@ -1247,7 +1278,11 @@ export default function Home() {
               mapMode={mapMode}
               photos={photos}
               showPhotos={showPhotos}
-              onPhotoSelect={setSelectedGroup}
+              onPhotoSelect={(group) =>
+                group
+                  ? dispatchMapSurface({ type: "selectPhoto", group })
+                  : dispatchMapSurface({ type: "closePhoto" })
+              }
               showMyLocation={showMyLocation}
               myLocation={myLocationPosition}
               highlightCoordinates={highlightCoordinates}
@@ -1256,13 +1291,13 @@ export default function Home() {
               savedPoints={displayedSavedPoints}
               showSavedPoints={showSavedPoints || viewingSavedPoint !== null}
               onSavedPointSelect={(id) => {
-                setViewingSavedPoint(null)
-                setEditingSavedPointId(id)
+                dispatchMapSurface({ type: "editSavedPoint", id })
               }}
               onSavedPointCreate={({ lng, lat }) => {
-                setViewingSavedPoint(null)
-                setEditingSavedPointId(null)
-                setNewSavedPointCoordinate([lng, lat])
+                dispatchMapSurface({
+                  type: "createSavedPoint",
+                  coordinate: [lng, lat],
+                })
               }}
             />
           </ErrorBoundary>
@@ -1373,7 +1408,7 @@ export default function Home() {
               />
               <DraggablePhotoDialog
                 group={selectedGroup}
-                onClose={() => setSelectedGroup(null)}
+                onClose={() => dispatchMapSurface({ type: "closePhoto" })}
               />
               {selectedActivities.length > 0 && (
                 <ErrorBoundary
@@ -1386,9 +1421,7 @@ export default function Home() {
                   <DraggableActivityDialog
                     activities={selectedActivities}
                     onRemoveActivity={(id) =>
-                      setSelectedActivityIds((prev) =>
-                        prev.filter((x) => x !== id)
-                      )
+                      dispatchMapSurface({ type: "removeActivity", id })
                     }
                     onClose={closeActivityDialog}
                     onShare={() => setShowShareDialog(true)}
@@ -1432,7 +1465,9 @@ export default function Home() {
                 <Dialog
                   open
                   onOpenChange={(open) => {
-                    if (!open) setPendingActivityId(null)
+                    if (!open) {
+                      dispatchMapSurface({ type: "cancelPendingActivity" })
+                    }
                   }}
                 >
                   <DialogContent showCloseButton={false}>
@@ -1445,26 +1480,25 @@ export default function Home() {
                     <DialogFooter className="flex-col gap-2 sm:flex-row">
                       <Button
                         variant="outline"
-                        onClick={() => setPendingActivityId(null)}
+                        onClick={() =>
+                          dispatchMapSurface({ type: "cancelPendingActivity" })
+                        }
                       >
                         Cancel
                       </Button>
                       <Button
                         variant="outline"
                         onClick={() => {
-                          setSelectedActivityIds([pendingActivityId!])
-                          setPendingActivityId(null)
+                          dispatchMapSurface({
+                            type: "replaceWithPendingActivity",
+                          })
                         }}
                       >
                         Replace
                       </Button>
                       <Button
                         onClick={() => {
-                          setSelectedActivityIds((prev) => [
-                            ...prev,
-                            pendingActivityId!,
-                          ])
-                          setPendingActivityId(null)
+                          dispatchMapSurface({ type: "addPendingActivity" })
                         }}
                       >
                         Add to stats
