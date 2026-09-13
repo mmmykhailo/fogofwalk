@@ -160,19 +160,13 @@ function appendGeometry(geometry: PolygonGeometry, output: number[]): boolean {
   return valid
 }
 
-function buildWrappedFogMaskCoordinates(data: FogRenderData): number[] {
+function buildFogMaskCoordinates(data: FogRenderData): number[] {
   const base: number[] = []
   for (const feature of data.features) {
     if (!feature.geometry) continue
     appendGeometry(feature.geometry, base)
   }
-  const wrapped: number[] = []
-  for (const offset of [-1, 0, 1]) {
-    for (let index = 0; index < base.length; index += 2) {
-      wrapped.push(base[index]! + offset, base[index + 1]!)
-    }
-  }
-  return wrapped
+  return base
 }
 
 /**
@@ -182,16 +176,19 @@ function buildWrappedFogMaskCoordinates(data: FogRenderData): number[] {
  * dark spokes or seams in the fog.
  */
 export function buildFogMaskVertexData(data: FogRenderData): Float32Array {
-  const coordinates = buildWrappedFogMaskCoordinates(data)
-  const output = new Float32Array((coordinates.length / 2) * 4)
-  for (let index = 0, outputIndex = 0; index < coordinates.length; index += 2) {
-    writeSplitCoordinate(
-      coordinates[index]!,
-      coordinates[index + 1]!,
-      output,
-      outputIndex
-    )
-    outputIndex += 4
+  const coordinates = buildFogMaskCoordinates(data)
+  const output = new Float32Array((coordinates.length / 2) * 3 * 4)
+  let outputIndex = 0
+  for (const worldOffset of [-1, 0, 1]) {
+    for (let index = 0; index < coordinates.length; index += 2) {
+      writeSplitCoordinate(
+        coordinates[index]! + worldOffset,
+        coordinates[index + 1]!,
+        output,
+        outputIndex
+      )
+      outputIndex += 4
+    }
   }
   return output
 }
