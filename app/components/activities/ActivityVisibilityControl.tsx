@@ -19,7 +19,7 @@ export function ActivityVisibilityControl({
   const errorId = `activity-visibility-error-${activity.id}`
 
   return (
-    <div className="flex flex-col items-center gap-1">
+    <div className="flex flex-col gap-1">
       <VisibilitySelect
         isPublic={mutation.isPublic}
         onChange={mutation.changeVisibility}
