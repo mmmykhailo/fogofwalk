@@ -6,7 +6,8 @@ import {
 } from "@turf/helpers"
 import { pathsForActivity } from "~shared/activityContract"
 import type { ActivityCoords, ParsedActivity } from "~/types/activities"
-import { SAVED_POINT_COLORS, type SavedPoint } from "~shared/saved-points"
+import type { SavedPoint } from "~shared/saved-points"
+import { savedPointMarkerImageId } from "~/lib/map/savedPointMarkerImages"
 
 export function activitiesFeatureCollection(
   activities: Pick<ParsedActivity, "id" | "name" | "coordinates" | "paths">[]
@@ -44,7 +45,11 @@ export function savedPointsFeatureCollection(savedPoints: SavedPoint[]) {
       point([savedPoint.lng, savedPoint.lat], {
         id: savedPoint.id,
         name: savedPoint.name,
-        color: SAVED_POINT_COLORS[savedPoint.color],
+        markerImage: savedPointMarkerImageId(savedPoint.color),
+        stackOrder:
+          Number.isFinite(savedPoint.createdAt) && savedPoint.createdAt >= 0
+            ? savedPoint.createdAt
+            : 0,
       })
     )
   )
