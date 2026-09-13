@@ -3,6 +3,18 @@ import { readFile } from "node:fs/promises"
 import type { FogWorkerActivity } from "~/types/activities"
 import { FOG_PROTOCOL_VERSION, type FogRequest } from "../protocol"
 import { createFogEngine } from "."
+import { validateFogRenderData } from "./validate"
+
+const overlappingFillCoordinates = {
+  first: [
+    [14.000236923331627, 50.002461053277834],
+    [13.999885548084043, 50.00128527134704],
+  ] as [number, number][],
+  second: [
+    [14.001899999203859, 49.99982727904059],
+    [14.00195723735355, 50.00086659489153],
+  ] as [number, number][],
+}
 
 function activity(id: string): FogWorkerActivity {
   return {
@@ -34,6 +46,54 @@ function request(overrides: Partial<FogRequest> = {}): FogRequest {
 }
 
 describe("FogEngine", () => {
+  test("[F-042] keeps a valid overlapping fill rebuild complete", async () => {
+    const result = await createFogEngine().process(
+      request({
+        requestId: "overlapping-fill",
+        generation: 1,
+        libraryRevision: 2,
+        coverageRevision: 2,
+        mode: "fill",
+        kind: "rebuild",
+        activities: [
+          {
+            id: "overlapping-first",
+            name: "overlapping-first",
+            coordinates: overlappingFillCoordinates.first,
+          },
+          {
+            id: "overlapping-second",
+            name: "overlapping-second",
+            coordinates: overlappingFillCoordinates.second,
+          },
+        ],
+      })
+    )
+
+    expect(result.status).toBe("complete")
+    if (result.status !== "complete") return
+    const { snapshot } = result
+    expect(snapshot.completeness).toBe("complete")
+    expect(snapshot.mode).toBe("fill")
+    expect(snapshot.geometry.features).toHaveLength(1)
+    expect(snapshot.geometry.features[0]?.geometry.type).toBe("Polygon")
+    expect(snapshot.diagnostics).toMatchObject({
+      degraded: false,
+      warningCounts: {},
+      coverageReducedCounts: {},
+      errors: [],
+      errorCounts: {},
+      coverageReducedActivityCount: 0,
+      rejectedActivityCount: 0,
+      geometryFallbackCount: 0,
+      processed: 2,
+      total: 2,
+      inputPoints: 4,
+      outputPoints: 4,
+    })
+    expect(validateFogRenderData(snapshot.geometry).ok).toBe(true)
+  })
+
   test("rebuilds the public large-track fixture in both modes", async () => {
     const xml = await readFile(
       new URL("../../../../public/sample-run.gpx", import.meta.url),
