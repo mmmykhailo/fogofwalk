@@ -1,7 +1,14 @@
 import { describe, expect, test } from "bun:test"
 import type maplibregl from "maplibre-gl"
 import type { FogRenderData } from "~/lib/fog/protocol"
-import { buildFogMaskVertices, createFogMaskLayer } from "./fogMaskLayer"
+import {
+  buildCameraRelativeMatrix,
+  buildFogMaskVertices,
+  createFogMaskLayer,
+  projectCoordinate,
+  splitCoordinate,
+  splitFloat64,
+} from "./fogMaskLayer"
 
 function square(west: number, south: number, east: number, north: number) {
   return [
@@ -14,6 +21,71 @@ function square(west: number, south: number, east: number, north: number) {
 }
 
 describe("positive fog mask layer", () => {
+  test("reconstructs projected coordinates from high and low float32 parts", () => {
+    const coordinates = [
+      projectCoordinate([13.4, 52.5]),
+      projectCoordinate([0, 0]),
+      projectCoordinate([-180, 85.05112878]),
+      projectCoordinate([180, -85.05112878]),
+      projectCoordinate([179.999, 12]),
+      projectCoordinate([-180.001, -12]),
+    ]
+
+    for (const [x, y] of coordinates) {
+      const [xHigh, yHigh, xLow, yLow] = splitCoordinate(x, y)
+      expect(Math.abs(xHigh + xLow - x)).toBeLessThan(1e-12)
+      expect(Math.abs(yHigh + yLow - y)).toBeLessThan(1e-12)
+    }
+
+    const [high, low] = splitFloat64(coordinates[0]![0])
+    expect(high + low).toBeCloseTo(coordinates[0]![0], 12)
+  })
+
+  test("keeps an anchored high-zoom transform equivalent to a direct transform", () => {
+    const [anchorX, anchorY] = projectCoordinate([13.5, 52.5])
+    const point = [anchorX + 1e-9, anchorY - 2e-9]
+    const matrix = new Float64Array([
+      280_000,
+      0.25,
+      0,
+      0,
+      0.5,
+      -280_000,
+      0,
+      0,
+      0,
+      0,
+      1,
+      0,
+      -(280_000 * anchorX + 0.5 * anchorY),
+      -(0.25 * anchorX - 280_000 * anchorY),
+      0,
+      1,
+    ])
+    const anchored = buildCameraRelativeMatrix(matrix, anchorX, anchorY)
+    const [pointHighX, pointHighY, pointLowX, pointLowY] = splitCoordinate(
+      point[0],
+      point[1]
+    )
+    const [anchorHighX, anchorHighY, anchorLowX, anchorLowY] = splitCoordinate(
+      anchorX,
+      anchorY
+    )
+    const relative = [
+      pointHighX - anchorHighX + (pointLowX - anchorLowX),
+      pointHighY - anchorHighY + (pointLowY - anchorLowY),
+    ]
+    const transform = (source: ArrayLike<number>, x: number, y: number) => [
+      source[0]! * x + source[4]! * y + source[12]!,
+      source[1]! * x + source[5]! * y + source[13]!,
+    ]
+
+    const direct = transform(matrix, point[0], point[1])
+    const reconstructed = transform(anchored, relative[0]!, relative[1]!)
+    expect(Math.abs(reconstructed[0]! - direct[0]!)).toBeLessThan(0.002)
+    expect(Math.abs(reconstructed[1]! - direct[1]!)).toBeLessThan(0.002)
+  })
+
   test("triangulates disconnected explored features independently", () => {
     const data: FogRenderData = {
       type: "FeatureCollection",

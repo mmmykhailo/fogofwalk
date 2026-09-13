@@ -22,7 +22,7 @@ const FOG_RGBA: readonly [number, number, number, number] = (() => {
 type PolygonGeometry = Polygon | MultiPolygon
 type GL = WebGLRenderingContext | WebGL2RenderingContext
 
-function projectCoordinate(position: number[]): [number, number] {
+export function projectCoordinate(position: number[]): [number, number] {
   const longitude = position[0]!
   const latitude = Math.max(
     -MAX_RENDER_LATITUDE,
@@ -34,6 +34,53 @@ function projectCoordinate(position: number[]): [number, number] {
     (longitude + 180) / 360,
     0.5 - Math.log((1 + sine) / (1 - sine)) / (4 * Math.PI),
   ]
+}
+
+/** Split a JavaScript number into two float32 values whose sum preserves its detail. */
+export function splitFloat64(value: number): [number, number] {
+  const high = Math.fround(value)
+  return [high, Math.fround(value - high)]
+}
+
+/** Split a projected coordinate without allocating a per-coordinate array. */
+function writeSplitCoordinate(
+  x: number,
+  y: number,
+  output: Float32Array,
+  offset: number
+): void {
+  const xHigh = Math.fround(x)
+  const yHigh = Math.fround(y)
+  output[offset] = xHigh
+  output[offset + 1] = yHigh
+  output[offset + 2] = Math.fround(x - xHigh)
+  output[offset + 3] = Math.fround(y - yHigh)
+}
+
+export function splitCoordinate(
+  x: number,
+  y: number
+): [number, number, number, number] {
+  const output = new Float32Array(4)
+  writeSplitCoordinate(x, y, output, 0)
+  return [output[0]!, output[1]!, output[2]!, output[3]!]
+}
+
+/** Build M * T(anchor) while retaining the multiplication in JS number precision. */
+export function buildCameraRelativeMatrix(
+  matrix: ArrayLike<number>,
+  anchorX: number,
+  anchorY: number,
+  output = new Float32Array(16)
+): Float32Array {
+  for (let index = 0; index < 16; index += 1) {
+    output[index] = matrix[index]!
+  }
+  for (let row = 0; row < 4; row += 1) {
+    output[12 + row] =
+      matrix[row]! * anchorX + matrix[4 + row]! * anchorY + matrix[12 + row]!
+  }
+  return output
 }
 
 function ringPoints(ring: number[][]): [number, number][] {
