@@ -222,12 +222,3 @@
   margin-bottom: 0;
   border-radius: 0%;
 }
-
-/* Compact overlays may trade blur for a more opaque background during a map
- * gesture; persistent draggable windows deliberately retain their blur. */
-[data-map-cache][data-map-moving] .map-moving-blur-fallback {
-  -webkit-backdrop-filter: none;
-  backdrop-filter: none;
-  background-color: var(--background);
-  background-color: color-mix(in oklch, var(--background) 95%, transparent);
-}
