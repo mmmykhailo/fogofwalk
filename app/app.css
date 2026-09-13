@@ -223,9 +223,9 @@
   border-radius: 0%;
 }
 
-/* Map overlays are translucent at rest, but sampling the WebGL canvas through
- * a blur during a gesture makes every map frame pay a compositor cost. */
-[data-map-cache][data-map-moving] .map-glass-surface {
+/* Compact overlays may trade blur for a more opaque background during a map
+ * gesture; persistent draggable windows deliberately retain their blur. */
+[data-map-cache][data-map-moving] .map-moving-blur-fallback {
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
   background-color: var(--background);
