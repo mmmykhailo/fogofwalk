@@ -9,6 +9,7 @@ import {
 import { mapStore, worldFogGeoJSON } from "~/lib/mapStore"
 import { activitiesFeatureCollection } from "~/lib/map/geojson"
 import { createFogMaskLayer } from "~/lib/map/fogMaskLayer"
+import { ensureSavedPointMarkerImages } from "~/lib/map/savedPointMarkerImages"
 import type { MapMode } from "~/types/activities"
 
 export const MAP_SOURCE_IDS = {
@@ -22,15 +23,13 @@ export const MAP_LAYER_IDS = {
   fog: "fog-layer",
   activities: "activities-layer",
   activityHit: "activities-hit-layer",
-  savedPointOuter: "saved-points-outer-layer",
-  savedPointCentre: "saved-points-centre-layer",
+  savedPointMarker: "saved-points-marker-layer",
   savedPointHit: "saved-points-hit-layer",
   lap: "lap-layer",
 } as const
 
 export const SAVED_POINT_LAYER_IDS = [
-  MAP_LAYER_IDS.savedPointOuter,
-  MAP_LAYER_IDS.savedPointCentre,
+  MAP_LAYER_IDS.savedPointMarker,
   MAP_LAYER_IDS.savedPointHit,
 ] as const
 
@@ -84,25 +83,21 @@ export function setupMapLayers(map: maplibregl.Map, mode: MapMode): void {
       data: { type: "FeatureCollection", features: [] },
     })
   }
-  if (!map.getLayer(MAP_LAYER_IDS.savedPointOuter)) {
+  ensureSavedPointMarkerImages(map)
+  if (!map.getLayer(MAP_LAYER_IDS.savedPointMarker)) {
     map.addLayer({
-      id: MAP_LAYER_IDS.savedPointOuter,
-      type: "circle",
+      id: MAP_LAYER_IDS.savedPointMarker,
+      type: "symbol",
       source: MAP_SOURCE_IDS.savedPoints,
-      paint: {
-        "circle-radius": 10,
-        "circle-color": ["get", "color"],
-        "circle-stroke-width": 1,
-        "circle-stroke-color": "#fff",
+      layout: {
+        "icon-image": ["get", "markerImage"],
+        "icon-allow-overlap": true,
+        "icon-ignore-placement": true,
+        "icon-pitch-alignment": "viewport",
+        "icon-rotation-alignment": "viewport",
+        "symbol-sort-key": ["get", "stackOrder"],
+        "symbol-z-order": "source",
       },
-    })
-  }
-  if (!map.getLayer(MAP_LAYER_IDS.savedPointCentre)) {
-    map.addLayer({
-      id: MAP_LAYER_IDS.savedPointCentre,
-      type: "circle",
-      source: MAP_SOURCE_IDS.savedPoints,
-      paint: { "circle-radius": 3.5, "circle-color": "#fff" },
     })
   }
   // Kept as a source layer (rather than a DOM marker) so taps have a forgiving
@@ -112,6 +107,7 @@ export function setupMapLayers(map: maplibregl.Map, mode: MapMode): void {
       id: MAP_LAYER_IDS.savedPointHit,
       type: "circle",
       source: MAP_SOURCE_IDS.savedPoints,
+      layout: { "circle-sort-key": ["get", "stackOrder"] },
       paint: {
         "circle-radius": 22,
         "circle-color": "#000",
