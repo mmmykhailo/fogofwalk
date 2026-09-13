@@ -5,6 +5,22 @@ import type {
   ImportStage,
 } from "./service"
 
+export const IMPORT_STAGE_ORDER = [
+  "queued",
+  "reading",
+  "parsing",
+  "validating",
+  "ready",
+  "committing",
+  "committed",
+  "deriving",
+  "complete",
+] as const satisfies readonly ImportStage[]
+
+const IMPORT_STAGE_RANK = new Map<ImportStage, number>(
+  IMPORT_STAGE_ORDER.map((stage, index) => [stage, index])
+)
+
 export type ImportOperationPhase =
   | "idle"
   | "running"
@@ -16,8 +32,6 @@ export type ImportOperationPhase =
 export interface ImportStatus {
   phase: ImportOperationPhase
   operationId: string | null
-  stage: ImportStage | null
-  fileIndex: number | null
   completedFiles: number
   totalFiles: number
   fileStages: Record<number, ImportStage>
@@ -25,13 +39,17 @@ export interface ImportStatus {
   error: string | null
 }
 
+export interface ImportStageSummary {
+  stage: Exclude<ImportStage, "complete">
+  fileCount: number
+  fileIndexes: number[]
+}
+
 const listeners = new Set<() => void>()
 
 let status: ImportStatus = {
   phase: "idle",
   operationId: null,
-  stage: null,
-  fileIndex: null,
   completedFiles: 0,
   totalFiles: 0,
   fileStages: {},
@@ -60,15 +78,40 @@ export function useImportStatus(): ImportStatus {
   )
 }
 
+export function getActiveImportStageSummaries(
+  currentStatus: ImportStatus
+): ImportStageSummary[] {
+  if (currentStatus.phase !== "running") return []
+
+  const grouped = new Map<Exclude<ImportStage, "complete">, number[]>()
+  for (const [fileIndex, stage] of Object.entries(currentStatus.fileStages)) {
+    if (stage === "complete") continue
+    const indexes = grouped.get(stage) ?? []
+    indexes.push(Number(fileIndex))
+    grouped.set(stage, indexes)
+  }
+
+  return Array.from(grouped.entries())
+    .map(([stage, fileIndexes]) => {
+      fileIndexes.sort((first, second) => first - second)
+      return {
+        stage,
+        fileCount: fileIndexes.length,
+        fileIndexes,
+      }
+    })
+    .sort((first, second) => stageRank(first.stage) - stageRank(second.stage))
+}
+
 export function beginImport(operationId: string, totalFiles: number): void {
   status = {
     phase: "running",
     operationId,
-    stage: totalFiles > 0 ? "queued" : null,
-    fileIndex: null,
     completedFiles: 0,
     totalFiles,
-    fileStages: {},
+    fileStages: Object.fromEntries(
+      Array.from({ length: totalFiles }, (_, index) => [index, "queued"])
+    ) as Record<number, ImportStage>,
     result: null,
     error: null,
   }
@@ -84,8 +127,6 @@ export function reportImportProgress(event: ImportProgressEvent): void {
   status = {
     ...status,
     phase: "running",
-    stage: event.stage,
-    fileIndex: event.fileIndex,
     completedFiles: Math.max(status.completedFiles, event.completedFiles),
     totalFiles: event.totalFiles,
     fileStages: {
@@ -113,8 +154,6 @@ export function completeImport(result: ImportBatchResult): void {
   status = {
     ...status,
     phase: terminalPhase(result),
-    stage: result.files.length > 0 ? "complete" : null,
-    fileIndex: result.files.length > 0 ? result.files.length - 1 : null,
     completedFiles: result.files.length,
     totalFiles: result.files.length,
     fileStages: Object.fromEntries(
@@ -127,16 +166,7 @@ export function completeImport(result: ImportBatchResult): void {
 }
 
 function stageRank(stage: ImportStage): number {
-  return [
-    "queued",
-    "reading",
-    "parsing",
-    "validating",
-    "committing",
-    "committed",
-    "deriving",
-    "complete",
-  ].indexOf(stage)
+  return IMPORT_STAGE_RANK.get(stage) ?? -1
 }
 
 export function failImport(operationId: string, error: unknown): void {
@@ -144,7 +174,6 @@ export function failImport(operationId: string, error: unknown): void {
   status = {
     ...status,
     phase: "failed",
-    stage: "complete",
     error: error instanceof Error ? error.message : String(error),
   }
   notify()
@@ -160,6 +189,8 @@ export function describeImportStage(stage: ImportStage | null): string {
       return "Parsing activities"
     case "validating":
       return "Validating routes"
+    case "ready":
+      return "Waiting to save"
     case "committing":
       return "Saving activities"
     case "committed":

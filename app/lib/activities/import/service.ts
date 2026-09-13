@@ -15,6 +15,7 @@ export type ImportStage =
   | "reading"
   | "parsing"
   | "validating"
+  | "ready"
   | "committing"
   | "committed"
   | "deriving"
@@ -70,6 +71,7 @@ export interface ImportProgressEvent {
   operationId: string
   fileIndex: number
   stage: ImportStage
+  /** Number of files whose local preparation has finished, not durable commits. */
   completedFiles: number
   totalFiles: number
 }
