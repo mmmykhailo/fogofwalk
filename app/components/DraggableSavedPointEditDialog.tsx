@@ -96,7 +96,7 @@ export function DraggableSavedPointEditDialog({
   return (
     <DraggableDialog className="z-20 w-96 max-w-[calc(100vw-1.5rem)]">
       {(dragHandleProps) => (
-        <Card className="map-glass-surface bg-background/80 backdrop-blur-md">
+        <Card className="bg-background/80 backdrop-blur-md">
           <CardHeader
             {...dragHandleProps}
             className="cursor-grab touch-none select-none active:cursor-grabbing"

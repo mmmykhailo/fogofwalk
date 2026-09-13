@@ -147,7 +147,7 @@ export function DraggablePhotoDialog({
   return (
     <DraggableDialog className="z-20 w-80">
       {(dragHandleProps) => (
-        <Card className="map-glass-surface overflow-hidden bg-background/80 backdrop-blur-md">
+        <Card className="overflow-hidden bg-background/80 backdrop-blur-md">
           <CardHeader
             {...dragHandleProps}
             className="cursor-grab touch-none select-none active:cursor-grabbing"

@@ -223,7 +223,7 @@ export function DraggableActivityDialog({
             counter="mapDialogCommits"
             mark="map:dialog:commit"
           />
-          <Card className="map-glass-surface bg-background/80 backdrop-blur-md">
+          <Card className="bg-background/80 backdrop-blur-md">
             <CardHeader
               {...dragHandleProps}
               className="cursor-grab touch-none select-none active:cursor-grabbing"
