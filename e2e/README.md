@@ -20,17 +20,17 @@ Or from the repo root: `bun run test:e2e`.
 
 Nine specs covering local, map, profile, and sync behaviour:
 
-| Spec                        | Covers                                                                                                                      |
-| --------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| `auth.spec.ts`              | local-account sign-in, session persistence, pending-vs-allowed, log out, delete account                                     |
-| `activity-sync.spec.ts`     | upload, download onto a second device, content-hash dedupe, the scheduler, manifest paging                                  |
-| `deletion.spec.ts`          | the three deletion semantics — per-activity with and without the server switch, purge-all, clear-all                        |
-| `suspension.spec.ts`        | auto-sync suspension after a local-only delete, and that only a manual sync clears it                                       |
-| `serverless.spec.ts`        | the `VITE_API_URL`-unset build, fog-cache/worker convergence, and fog updates during map-style changes                      |
-| `rate-limit.spec.ts`        | a 429 upload is retried inside the same sync run, the retry is bounded, and both account surfaces count an upload hold down |
-| `sync-cancellation.spec.ts` | sign-out/account switching abort active effects; saved-point cursors, outboxes, and ownership stay isolated                 |
-| `public-profile.spec.ts`    | public activity visibility, profile rendering, and publishing changes                                                       |
-| `saved-points.spec.ts`      | saved-point editing controls and the owner's public saved-point link                                                        |
+| Spec                        | Covers                                                                                                                       |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `auth.spec.ts`              | local-account sign-in, session persistence, pending-vs-allowed, log out, delete account                                      |
+| `activity-sync.spec.ts`     | upload, download onto a second device, content-hash dedupe, the scheduler, manifest paging                                   |
+| `deletion.spec.ts`          | the three deletion semantics — per-activity with and without the server switch, purge-all, clear-all                         |
+| `suspension.spec.ts`        | auto-sync suspension after a local-only delete, and that only a manual sync clears it                                        |
+| `serverless.spec.ts`        | the `VITE_API_URL`-unset build, fog-cache/worker convergence, and fog updates during map-style changes                       |
+| `rate-limit.spec.ts`        | a 429 upload is retried inside the same sync run, the retry is bounded, and both account surfaces count an upload hold down  |
+| `sync-cancellation.spec.ts` | sign-out/account switching abort active effects; saved-point cursors, outboxes, and ownership stay isolated                  |
+| `public-profile.spec.ts`    | public activity visibility, profile rendering, and publishing changes                                                        |
+| `saved-points.spec.ts`      | saved-point editing controls, atomic overlap rendering, newest-created hit priority, and the owner's public saved-point link |
 
 ## How the rig fits together
 
@@ -83,3 +83,4 @@ and check the matching spec fails — every case below has been verified to do s
 | `setIsProcessing(activityCount > 0)` without `isFogRunInFlight`       | deleting with the server switch on                                   |
 | missing account ownership on local outbox effects                     | switching accounts does not upload the previous account's activity   |
 | shared saved-point cursor or ownership state                          | saved-point cursors and ownership stay isolated across accounts      |
+| separate saved-point centre/body layers or `updatedAt`-based stacking | saved-point overlap rendering and newest-created hit priority        |
