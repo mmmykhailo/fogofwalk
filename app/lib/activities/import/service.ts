@@ -71,7 +71,10 @@ export interface ImportProgressEvent {
   operationId: string
   fileIndex: number
   stage: ImportStage
-  /** Number of files whose local preparation has finished, not durable commits. */
+  /**
+   * Number of files whose reading, parsing, normalization, validation, and
+   * hashing work inside `processOne()` has finished; it is not a commit count.
+   */
   completedFiles: number
   totalFiles: number
 }
@@ -226,22 +229,15 @@ export function createActivityImportService(
     )
 
     const processOne = async (outcome: ImportFileOutcome): Promise<void> => {
-      if (options.signal?.aborted) {
-        outcome.status = "cancelled"
-        outcome.errorCode = "cancelled"
-        outcome.error = "Import cancelled before reading the file."
-        setStage(
-          outcome,
-          "complete",
-          operationId,
-          files.length,
-          completedFiles,
-          options.onProgress
-        )
-        return
-      }
-
+      let preparationEndStage: "ready" | "complete" = "complete"
       try {
+        if (options.signal?.aborted) {
+          outcome.status = "cancelled"
+          outcome.errorCode = "cancelled"
+          outcome.error = "Import cancelled before reading the file."
+          return
+        }
+
         setStage(
           outcome,
           "reading",
@@ -304,6 +300,9 @@ export function createActivityImportService(
           outcome.errorCode = "invalid-activity"
           outcome.error = "No usable activities were found in this file."
         }
+        if ((parsedByFile.get(outcome.index)?.length ?? 0) > 0) {
+          preparationEndStage = "ready"
+        }
       } catch (error) {
         const safe = safeError(error)
         outcome.status = "failed"
@@ -311,6 +310,14 @@ export function createActivityImportService(
         outcome.error = safe.error
       } finally {
         completedFiles++
+        setStage(
+          outcome,
+          preparationEndStage,
+          operationId,
+          files.length,
+          completedFiles,
+          options.onProgress
+        )
       }
     }
 
@@ -335,12 +342,24 @@ export function createActivityImportService(
     const cancelled = options.signal?.aborted ?? false
     if (cancelled) {
       for (const outcome of outcomes) {
-        if (outcome.status === "committed") {
+        if ((parsedByFile.get(outcome.index)?.length ?? 0) > 0) {
           outcome.status = "cancelled"
           outcome.activities = outcome.activities.map((activity) => ({
             ...activity,
-            status: "cancelled",
+            ...(activity.status === "committed"
+              ? { status: "cancelled" as const }
+              : {}),
           }))
+        }
+        if (outcome.stage !== "complete") {
+          setStage(
+            outcome,
+            "complete",
+            operationId,
+            files.length,
+            completedFiles,
+            options.onProgress
+          )
         }
       }
       return {
@@ -353,9 +372,7 @@ export function createActivityImportService(
 
     if (parsedActivities.length > 0) {
       for (const outcome of outcomes) {
-        if (
-          outcome.activities.some((activity) => activity.status === "committed")
-        ) {
+        if ((parsedByFile.get(outcome.index)?.length ?? 0) > 0) {
           setStage(
             outcome,
             "committing",
@@ -372,12 +389,7 @@ export function createActivityImportService(
       } catch (error) {
         const safe = safeError(error)
         for (const outcome of outcomes) {
-          if (
-            !outcome.activities.some(
-              (activity) => activity.status === "committed"
-            )
-          )
-            continue
+          if ((parsedByFile.get(outcome.index)?.length ?? 0) === 0) continue
           outcome.status = "failed"
           outcome.errorCode = safe.errorCode
           outcome.error = safe.error
@@ -433,15 +445,24 @@ export function createActivityImportService(
           completedFiles,
           options.onProgress
         )
+        setStage(
+          outcome,
+          "complete",
+          operationId,
+          files.length,
+          completedFiles,
+          options.onProgress
+        )
+      } else if (outcome.stage !== "complete") {
+        setStage(
+          outcome,
+          "complete",
+          operationId,
+          files.length,
+          completedFiles,
+          options.onProgress
+        )
       }
-      setStage(
-        outcome,
-        "complete",
-        operationId,
-        files.length,
-        completedFiles,
-        options.onProgress
-      )
     }
 
     return {
