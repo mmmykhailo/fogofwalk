@@ -73,7 +73,7 @@ export function MapCompass({
     <ButtonGroup
       orientation="vertical"
       className={cn(
-        "map-glass-surface bg-background/80 backdrop-blur-md",
+        "map-moving-blur-fallback bg-background/80 backdrop-blur-md",
         className
       )}
     >
