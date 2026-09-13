@@ -60,7 +60,7 @@ export function ImportProgressIndicator() {
       role="status"
       aria-live="polite"
       aria-atomic="true"
-      className="flex w-full max-w-[min(28rem,calc(100vw-1.5rem))] items-start gap-2 border border-border bg-background/90 px-2.5 py-2 text-xs shadow-sm backdrop-blur-md"
+      className="map-moving-blur-fallback flex w-full max-w-[min(28rem,calc(100vw-1.5rem))] items-start gap-2 border border-border bg-background/90 px-2.5 py-2 text-xs shadow-sm backdrop-blur-md"
     >
       <UploadSimpleIcon
         weight="duotone"
