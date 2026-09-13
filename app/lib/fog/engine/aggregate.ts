@@ -55,6 +55,7 @@ const DEFAULT_MAX_PARTITIONS = 10_000
 type PolygonFeature = Feature<Polygon | MultiPolygon>
 type Coordinate = [number, number]
 type Bounds = [number, number, number, number]
+type FillUnionOperation = typeof union
 
 const POSITIVE_INDEX_COLUMNS = 36
 const POSITIVE_INDEX_ROWS = 18
@@ -585,7 +586,8 @@ function overlappingFillComponents(
 
 function appendFillMask(
   accumulator: FogMaskAccumulator,
-  incoming: PolygonFeature
+  incoming: PolygonFeature,
+  unionOperation: FillUnionOperation
 ): void {
   const components = overlappingFillComponents(accumulator, incoming)
   if (components.length === 0) {
@@ -597,20 +599,25 @@ function appendFillMask(
     ...components.flatMap((component) => component.features),
     incoming,
   ]
+  let normalizedProjectedMerged: PolygonFeature
   try {
-    const merged = union(featureCollection(candidates)) as PolygonFeature | null
-    if (!merged) throw new Error("union returned no geometry")
-    const normalizedMerged = stripInteriorRings(merged)
-    const mergedValidation = validateFogRenderFeature(normalizedMerged, {
-      allowInteriorRings: true,
-    })
+    const projectedMerged = unionOperation(featureCollection(candidates))
+    if (!projectedMerged) throw new Error("union returned no geometry")
+    normalizedProjectedMerged = stripInteriorRings(projectedMerged)
+    // The render validator expects geographic coordinates, not the normalized
+    // Web Mercator coordinates used by the accumulator.
+    const geographicMergedForValidation = unprojectFeature(
+      normalizedProjectedMerged
+    )
+    const mergedValidation = validateFogRenderFeature(
+      geographicMergedForValidation,
+      {
+        allowInteriorRings: true,
+      }
+    )
     if (!mergedValidation.ok) {
       throw new Error("union produced geometry that could not be validated")
     }
-    for (const component of components) {
-      removeFillComponent(accumulator, component)
-    }
-    addFillComponent(accumulator, normalizedMerged)
   } catch {
     // Retain the already-published positive components and isolate the new
     // difficult geometry. Future appends remain incremental but stop trying to
@@ -628,7 +635,13 @@ function appendFillMask(
       accumulator.warningCounts,
       "explored-mask-union-failed"
     )
+    return
   }
+
+  for (const component of components) {
+    removeFillComponent(accumulator, component)
+  }
+  addFillComponent(accumulator, normalizedProjectedMerged)
 }
 
 /**
@@ -639,7 +652,8 @@ function appendFillMask(
  */
 export function appendFogMasks(
   accumulator: FogMaskAccumulator,
-  masks: FogMask[]
+  masks: FogMask[],
+  unionOperation: FillUnionOperation = union
 ): void {
   const projected = maskFeatures(masks).map(projectFeature)
   if (projected.length === 0) return
@@ -653,7 +667,7 @@ export function appendFogMasks(
   }
 
   for (const incoming of projected.map(stripInteriorRings)) {
-    appendFillMask(accumulator, incoming)
+    appendFillMask(accumulator, incoming, unionOperation)
   }
 }
 
