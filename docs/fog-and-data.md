@@ -67,6 +67,13 @@ A restored fog cache is render-only: it cannot reconstruct the worker's internal
 
 Use `mapStore.sourcesReady`, not `map.loaded()`, before operating on map sources. A style change destroys custom sources and layers, so `setupMapLayers` must re-add fog, activities, laps, and photos.
 
+Saved points render as one atomic shared symbol marker per point, with the
+white centre, coloured body, and white outer stroke kept together. Marker
+stacking uses sanitized `createdAt` values, and the shared transparent hit layer
+uses the same ordering so selection agrees with what is visible. The fixed
+palette marker images are re-registered inside `setupMapLayers()` after style or
+WebGL context replacement, before the custom sources are marked ready.
+
 Map background detection uses the centralized interactive-target registry, not
 fog geometry or fog visibility. During a style reload, the interaction helpers
 query only hit layers that are currently installed, so a temporary missing

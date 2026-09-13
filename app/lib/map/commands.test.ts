@@ -113,7 +113,7 @@ describe("map rendering commands", () => {
     expect(layoutCalls.some(([id]) => id === "fog-layer")).toBe(false)
     expect(
       layoutCalls.filter(([, property]) => property === "visibility")
-    ).toHaveLength(6)
+    ).toHaveLength(5)
     expect(paintCalls).toHaveLength(3)
   })
 
