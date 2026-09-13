@@ -29,20 +29,25 @@ export type ImportOperationPhase =
   | "failed"
   | "cancelled"
 
+export type DisplayImportStage = Exclude<ImportStage, "complete">
+
 export interface ImportStatus {
   phase: ImportOperationPhase
   operationId: string | null
   completedFiles: number
   totalFiles: number
   fileStages: Record<number, ImportStage>
+  reachedStages: Partial<Record<DisplayImportStage, true>>
+  isVisible: boolean
   result: ImportBatchResult | null
   error: string | null
 }
 
-export interface ImportStageSummary {
-  stage: Exclude<ImportStage, "complete">
-  fileCount: number
-  fileIndexes: number[]
+export interface ImportStageProgress {
+  stage: DisplayImportStage
+  settledFiles: number
+  totalFiles: number
+  percentage: number
 }
 
 const listeners = new Set<() => void>()
@@ -53,6 +58,8 @@ let status: ImportStatus = {
   completedFiles: 0,
   totalFiles: 0,
   fileStages: {},
+  reachedStages: {},
+  isVisible: false,
   result: null,
   error: null,
 }
@@ -78,32 +85,42 @@ export function useImportStatus(): ImportStatus {
   )
 }
 
-export function getActiveImportStageSummaries(
+export function getImportStageProgress(
   currentStatus: ImportStatus
-): ImportStageSummary[] {
-  if (currentStatus.phase !== "running") return []
+): ImportStageProgress[] {
+  if (!currentStatus.isVisible || currentStatus.totalFiles <= 0) return []
 
-  const grouped = new Map<Exclude<ImportStage, "complete">, number[]>()
-  for (const [fileIndex, stage] of Object.entries(currentStatus.fileStages)) {
-    if (stage === "complete") continue
-    const indexes = grouped.get(stage) ?? []
-    indexes.push(Number(fileIndex))
-    grouped.set(stage, indexes)
-  }
+  return IMPORT_STAGE_ORDER.flatMap((stage) => {
+    if (stage === "complete" || !currentStatus.reachedStages[stage]) {
+      return []
+    }
 
-  return Array.from(grouped.entries())
-    .map(([stage, fileIndexes]) => {
-      fileIndexes.sort((first, second) => first - second)
-      return {
+    const settledFiles = Object.values(currentStatus.fileStages).filter(
+      (currentStage) => stageRank(currentStage) > stageRank(stage)
+    ).length
+    const boundedSettledFiles = Math.min(
+      currentStatus.totalFiles,
+      Math.max(0, settledFiles)
+    )
+    const percentage = Math.round(
+      Math.min(1, Math.max(0, boundedSettledFiles / currentStatus.totalFiles)) *
+        100
+    )
+
+    return [
+      {
         stage,
-        fileCount: fileIndexes.length,
-        fileIndexes,
-      }
-    })
-    .sort((first, second) => stageRank(first.stage) - stageRank(second.stage))
+        settledFiles: boundedSettledFiles,
+        totalFiles: currentStatus.totalFiles,
+        percentage,
+      },
+    ]
+  })
 }
 
 export function beginImport(operationId: string, totalFiles: number): void {
+  const reachedStages: Partial<Record<DisplayImportStage, true>> =
+    totalFiles > 0 ? { queued: true } : {}
   status = {
     phase: "running",
     operationId,
@@ -112,6 +129,8 @@ export function beginImport(operationId: string, totalFiles: number): void {
     fileStages: Object.fromEntries(
       Array.from({ length: totalFiles }, (_, index) => [index, "queued"])
     ) as Record<number, ImportStage>,
+    reachedStages,
+    isVisible: totalFiles > 0,
     result: null,
     error: null,
   }
@@ -124,15 +143,20 @@ export function reportImportProgress(event: ImportProgressEvent): void {
   if (previousStage && stageRank(event.stage) < stageRank(previousStage)) {
     return
   }
+  const reachedStages =
+    event.stage === "complete" || status.reachedStages[event.stage]
+      ? status.reachedStages
+      : { ...status.reachedStages, [event.stage]: true }
   status = {
     ...status,
     phase: "running",
     completedFiles: Math.max(status.completedFiles, event.completedFiles),
-    totalFiles: event.totalFiles,
     fileStages: {
       ...status.fileStages,
       [event.fileIndex]: event.stage,
     },
+    reachedStages,
+    isVisible: true,
   }
   notify()
 }
@@ -155,7 +179,6 @@ export function completeImport(result: ImportBatchResult): void {
     ...status,
     phase: terminalPhase(result),
     completedFiles: result.files.length,
-    totalFiles: result.files.length,
     fileStages: Object.fromEntries(
       result.files.map((file) => [file.index, file.stage])
     ),
@@ -171,10 +194,30 @@ function stageRank(stage: ImportStage): number {
 
 export function failImport(operationId: string, error: unknown): void {
   if (status.operationId !== operationId) return
+  const fileStages = Object.fromEntries(
+    Object.keys(status.fileStages).map((fileIndex) => [fileIndex, "complete"])
+  ) as Record<number, ImportStage>
   status = {
     ...status,
     phase: "failed",
+    fileStages,
     error: error instanceof Error ? error.message : String(error),
+  }
+  notify()
+}
+
+export function dismissImportStatus(operationId: string): void {
+  if (
+    status.operationId !== operationId ||
+    status.phase === "idle" ||
+    status.phase === "running" ||
+    !status.isVisible
+  ) {
+    return
+  }
+  status = {
+    ...status,
+    isVisible: false,
   }
   notify()
 }
