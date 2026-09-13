@@ -99,7 +99,7 @@ export function ControlPanel({
       />
 
       {/* FAB — grouped visually with the compass (top-right) */}
-      <div className="absolute top-28 right-1.5 left-1.5 z-10 flex items-start justify-end gap-2 sm:right-3 sm:left-auto">
+      <div className="absolute top-28 right-auto left-1.5 z-10 flex w-[calc(100vw-0.75rem)] items-start justify-end gap-2 sm:right-3 sm:left-auto sm:w-auto">
         <div className="flex min-w-0 flex-1 flex-col items-end gap-2">
           <ImportProgressIndicator />
           {isProcessing && (
