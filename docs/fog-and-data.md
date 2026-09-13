@@ -15,7 +15,14 @@ Files are parsed into `ParsedActivity[]` on the main thread, then posted to `wor
 
 There are two distinct simplification tolerances. `ACTIVITY_SIMPLIFY_TOLERANCE` (0.0005, about 55 m) applies before buffering; `SIMPLIFY_TOLERANCE` (0.0001, about 11 m) applies to emitted fog. Swapping them visibly degrades the fog boundary or wastes a large vertex budget.
 
-Corridor mode clears only the buffered route. Fill mode unions intersecting activity buffers, strips inner rings, and emits the resulting positive explored shape, so closed loops clear their interiors without constructing a world-minus-route polygon.
+Corridor mode clears only the buffered route. Fill mode indexes intersecting
+activity buffers and performs Turf unions in normalized Web Mercator, then
+strips inner rings. A merged component is unprojected only as a temporary copy
+for pre-commit render validation; the projected merged component remains the
+accumulator source of truth. Final emission independently unprojects the
+accumulator components, simplifies them with `SIMPLIFY_TOLERANCE`, and
+validates them again. This lets closed loops clear their interiors without
+constructing a world-minus-route polygon.
 
 The previous world-minus-mask representation had a confirmed MapLibre failure
 mode: `geojson-vt` could clip a long route-shaped interior ring against source
@@ -24,10 +31,9 @@ positive-mask layer avoids that inverse topology. Do not reintroduce the
 world-minus-route polygon or treat `maxzoom` freezing and source-option tuning
 as production fixes.
 
-After accumulation, every emitted Polygon/MultiPolygon is transformed back to
-geographic coordinates and simplified with `SIMPLIFY_TOLERANCE`. This stage is
-deliberately separate from input simplification and never mutates the worker
-accumulator. Each feature is then checked for finite bounded coordinates,
+This final emission stage is deliberately separate from input simplification
+and never mutates the worker accumulator. Each feature is checked for finite
+bounded coordinates,
 closed non-zero-area rings, topology, and independent feature, vertex, and
 serialized-byte limits. The validator reports `valid`, `invalid`,
 `budget_exceeded`, or `cancelled`; a work-budget result is not treated as proof

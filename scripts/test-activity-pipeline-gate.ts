@@ -114,6 +114,19 @@ const checks: GateCheck[] = [
     ],
   },
   {
+    id: "F-042",
+    priority: "P0",
+    layers: ["U", "W"],
+    description: "valid overlapping fill masks merge without degrading fog",
+    commands: [
+      unit(
+        "fill union coordinate-space regression",
+        "app/lib/fog/engine/aggregate.test.ts",
+        "app/lib/fog/engine/index.test.ts"
+      ),
+    ],
+  },
+  {
     id: "I-037",
     priority: "P0",
     layers: ["U", "B", "V"],
