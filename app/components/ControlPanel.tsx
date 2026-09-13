@@ -99,13 +99,17 @@ export function ControlPanel({
       />
 
       {/* FAB — grouped visually with the compass (top-right) */}
-      <div className="absolute top-28 right-1.5 z-10 flex items-center gap-2 sm:right-3">
-        <ImportProgressIndicator />
-        {isProcessing && <FogProgressIndicator activityCount={activityCount} />}
+      <div className="absolute top-28 right-1.5 left-1.5 z-10 flex items-start justify-end gap-2 sm:right-3 sm:left-auto">
+        <div className="flex min-w-0 flex-1 flex-col items-end gap-2">
+          <ImportProgressIndicator />
+          {isProcessing && (
+            <FogProgressIndicator activityCount={activityCount} />
+          )}
+        </div>
         <Button
           variant="outline"
           size="icon"
-          className="map-moving-blur-fallback border-0 bg-background/80 shadow-sm backdrop-blur-md"
+          className="map-moving-blur-fallback shrink-0 self-start border-0 bg-background/80 shadow-sm backdrop-blur-md"
           onClick={() => setIsDrawerOpen(true)}
           aria-label="Open controls"
         >
