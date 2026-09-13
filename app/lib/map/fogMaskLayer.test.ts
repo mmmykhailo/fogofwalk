@@ -28,6 +28,137 @@ function reconstructVertex(data: Float32Array, vertexIndex: number) {
   ] as const
 }
 
+type FakeGlState = {
+  bufferData: Array<{ data: unknown; usage: number }>
+  drawCalls: Array<{ mode: number; first: number; count: number }>
+  matrixUniforms: number[][]
+  anchorUniforms: Array<[number, number]>
+  vertexPointers: Array<{
+    index: number
+    size: number
+    stride: number
+    offset: number
+  }>
+}
+
+function createFakeGl(lookups = { uniforms: 0, attributes: 0 }) {
+  const state: FakeGlState = {
+    bufferData: [],
+    drawCalls: [],
+    matrixUniforms: [],
+    anchorUniforms: [],
+    vertexPointers: [],
+  }
+  const gl = {
+    VERTEX_SHADER: 1,
+    FRAGMENT_SHADER: 2,
+    COMPILE_STATUS: 3,
+    LINK_STATUS: 4,
+    ARRAY_BUFFER: 5,
+    STATIC_DRAW: 6,
+    FLOAT: 7,
+    TRIANGLES: 8,
+    BLEND: 9,
+    DEPTH_TEST: 10,
+    STENCIL_TEST: 11,
+    ALWAYS: 12,
+    EQUAL: 13,
+    KEEP: 14,
+    REPLACE: 15,
+    ONE: 16,
+    ONE_MINUS_SRC_ALPHA: 17,
+    createShader: () => ({}) as WebGLShader,
+    shaderSource: () => {},
+    compileShader: () => {},
+    getShaderParameter: () => true,
+    getShaderInfoLog: () => null,
+    deleteShader: () => {},
+    createProgram: () => ({}) as WebGLProgram,
+    attachShader: () => {},
+    linkProgram: () => {},
+    getProgramParameter: () => true,
+    getProgramInfoLog: () => null,
+    deleteProgram: () => {},
+    createBuffer: () => ({}) as WebGLBuffer,
+    deleteBuffer: () => {},
+    bindBuffer: () => {},
+    bufferData: (_target: number, data: unknown, usage: number) => {
+      state.bufferData.push({ data, usage })
+    },
+    getUniformLocation: () => {
+      lookups.uniforms++
+      return {} as WebGLUniformLocation
+    },
+    getAttribLocation: () => {
+      const location = lookups.attributes
+      lookups.attributes += 1
+      return location
+    },
+    useProgram: () => {},
+    uniformMatrix4fv: (
+      _location: WebGLUniformLocation,
+      _transpose: boolean,
+      value: ArrayLike<number>
+    ) => {
+      state.matrixUniforms.push(Array.from(value))
+    },
+    uniform2f: (_location: WebGLUniformLocation, x: number, y: number) => {
+      state.anchorUniforms.push([x, y])
+    },
+    disable: () => {},
+    depthMask: () => {},
+    enable: () => {},
+    stencilMask: () => {},
+    colorMask: () => {},
+    stencilFunc: () => {},
+    stencilOp: () => {},
+    uniform4f: () => {},
+    vertexAttribPointer: (
+      index: number,
+      size: number,
+      _type: number,
+      _normalized: boolean,
+      stride: number,
+      offset: number
+    ) => {
+      state.vertexPointers.push({ index, size, stride, offset })
+    },
+    enableVertexAttribArray: () => {},
+    drawArrays: (mode: number, first: number, count: number) => {
+      state.drawCalls.push({ mode, first, count })
+    },
+    disableVertexAttribArray: () => {},
+    blendFunc: () => {},
+  } as unknown as WebGLRenderingContext
+  return { gl, state }
+}
+
+function createFakeMap() {
+  const handlers = new Map<string, () => void>()
+  let center = { lng: 13.5, lat: 52.5 }
+  const map = {
+    getCenter: () => center,
+    on(event: string, handler: () => void) {
+      handlers.set(event, handler)
+    },
+    off(event: string) {
+      handlers.delete(event)
+    },
+    triggerRepaint() {},
+  } as unknown as maplibregl.Map
+  return {
+    map,
+    handlers,
+    setCenter(nextCenter: { lng: number; lat: number }) {
+      center = nextCenter
+    },
+  }
+}
+
+function identityMatrix() {
+  return new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1])
+}
+
 describe("positive fog mask layer", () => {
   test("reconstructs projected coordinates from high and low float32 parts", () => {
     const coordinates = [
@@ -163,91 +294,122 @@ describe("positive fog mask layer", () => {
 
   test("resolves shader handles once per resource set", () => {
     const lookups = { uniforms: 0, attributes: 0 }
-    const gl = {
-      VERTEX_SHADER: 1,
-      FRAGMENT_SHADER: 2,
-      COMPILE_STATUS: 3,
-      LINK_STATUS: 4,
-      ARRAY_BUFFER: 5,
-      STATIC_DRAW: 6,
-      FLOAT: 7,
-      TRIANGLES: 8,
-      BLEND: 9,
-      DEPTH_TEST: 10,
-      STENCIL_TEST: 11,
-      ALWAYS: 12,
-      EQUAL: 13,
-      KEEP: 14,
-      REPLACE: 15,
-      ONE: 16,
-      ONE_MINUS_SRC_ALPHA: 17,
-      createShader: () => ({}) as WebGLShader,
-      shaderSource: () => {},
-      compileShader: () => {},
-      getShaderParameter: () => true,
-      getShaderInfoLog: () => null,
-      deleteShader: () => {},
-      createProgram: () => ({}) as WebGLProgram,
-      attachShader: () => {},
-      linkProgram: () => {},
-      getProgramParameter: () => true,
-      getProgramInfoLog: () => null,
-      deleteProgram: () => {},
-      createBuffer: () => ({}) as WebGLBuffer,
-      deleteBuffer: () => {},
-      bindBuffer: () => {},
-      bufferData: () => {},
-      getUniformLocation: () => {
-        lookups.uniforms++
-        return {} as WebGLUniformLocation
-      },
-      getAttribLocation: () => {
-        lookups.attributes++
-        return 0
-      },
-      useProgram: () => {},
-      uniformMatrix4fv: () => {},
-      disable: () => {},
-      depthMask: () => {},
-      enable: () => {},
-      stencilMask: () => {},
-      colorMask: () => {},
-      stencilFunc: () => {},
-      stencilOp: () => {},
-      uniform4f: () => {},
-      vertexAttribPointer: () => {},
-      enableVertexAttribArray: () => {},
-      drawArrays: () => {},
-      disableVertexAttribArray: () => {},
-      blendFunc: () => {},
-    } as unknown as WebGLRenderingContext
-    const handlers = new Map<string, () => void>()
-    const map = {
-      on(event: string, handler: () => void) {
-        handlers.set(event, handler)
-      },
-      off(event: string) {
-        handlers.delete(event)
-      },
-      triggerRepaint() {},
-    } as unknown as maplibregl.Map
+    const firstGl = createFakeGl(lookups)
+    const fakeMap = createFakeMap()
     const layer = createFogMaskLayer({
       type: "FeatureCollection",
       features: [],
     })
     const renderArgs = {
-      defaultProjectionData: { mainMatrix: new Float32Array(16) },
+      defaultProjectionData: { mainMatrix: identityMatrix() },
     } as never
 
-    layer.onAdd?.(map, gl)
-    layer.render?.(gl, renderArgs)
-    layer.render?.(gl, renderArgs)
-    layer.render?.(gl, renderArgs)
-    expect(lookups).toEqual({ uniforms: 2, attributes: 1 })
-
-    layer.onRemove?.(map, gl)
-    layer.onAdd?.(map, gl)
-    layer.render?.(gl, renderArgs)
+    layer.onAdd?.(fakeMap.map, firstGl.gl)
+    layer.render?.(firstGl.gl, renderArgs)
+    layer.render?.(firstGl.gl, renderArgs)
+    layer.render?.(firstGl.gl, renderArgs)
     expect(lookups).toEqual({ uniforms: 4, attributes: 2 })
+
+    layer.onRemove?.(fakeMap.map, firstGl.gl)
+    layer.onAdd?.(fakeMap.map, firstGl.gl)
+    layer.render?.(firstGl.gl, renderArgs)
+    expect(lookups).toEqual({ uniforms: 8, attributes: 4 })
+
+    fakeMap.handlers.get("webglcontextlost")?.()
+    const restoredGl = createFakeGl(lookups)
+    layer.onAdd?.(fakeMap.map, restoredGl.gl)
+    layer.render?.(restoredGl.gl, renderArgs)
+    expect(lookups).toEqual({ uniforms: 12, attributes: 6 })
+  })
+
+  test("does not upload geometry while the camera changes", () => {
+    const fakeGl = createFakeGl()
+    const fakeMap = createFakeMap()
+    const matrix = identityMatrix()
+    const renderArgs = {
+      defaultProjectionData: { mainMatrix: matrix },
+    } as never
+    const layer = createFogMaskLayer({
+      type: "FeatureCollection",
+      features: [],
+    })
+
+    layer.onAdd?.(fakeMap.map, fakeGl.gl)
+    layer.render?.(fakeGl.gl, renderArgs)
+    const uploadCount = fakeGl.state.bufferData.length
+
+    fakeMap.setCenter({ lng: 181, lat: 40 })
+    matrix[12] = 0.25
+    matrix[13] = -0.75
+    layer.render?.(fakeGl.gl, renderArgs)
+    fakeMap.setCenter({ lng: -181, lat: -40 })
+    matrix[12] = -0.25
+    matrix[13] = 0.75
+    layer.render?.(fakeGl.gl, renderArgs)
+
+    expect(fakeGl.state.bufferData).toHaveLength(uploadCount)
+    expect(fakeGl.state.matrixUniforms).toHaveLength(9)
+
+    layer.setData({
+      type: "FeatureCollection",
+      features: [
+        {
+          type: "Feature",
+          properties: null,
+          geometry: { type: "Polygon", coordinates: [square(10, 10, 11, 11)] },
+        },
+      ],
+    })
+    expect(fakeGl.state.bufferData).toHaveLength(uploadCount + 1)
+  })
+
+  test("uses a clip-space world quad for both world passes", () => {
+    const fakeGl = createFakeGl()
+    const fakeMap = createFakeMap()
+    const layer = createFogMaskLayer({
+      type: "FeatureCollection",
+      features: [
+        {
+          type: "Feature",
+          properties: null,
+          geometry: { type: "Polygon", coordinates: [square(10, 10, 11, 11)] },
+        },
+      ],
+    })
+    const renderArgs = {
+      defaultProjectionData: { mainMatrix: identityMatrix() },
+    } as never
+
+    layer.onAdd?.(fakeMap.map, fakeGl.gl)
+    const worldData = fakeGl.state.bufferData[0]!.data as Float32Array
+    const expectedWorld: [number, number][] = [
+      [-1, -1],
+      [1, -1],
+      [1, 1],
+      [-1, -1],
+      [1, 1],
+      [-1, 1],
+    ]
+    expect(worldData.length).toBe(6 * 4)
+    for (let index = 0; index < expectedWorld.length; index += 1) {
+      expect(reconstructVertex(worldData, index)).toEqual(expectedWorld[index])
+    }
+
+    layer.render?.(fakeGl.gl, renderArgs)
+    expect(fakeGl.state.drawCalls).toEqual([
+      { mode: 8, first: 0, count: 6 },
+      { mode: 8, first: 0, count: 18 },
+      { mode: 8, first: 0, count: 6 },
+    ])
+    expect(fakeGl.state.matrixUniforms[0]).toEqual(Array.from(identityMatrix()))
+    expect(fakeGl.state.matrixUniforms[2]).toEqual(Array.from(identityMatrix()))
+    expect(fakeGl.state.vertexPointers).toEqual([
+      { index: 0, size: 2, stride: 16, offset: 0 },
+      { index: 1, size: 2, stride: 16, offset: 8 },
+      { index: 0, size: 2, stride: 16, offset: 0 },
+      { index: 1, size: 2, stride: 16, offset: 8 },
+      { index: 0, size: 2, stride: 16, offset: 0 },
+      { index: 1, size: 2, stride: 16, offset: 8 },
+    ])
   })
 })

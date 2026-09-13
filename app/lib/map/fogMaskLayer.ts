@@ -5,7 +5,14 @@ import { FOG_COLOR, FOG_OPACITY } from "~/constants/fog"
 import type { FogRenderData } from "~/lib/fog/protocol"
 
 const MAX_RENDER_LATITUDE = 85.05112878
-const WORLD_VERTICES = new Float32Array([-1, 0, 2, 0, 2, 1, -1, 0, 2, 1, -1, 1])
+const WORLD_VERTICES = new Float32Array([
+  -1, -1, 0, 0, 1, -1, 0, 0, 1, 1, 0, 0, -1, -1, 0, 0, 1, 1, 0, 0, -1, 1, 0, 0,
+])
+const IDENTITY_MATRIX = new Float32Array([
+  1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1,
+])
+const VERTEX_STRIDE = 4 * Float32Array.BYTES_PER_ELEMENT
+const LOW_ATTRIBUTE_OFFSET = 2 * Float32Array.BYTES_PER_ELEMENT
 const FOG_RGBA: readonly [number, number, number, number] = (() => {
   const value = FOG_COLOR.replace("#", "")
   const red = Number.parseInt(value.slice(0, 2), 16) / 255
@@ -22,24 +29,45 @@ const FOG_RGBA: readonly [number, number, number, number] = (() => {
 type PolygonGeometry = Polygon | MultiPolygon
 type GL = WebGLRenderingContext | WebGL2RenderingContext
 
-export function projectCoordinate(position: number[]): [number, number] {
-  const longitude = position[0]!
-  const latitude = Math.max(
+function writeProjectedCoordinate(
+  longitude: number,
+  latitude: number,
+  output: Float64Array,
+  offset: number
+): void {
+  const boundedLatitude = Math.max(
     -MAX_RENDER_LATITUDE,
-    Math.min(MAX_RENDER_LATITUDE, position[1]!)
+    Math.min(MAX_RENDER_LATITUDE, latitude)
   )
-  const radians = (latitude * Math.PI) / 180
+  const radians = (boundedLatitude * Math.PI) / 180
   const sine = Math.sin(radians)
-  return [
-    (longitude + 180) / 360,
-    0.5 - Math.log((1 + sine) / (1 - sine)) / (4 * Math.PI),
-  ]
+  output[offset] = (longitude + 180) / 360
+  output[offset + 1] = 0.5 - Math.log((1 + sine) / (1 - sine)) / (4 * Math.PI)
+}
+
+export function projectCoordinate(position: number[]): [number, number] {
+  const output = new Float64Array(2)
+  writeProjectedCoordinate(position[0]!, position[1]!, output, 0)
+  return [output[0]!, output[1]!]
 }
 
 /** Split a JavaScript number into two float32 values whose sum preserves its detail. */
 export function splitFloat64(value: number): [number, number] {
+  const output = new Float32Array(2)
+  writeSplitValue(value, output, 0, output, 1)
+  return [output[0]!, output[1]!]
+}
+
+function writeSplitValue(
+  value: number,
+  highOutput: Float32Array,
+  highOffset: number,
+  lowOutput: Float32Array,
+  lowOffset: number
+): void {
   const high = Math.fround(value)
-  return [high, Math.fround(value - high)]
+  highOutput[highOffset] = high
+  lowOutput[lowOffset] = Math.fround(value - high)
 }
 
 /** Split a projected coordinate without allocating a per-coordinate array. */
@@ -49,12 +77,8 @@ function writeSplitCoordinate(
   output: Float32Array,
   offset: number
 ): void {
-  const xHigh = Math.fround(x)
-  const yHigh = Math.fround(y)
-  output[offset] = xHigh
-  output[offset + 1] = yHigh
-  output[offset + 2] = Math.fround(x - xHigh)
-  output[offset + 3] = Math.fround(y - yHigh)
+  writeSplitValue(x, output, offset, output, offset + 2)
+  writeSplitValue(y, output, offset + 1, output, offset + 3)
 }
 
 export function splitCoordinate(
@@ -172,11 +196,6 @@ export function buildFogMaskVertexData(data: FogRenderData): Float32Array {
   return output
 }
 
-/** Temporary compatibility wrapper for the pre-anchored renderer. */
-export function buildFogMaskVertices(data: FogRenderData): Float32Array {
-  return new Float32Array(buildWrappedFogMaskCoordinates(data))
-}
-
 function compileShader(gl: GL, type: number, source: string): WebGLShader {
   const shader = gl.createShader(type)
   if (!shader) throw new Error("Fog mask shader could not be created.")
@@ -195,10 +214,16 @@ function createProgram(gl: GL): WebGLProgram {
     gl,
     gl.VERTEX_SHADER,
     `
-      attribute vec2 a_pos;
+      precision highp float;
+      attribute vec2 a_pos_high;
+      attribute vec2 a_pos_low;
+      uniform vec2 u_anchor_high;
+      uniform vec2 u_anchor_low;
       uniform mat4 u_matrix;
       void main() {
-        gl_Position = u_matrix * vec4(a_pos, 0.0, 1.0);
+        vec2 relative =
+          (a_pos_high - u_anchor_high) + (a_pos_low - u_anchor_low);
+        gl_Position = u_matrix * vec4(relative, 0.0, 1.0);
       }
     `
   )
@@ -235,15 +260,26 @@ function createProgram(gl: GL): WebGLProgram {
 function drawBuffer(
   gl: GL,
   buffer: WebGLBuffer,
-  attribute: number,
+  highAttribute: number,
+  lowAttribute: number,
   vertexCount: number
 ): void {
-  if (vertexCount === 0 || attribute < 0) return
+  if (vertexCount === 0 || highAttribute < 0 || lowAttribute < 0) return
   gl.bindBuffer(gl.ARRAY_BUFFER, buffer)
-  gl.vertexAttribPointer(attribute, 2, gl.FLOAT, false, 0, 0)
-  gl.enableVertexAttribArray(attribute)
+  gl.vertexAttribPointer(highAttribute, 2, gl.FLOAT, false, VERTEX_STRIDE, 0)
+  gl.vertexAttribPointer(
+    lowAttribute,
+    2,
+    gl.FLOAT,
+    false,
+    VERTEX_STRIDE,
+    LOW_ATTRIBUTE_OFFSET
+  )
+  gl.enableVertexAttribArray(highAttribute)
+  gl.enableVertexAttribArray(lowAttribute)
   gl.drawArrays(gl.TRIANGLES, 0, vertexCount)
-  gl.disableVertexAttribArray(attribute)
+  gl.disableVertexAttribArray(highAttribute)
+  gl.disableVertexAttribArray(lowAttribute)
 }
 
 export interface FogMaskLayer extends maplibregl.CustomLayerInterface {
@@ -259,11 +295,18 @@ export function createFogMaskLayer(initialData: FogRenderData): FogMaskLayer {
   let positiveBuffer: WebGLBuffer | null = null
   let worldBuffer: WebGLBuffer | null = null
   let matrixLocation: WebGLUniformLocation | null = null
+  let anchorHighLocation: WebGLUniformLocation | null = null
+  let anchorLowLocation: WebGLUniformLocation | null = null
   let colorLocation: WebGLUniformLocation | null = null
-  let positionLocation = -1
+  let positionHighLocation = -1
+  let positionLowLocation = -1
   let positiveVertexCount = 0
   let contextLostHandler: (() => void) | null = null
   let contextRestoredHandler: (() => void) | null = null
+  const cameraRelativeMatrix = new Float32Array(16)
+  const anchorCoordinates = new Float64Array(2)
+  const anchorHigh = new Float32Array(2)
+  const anchorLow = new Float32Array(2)
 
   function discardResources(): void {
     // WebGL objects are invalid after context loss. Do not call delete* on the
@@ -272,8 +315,11 @@ export function createFogMaskLayer(initialData: FogRenderData): FogMaskLayer {
     positiveBuffer = null
     worldBuffer = null
     matrixLocation = null
+    anchorHighLocation = null
+    anchorLowLocation = null
     colorLocation = null
-    positionLocation = -1
+    positionHighLocation = -1
+    positionLowLocation = -1
     glContext = null
     positiveVertexCount = 0
   }
@@ -300,12 +346,30 @@ export function createFogMaskLayer(initialData: FogRenderData): FogMaskLayer {
       nextProgram,
       "u_matrix"
     )
+    const nextAnchorHighLocation = nextGl.getUniformLocation(
+      nextProgram,
+      "u_anchor_high"
+    )
+    const nextAnchorLowLocation = nextGl.getUniformLocation(
+      nextProgram,
+      "u_anchor_low"
+    )
     const nextColorLocation = nextGl.getUniformLocation(nextProgram, "u_color")
-    const nextPositionLocation = nextGl.getAttribLocation(nextProgram, "a_pos")
+    const nextPositionHighLocation = nextGl.getAttribLocation(
+      nextProgram,
+      "a_pos_high"
+    )
+    const nextPositionLowLocation = nextGl.getAttribLocation(
+      nextProgram,
+      "a_pos_low"
+    )
     if (
       nextMatrixLocation === null ||
+      nextAnchorHighLocation === null ||
+      nextAnchorLowLocation === null ||
       nextColorLocation === null ||
-      nextPositionLocation < 0
+      nextPositionHighLocation < 0 ||
+      nextPositionLowLocation < 0
     ) {
       nextGl.deleteProgram(nextProgram)
       nextGl.deleteBuffer(nextPositiveBuffer)
@@ -317,8 +381,11 @@ export function createFogMaskLayer(initialData: FogRenderData): FogMaskLayer {
     positiveBuffer = nextPositiveBuffer
     worldBuffer = nextWorldBuffer
     matrixLocation = nextMatrixLocation
+    anchorHighLocation = nextAnchorHighLocation
+    anchorLowLocation = nextAnchorLowLocation
     colorLocation = nextColorLocation
-    positionLocation = nextPositionLocation
+    positionHighLocation = nextPositionHighLocation
+    positionLowLocation = nextPositionLowLocation
     glContext = nextGl
     nextGl.bindBuffer(nextGl.ARRAY_BUFFER, worldBuffer)
     nextGl.bufferData(nextGl.ARRAY_BUFFER, WORLD_VERTICES, nextGl.STATIC_DRAW)
@@ -340,13 +407,31 @@ export function createFogMaskLayer(initialData: FogRenderData): FogMaskLayer {
 
   function uploadPositiveData(): void {
     if (!glContext || !positiveBuffer) return
-    const vertices = buildFogMaskVertices(data)
-    positiveVertexCount = vertices.length / 2
+    const vertices = buildFogMaskVertexData(data)
+    positiveVertexCount = vertices.length / 4
     glContext.bindBuffer(glContext.ARRAY_BUFFER, positiveBuffer)
     glContext.bufferData(
       glContext.ARRAY_BUFFER,
       vertices,
       glContext.STATIC_DRAW
+    )
+  }
+
+  function updateCameraRelativeState(mainMatrix: ArrayLike<number>): void {
+    const center = map?.getCenter()
+    writeProjectedCoordinate(
+      center?.lng ?? 0,
+      center?.lat ?? 0,
+      anchorCoordinates,
+      0
+    )
+    writeSplitValue(anchorCoordinates[0]!, anchorHigh, 0, anchorLow, 0)
+    writeSplitValue(anchorCoordinates[1]!, anchorHigh, 1, anchorLow, 1)
+    buildCameraRelativeMatrix(
+      mainMatrix,
+      anchorCoordinates[0]!,
+      anchorCoordinates[1]!,
+      cameraRelativeMatrix
     )
   }
 
@@ -386,21 +471,17 @@ export function createFogMaskLayer(initialData: FogRenderData): FogMaskLayer {
         !positiveBuffer ||
         !worldBuffer ||
         !matrixLocation ||
+        !anchorHighLocation ||
+        !anchorLowLocation ||
         !colorLocation ||
-        positionLocation < 0
+        positionHighLocation < 0 ||
+        positionLowLocation < 0
       ) {
         return
       }
 
       nextGl.useProgram(program)
-      // MapLibre's modelViewProjectionMatrix uses world-size coordinates. The
-      // custom-layer projection data supplies the equivalent matrix scaled for
-      // normalized Web Mercator coordinates in the [0, 1] range.
-      nextGl.uniformMatrix4fv(
-        matrixLocation,
-        false,
-        defaultProjectionData.mainMatrix
-      )
+      updateCameraRelativeState(defaultProjectionData.mainMatrix)
       nextGl.disable(nextGl.BLEND)
       nextGl.disable(nextGl.DEPTH_TEST)
       nextGl.depthMask(false)
@@ -409,24 +490,40 @@ export function createFogMaskLayer(initialData: FogRenderData): FogMaskLayer {
 
       // Reset the stencil over the world rectangle instead of clearing the
       // shared map stencil buffer, which could disturb later style layers.
+      nextGl.uniformMatrix4fv(matrixLocation, false, IDENTITY_MATRIX)
+      nextGl.uniform2f(anchorHighLocation, 0, 0)
+      nextGl.uniform2f(anchorLowLocation, 0, 0)
       nextGl.colorMask(false, false, false, false)
       nextGl.stencilFunc(nextGl.ALWAYS, 0, 0xff)
       nextGl.stencilOp(nextGl.KEEP, nextGl.KEEP, nextGl.REPLACE)
       drawBuffer(
         nextGl,
         worldBuffer,
-        positionLocation,
-        WORLD_VERTICES.length / 2
+        positionHighLocation,
+        positionLowLocation,
+        WORLD_VERTICES.length / 4
       )
 
       nextGl.stencilFunc(nextGl.ALWAYS, 1, 0xff)
-      drawBuffer(nextGl, positiveBuffer, positionLocation, positiveVertexCount)
+      nextGl.uniformMatrix4fv(matrixLocation, false, cameraRelativeMatrix)
+      nextGl.uniform2f(anchorHighLocation, anchorHigh[0]!, anchorHigh[1]!)
+      nextGl.uniform2f(anchorLowLocation, anchorLow[0]!, anchorLow[1]!)
+      drawBuffer(
+        nextGl,
+        positiveBuffer,
+        positionHighLocation,
+        positionLowLocation,
+        positiveVertexCount
+      )
 
       nextGl.colorMask(true, true, true, true)
       nextGl.stencilFunc(nextGl.EQUAL, 0, 0xff)
       nextGl.stencilOp(nextGl.KEEP, nextGl.KEEP, nextGl.KEEP)
       nextGl.enable(nextGl.BLEND)
       nextGl.blendFunc(nextGl.ONE, nextGl.ONE_MINUS_SRC_ALPHA)
+      nextGl.uniformMatrix4fv(matrixLocation, false, IDENTITY_MATRIX)
+      nextGl.uniform2f(anchorHighLocation, 0, 0)
+      nextGl.uniform2f(anchorLowLocation, 0, 0)
       nextGl.uniform4f(
         colorLocation,
         FOG_RGBA[0],
@@ -437,8 +534,9 @@ export function createFogMaskLayer(initialData: FogRenderData): FogMaskLayer {
       drawBuffer(
         nextGl,
         worldBuffer,
-        positionLocation,
-        WORLD_VERTICES.length / 2
+        positionHighLocation,
+        positionLowLocation,
+        WORLD_VERTICES.length / 4
       )
 
       nextGl.disable(nextGl.STENCIL_TEST)
