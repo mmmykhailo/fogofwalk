@@ -136,12 +136,7 @@ function appendGeometry(geometry: PolygonGeometry, output: number[]): boolean {
   return valid
 }
 
-/**
- * Triangulates only the positive explored masks. The triangles are an internal
- * stencil pass and are never submitted as visible fill features, so shared
- * edges cannot become dark spokes or seams in the fog.
- */
-export function buildFogMaskVertices(data: FogRenderData): Float32Array {
+function buildWrappedFogMaskCoordinates(data: FogRenderData): number[] {
   const base: number[] = []
   for (const feature of data.features) {
     if (!feature.geometry) continue
@@ -153,7 +148,33 @@ export function buildFogMaskVertices(data: FogRenderData): Float32Array {
       wrapped.push(base[index]! + offset, base[index + 1]!)
     }
   }
-  return new Float32Array(wrapped)
+  return wrapped
+}
+
+/**
+ * Triangulates only the positive explored masks and stores each coordinate as
+ * a high/low float32 pair. The triangles are an internal stencil pass and are
+ * never submitted as visible fill features, so shared edges cannot become
+ * dark spokes or seams in the fog.
+ */
+export function buildFogMaskVertexData(data: FogRenderData): Float32Array {
+  const coordinates = buildWrappedFogMaskCoordinates(data)
+  const output = new Float32Array((coordinates.length / 2) * 4)
+  for (let index = 0, outputIndex = 0; index < coordinates.length; index += 2) {
+    writeSplitCoordinate(
+      coordinates[index]!,
+      coordinates[index + 1]!,
+      output,
+      outputIndex
+    )
+    outputIndex += 4
+  }
+  return output
+}
+
+/** Temporary compatibility wrapper for the pre-anchored renderer. */
+export function buildFogMaskVertices(data: FogRenderData): Float32Array {
+  return new Float32Array(buildWrappedFogMaskCoordinates(data))
 }
 
 function compileShader(gl: GL, type: number, source: string): WebGLShader {

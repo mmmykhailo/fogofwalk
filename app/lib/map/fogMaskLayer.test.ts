@@ -3,7 +3,7 @@ import type maplibregl from "maplibre-gl"
 import type { FogRenderData } from "~/lib/fog/protocol"
 import {
   buildCameraRelativeMatrix,
-  buildFogMaskVertices,
+  buildFogMaskVertexData,
   createFogMaskLayer,
   projectCoordinate,
   splitCoordinate,
@@ -18,6 +18,14 @@ function square(west: number, south: number, east: number, north: number) {
     [west, north],
     [west, south],
   ]
+}
+
+function reconstructVertex(data: Float32Array, vertexIndex: number) {
+  const offset = vertexIndex * 4
+  return [
+    data[offset]! + data[offset + 2]!,
+    data[offset + 1]! + data[offset + 3]!,
+  ] as const
 }
 
 describe("positive fog mask layer", () => {
@@ -103,12 +111,20 @@ describe("positive fog mask layer", () => {
       ],
     }
 
-    const vertices = buildFogMaskVertices(data)
+    const vertices = buildFogMaskVertexData(data)
 
     // Two triangles per square, replicated for the three wrapped worlds. The
     // returned triangles are used only for stencil writes, never visible fills.
-    expect(vertices.length).toBe(2 * 3 * 2 * 3 * 2)
-    expect(vertices.length % 6).toBe(0)
+    expect(vertices.length / 4).toBe(2 * 3 * 2 * 3)
+    expect(vertices.length % 12).toBe(0)
+
+    const firstWorld = reconstructVertex(vertices, 0)
+    const secondWorld = reconstructVertex(vertices, 12)
+    const thirdWorld = reconstructVertex(vertices, 24)
+    expect(secondWorld[0] - firstWorld[0]).toBeCloseTo(1, 12)
+    expect(thirdWorld[0] - secondWorld[0]).toBeCloseTo(1, 12)
+    expect(secondWorld[1]).toBeCloseTo(firstWorld[1], 12)
+    expect(thirdWorld[1]).toBeCloseTo(firstWorld[1], 12)
   })
 
   test("retains interior rings for earcut to exclude from the explored mask", () => {
@@ -126,8 +142,8 @@ describe("positive fog mask layer", () => {
       ],
     }
 
-    const vertices = buildFogMaskVertices(data)
-    expect(vertices.length).toBeGreaterThan(2 * 3 * 2 * 3)
+    const vertices = buildFogMaskVertexData(data)
+    expect(vertices.length / 4).toBeGreaterThan(2 * 3 * 3)
   })
 
   test("exposes a MapLibre custom layer with mutable positive data", () => {
