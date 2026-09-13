@@ -55,6 +55,8 @@ so a normal complete run with thousands of duplicate GPS points stays quiet.
 
 Every worker message carries a `runId`. Only call `startFogRun()` when discarding existing work (mode toggle, delete, clear all), and always follow it with `RESET`. Adding activities and restore reprocessing join the existing run. The worker yields a macrotask between activities and serializes same-run batches, so resets cannot land mid-activity.
 
+Import progress is a batch snapshot over the bounded parser pool: each selected file has its own lifecycle stage, while the UI groups active files by stage in lifecycle order. `completedFiles` counts files whose local reading, parsing, normalization, validation, and hashing preparation has ended; an accepted file then waits at `Waiting to save` until the one ordered durable library commit starts. Import commit progress and downstream fog-worker progress remain separate surfaces and can be visible at the same time.
+
 ## Storage and restore
 
 IndexedDB stores activities, photos, and preferences. Preferences include fog mode/cache, session, and sync state. `clearAll()` preserves the session and user controls such as fog mode, while clearing the derived fog cache and sync state. `loadActivities()` performs read-time migrations for missing `startedAtMs` and `uniqueDistanceKm`; do not re-save old records merely to migrate them.

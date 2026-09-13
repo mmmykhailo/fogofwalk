@@ -147,6 +147,25 @@ const checks: GateCheck[] = [
     ],
   },
   {
+    id: "I-038",
+    priority: "P1",
+    layers: ["U", "B"],
+    description:
+      "concurrent import stages remain simultaneously visible in stable order",
+    commands: [
+      unit(
+        "concurrent import stage units",
+        "app/lib/activities/import/status.test.ts",
+        "app/lib/activities/import/service.test.ts"
+      ),
+      browser(
+        "concurrent import stage browser regression",
+        "specs/import-progress.spec.ts",
+        "--project=synced"
+      ),
+    ],
+  },
+  {
     id: "L-014",
     priority: "P1",
     layers: ["R"],
