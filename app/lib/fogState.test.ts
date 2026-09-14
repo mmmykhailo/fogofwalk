@@ -16,6 +16,7 @@ import {
   FOG_PARTITION_SCHEME_VERSION,
   FOG_PROTOCOL_VERSION,
   type FogDiagnostics,
+  type FogReply,
   type FogRequest,
   type FogSnapshot,
 } from "~/lib/fog/protocol"
@@ -566,7 +567,7 @@ describe("fog worker run state", () => {
       processed: 100,
       total: 209,
       stage: "buffering" as const,
-    }
+    } satisfies Extract<FogReply, { type: "PROGRESS" }>
     expect(fogCoordinator.handleReply(progressReply).accepted).toBe(true)
     expect(getFogStatus()).toMatchObject({ processed: 100, total: 209 })
 
