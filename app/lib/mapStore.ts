@@ -780,6 +780,7 @@ export const fogCoordinator = createFogCoordinator(
         })
       } else if (terminal.status === "complete" && terminal.snapshot) {
         updateFogStatus({
+          phase: "idle",
           requestId: terminal.context.request.requestId,
           processed: terminal.context.request.activities.length,
           total: terminal.context.request.activities.length,
