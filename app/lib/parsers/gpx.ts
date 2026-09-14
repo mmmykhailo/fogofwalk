@@ -110,12 +110,10 @@ function buildParsedActivity(
     path.some((timestamp) => timestamp != null)
   )
   const retainedPoints = anomaly.paths.flat()
-  const validTimestamps = retainedPoints
-    .map((point) => point.timestampMs)
-    .filter(
-      (timestamp): timestamp is number =>
-        timestamp != null && Number.isFinite(timestamp)
-    )
+  const firstDatedPoint = retainedPoints.find(
+    (point) => point.timestampMs != null && Number.isFinite(point.timestampMs)
+  )
+  const startedAtMs = firstDatedPoint?.timestampMs ?? null
   const coordinates = canonicalPaths.flatMap((path) => path) as ActivityCoords
   const stats = computeActivityStatsForPaths(anomaly.paths)
   const afterStats = { ...stats, uniqueDistanceKm: stats.distanceKm }
@@ -136,7 +134,7 @@ function buildParsedActivity(
     activity: {
       id,
       name: file.name,
-      startedAtMs: validTimestamps[0] ?? null,
+      startedAtMs,
       coordinates,
       paths: canonicalPaths,
       ...(canonicalTimestamps ? { pathTimestamps: canonicalTimestamps } : {}),
@@ -148,8 +146,8 @@ function buildParsedActivity(
           }
         : {}),
       startSunPhase: deriveStartSunPhase(
-        coordinates,
-        validTimestamps[0] ?? null
+        firstDatedPoint ? [[firstDatedPoint.lng, firstDatedPoint.lat]] : [],
+        startedAtMs
       ),
       format: "gpx",
       ...(activityType ? { activityType } : {}),

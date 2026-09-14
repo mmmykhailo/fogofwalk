@@ -295,10 +295,10 @@ export async function parseFitFileWithResults(
     path.map((point) => point.timestampMs ?? null)
   )
 
-  const validTs = retainedPaths
+  const firstDatedPoint = retainedPaths
     .flat()
-    .map((point) => point.timestampMs)
-    .filter((t): t is number => t != null && isFinite(t))
+    .find((point) => point.timestampMs != null && isFinite(point.timestampMs))
+  const startedAtMs = firstDatedPoint?.timestampMs ?? null
   const stats = computeActivityStatsForPaths(retainedPaths)
   const afterStats = { ...stats, uniqueDistanceKm: stats.distanceKm }
   const completedReport = report
@@ -317,7 +317,7 @@ export async function parseFitFileWithResults(
       {
         id: createUuid(),
         name: file.name,
-        startedAtMs: validTs.length > 0 ? validTs[0] : null,
+        startedAtMs,
         coordinates: coords,
         paths: retainedPaths.map((path) =>
           path.map((point) => [point.lng, point.lat] as [number, number])
@@ -328,8 +328,8 @@ export async function parseFitFileWithResults(
           ? { pathTimestamps: timestamps }
           : {}),
         startSunPhase: deriveStartSunPhase(
-          coords,
-          validTs.length > 0 ? validTs[0] : null
+          firstDatedPoint ? [[firstDatedPoint.lng, firstDatedPoint.lat]] : [],
+          startedAtMs
         ),
         pointTimestamps: timestamps.every((path) =>
           path.every((timestamp) => timestamp == null)
