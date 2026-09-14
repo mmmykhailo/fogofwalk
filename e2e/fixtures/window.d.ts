@@ -20,6 +20,7 @@ declare global {
     once(event: string, handler: () => void): void
     off(event: string, handler?: () => void): void
     getSource(id: string): unknown
+    getCenter(): { lng: number; lat: number }
   }
 
   interface Window {

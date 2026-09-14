@@ -94,6 +94,45 @@ ${segment
   }
 }
 
+/** One high-confidence mid-track spike that should become two retained paths. */
+export function makeGpsAnomalyGpx(): GpxFixture {
+  const coordinates: [number, number][] = [
+    [13.4, 52.5],
+    [13.4001, 52.5],
+    [13.4002, 52.5],
+    [13.4003, 52.5],
+    [13.4004, 52.5],
+    [23.4, 52.5],
+    [13.4005, 52.5],
+    [13.4006, 52.5],
+    [13.4007, 52.5],
+    [13.4008, 52.5],
+  ]
+  const startMs = Date.UTC(2024, 0, 20, 8, 0, 0)
+  const trkpts = coordinates
+    .map(
+      ([lng, lat], index) =>
+        `      <trkpt lat="${lat.toFixed(6)}" lon="${lng.toFixed(6)}"><ele>100</ele><time>${new Date(startMs + index * 1_000).toISOString()}</time></trkpt>`
+    )
+    .join("\n")
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="fogofwalk-e2e" xmlns="http://www.topografix.com/GPX/1/1">
+  <trk>
+    <name>GPS anomaly cleanup fixture</name>
+    <type>Walking</type>
+    <trkseg>
+${trkpts}
+    </trkseg>
+  </trk>
+</gpx>
+`
+  return {
+    name: "gps-anomaly-e2e.gpx",
+    buffer: Buffer.from(xml, "utf8"),
+    mimeType: "application/gpx+xml",
+  }
+}
+
 /** A dense, closed multi-segment route for real-browser fog rendering checks. */
 export function makeFogVisualGpx(): GpxFixture {
   const rectangle: [number, number][] = []
