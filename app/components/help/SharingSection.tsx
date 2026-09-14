@@ -2,8 +2,8 @@ export function SharingSection() {
   return (
     <div className="space-y-3 text-sm leading-relaxed text-muted-foreground">
       <p>
-        Select an activity and open the share button to build a portrait image
-        sized for a story or a post. You choose:
+        Select one or several activities and open the share button to build a
+        3:4 portrait PNG. You choose:
       </p>
       <ul className="ml-4 list-disc space-y-1">
         <li>

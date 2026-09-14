@@ -17,10 +17,11 @@ export function InstallSection() {
         activity is imported as soon as the app opens.
       </p>
       <p>
-        Map tiles you have already looked at are cached for about a month, and
-        the app itself is cached too, so a previously visited area keeps working
-        with no connection at all. Importing files and viewing your stats never
-        needed the network in the first place.
+        The app shell and standard map resources you have already used are
+        cached, with map resources retained for about a month. Previously
+        visited standard-map areas can therefore keep working without a
+        connection. Importing files, browsing local data, and viewing your stats
+        do not need the sync server.
       </p>
     </div>
   )

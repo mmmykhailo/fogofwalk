@@ -29,8 +29,10 @@ export function StatisticsSection() {
         </li>
       </ul>
       <p>
-        Everything here is recomputed from the activities on this device each
-        time you open the page, so it reflects exactly what you have imported.
+        Everything here is derived from the activities on this device. Expensive
+        unique-distance work runs off the main thread and is cached for the
+        current library revision, so returning to the page does not repeat work
+        unnecessarily.
       </p>
     </div>
   )

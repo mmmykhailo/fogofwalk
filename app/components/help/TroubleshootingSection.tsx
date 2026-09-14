@@ -28,12 +28,13 @@ export const TROUBLESHOOTING_ITEMS: {
     q: "I re-imported a file and nothing happened",
     a: (
       <>
-        Activities are matched on their <em>contents</em>, not their filename,
-        so importing the same activity twice — even renamed, even exported again
-        from a different app — is recognised as a duplicate and skipped. That is
-        what keeps your totals honest when you import a folder twice. If you
-        actually need to replace an activity (to pick up laps, for instance),
-        delete it first, then import the file.
+        Activities are matched using their format, start time, and recorded
+        paths, not their filename. Importing the same data again under a new
+        name is therefore recognised as a duplicate and skipped. A fresh export
+        may be treated as different if the source changes its points, path
+        structure, format, or start time. If you need to replace an exact
+        duplicate (to pick up laps, for instance), delete it first, then import
+        the file.
       </>
     ),
   },

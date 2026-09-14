@@ -25,13 +25,14 @@ export function WhatIsItSection() {
           Find new routes by spotting the gaps in the fog near familiar areas
         </li>
         <li>
-          Attach photos to your routes and build a personal map of memories
+          Attach photos to routes and save named places on your personal map
         </li>
       </ul>
       <p>
         Nothing to sign up for. Open the page, pick some files, and the map is
-        yours — everything is computed and stored on your own device. If you
-        don't have an activity file to hand, the first-run dialog has a{" "}
+        yours — everything is computed and stored on your own device unless you
+        choose to sign in for sync. If you don't have an activity file to hand,
+        the first-run dialog has a{" "}
         <strong className="text-foreground">Try sample</strong> button that
         loads a demo run.
       </p>

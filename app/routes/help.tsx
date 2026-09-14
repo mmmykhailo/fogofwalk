@@ -11,7 +11,7 @@ export function meta({}: Route.MetaArgs) {
     {
       name: "description",
       content:
-        "Learn how to use Fog of Walk: supported file formats (GPX, FIT), adding photos, activity and lifetime statistics, sharing, installing it as an app, optional cross-device sync, and troubleshooting.",
+        "Learn how to use Fog of Walk: importing GPX and FIT files, adding photos and saved points, managing activities, statistics, sharing, public profiles, installation, optional cross-device sync, and troubleshooting.",
     },
   ]
 }

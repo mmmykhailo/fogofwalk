@@ -6,8 +6,11 @@ import {
 } from "~/components/help/FileFormatsSection"
 import { PhotosSection } from "~/components/help/PhotosSection"
 import { ActivityStatsSection } from "~/components/help/ActivityStatsSection"
+import { ManagingActivitiesSection } from "~/components/help/ManagingActivitiesSection"
+import { SavedPointsSection } from "~/components/help/SavedPointsSection"
 import { StatisticsSection } from "~/components/help/StatisticsSection"
 import { SharingSection } from "~/components/help/SharingSection"
+import { PublicProfileSection } from "~/components/help/PublicProfileSection"
 import { MapControlsSection } from "~/components/help/MapControlsSection"
 import { InstallSection } from "~/components/help/InstallSection"
 import { SyncSection } from "~/components/help/SyncSection"
@@ -61,8 +64,19 @@ export const HELP_SECTIONS: HelpSection[] = [
     title: "Exploring your activities",
     Body: ActivityStatsSection,
   },
+  {
+    id: "managing-activities",
+    title: "Managing your activity library",
+    Body: ManagingActivitiesSection,
+  },
+  { id: "saved-points", title: "Saved points", Body: SavedPointsSection },
   { id: "statistics", title: "Statistics", Body: StatisticsSection },
-  { id: "sharing", title: "Sharing an activity", Body: SharingSection },
+  { id: "sharing", title: "Sharing activity cards", Body: SharingSection },
+  {
+    id: "public-profile",
+    title: "Public profiles",
+    Body: PublicProfileSection,
+  },
   { id: "map-controls", title: "Map controls", Body: MapControlsSection },
   { id: "install", title: "Install it as an app", Body: InstallSection },
   {

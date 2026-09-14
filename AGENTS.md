@@ -10,16 +10,16 @@ Read the focused references before changing their area:
 
 ## Essential architecture
 
-`routes/home.tsx` restores IndexedDB state, owns file mutations, and coordinates the fog worker. `MapView.tsx` owns MapLibre sources and worker updates. `lib/mapStore.ts` is the module-level map/worker/activity store; `workers/fogWorker.ts` owns all fog geometry.
+`app/routes/home.tsx` restores map data, owns map mutations, and coordinates the activity library and fog projection. `app/lib/activities/` owns import normalization and durable library commits. `app/components/map/MapView.tsx` composes the MapLibre lifecycle, presentation, interactions, photos, saved points, and fog-worker bridge; those responsibilities live in its focused hooks. `app/lib/mapStore.ts` projects module-level map, worker, activity, and revision state. `app/workers/fogWorker.ts` is a thin transport adapter around the geometry engine in `app/lib/fog/engine/`.
 
-`routes/stats.tsx`, `routes/help.tsx`, and public profile routes are explicitly registered in `app/routes.ts`. Shared page chrome is in `components/PageShell.tsx` and `components/PageSection.tsx`. Reusable responsive page-section layouts use `components/Grid.tsx`; configure its `columns` rather than repeating standard grid utility combinations. Grid spacing is always `gap-3`.
+Application pages, including stats, help, activity and saved-point libraries, and public profiles, are explicitly registered in `app/routes.ts`. Shared page chrome is in `app/components/PageShell.tsx` and `app/components/PageSection.tsx`. Reusable responsive page-section layouts use `app/components/Grid.tsx`; configure its `columns` rather than repeating standard grid utility combinations. Grid spacing is always `gap-3`.
 
 The sync server is an independent package in `server/`; its shared contracts live in `shared/`. The server-optional invariant is non-negotiable: an unset `VITE_API_URL` must leave the client fully usable without network access.
 
 ## Critical invariants
 
 - Preserve the distinction between activity and emitted-fog simplification tolerances.
-- Post fog-worker messages through `postToFogWorker()` so every message has the current `runId`.
+- Schedule fog work through the `mapStore` projection helpers. Low-level commands must go through `postToFogWorker()` so the coordinator stamps the current generation, request, library revision, coverage revision, and mode.
 - Use `mapStore.sourcesReady`, not `map.loaded()`, before changing sources.
 - Worker URLs must be relative (`../workers/fogWorker.ts`), not `~` aliases.
 - Turf v7 `union` and `difference` take a `FeatureCollection`.

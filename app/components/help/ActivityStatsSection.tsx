@@ -26,9 +26,10 @@ export function ActivityStatsSection() {
       <p>
         Two notes on the numbers.{" "}
         <strong className="text-foreground">Moving time</strong> excludes
-        stopped segments, so it is shorter than elapsed time whenever you paused
-        at lights or for a break — and average pace is calculated from it, while
-        average speed uses elapsed time. Per-lap{" "}
+        stopped segments, so it is shorter than duration whenever you paused at
+        lights or for a break. <em>Avg pace</em> and <em>Avg speed</em> use the
+        full duration; the separately labelled moving pace and moving speed use
+        moving time. Per-lap{" "}
         <strong className="text-foreground">elevation gain</strong> will not
         quite add up to the whole activity's figure: gain is measured with a
         smoothing filter that restarts at each lap boundary, which is the price

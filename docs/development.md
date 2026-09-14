@@ -22,11 +22,14 @@ mobile touch pan/rotate:
 cd e2e && bun run test:performance
 ```
 
-The benchmark currently runs 22 scenarios. Deterministic work-count and
-long-task assertions are the gates; raw frame gaps are diagnostic because the
-Chromium renderer and SwiftShader performance vary between hosts. Regression
-runs retain their JSON metrics and Playwright traces in the E2E test-results
-directory rather than committing machine-specific baselines.
+The performance configuration covers six activity-library datasets (metadata
+and geometry fixtures at 100, 500, and 2,000 activities), 22 sampled map
+interaction scenarios, and desktop dialog pointer-move coalescing.
+Deterministic work-count, DOM-bound, and long-task assertions are the gates;
+raw frame gaps are diagnostic because the Chromium renderer and SwiftShader
+performance vary between hosts. Regression runs retain their JSON metrics and
+Playwright traces in the E2E test-results directory rather than committing
+machine-specific baselines.
 
 Run `bun run typecheck` after every application change. The repository has Prettier drift, so format only the files you changed with `bunx prettier --write <paths>` rather than `bun run format`.
 

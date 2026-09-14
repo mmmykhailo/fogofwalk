@@ -18,19 +18,30 @@ Or from the repo root: `bun run test:e2e`.
 
 ## What is covered
 
-Nine specs covering local, map, profile, and sync behaviour:
+Nineteen specs cover local data, import and fog processing, map interactions,
+profiles, and sync:
 
-| Spec                        | Covers                                                                                                                       |
-| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| `auth.spec.ts`              | local-account sign-in, session persistence, pending-vs-allowed, log out, delete account                                      |
-| `activity-sync.spec.ts`     | upload, download onto a second device, content-hash dedupe, the scheduler, manifest paging                                   |
-| `deletion.spec.ts`          | the three deletion semantics — per-activity with and without the server switch, purge-all, clear-all                         |
-| `suspension.spec.ts`        | auto-sync suspension after a local-only delete, and that only a manual sync clears it                                        |
-| `serverless.spec.ts`        | the `VITE_API_URL`-unset build, fog-cache/worker convergence, and fog updates during map-style changes                       |
-| `rate-limit.spec.ts`        | a 429 upload is retried inside the same sync run, the retry is bounded, and both account surfaces count an upload hold down  |
-| `sync-cancellation.spec.ts` | sign-out/account switching abort active effects; saved-point cursors, outboxes, and ownership stay isolated                  |
-| `public-profile.spec.ts`    | public activity visibility, profile rendering, and publishing changes                                                        |
-| `saved-points.spec.ts`      | saved-point editing controls, atomic overlap rendering, newest-created hit priority, and the owner's public saved-point link |
+| Spec                                  | Covers                                                                                                              |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `activities-bulk-settings.spec.ts`    | selecting, confirming, persisting, and syncing bulk activity-type and visibility edits                              |
+| `activities-performance.spec.ts`      | summary-only loading, sorting, pagination, bounded DOM size, metadata writes, and summary-store recovery            |
+| `activity-metadata.spec.ts`           | optimistic activity metadata edits, rollback, cross-tab propagation, and avoiding unnecessary geometry work         |
+| `activity-progress.spec.ts`           | unified parser/save/fog progress, accessible bars, persistence, terminal states, and mode-toggle generations        |
+| `activity-sync.spec.ts`               | uploads, second-device downloads, content-hash dedupe, metadata sync, scheduling, and manifest paging               |
+| `auth.spec.ts`                        | local-account sign-in, session persistence, pending-vs-allowed access, log out, and account deletion                |
+| `deletion.spec.ts`                    | per-activity local/everywhere deletion, server purge, clear-all, re-imports, and tombstone semantics                |
+| `fog-visual.spec.ts`                  | positive-mask rendering without triangle seams and stable corridor edges during animated zoom                       |
+| `fog-worker.spec.ts`                  | real-worker revision identity, cache acceptance, partial rebuilds, append blocking, and watchdog recovery           |
+| `map-dialog-dismissal.spec.ts`        | dialog dismissal with fog on/off and protection from delayed public saved-point responses                           |
+| `map-interaction-performance.spec.ts` | bounded map work for large libraries, overlay combinations, desktop/mobile gestures, and pointer-move coalescing    |
+| `map-overlay-blur.spec.ts`            | draggable-dialog blur and compact-control map fallbacks                                                             |
+| `paths.spec.ts`                       | keeping disconnected activity paths separate in map and share rendering                                             |
+| `public-profile.spec.ts`              | bounded profile previews, paginated public activities, owner actions, and visibility changes                        |
+| `rate-limit.spec.ts`                  | bounded 429 retries and visible countdowns for server-directed and self-paced upload holds                          |
+| `saved-points.spec.ts`                | saved-point editing, public links, atomic overlap rendering, and newest-created hit priority                        |
+| `serverless.spec.ts`                  | no-API builds, offline imports, local metadata, fog restore/style changes, and keeping the map mounted across pages |
+| `suspension.spec.ts`                  | suspension and explicit/reload resume after clear-all or local-only deletion                                        |
+| `sync-cancellation.spec.ts`           | sign-out/account-switch cancellation and account isolation for activity effects and saved-point sync state          |
 
 ## How the rig fits together
 
@@ -42,10 +53,11 @@ approve it through the real admin endpoint.
 Playwright's `webServer` starts two client dev servers: one with `VITE_API_URL`
 pointing at the test API, one with it unset (the GitHub Pages build).
 
-The E2E client also uses a three-upload, three-second local pacing window. It
-exercises the same upload-hold path as production's 108-upload, one-minute
-window without making the suite idle for a minute. The real server keeps its
-production rate limit, so the pacing test still proves that no 429 occurs.
+The self-pacing regression test installs a three-upload, ten-second client
+window before the app loads. It exercises the same upload-hold path as
+production's 108-upload, one-minute window without making the suite idle for a
+minute. The real server keeps its production rate limit, so the test still
+proves that self-pacing avoids a 429.
 
 ## Three things that are not obvious
 
