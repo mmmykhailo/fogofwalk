@@ -1,17 +1,6 @@
-import { useFogStatus } from "~/lib/mapStore"
 import { ArrowClockwiseIcon, WarningIcon } from "@phosphor-icons/react"
 import { Button } from "~/components/ui/button"
-
-export function FogProgressText() {
-  const status = useFogStatus()
-  return (
-    <>
-      {status.phase === "recovering"
-        ? "Rebuilding fog…"
-        : `Processing ${status.processed} of ${status.total}…`}
-    </>
-  )
-}
+import { useFogStatus } from "~/lib/mapStore"
 
 export function FogStatusNotice({ onRetry }: { onRetry: () => void }) {
   const status = useFogStatus()

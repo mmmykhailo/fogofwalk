@@ -1,136 +1,109 @@
-import { useEffect } from "react"
+import { useEffect, useRef, useState } from "react"
+import {
+  activityProgressUpdateKey,
+  createActivityProgressSession,
+  getActivityProgressIdentities,
+  getActivityProgressRows,
+  getObservedActivityProgressRows,
+  isActivityProgressSessionComplete,
+  mergeActivityProgressSession,
+} from "~/lib/activities/progress"
 import {
   dismissImportStatus,
-  getImportProgressSnapshot,
   useImportStatus,
 } from "~/lib/activities/import/status"
-import type { ImportStatus } from "~/lib/activities/import/status"
 import { useFogStatus } from "~/lib/mapStore"
-import type { FogProjectionStatus } from "~/lib/mapStore"
 
-const IMPORT_TERMINAL_HOLD_MS = 2_000
+const ACTIVITY_PROGRESS_QUIET_MS = 3_000
 
-export type ActivityProgressStage = "parsing" | "saved" | "fog"
-
-export interface ActivityProgressRow {
-  stage: ActivityProgressStage
-  label: string
-  current: number
-  maximum: number
-  unit: "files" | "activities"
-  percentage: number
-}
-
-function clampProgress(current: number, maximum: number): number {
-  return Math.min(maximum, Math.max(0, current))
-}
-
-function progressPercentage(current: number, maximum: number): number {
-  if (maximum <= 0) return 0
-  return Math.round((clampProgress(current, maximum) / maximum) * 100)
-}
-
-function hasNewlyCommittedActivity(status: ImportStatus): boolean {
-  return (
-    status.result?.activities.some(
-      (activity) => activity.status === "committed"
-    ) ?? false
-  )
-}
-
-function isFogVisible(
-  importStatus: ImportStatus,
-  fogStatus: FogProjectionStatus
+function isImportTerminal(
+  phase: ReturnType<typeof useImportStatus>["phase"]
 ): boolean {
-  const isActive =
-    fogStatus.phase === "processing" || fogStatus.phase === "recovering"
-  const isRetainedForImport =
-    importStatus.isVisible &&
-    importStatus.phase !== "idle" &&
-    importStatus.phase !== "running" &&
-    hasNewlyCommittedActivity(importStatus)
-  return isActive || isRetainedForImport
+  return phase !== "idle" && phase !== "running"
 }
 
-export function getActivityProgressRows(
-  importStatus: ImportStatus,
-  fogStatus: FogProjectionStatus
-): ActivityProgressRow[] {
-  const rows: ActivityProgressRow[] = []
-  const importProgress = getImportProgressSnapshot(importStatus)
-
-  if (importProgress) {
-    rows.push({
-      stage: "parsing",
-      label: "Parsing activities",
-      current: importProgress.completedFiles,
-      maximum: importProgress.totalFiles,
-      unit: "files",
-      percentage: progressPercentage(
-        importProgress.completedFiles,
-        importProgress.totalFiles
-      ),
-    })
-
-    if (importProgress.isSaveStageVisible) {
-      rows.push({
-        stage: "saved",
-        label: "Activities saved",
-        current: importProgress.savedFiles,
-        maximum: importProgress.totalFiles,
-        unit: "files",
-        percentage: progressPercentage(
-          importProgress.savedFiles,
-          importProgress.totalFiles
-        ),
-      })
-    }
-  }
-
-  if (isFogVisible(importStatus, fogStatus)) {
-    const maximum = Math.max(0, fogStatus.total)
-    const current = clampProgress(fogStatus.processed, maximum)
-    rows.push({
-      stage: "fog",
-      label: "Processing fog",
-      current,
-      maximum,
-      unit: "activities",
-      percentage: progressPercentage(current, maximum),
-    })
-  }
-
-  return rows
-}
-
-export function ActivityProgressIndicator() {
+export function ActivityProgress() {
   const importStatus = useImportStatus()
   const fogStatus = useFogStatus()
+  const [, setSessionVersion] = useState(0)
+  const sessionRef = useRef(createActivityProgressSession())
+
+  const identities = getActivityProgressIdentities(importStatus, fogStatus)
+  const observedRows = getObservedActivityProgressRows(
+    importStatus,
+    fogStatus,
+    sessionRef.current
+  )
+  const session = mergeActivityProgressSession(
+    sessionRef.current,
+    observedRows,
+    identities
+  )
+  sessionRef.current = session
+
+  const updateKey = activityProgressUpdateKey(importStatus, fogStatus)
+  const currentSessionRef = sessionRef
+  const importStatusRef = useRef(importStatus)
+  const fogStatusRef = useRef(fogStatus)
+  const updateKeyRef = useRef(updateKey)
+  importStatusRef.current = importStatus
+  fogStatusRef.current = fogStatus
+  updateKeyRef.current = updateKey
 
   useEffect(() => {
     if (
-      importStatus.phase === "idle" ||
+      !isActivityProgressSessionComplete(session) ||
       importStatus.phase === "running" ||
-      importStatus.operationId === null ||
-      !importStatus.isVisible
+      fogStatus.phase === "processing" ||
+      fogStatus.phase === "recovering"
     ) {
       return
     }
 
-    const operationId = importStatus.operationId
+    const capturedImportOperationId = session.importOperationId
+    const capturedFogRequestId = session.fogRequestId
+    const capturedFogGeneration = session.fogGeneration
+    const capturedUpdateKey = updateKey
     const timeoutId = window.setTimeout(() => {
-      dismissImportStatus(operationId)
-    }, IMPORT_TERMINAL_HOLD_MS)
-    return () => window.clearTimeout(timeoutId)
-  }, [importStatus.operationId, importStatus.phase, importStatus.isVisible])
+      const currentImportStatus = importStatusRef.current
+      const currentFogStatus = fogStatusRef.current
+      const currentSession = currentSessionRef.current
 
-  const rows = getActivityProgressRows(importStatus, fogStatus)
+      if (
+        currentSession.importOperationId !== capturedImportOperationId ||
+        currentSession.fogRequestId !== capturedFogRequestId ||
+        currentSession.fogGeneration !== capturedFogGeneration ||
+        updateKeyRef.current !== capturedUpdateKey ||
+        !isActivityProgressSessionComplete(currentSession) ||
+        currentImportStatus.phase === "running" ||
+        currentFogStatus.phase === "processing" ||
+        currentFogStatus.phase === "recovering"
+      ) {
+        return
+      }
+
+      currentSessionRef.current = createActivityProgressSession()
+      setSessionVersion((version) => version + 1)
+
+      if (
+        capturedImportOperationId !== null &&
+        currentImportStatus.operationId === capturedImportOperationId &&
+        currentImportStatus.isVisible &&
+        isImportTerminal(currentImportStatus.phase)
+      ) {
+        dismissImportStatus(capturedImportOperationId)
+      }
+    }, ACTIVITY_PROGRESS_QUIET_MS)
+
+    return () => window.clearTimeout(timeoutId)
+  }, [fogStatus.phase, importStatus.phase, session, updateKey])
+
+  const rows = getActivityProgressRows(session)
   if (rows.length === 0) return null
 
   return (
     <div
       data-testid="activity-progress"
-      data-phase={importStatus.phase}
       role="status"
       aria-live="polite"
       aria-atomic="true"
