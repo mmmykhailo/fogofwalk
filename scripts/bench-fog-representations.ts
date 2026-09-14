@@ -1,4 +1,5 @@
 import { performance } from "node:perf_hooks"
+import { createReadStream } from "node:fs"
 import { readFile } from "node:fs/promises"
 import bbox from "@turf/bbox"
 import difference from "@turf/difference"
@@ -19,61 +20,163 @@ import type { FogWorkerActivity } from "../app/types/activities"
 const WORLD_SOUTH = -85.05112878
 const WORLD_NORTH = 85.05112878
 const ITERATIONS = 3
+const REAL_FIXTURE_ACTIVITY_COUNT = 500
 const SCALE_TIERS = [100, 1_000, 10_000]
+const REAL_DATASET_SOURCE =
+  "https://www.kaggle.com/datasets/roccoli/gpx-hike-tracks"
 
 type GeometryFeature = Feature<Polygon | MultiPolygon>
 type GeometryCollection = FeatureCollection<Polygon | MultiPolygon>
 
-function makeFixture(): FogWorkerActivity[] {
-  return Array.from({ length: 24 }, (_, index) => {
-    if (index === 0) {
-      return {
-        id: `route-${index}`,
-        name: "synthetic route",
-        coordinates: Array.from(
-          { length: 96 },
-          (_, point) =>
-            [-31 + (62 * point) / 95, 12 + Math.sin(point / 7) * 0.8] as [
-              number,
-              number,
-            ]
-        ),
+async function* readCsvRows(path: string): AsyncGenerator<string[]> {
+  const stream = createReadStream(path, { encoding: "utf8" })
+  let field = ""
+  let record: string[] = []
+  let inQuotes = false
+  let pendingQuote = false
+
+  try {
+    for await (const chunk of stream) {
+      const text = typeof chunk === "string" ? chunk : chunk.toString("utf8")
+      for (let index = 0; index < text.length; index += 1) {
+        const character = text[index]!
+
+        if (inQuotes) {
+          if (pendingQuote) {
+            pendingQuote = false
+            if (character === '"') {
+              field += '"'
+              continue
+            }
+            inQuotes = false
+          }
+
+          if (inQuotes) {
+            if (character === '"') pendingQuote = true
+            else field += character
+            continue
+          }
+        }
+
+        if (character === '"') {
+          inQuotes = true
+        } else if (character === ",") {
+          record.push(field)
+          field = ""
+        } else if (character === "\n") {
+          record.push(field)
+          field = ""
+          if (record.some((value) => value.length > 0)) yield record
+          record = []
+        } else if (character !== "\r") {
+          field += character
+        }
       }
     }
 
-    const centreLongitude = -12 + (index % 8) * 6
-    const centreLatitude = 34 + Math.floor(index / 8) * 5
-    if (index % 6 === 0) {
-      return {
-        id: `route-${index}`,
-        name: "synthetic loop",
-        coordinates: Array.from({ length: 96 }, (_, point) => {
-          const angle = (Math.PI * 2 * point) / 95
-          return [
-            centreLongitude + Math.cos(angle) * 0.7,
-            centreLatitude + Math.sin(angle) * 0.7,
-          ] as [number, number]
-        }),
-      }
+    if (pendingQuote) {
+      pendingQuote = false
+      inQuotes = false
     }
-
-    return {
-      id: `route-${index}`,
-      name: "synthetic route",
-      coordinates: Array.from(
-        { length: 96 },
-        (_, point) =>
-          [
-            centreLongitude + (point / 95 - 0.5) * 1.4,
-            centreLatitude + Math.sin(point / 8 + index) * 0.25,
-          ] as [number, number]
-      ),
+    if (field.length > 0 || record.length > 0) {
+      record.push(field)
+      yield record
     }
-  })
+  } finally {
+    stream.destroy()
+  }
 }
 
-function collectMasks(activities: readonly FogWorkerActivity[]): FogMask[] {
-  return activities.flatMap((activity) => bufferFogActivity(activity).masks)
+function parseHikrTrackPaths(xml: string): [number, number][][] {
+  const segments = [
+    ...xml.matchAll(/<trkseg\b[^>]*>([\s\S]*?)<\/trkseg>/gi),
+  ].map((match) => match[1] ?? "")
+  const sourceSegments = segments.length > 0 ? segments : [xml]
+  const paths: [number, number][][] = []
+
+  for (const segment of sourceSegments) {
+    const path: [number, number][] = []
+    for (const match of segment.matchAll(/<trkpt\b([^>]*)>/gi)) {
+      const attributes = match[1] ?? ""
+      const latitude = Number(
+        attributes.match(/\blat\s*=\s*["']([^"']+)["']/i)?.[1]
+      )
+      const longitude = Number(
+        attributes.match(/\blon\s*=\s*["']([^"']+)["']/i)?.[1]
+      )
+      if (
+        Number.isFinite(latitude) &&
+        latitude >= -90 &&
+        latitude <= 90 &&
+        Number.isFinite(longitude)
+      ) {
+        path.push([longitude, latitude])
+      }
+    }
+    if (path.length >= 2) paths.push(path)
+  }
+
+  return paths
+}
+
+interface RealFixture {
+  activities: FogWorkerActivity[]
+  sourceRowsScanned: number
+  skippedRecords: number
+}
+
+async function loadRealFixture(): Promise<RealFixture> {
+  const datasetPath = process.env.FOG_BENCHMARK_CSV
+  if (!datasetPath) {
+    throw new Error(
+      "Set FOG_BENCHMARK_CSV to the extracted gpx-tracks-from-hikr.org.csv file. " +
+        "See docs/performance-update.md for the source and download command."
+    )
+  }
+
+  const rows = readCsvRows(datasetPath)
+  const header = await rows.next()
+  if (header.done || !header.value) {
+    throw new Error(`real activity dataset is empty: ${datasetPath}`)
+  }
+
+  const columns = new Map(header.value.map((name, index) => [name, index]))
+  const gpxColumn = columns.get("gpx")
+  if (gpxColumn === undefined) {
+    throw new Error(`real activity dataset has no gpx column: ${datasetPath}`)
+  }
+  const idColumn = columns.get("_id")
+  const nameColumn = columns.get("name")
+  const activities: FogWorkerActivity[] = []
+  let sourceRowsScanned = 0
+  let skippedRecords = 0
+
+  for await (const row of rows) {
+    sourceRowsScanned += 1
+    const paths = parseHikrTrackPaths(row[gpxColumn] ?? "")
+    if (paths.length === 0) {
+      skippedRecords += 1
+      continue
+    }
+
+    const coordinates = paths.flatMap((path) => path)
+    activities.push({
+      id: row[idColumn ?? -1] || `hikr-activity-${sourceRowsScanned}`,
+      name: row[nameColumn ?? -1] || "recorded hike",
+      coordinates,
+      paths,
+    })
+    if (activities.length >= REAL_FIXTURE_ACTIVITY_COUNT) break
+  }
+
+  if (activities.length < REAL_FIXTURE_ACTIVITY_COUNT) {
+    throw new Error(
+      `real activity dataset contained only ${activities.length} usable activities; ` +
+        `expected ${REAL_FIXTURE_ACTIVITY_COUNT}`
+    )
+  }
+
+  return { activities, sourceRowsScanned, skippedRecords }
 }
 
 function countCoordinates(geometry: unknown): number {
@@ -233,6 +336,23 @@ function benchmark(
     p95Ms: Number((percentile(durations, 0.95) ?? 0).toFixed(2)),
     heapUsedMb: Number((Math.max(...heapSamples) / (1024 * 1024)).toFixed(2)),
     metrics: geometryMetrics(output!),
+  }
+}
+
+function safeBenchmark(
+  name: string,
+  build: () => GeometryCollection
+):
+  | ReturnType<typeof benchmark>
+  | { name: string; status: "failed"; error: string } {
+  try {
+    return benchmark(name, build)
+  } catch (error) {
+    return {
+      name,
+      status: "failed",
+      error: error instanceof Error ? error.message : String(error),
+    }
   }
 }
 
@@ -538,7 +658,11 @@ async function benchmarkEngineScale(
   }
 }
 
-const masks = collectMasks(makeFixture())
+const realFixture = await loadRealFixture()
+const bufferedActivities = realFixture.activities.map((activity) =>
+  bufferFogActivity(activity)
+)
+const masks = bufferedActivities.flatMap((activity) => activity.masks)
 const positive = featureCollection(masks) as GeometryCollection
 const bounded = () => {
   const result = buildBoundedFog(masks, "corridor")
@@ -546,11 +670,24 @@ const bounded = () => {
 }
 
 const baseline = {
-  fixture: { activityCount: 24, masks: masks.length, pointsPerRoute: 96 },
+  fixture: {
+    source: REAL_DATASET_SOURCE,
+    activityCount: realFixture.activities.length,
+    sourceRowsScanned: realFixture.sourceRowsScanned,
+    skippedRecords: realFixture.skippedRecords,
+    masks: masks.length,
+    inputPoints: realFixture.activities.reduce(
+      (total, activity) => total + activity.coordinates.length,
+      0
+    ),
+    rejectedActivities: bufferedActivities.filter(
+      (activity) => activity.rejected
+    ).length,
+  },
   candidates: [
-    benchmark("positive-explored-mask", () => positive),
-    benchmark("positive-mask-aggregated", bounded),
-    benchmark("global-hole-reference", () => globalHole(masks)),
+    safeBenchmark("positive-explored-mask", () => positive),
+    safeBenchmark("positive-mask-aggregated", bounded),
+    safeBenchmark("global-hole-reference", () => globalHole(masks)),
   ],
 }
 
