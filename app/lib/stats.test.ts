@@ -24,4 +24,27 @@ describe("computeActivityStatsForPaths", () => {
     expect(result.durationMs).toBe(60_000)
     expect(result.distanceKm).toBeLessThan(2)
   })
+
+  test("restarts elevation and moving-time calculations at anomaly-created gaps", () => {
+    const result = computeActivityStatsForPaths([
+      [
+        { ...point(0, 0, 0), elevationM: 0 },
+        { ...point(0.000045, 0, 10_000), elevationM: 0 },
+      ],
+      [
+        { ...point(0.00009, 0, 20_000), elevationM: 100 },
+        { ...point(0.000135, 0, 30_000), elevationM: 100 },
+      ],
+    ])
+
+    expect(result.elevationGainM).toBe(0)
+    expect(result.elevationLossM).toBe(0)
+    expect(result.movingTimeMs).toBe(20_000)
+    expect(result.durationMs).toBe(30_000)
+    expect(result.distanceKm).toBeCloseTo(0.01, 1)
+    expect(result.elevationProfile.at(-1)?.distanceKm).toBeCloseTo(
+      result.distanceKm,
+      6
+    )
+  })
 })

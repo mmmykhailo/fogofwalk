@@ -4,6 +4,7 @@ import { createActivityImportService } from "./service"
 import type { ImportProgressEvent, ImportStage } from "./service"
 import { createMemoryActivityLibraryRepository } from "../repository"
 import type { LibraryCommit } from "../libraryEvents"
+import type { GpsAnomalyReport } from "~/lib/parsers/types"
 
 function activity(id: string, hash = `hash-${id}`): ParsedActivity {
   return {
@@ -97,6 +98,34 @@ function libraryCommit(
 
 function latestStages(events: ImportProgressEvent[]): Map<number, ImportStage> {
   return new Map(events.map((event) => [event.fileIndex, event.stage] as const))
+}
+
+const anomalyReport: GpsAnomalyReport = {
+  status: "cleaned",
+  counts: {
+    inputPoints: 9,
+    retainedPoints: 8,
+    removedPoints: 1,
+    splitCount: 1,
+    trimmedPrefixPoints: 0,
+    trimmedSuffixPoints: 0,
+    reasons: { teleport_spike: 1 },
+  },
+  examples: [],
+  work: {
+    distanceCalculations: 10,
+    pointsVisited: 9,
+    boundedLookaheadCount: 2,
+  },
+  format: "gpx",
+  activityType: "walking",
+  sourcePathCount: 1,
+  timestampPointCount: 9,
+  nonPositiveTimestampCount: 0,
+  emittedPathCount: 2,
+  beforeStats: activity("before").stats,
+  afterStats: activity("after").stats,
+  detectorDurationMs: 1,
 }
 
 describe("ActivityImportService", () => {
@@ -362,6 +391,57 @@ describe("ActivityImportService", () => {
     })
     expect(result.files[1]?.status).toBe("committed")
     expect((await repository.load()).activities).toHaveLength(1)
+  })
+
+  test("keeps valid parser siblings and strips transient anomaly reports", async () => {
+    const repository = createMemoryActivityLibraryRepository()
+    const parsed = {
+      ...activity("cleaned"),
+      gpsAnomalyReport: anomalyReport,
+    }
+    const service = createActivityImportService({
+      parseFile: async () => ({
+        activities: [parsed],
+        rejections: [
+          {
+            id: "ambiguous",
+            reason: "ambiguous-gps-discontinuity",
+            activityIndex: 1,
+            gpsAnomalyReport: {
+              ...anomalyReport,
+              status: "ambiguous",
+              afterStats: null,
+            },
+          },
+        ],
+      }),
+      commit: (operationId, activities) =>
+        repository.commit({ type: "import", operationId, activities }, 0),
+    })
+
+    const result = await service.importFiles([file("siblings.gpx")])
+
+    expect(result.files[0]).toMatchObject({
+      status: "committed",
+      parsedActivityCount: 2,
+    })
+    expect(result.files[0]?.activities).toEqual(
+      expect.arrayContaining([
+        {
+          id: "ambiguous",
+          status: "rejected",
+          reason: "ambiguous-gps-discontinuity",
+        },
+        {
+          id: expect.any(String),
+          contentHash: expect.any(String),
+          status: "committed",
+        },
+      ])
+    )
+    const stored = await repository.load()
+    expect(stored.activities).toHaveLength(1)
+    expect(stored.activities[0]).not.toHaveProperty("gpsAnomalyReport")
   })
 
   test("pre-read cancellation increments preparation before completion", async () => {

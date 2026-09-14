@@ -13,7 +13,12 @@ import {
   detectGpsAnomalies,
   type AnomalyPoint,
 } from "~/lib/activities/gpsAnomalies"
-import type { ParsedImportActivity } from "./types"
+import { buildGpsAnomalyReport } from "~/lib/activities/gpsAnomalyDebug"
+import type {
+  ParsedImportActivity,
+  ParsedImportParseResult,
+  ParsedImportRejection,
+} from "./types"
 
 /**
  * `fit-file-parser` decodes every FIT `date_time` field into a `Date` object
@@ -202,9 +207,9 @@ export function buildLapsFromFit(
   return laps.length >= 2 ? laps : undefined
 }
 
-export async function parseFitFile(
+export async function parseFitFileWithResults(
   file: File
-): Promise<ParsedImportActivity[]> {
+): Promise<ParsedImportParseResult> {
   const buffer = await file.arrayBuffer()
   const parser = new FitParser({ force: true, speedUnit: "m/s" })
   const data = await parser.parseAsync(buffer)
@@ -220,7 +225,14 @@ export async function parseFitFile(
     return true
   })
 
-  if (validRecords.length < 2) return []
+  if (validRecords.length < 2) {
+    return {
+      activities: [],
+      rejections: [
+        { id: createUuid(), reason: "no-renderable-path", activityIndex: 0 },
+      ],
+    }
+  }
 
   const activityType = normalizeActivityType(
     data.sessions?.[0]?.sport ?? data.sports?.[0]?.sport
@@ -244,12 +256,35 @@ export async function parseFitFile(
     }
   })
 
+  const detectorStartedAt = performance.now()
   const anomaly = detectGpsAnomalies(
     [{ sourcePathIndex: 0, points: rawPoints }],
     { activityType }
   )
+  const detectorDurationMs = performance.now() - detectorStartedAt
+  const sourcePaths = [{ sourcePathIndex: 0, points: rawPoints }]
+  const report =
+    anomaly.status === "clean"
+      ? undefined
+      : buildGpsAnomalyReport({
+          result: anomaly,
+          format: "fit",
+          activityType,
+          sourcePaths,
+          afterStats: null,
+          detectorDurationMs,
+        })
   if (anomaly.status === "ambiguous" || anomaly.status === "rejected") {
-    return []
+    const rejection: ParsedImportRejection = {
+      id: createUuid(),
+      activityIndex: 0,
+      reason:
+        anomaly.status === "ambiguous"
+          ? "ambiguous-gps-discontinuity"
+          : "no-renderable-path",
+      ...(report ? { gpsAnomalyReport: report } : {}),
+    }
+    return { activities: [], rejections: [rejection] }
   }
 
   const retainedPaths = anomaly.paths
@@ -265,42 +300,55 @@ export async function parseFitFile(
     .map((point) => point.timestampMs)
     .filter((t): t is number => t != null && isFinite(t))
   const stats = computeActivityStatsForPaths(retainedPaths)
+  const afterStats = { ...stats, uniqueDistanceKm: stats.distanceKm }
+  const completedReport = report
+    ? buildGpsAnomalyReport({
+        result: anomaly,
+        format: "fit",
+        activityType,
+        sourcePaths,
+        afterStats,
+        detectorDurationMs,
+      })
+    : undefined
   const laps = buildLapsFromFit(retainedPaths, data.laps ?? [])
-  return [
-    {
-      id: createUuid(),
-      name: file.name,
-      startedAtMs: validTs.length > 0 ? validTs[0] : null,
-      coordinates: coords,
-      paths: retainedPaths.map((path) =>
-        path.map((point) => [point.lng, point.lat] as [number, number])
-      ),
-      ...(timestamps.some((path) => path.some((timestamp) => timestamp != null))
-        ? { pathTimestamps: timestamps }
-        : {}),
-      startSunPhase: deriveStartSunPhase(
-        coords,
-        validTs.length > 0 ? validTs[0] : null
-      ),
-      pointTimestamps: timestamps.every((path) =>
-        path.every((timestamp) => timestamp == null)
-      )
-        ? undefined
-        : timestamps.flatMap((path) => path.map((t) => t ?? -1)),
-      format: "fit",
-      ...(activityType ? { activityType } : {}),
-      stats: { ...stats, uniqueDistanceKm: stats.distanceKm },
-      ...(laps ? { laps } : {}),
-      ...(anomaly.status !== "clean"
-        ? {
-            gpsAnomalyReport: {
-              status: anomaly.status,
-              counts: anomaly.counts,
-              examples: anomaly.examples,
-              work: anomaly.work,
-            },
-          }
-        : {}),
-    },
-  ]
+  return {
+    activities: [
+      {
+        id: createUuid(),
+        name: file.name,
+        startedAtMs: validTs.length > 0 ? validTs[0] : null,
+        coordinates: coords,
+        paths: retainedPaths.map((path) =>
+          path.map((point) => [point.lng, point.lat] as [number, number])
+        ),
+        ...(timestamps.some((path) =>
+          path.some((timestamp) => timestamp != null)
+        )
+          ? { pathTimestamps: timestamps }
+          : {}),
+        startSunPhase: deriveStartSunPhase(
+          coords,
+          validTs.length > 0 ? validTs[0] : null
+        ),
+        pointTimestamps: timestamps.every((path) =>
+          path.every((timestamp) => timestamp == null)
+        )
+          ? undefined
+          : timestamps.flatMap((path) => path.map((t) => t ?? -1)),
+        format: "fit",
+        ...(activityType ? { activityType } : {}),
+        stats: afterStats,
+        ...(laps ? { laps } : {}),
+        ...(completedReport ? { gpsAnomalyReport: completedReport } : {}),
+      },
+    ],
+    rejections: [],
+  }
+}
+
+export async function parseFitFile(
+  file: File
+): Promise<ParsedImportActivity[]> {
+  return (await parseFitFileWithResults(file)).activities
 }

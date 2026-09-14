@@ -65,6 +65,7 @@ export interface GpsAnomalyResult {
   work: {
     distanceCalculations: number
     pointsVisited: number
+    boundedLookaheadCount: number
   }
 }
 
@@ -94,6 +95,7 @@ interface MutableCounts {
 interface MutableWork {
   distanceCalculations: number
   pointsVisited: number
+  boundedLookaheadCount: number
 }
 
 interface AnalysisContext {
@@ -398,6 +400,7 @@ function analyzePiece(
             points[lookahead + 1]!,
             context.work
           )
+          context.work.boundedLookaheadCount += 1
           if (!isPhysicallyPlausible(confirmationEdge, context)) {
             confirmed = false
             break
@@ -544,7 +547,11 @@ export function detectGpsAnomalies(
     activityType: options.activityType,
     maxSpeedMps: maxPlausibleSpeed(options.activityType),
     spatialEdges: [],
-    work: { distanceCalculations: 0, pointsVisited: 0 },
+    work: {
+      distanceCalculations: 0,
+      pointsVisited: 0,
+      boundedLookaheadCount: 0,
+    },
   }
   const counts: MutableCounts = {
     inputPoints: sourcePaths.reduce(
