@@ -52,8 +52,9 @@ interface LapBoundary {
  * `timestamp` (which is the lap end and is inclusive, so it double-counts
  * boundary points and leaves auto-pause gaps belonging to no lap). Sweeping
  * forward once with a non-decreasing lap index makes the resulting ranges
- * contiguous, non-overlapping and exhaustive by construction. The sweep is
- * repeated per retained path, never across a removed anomaly boundary.
+ * contiguous, non-overlapping and exhaustive by construction. The lap sweep
+ * stays active across retained paths, while range state resets at every path
+ * boundary so a removed anomaly gap is never bridged.
  *
  * Returns `undefined` when there is nothing worth showing a selector for.
  *
@@ -99,9 +100,9 @@ export function buildLapsFromFit(
   boundaries.sort((a, b) => a.startMs - b.startMs)
 
   const rangesByLap = boundaries.map(() => [] as ActivityLapPathRange[])
+  let lapIdx = 0
   for (let pathIndex = 0; pathIndex < rawPaths.length; pathIndex += 1) {
     const rawPoints = rawPaths[pathIndex]!
-    let lapIdx = 0
     let startIndex = -1
     let activeLap = -1
     const flush = (endIndex: number) => {

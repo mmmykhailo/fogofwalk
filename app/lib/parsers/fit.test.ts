@@ -3,8 +3,12 @@ import type { RawPoint } from "~shared/activities"
 import { buildLapActivity } from "~/lib/laps"
 import { buildLapsFromFit } from "./fit"
 
-function point(lng: number, timestampMs: number): RawPoint {
-  return { lng, lat: 0, timestampMs }
+function point(lng: number, timestampMs?: number): RawPoint {
+  return {
+    lng,
+    lat: 0,
+    ...(timestampMs == null ? {} : { timestampMs }),
+  }
 }
 
 function lap(startMs: number, elapsed = 10) {
@@ -66,6 +70,51 @@ describe("FIT lap ranges", () => {
       { pathIndex: 1, startIndex: 0, endIndex: 2 },
     ])
     expect(laps?.[1]?.stats.durationMs).toBe(3_000)
+  })
+
+  test("keeps the active lap across retained paths with undated points", () => {
+    const paths = [
+      [
+        point(0, 0),
+        point(0.001, 1_000),
+        point(0.002, 2_000),
+        point(0.003, 3_000),
+      ],
+      [point(10), point(10.001), point(10.002, 5_000)],
+    ]
+    const laps = buildLapsFromFit(paths, [lap(0), lap(3_000)])
+
+    expect(laps).toHaveLength(2)
+    expect(laps?.[0]?.pathRanges).toEqual([
+      { pathIndex: 0, startIndex: 0, endIndex: 2 },
+    ])
+    expect(laps?.[1]?.pathRanges).toEqual([
+      { pathIndex: 0, startIndex: 2, endIndex: 3 },
+      { pathIndex: 1, startIndex: 0, endIndex: 2 },
+    ])
+    expect(laps?.[0]?.stats.distanceKm).toBeCloseTo(0.222, 2)
+    expect(laps?.[1]?.stats.distanceKm).toBeCloseTo(0.333, 2)
+    expect(laps?.[1]?.stats.distanceKm).toBeLessThan(1)
+  })
+
+  test("starts an initially undated path in lap 1", () => {
+    const paths = [
+      [point(0), point(0.001), point(0.002, 3_000), point(0.003, 4_000)],
+    ]
+    const laps = buildLapsFromFit(paths, [lap(0), lap(3_000)])
+
+    expect(
+      laps?.map(({ number, pathRanges }) => ({ number, pathRanges }))
+    ).toEqual([
+      {
+        number: 1,
+        pathRanges: [{ pathIndex: 0, startIndex: 0, endIndex: 1 }],
+      },
+      {
+        number: 2,
+        pathRanges: [{ pathIndex: 0, startIndex: 1, endIndex: 3 }],
+      },
+    ])
   })
 
   test("builds a synthetic lap activity from path ranges", () => {
