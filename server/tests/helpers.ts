@@ -1,7 +1,7 @@
 /** Shared fixtures: an app over the memory driver, users, and gzip uploads. */
 
 import type { ActivityStats, ActivityCoords } from "~shared/activities"
-import type { ActivityUploadPayload } from "~shared/api"
+import type { LegacyActivityUploadPayload } from "~shared/api"
 
 import { createApp } from "../src/app"
 import { createSessionFor } from "../src/auth/session"
@@ -27,8 +27,8 @@ export function makeStats(distanceKm = 4.2): ActivityStats {
 }
 
 export function makeActivity(
-  overrides: Partial<ActivityUploadPayload> = {}
-): ActivityUploadPayload {
+  overrides: Partial<LegacyActivityUploadPayload> = {}
+): LegacyActivityUploadPayload {
   const coordinates: ActivityCoords = [
     [13.4, 52.5],
     [13.401, 52.501],
@@ -49,7 +49,7 @@ export function makeActivity(
 }
 
 export function gzipActivity(
-  activity: ActivityUploadPayload
+  activity: LegacyActivityUploadPayload
 ): Uint8Array<ArrayBuffer> {
   return Bun.gzipSync(new TextEncoder().encode(JSON.stringify(activity)))
 }
@@ -85,7 +85,7 @@ export function authHeaders(token: string): Record<string, string> {
 export async function putActivity(
   app: ReturnType<typeof createApp>,
   token: string,
-  activity: ActivityUploadPayload,
+  activity: LegacyActivityUploadPayload,
   hashOverride?: string
 ): Promise<Response> {
   const hash = hashOverride ?? (await computeContentHash(activity))

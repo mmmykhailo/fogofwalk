@@ -1,5 +1,5 @@
 import "maplibre-gl/dist/maplibre-gl.css"
-import type { MapMode, ActivityCoords } from "~/types/activities"
+import type { ActivityPaths, MapMode } from "~/types/activities"
 import type { PhotoEntry, PhotoGroup } from "~/types/photos"
 import type { SavedPoint } from "~shared/saved-points"
 import { MapCompass } from "~/components/map/MapCompass"
@@ -29,9 +29,9 @@ interface MapViewProps {
   /** Current geolocation as [lng, lat], or null while unavailable. */
   myLocation: [number, number] | null
   /** Geometry drawn on lap-layer. Null when the whole activity is shown. */
-  highlightCoordinates: ActivityCoords | null
+  highlightPaths: ActivityPaths | null
   /** Geometry the camera frames — the lap, or the whole activity on "All laps". */
-  focusCoordinates: ActivityCoords | null
+  focusPaths: ActivityPaths | null
   /**
    * Identity of the current focus: "<activityId>#lap3", "<activityId>#all", or null.
    * The effect keys on this rather than on the coordinate arrays, whose
@@ -59,8 +59,8 @@ export function MapView({
   onPhotoSelect,
   showMyLocation,
   myLocation,
-  highlightCoordinates,
-  focusCoordinates,
+  highlightPaths,
+  focusPaths,
   focusKey,
   savedPoints,
   showSavedPoints,
@@ -81,7 +81,7 @@ export function MapView({
       showActivities,
       showFog,
       selectedActivityIds,
-      highlightCoordinates,
+      highlightPaths,
       savedPoints,
       showSavedPoints,
       onMapReady,
@@ -100,8 +100,8 @@ export function MapView({
     showActivities,
     showFog,
     selectedActivityIds,
-    highlightCoordinates,
-    focusCoordinates,
+    highlightPaths,
+    focusPaths,
     focusKey,
   })
 

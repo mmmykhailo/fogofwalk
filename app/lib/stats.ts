@@ -9,8 +9,7 @@ import {
   ELEVATION_SMOOTHING_DISTANCE_M,
   ELEVATION_GAIN_STEP_THRESHOLD_M,
 } from "~/constants/fog"
-
-const EARTH_RADIUS_KM = 6371.0088
+import { haversineMeters } from "~/lib/geo"
 const MAX_PROFILE_POINTS = 300
 
 // Trailing moving average of elevationM over a distance window: each output
@@ -76,13 +75,7 @@ export function haversineKm(
   lng2: number,
   lat2: number
 ): number {
-  const toRad = (d: number) => (d * Math.PI) / 180
-  const dLat = toRad(lat2 - lat1)
-  const dLng = toRad(lng2 - lng1)
-  const a =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2
-  return 2 * EARTH_RADIUS_KM * Math.asin(Math.sqrt(a))
+  return haversineMeters([lng1, lat1], [lng2, lat2]) / 1000
 }
 
 export function computeActivityStats(
@@ -236,13 +229,10 @@ export function computeActivityStatsForPaths(
     distanceOffset += part.distanceKm
   }
 
-  const firstTimestampMs = paths
-    .flatMap((path) => path)
-    .find((point) => point.timestampMs != null)?.timestampMs
-  const flattened = paths.flatMap((path) => path)
-  const lastTimestampMs = [...flattened]
-    .reverse()
-    .find((point) => point.timestampMs != null)?.timestampMs
+  const firstPath = paths.find((path) => path.length > 0)
+  const lastPath = [...paths].reverse().find((path) => path.length > 0)
+  const firstTimestampMs = firstPath?.[0]?.timestampMs
+  const lastTimestampMs = lastPath?.[lastPath.length - 1]?.timestampMs
   const durationMs =
     firstTimestampMs != null && lastTimestampMs != null
       ? lastTimestampMs - firstTimestampMs

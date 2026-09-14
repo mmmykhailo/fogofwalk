@@ -7,6 +7,10 @@ import type {
   ParsedActivity,
 } from "~shared/activities"
 import { ACTIVITY_SIMPLIFY_TOLERANCE } from "~/constants/fog"
+import {
+  haversineMeters,
+  shortestLongitudeDeltaDegrees,
+} from "~/lib/geo"
 
 /**
  * These are safety limits for the geometry engine, not product import limits.
@@ -136,30 +140,6 @@ function wrapLongitude(longitude: number): number {
   // Retain a positive 180 supplied at a non-crossing endpoint.  The edge
   // representation is selected explicitly while splitting a segment.
   return wrapped === -180 && longitude > 0 ? 180 : wrapped
-}
-
-function shortestLongitudeDelta(from: number, to: number): number {
-  let delta = to - from
-  while (delta > 180) delta -= 360
-  while (delta < -180) delta += 360
-  return delta
-}
-
-function haversineMeters(
-  first: [number, number],
-  second: [number, number]
-): number {
-  const radians = Math.PI / 180
-  const latitude1 = first[1] * radians
-  const latitude2 = second[1] * radians
-  const deltaLatitude = (second[1] - first[1]) * radians
-  const deltaLongitude = shortestLongitudeDelta(first[0], second[0]) * radians
-  const sinLatitude = Math.sin(deltaLatitude / 2)
-  const sinLongitude = Math.sin(deltaLongitude / 2)
-  const a =
-    sinLatitude * sinLatitude +
-    Math.cos(latitude1) * Math.cos(latitude2) * sinLongitude * sinLongitude
-  return 6_371_008.8 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
 }
 
 function interpolateTimestamp(
@@ -650,7 +630,7 @@ export function sanitizeFogInput(
       const longitude = wrapLongitude(rawPoint[0])
       const unwrappedLng = previous
         ? previous.unwrappedLng +
-          shortestLongitudeDelta(previous.lng, longitude)
+          shortestLongitudeDeltaDegrees(previous.lng, longitude)
         : longitude
       const point: InputPoint = {
         lng: longitude,

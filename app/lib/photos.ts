@@ -2,29 +2,13 @@ import exifr from "exifr"
 import type { ParsedActivity } from "~/types/activities"
 import type { PhotoEntry } from "~/types/photos"
 import { createUuid } from "~/lib/uuid"
+import { haversineMeters } from "~/lib/geo"
 import {
   pathTimestampsForActivity,
   pathsForActivity,
 } from "~shared/activityContract"
 
 const MATCH_TOLERANCE_MS = 5 * 60 * 1000
-
-function haversineM(
-  lng1: number,
-  lat1: number,
-  lng2: number,
-  lat2: number
-): number {
-  const R = 6371000
-  const dLat = ((lat2 - lat1) * Math.PI) / 180
-  const dLng = ((lng2 - lng1) * Math.PI) / 180
-  const a =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos((lat1 * Math.PI) / 180) *
-      Math.cos((lat2 * Math.PI) / 180) *
-      Math.sin(dLng / 2) ** 2
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
-}
 
 export async function readExifTimestamp(file: File): Promise<number | null> {
   try {
@@ -94,7 +78,7 @@ export async function processPhotoFiles(
     const isDuplicate = existingPhotos.some(
       (p) =>
         p.takenAtMs === takenAtMs &&
-        haversineM(p.lng, p.lat, match.lng, match.lat) < 1
+        haversineMeters([p.lng, p.lat], [match.lng, match.lat]) < 1
     )
     if (isDuplicate) continue
 

@@ -1,20 +1,20 @@
-import type { ParsedActivity } from "~/types/activities"
-import { backfillContentHashes } from "~/lib/activityHash"
-import { parseGpxFile } from "./gpx"
-import { parseFitFile } from "./fit"
+import { parseGpxFileWithResults } from "./gpx"
+import { parseFitFileWithResults } from "./fit"
 import { createParserRegistry } from "~/lib/activities/import/registry"
+import type { ParsedImportActivity, ParsedImportParseResult } from "./types"
 
 const parser = createParserRegistry({
-  gpx: parseGpxFile,
-  fit: parseFitFile,
+  gpx: parseGpxFileWithResults,
+  fit: parseFitFileWithResults,
 })
 
-export async function parseFile(file: File): Promise<ParsedActivity[]> {
-  const activities = await parser(file)
+export async function parseFileWithResults(
+  file: File
+): Promise<ParsedImportParseResult> {
+  const result = await parser(file)
+  return Array.isArray(result) ? { activities: result, rejections: [] } : result
+}
 
-  // Stamped here rather than in each parser: the hash is derived purely from
-  // the unified ParsedActivity shape, so it stays format-agnostic and a new
-  // parser gets sync dedupe for free.
-  await backfillContentHashes(activities)
-  return activities
+export async function parseFile(file: File): Promise<ParsedImportActivity[]> {
+  return (await parseFileWithResults(file)).activities
 }

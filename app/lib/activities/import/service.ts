@@ -5,7 +5,13 @@ import type {
 } from "~shared/activities"
 import { flattenActivityPaths } from "~shared/activityContract"
 import { createUuid } from "~/lib/uuid"
-import { parseFile as defaultParseFile } from "~/lib/parsers"
+import { parseFileWithResults as defaultParseFile } from "~/lib/parsers"
+import { logGpsAnomalyReport } from "~/lib/activities/gpsAnomalyDebug"
+import type {
+  ActivityParserResult,
+  ParsedImportActivity,
+  ParsedImportRejection,
+} from "~/lib/parsers/types"
 import { normalizeAndHashActivity } from "~/lib/activities/normalize"
 import { isActivityStorageError } from "../errors"
 import type { DuplicateReason, LibraryCommit } from "../libraryEvents"
@@ -80,7 +86,7 @@ export interface ImportProgressEvent {
 }
 
 export interface ImportServiceOptions {
-  parseFile?: (file: File) => Promise<ParsedActivity[]>
+  parseFile?: (file: File) => Promise<ActivityParserResult>
   commit: (
     operationId: string,
     activities: ParsedActivity[]
@@ -109,12 +115,13 @@ function safeError(error: unknown): { errorCode: string; error: string } {
   }
 }
 
-function compatibilityDraft(activity: ParsedActivity): ActivityDraft {
+function compatibilityDraft(activity: ParsedImportActivity): ActivityDraft {
   const {
     coordinates: _coordinates,
     pointTimestamps: _pointTimestamps,
     paths,
     pathTimestamps,
+    gpsAnomalyReport: _gpsAnomalyReport,
     ...metadata
   } = activity
   if (paths && paths.length > 0) {
@@ -190,6 +197,13 @@ function isDuplicate(
   )
 }
 
+function splitParserResult(result: ActivityParserResult): {
+  activities: ParsedImportActivity[]
+  rejections: ParsedImportRejection[]
+} {
+  return Array.isArray(result) ? { activities: result, rejections: [] } : result
+}
+
 /**
  * Bounded, transport-independent import lifecycle. Parsing failures are kept
  * per file, while one library commit gives the whole accepted batch one
@@ -254,12 +268,36 @@ export function createActivityImportService(
           completedFiles,
           options.onProgress
         )
-        const parsed = await parse(files[outcome.index]!)
-        outcome.parsedActivityCount = parsed.length
+        const parsedResult = splitParserResult(
+          await parse(files[outcome.index]!)
+        )
+        const parsed = parsedResult.activities
+        outcome.parsedActivityCount =
+          parsed.length + parsedResult.rejections.length
+        for (const [
+          rejectionIndex,
+          rejection,
+        ] of parsedResult.rejections.entries()) {
+          if (rejection.gpsAnomalyReport) {
+            logGpsAnomalyReport({
+              fileName: outcome.name,
+              activityIndex:
+                rejection.activityIndex ?? parsed.length + rejectionIndex,
+              report: rejection.gpsAnomalyReport,
+            })
+          }
+          outcome.activities.push({
+            id: rejection.id,
+            status: "rejected",
+            reason: rejection.reason,
+          })
+        }
         if (parsed.length === 0) {
           outcome.status = "rejected"
-          outcome.errorCode = "empty-file"
-          outcome.error = "No activities were found in this file."
+          outcome.errorCode = parsedResult.rejections[0]?.reason ?? "empty-file"
+          outcome.error = parsedResult.rejections[0]
+            ? `Activity rejected: ${parsedResult.rejections[0].reason}.`
+            : "No activities were found in this file."
           return
         }
 
@@ -271,10 +309,17 @@ export function createActivityImportService(
           completedFiles,
           options.onProgress
         )
-        for (const parsedActivity of parsed) {
+        for (const [activityIndex, parsedActivity] of parsed.entries()) {
           const normalized = await normalizeAndHashActivity(
             compatibilityDraft(parsedActivity)
           )
+          if (parsedActivity.gpsAnomalyReport) {
+            logGpsAnomalyReport({
+              fileName: outcome.name,
+              activityIndex,
+              report: parsedActivity.gpsAnomalyReport,
+            })
+          }
           if (!normalized.ok) {
             outcome.warnings.push(...normalized.warnings)
             outcome.activities.push({

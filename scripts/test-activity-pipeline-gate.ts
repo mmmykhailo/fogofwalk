@@ -160,8 +160,10 @@ const checks: GateCheck[] = [
       ),
       browser(
         "concurrent import stage browser regression",
-        "specs/import-progress.spec.ts",
-        "--project=synced"
+        "specs/activity-progress.spec.ts",
+        "--project=synced",
+        "--grep",
+        "\\[I-038\\]"
       ),
     ],
   },

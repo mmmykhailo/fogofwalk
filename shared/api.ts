@@ -319,8 +319,10 @@ export interface ManifestPage {
 export type LegacyActivityUploadPayload = Omit<ParsedActivity, "id">
 export type CanonicalActivityUploadPayload = Omit<CanonicalActivity, "id">
 
-/** Existing callers continue to use the legacy flat upload payload. */
-export type ActivityUploadPayload = LegacyActivityUploadPayload
+/** Downloaded payloads may be legacy or the canonical path-aware shape. */
+export type ActivityUploadPayload =
+  | LegacyActivityUploadPayload
+  | CanonicalActivityUploadPayload
 
 /**
  * Uploads remain readable by old clients while new clients can send the

@@ -73,6 +73,10 @@ function isNullableFiniteNumber(value: unknown): value is number | null {
   return value === null || isFiniteNumber(value)
 }
 
+function isSafeNonnegativeInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0
+}
+
 function isHash(value: unknown): value is string {
   return typeof value === "string" && HASH_PATTERN.test(value)
 }
@@ -118,6 +122,46 @@ function isCoordinate(value: unknown): value is [number, number] {
 
 function isCoordinatePath(value: unknown): value is [number, number][] {
   return Array.isArray(value) && value.every(isCoordinate)
+}
+
+function isValidLapPathRange(
+  value: unknown,
+  paths: readonly unknown[][]
+): boolean {
+  if (!isObject(value)) return false
+  if (
+    !isSafeNonnegativeInteger(value.pathIndex) ||
+    !isSafeNonnegativeInteger(value.startIndex) ||
+    !isSafeNonnegativeInteger(value.endIndex) ||
+    value.endIndex < value.startIndex
+  ) {
+    return false
+  }
+  const path = paths[value.pathIndex]
+  return path !== undefined && value.endIndex < path.length
+}
+
+function isValidLap(value: unknown, paths: readonly unknown[][]): boolean {
+  if (!isObject(value)) return false
+  const totalPointCount = paths.reduce((total, path) => total + path.length, 0)
+  if (
+    !Number.isSafeInteger(value.number) ||
+    !isSafeNonnegativeInteger(value.startIndex) ||
+    !isSafeNonnegativeInteger(value.endIndex) ||
+    value.endIndex < value.startIndex ||
+    value.endIndex >= totalPointCount ||
+    !isNullableFiniteNumber(value.startedAtMs) ||
+    (value.trigger !== undefined && typeof value.trigger !== "string") ||
+    !hasValidStats(value.stats)
+  ) {
+    return false
+  }
+  if (value.pathRanges === undefined) return true
+  return (
+    Array.isArray(value.pathRanges) &&
+    value.pathRanges.length > 0 &&
+    value.pathRanges.every((range) => isValidLapPathRange(range, paths))
+  )
 }
 
 function hasValidGeometry(value: Record<string, unknown>): boolean {
@@ -274,7 +318,14 @@ export function parseActivityPayload(value: unknown): ActivityUploadPayload {
       "The server returned an invalid activity payload."
     )
   }
-  if (value.laps !== undefined && !Array.isArray(value.laps)) {
+  const paths = Array.isArray(value.paths)
+    ? (value.paths as unknown[][])
+    : [value.coordinates as unknown[]]
+  if (
+    value.laps !== undefined &&
+    (!Array.isArray(value.laps) ||
+      !value.laps.every((lap) => isValidLap(lap, paths)))
+  ) {
     throw createSyncTransportError(
       "invalid-payload",
       "The server returned invalid activity lap data."

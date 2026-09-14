@@ -84,6 +84,7 @@ import {
 import { clearMapPosition } from "~/lib/mapStore"
 import { clearRenderedActivityState } from "~/lib/map/commands"
 import { activitiesFeatureCollection } from "~/lib/map/geojson"
+import { pathsForActivity } from "~shared/activityContract"
 import { initAuth, useAuth } from "~/lib/server/authStore"
 import { isServerEnabled } from "~/lib/server/config"
 import {
@@ -354,7 +355,12 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
       durationMs: Date.now() - startedAt,
       itemCount: batch.files.length,
       pointCount: added.reduce(
-        (count, activity) => count + activity.coordinates.length,
+        (count, activity) =>
+          count +
+          pathsForActivity(activity).reduce(
+            (pathCount, path) => pathCount + path.length,
+            0
+          ),
         0
       ),
       result: importResult,
@@ -1275,9 +1281,10 @@ export default function Home() {
     (selectedActivities[0].laps?.length ?? 0) >= 2
       ? selectedActivities[0]
       : null
-  const highlightCoordinates = activeLapActivity?.coordinates ?? null
-  const focusCoordinates =
-    activeLapActivity?.coordinates ?? focusActivity?.coordinates ?? null
+  const highlightPaths = activeLapActivity?.paths ?? null
+  const focusPaths =
+    activeLapActivity?.paths ??
+    (focusActivity ? pathsForActivity(focusActivity) : null)
   const focusKey =
     activeLapActivity?.id ?? (focusActivity ? `${focusActivity.id}#all` : null)
 
@@ -1326,8 +1333,8 @@ export default function Home() {
               }
               showMyLocation={showMyLocation}
               myLocation={myLocationPosition}
-              highlightCoordinates={highlightCoordinates}
-              focusCoordinates={focusCoordinates}
+              highlightPaths={highlightPaths}
+              focusPaths={focusPaths}
               focusKey={focusKey}
               savedPoints={displayedSavedPoints}
               showSavedPoints={showSavedPoints || viewingSavedPoint !== null}

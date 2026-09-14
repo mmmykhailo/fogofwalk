@@ -105,7 +105,7 @@ describe("map rendering commands", () => {
       showActivities: false,
       showFog: false,
       selectedActivityIds: [],
-      highlightCoordinates: null,
+      highlightPaths: null,
       savedPoints: [],
       showSavedPoints: false,
     })

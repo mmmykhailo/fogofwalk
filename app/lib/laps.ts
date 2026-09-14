@@ -1,4 +1,14 @@
-import type { ParsedActivity, ActivityLap } from "~/types/activities"
+import type {
+  ActivityLap,
+  ActivityPathTimestamps,
+  ActivityPaths,
+  ParsedActivity,
+} from "~/types/activities"
+import {
+  flattenActivityPaths,
+  pathTimestampsForActivity,
+  pathsForActivity,
+} from "~shared/activityContract"
 
 // Format-agnostic lap helpers used on the render path. Extracting laps from a
 // file is the parser's job — see `buildLapsFromFit` in lib/parsers/fit.ts.
@@ -28,13 +38,70 @@ export function buildLapActivity(
   activity: ParsedActivity,
   lap: ActivityLap
 ): ParsedActivity {
-  const end = lap.endIndex + 1
+  const parentPaths = pathsForActivity(activity)
+  const parentTimestamps = pathTimestampsForActivity(activity)
+  const paths: ActivityPaths = []
+  const pathTimestamps: ActivityPathTimestamps[] = []
+
+  if (lap.pathRanges && lap.pathRanges.length > 0) {
+    for (const range of lap.pathRanges) {
+      const parentPath = parentPaths[range.pathIndex]
+      if (!parentPath) continue
+      if (
+        !Number.isSafeInteger(range.startIndex) ||
+        !Number.isSafeInteger(range.endIndex) ||
+        range.startIndex < 0 ||
+        range.endIndex < range.startIndex ||
+        range.endIndex >= parentPath.length
+      ) {
+        continue
+      }
+      paths.push(parentPath.slice(range.startIndex, range.endIndex + 1))
+      if (parentTimestamps) {
+        pathTimestamps.push(
+          (parentTimestamps[range.pathIndex] ?? []).slice(
+            range.startIndex,
+            range.endIndex + 1
+          )
+        )
+      }
+    }
+  } else {
+    const parentPath = parentPaths[0]
+    if (
+      parentPath &&
+      Number.isSafeInteger(lap.startIndex) &&
+      Number.isSafeInteger(lap.endIndex) &&
+      lap.startIndex >= 0 &&
+      lap.endIndex >= lap.startIndex &&
+      lap.endIndex < parentPath.length
+    ) {
+      const end = lap.endIndex + 1
+      paths.push(parentPath.slice(lap.startIndex, end))
+      if (parentTimestamps) {
+        pathTimestamps.push(
+          (parentTimestamps[0] ?? []).slice(lap.startIndex, end)
+        )
+      }
+    }
+  }
+
+  const coordinates = flattenActivityPaths(paths)
+  const hasTimestamps = parentTimestamps != null
   return {
     id: `${activity.id}#lap${lap.number}`,
     name: `${stripExt(activity.name)} — Lap ${lap.number}`,
     startedAtMs: lap.startedAtMs,
-    coordinates: activity.coordinates.slice(lap.startIndex, end),
-    pointTimestamps: activity.pointTimestamps?.slice(lap.startIndex, end),
+    coordinates,
+    paths,
+    ...(hasTimestamps
+      ? {
+          pathTimestamps,
+          pointTimestamps: pathTimestamps.flatMap((path) =>
+            path.map((timestamp) => timestamp ?? -1)
+          ),
+        }
+      : {}),
     format: activity.format,
     stats: lap.stats,
     // Deliberately no `laps` — nesting the full lap array (with every lap's
