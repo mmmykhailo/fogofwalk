@@ -6,6 +6,7 @@ import type {
 import { flattenActivityPaths } from "~shared/activityContract"
 import { createUuid } from "~/lib/uuid"
 import { parseFile as defaultParseFile } from "~/lib/parsers"
+import type { ParsedImportActivity } from "~/lib/parsers/types"
 import { normalizeAndHashActivity } from "~/lib/activities/normalize"
 import { isActivityStorageError } from "../errors"
 import type { DuplicateReason, LibraryCommit } from "../libraryEvents"
@@ -80,7 +81,7 @@ export interface ImportProgressEvent {
 }
 
 export interface ImportServiceOptions {
-  parseFile?: (file: File) => Promise<ParsedActivity[]>
+  parseFile?: (file: File) => Promise<ParsedImportActivity[]>
   commit: (
     operationId: string,
     activities: ParsedActivity[]
@@ -109,12 +110,13 @@ function safeError(error: unknown): { errorCode: string; error: string } {
   }
 }
 
-function compatibilityDraft(activity: ParsedActivity): ActivityDraft {
+function compatibilityDraft(activity: ParsedImportActivity): ActivityDraft {
   const {
     coordinates: _coordinates,
     pointTimestamps: _pointTimestamps,
     paths,
     pathTimestamps,
+    gpsAnomalyReport: _gpsAnomalyReport,
     ...metadata
   } = activity
   if (paths && paths.length > 0) {

@@ -68,17 +68,22 @@ export interface ActivityStats {
   elevationProfile: ElevationPoint[]
 }
 
+/** A range into one disconnected parent activity path. */
+export interface ActivityLapPathRange {
+  pathIndex: number
+  /** Inclusive index within the selected activity path. */
+  startIndex: number
+  /** Inclusive index within the selected activity path. */
+  endIndex: number
+}
+
 /**
- * One lap from a FIT file, stored as an index range into the parent activity's
- * `coordinates` rather than as its own geometry.
+ * One lap from a FIT file, stored as index ranges into the parent activity
+ * paths rather than as its own persisted geometry.
  *
- * Two invariants other files rely on:
- * - Adjacent laps **share** their boundary point (`laps[k].startIndex ===
- *   laps[k - 1].endIndex`), so lap geometry is `coordinates.slice(startIndex,
- *   endIndex + 1)` and lap distances sum to the activity distance.
- * - `stats.uniqueDistanceKm` is always 0 — unique distance is a library-wide
- *   grid computation (`populateUniqueDistances`) that is not meaningful per lap.
- *   Consumers must hide the stat rather than render the zero.
+ * Adjacent laps share their boundary point only when they touch inside the
+ * same path. `stats.uniqueDistanceKm` is always 0 because unique distance is
+ * a library-wide grid computation, not a lap-level value.
  */
 export interface ActivityLap {
   /** Original 1-based FIT lap number — stays stable when empty laps are dropped. */
@@ -87,6 +92,11 @@ export interface ActivityLap {
   startIndex: number
   /** Inclusive index into coordinates/pointTimestamps. */
   endIndex: number
+  /**
+   * Canonical ranges into disconnected activity paths. Legacy flat indexes
+   * remain for old records and callers during the migration window.
+   */
+  pathRanges?: ActivityLapPathRange[]
   startedAtMs: number | null
   /** FIT lap_trigger: "manual" | "distance" | "time" | … */
   trigger?: string

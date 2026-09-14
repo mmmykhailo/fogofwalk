@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react"
 import bbox from "@turf/bbox"
-import { lineString } from "@turf/helpers"
+import { lineString, multiLineString } from "@turf/helpers"
 import {
   applyActivitySelectionPaint,
   setActivitiesVisible,
@@ -8,23 +8,23 @@ import {
   setLapHighlightData,
 } from "~/lib/map/commands"
 import { mapStore } from "~/lib/mapStore"
-import type { ActivityCoords } from "~/types/activities"
+import type { ActivityPaths } from "~/types/activities"
 
 interface MapPresentationOptions {
   showActivities: boolean
   showFog: boolean
   selectedActivityIds: string[]
-  highlightCoordinates: ActivityCoords | null
-  focusCoordinates: ActivityCoords | null
+  highlightPaths: ActivityPaths | null
+  focusPaths: ActivityPaths | null
   focusKey: string | null
 }
 
 export function useMapPresentation(options: MapPresentationOptions): void {
   const previousFocusKeyRef = useRef<string | null>(null)
-  const focusCoordinatesRef = useRef(options.focusCoordinates)
-  focusCoordinatesRef.current = options.focusCoordinates
-  const highlightCoordinatesRef = useRef(options.highlightCoordinates)
-  highlightCoordinatesRef.current = options.highlightCoordinates
+  const focusPathsRef = useRef(options.focusPaths)
+  focusPathsRef.current = options.focusPaths
+  const highlightPathsRef = useRef(options.highlightPaths)
+  highlightPathsRef.current = options.highlightPaths
 
   useEffect(() => {
     if (mapStore.map && mapStore.sourcesReady) {
@@ -38,7 +38,7 @@ export function useMapPresentation(options: MapPresentationOptions): void {
 
     const previousFocusKey = previousFocusKeyRef.current
     previousFocusKeyRef.current = options.focusKey
-    setLapHighlightData(map, highlightCoordinatesRef.current)
+    setLapHighlightData(map, highlightPathsRef.current)
 
     const activityIdOf = (key: string | null) => key?.split("#")[0] ?? null
     if (
@@ -47,9 +47,14 @@ export function useMapPresentation(options: MapPresentationOptions): void {
     )
       return
 
-    const coordinates = focusCoordinatesRef.current
-    if (!coordinates || coordinates.length < 2) return
-    const [minLng, minLat, maxLng, maxLat] = bbox(lineString(coordinates))
+    const paths = focusPathsRef.current
+    if (!paths || paths.every((path) => path.length < 2)) return
+    const renderablePaths = paths.filter((path) => path.length >= 2)
+    const geometry =
+      renderablePaths.length === 1
+        ? lineString(renderablePaths[0]!)
+        : multiLineString(renderablePaths)
+    const [minLng, minLat, maxLng, maxLat] = bbox(geometry)
     if (!Number.isFinite(minLng) || !Number.isFinite(minLat)) return
     map.fitBounds(
       [
@@ -66,7 +71,7 @@ export function useMapPresentation(options: MapPresentationOptions): void {
     }
   }, [options.showFog])
 
-  const isLapActive = options.highlightCoordinates != null
+  const isLapActive = options.highlightPaths != null
   useEffect(() => {
     if (mapStore.map && mapStore.sourcesReady) {
       applyActivitySelectionPaint(

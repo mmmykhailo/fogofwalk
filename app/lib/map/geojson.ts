@@ -5,7 +5,11 @@ import {
   point,
 } from "@turf/helpers"
 import { pathsForActivity } from "~shared/activityContract"
-import type { ActivityCoords, ParsedActivity } from "~/types/activities"
+import type {
+  ActivityCoords,
+  ActivityPaths,
+  ParsedActivity,
+} from "~/types/activities"
 import type { SavedPoint } from "~shared/saved-points"
 import { savedPointMarkerImageId } from "~/lib/map/savedPointMarkerImages"
 
@@ -33,10 +37,28 @@ export function activitiesFeatureCollection(
   return featureCollection(features)
 }
 
-export function lapFeatureCollection(coordinates: ActivityCoords | null) {
-  return featureCollection(
-    coordinates && coordinates.length >= 2 ? [lineString(coordinates)] : []
-  )
+export function lapFeatureCollection(
+  input: ActivityCoords | null
+): GeoJSON.FeatureCollection<GeoJSON.LineString | GeoJSON.MultiLineString>
+export function lapFeatureCollection(
+  input: ActivityPaths | null
+): GeoJSON.FeatureCollection<GeoJSON.LineString | GeoJSON.MultiLineString>
+export function lapFeatureCollection(
+  input: ActivityCoords | ActivityPaths | null
+): GeoJSON.FeatureCollection<GeoJSON.LineString | GeoJSON.MultiLineString> {
+  if (!input || input.length === 0) return featureCollection([])
+  const paths = Array.isArray(input[0]?.[0])
+    ? (input as ActivityPaths)
+    : [input as ActivityCoords]
+  const renderablePaths = paths.filter((path) => path.length >= 2)
+  if (renderablePaths.length === 0) return featureCollection([])
+  const geometry =
+    renderablePaths.length === 1
+      ? lineString(renderablePaths[0]!)
+      : multiLineString(renderablePaths)
+  return featureCollection([geometry] as Array<
+    GeoJSON.Feature<GeoJSON.LineString | GeoJSON.MultiLineString>
+  >)
 }
 
 export function savedPointsFeatureCollection(savedPoints: SavedPoint[]) {

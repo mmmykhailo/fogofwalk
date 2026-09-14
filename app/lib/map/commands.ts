@@ -19,7 +19,7 @@ import {
   SAVED_POINT_LAYER_IDS,
 } from "~/lib/map/layers"
 import type { FogMaskLayer } from "~/lib/map/fogMaskLayer"
-import type { ActivityCoords } from "~/types/activities"
+import type { ActivityCoords, ActivityPaths } from "~/types/activities"
 import type { SavedPoint } from "~shared/saved-points"
 import { mapStore, worldFogGeoJSON } from "~/lib/mapStore"
 import { incrementPerformanceCounter } from "~/lib/performance"
@@ -28,7 +28,7 @@ export interface MapPresentationState {
   showActivities: boolean
   showFog: boolean
   selectedActivityIds: string[]
-  highlightCoordinates: ActivityCoords | null
+  highlightPaths: ActivityPaths | null
   savedPoints: SavedPoint[]
   showSavedPoints: boolean
 }
@@ -165,14 +165,14 @@ export function applyActivitySelectionPaint(
 
 export function setLapHighlightData(
   map: maplibregl.Map,
-  coordinates: ActivityCoords | null
+  paths: ActivityCoords | ActivityPaths | null
 ): void {
   const source = map.getSource(MAP_SOURCE_IDS.lap) as
     | maplibregl.GeoJSONSource
     | undefined
   if (source) {
     incrementPerformanceCounter("mapSourceSetDataCalls")
-    source.setData(lapFeatureCollection(coordinates))
+    source.setData(lapFeatureCollection(paths as ActivityPaths | null))
   }
 }
 
@@ -183,12 +183,12 @@ export function rehydrateMapPresentation(
 ): void {
   setSavedPointsPresentation(map, state.savedPoints, state.showSavedPoints)
   setActivitiesVisible(map, state.showActivities)
-  setLapHighlightData(map, state.highlightCoordinates)
+  setLapHighlightData(map, state.highlightPaths)
   setFogVisible(map, state.showFog)
   applyActivitySelectionPaint(
     map,
     state.selectedActivityIds,
-    state.highlightCoordinates != null
+    state.highlightPaths != null
   )
 }
 

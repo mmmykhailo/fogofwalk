@@ -68,13 +68,30 @@ describe("map GeoJSON builders", () => {
   })
 
   test("omits an invalid lap and emits a usable lap", () => {
-    expect(lapFeatureCollection([[14, 50]]).features).toEqual([])
+    expect(lapFeatureCollection([[[14, 50]]]).features).toEqual([])
     expect(
       lapFeatureCollection([
-        [14, 50],
-        [15, 51],
+        [
+          [14, 50],
+          [15, 51],
+        ],
       ]).features
     ).toHaveLength(1)
+  })
+
+  test("emits a disconnected lap as one MultiLineString", () => {
+    const result = lapFeatureCollection([
+      [
+        [14, 50],
+        [14.01, 50.01],
+      ],
+      [
+        [15, 51],
+        [15.01, 51.01],
+      ],
+    ])
+
+    expect(result.features[0]?.geometry.type).toBe("MultiLineString")
   })
 
   test("emits one marker feature with stable image and creation properties", () => {

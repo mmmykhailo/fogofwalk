@@ -1,27 +1,28 @@
 import { gpx } from "@tmcw/togeojson"
-import type {
-  ParsedActivity,
-  RawPoint,
-  ActivityCoords,
-  ActivityPaths,
-  ActivityPathTimestamps,
-} from "~/types/activities"
+import type { ActivityCoords, ActivityPathTimestamps } from "~/types/activities"
 import { computeActivityStatsForPaths } from "~/lib/stats"
 import { normalizeActivityType } from "~/lib/activityType"
 import { deriveStartSunPhase } from "~/lib/sunPhase"
 import { createUuid } from "~/lib/uuid"
+import {
+  detectGpsAnomalies,
+  type AnomalyPoint,
+  type AnomalySourcePath,
+} from "~/lib/activities/gpsAnomalies"
+import type { ParsedImportActivity } from "./types"
 
 function buildRawPoints(
   coords: [number, number, number?][],
   times?: string[]
-): RawPoint[] {
-  return coords.map((c, i) => ({
+): AnomalyPoint[] {
+  return coords.map((c, sourcePointIndex) => ({
     lng: c[0],
     lat: c[1],
-    elevationM: c[2] != null && isFinite(c[2]) ? c[2] : undefined,
+    sourcePointIndex,
+    elevationM: c[2] != null && Number.isFinite(c[2]) ? c[2] : undefined,
     timestampMs: (() => {
-      if (!times?.[i]) return undefined
-      const timestamp = Date.parse(times[i]!)
+      if (!times?.[sourcePointIndex]) return undefined
+      const timestamp = Date.parse(times[sourcePointIndex]!)
       return Number.isFinite(timestamp) ? timestamp : undefined
     })(),
   }))
@@ -32,70 +33,48 @@ function stringTimes(value: unknown): string[] | undefined {
   return value.map((time) => String(time))
 }
 
-function usablePointSegments(points: RawPoint[]): RawPoint[][] {
-  const segments: RawPoint[][] = []
-  let current: RawPoint[] = []
-  const flush = () => {
-    if (current.length >= 2) segments.push(current)
-    current = []
-  }
-  for (const point of points) {
-    if (
-      !Number.isFinite(point.lng) ||
-      !Number.isFinite(point.lat) ||
-      point.lat < -90 ||
-      point.lat > 90 ||
-      point.lng < -180 ||
-      point.lng > 180
-    ) {
-      flush()
-      continue
-    }
-    current.push(point)
-  }
-  flush()
-  return segments
-}
-
 function buildParsedActivity(
   file: File,
   paths: ActivityCoords[],
   pathTimestamps: (string[] | undefined)[],
-  activityType: ParsedActivity["activityType"]
-): ParsedActivity | null {
+  activityType: ParsedImportActivity["activityType"]
+): ParsedImportActivity | null {
   if (paths.length === 0) return null
 
-  const rawPaths = paths.map((path, index) =>
-    buildRawPoints(path as [number, number, number?][], pathTimestamps[index])
-  )
-  const usableSegments = rawPaths.flatMap(usablePointSegments)
-  const allPoints = usableSegments.flat()
-  if (allPoints.length === 0) return null
+  const sourcePaths: AnomalySourcePath[] = paths.map((path, index) => ({
+    sourcePathIndex: index,
+    points: buildRawPoints(
+      path as [number, number, number?][],
+      pathTimestamps[index]
+    ),
+  }))
+  const anomaly = detectGpsAnomalies(sourcePaths, { activityType })
+  if (anomaly.status === "ambiguous" || anomaly.status === "rejected") {
+    return null
+  }
 
-  const timestamps = rawPaths.map((path) =>
+  const canonicalPaths = anomaly.paths.map((path) =>
+    path.map(({ lng, lat }) => [lng, lat] as [number, number])
+  ) as ActivityCoords[]
+  if (canonicalPaths.length === 0) return null
+
+  const timestamps = anomaly.paths.map((path) =>
     path.map((point) => point.timestampMs ?? null)
   )
   const hasTimestamp = timestamps.some((path) =>
     path.some((timestamp) => timestamp != null)
   )
-  const validTimestamps = allPoints
+  const retainedPoints = anomaly.paths.flat()
+  const validTimestamps = retainedPoints
     .map((point) => point.timestampMs)
     .filter(
       (timestamp): timestamp is number =>
-        timestamp != null && isFinite(timestamp)
+        timestamp != null && Number.isFinite(timestamp)
     )
-  // togeojson keeps GPX elevation as a third coordinate ordinate. The
-  // canonical activity geometry is deliberately two-dimensional; elevation is
-  // already captured in the raw stats above. Strip the ordinate before the
-  // draft reaches normalizeActivityGeometry, which rejects non-2D points.
-  const canonicalPaths = paths.map(
-    (path) =>
-      path.map(([lng, lat]) => [lng, lat] as [number, number]) as ActivityCoords
-  )
   const coordinates = canonicalPaths.flatMap((path) => path) as ActivityCoords
-  const stats = computeActivityStatsForPaths(usableSegments)
+  const stats = computeActivityStatsForPaths(anomaly.paths)
   const canonicalTimestamps = hasTimestamp
-    ? timestamps.map((path) => path as ActivityPathTimestamps)
+    ? (timestamps as ActivityPathTimestamps[])
     : undefined
   return {
     id: createUuid(),
@@ -115,6 +94,16 @@ function buildParsedActivity(
     format: "gpx",
     ...(activityType ? { activityType } : {}),
     stats: { ...stats, uniqueDistanceKm: stats.distanceKm },
+    ...(anomaly.status !== "clean"
+      ? {
+          gpsAnomalyReport: {
+            status: anomaly.status,
+            counts: anomaly.counts,
+            examples: anomaly.examples,
+            work: anomaly.work,
+          },
+        }
+      : {}),
   }
 }
 
@@ -123,12 +112,14 @@ function buildParsedActivity(
  * remains one activity with disconnected paths; callers must not connect its
  * endpoints by flattening it into one LineString.
  */
-export async function parseGpxFile(file: File): Promise<ParsedActivity[]> {
+export async function parseGpxFile(
+  file: File
+): Promise<ParsedImportActivity[]> {
   const text = await file.text()
   const dom = new DOMParser().parseFromString(text, "text/xml")
   const geo = gpx(dom)
 
-  const activities: ParsedActivity[] = []
+  const activities: ParsedImportActivity[] = []
   for (const feat of geo.features) {
     if (!feat.geometry) continue
     const activityType = normalizeActivityType(feat.properties?.type)

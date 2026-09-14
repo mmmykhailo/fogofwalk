@@ -1,15 +1,19 @@
 import FitParser from "fit-file-parser"
 import type {
-  ParsedActivity,
   RawPoint,
-  ActivityCoords,
   ActivityLap,
+  ActivityLapPathRange,
 } from "~/types/activities"
-import { computeActivityStats } from "~/lib/stats"
+import { computeActivityStatsForPaths } from "~/lib/stats"
 import { LAP_PROFILE_POINTS, MAX_LAPS } from "~/constants/fog"
 import { normalizeActivityType } from "~/lib/activityType"
 import { deriveStartSunPhase } from "~/lib/sunPhase"
 import { createUuid } from "~/lib/uuid"
+import {
+  detectGpsAnomalies,
+  type AnomalyPoint,
+} from "~/lib/activities/gpsAnomalies"
+import type { ParsedImportActivity } from "./types"
 
 /**
  * `fit-file-parser` decodes every FIT `date_time` field into a `Date` object
@@ -43,10 +47,8 @@ interface LapBoundary {
  * `timestamp` (which is the lap end and is inclusive, so it double-counts
  * boundary points and leaves auto-pause gaps belonging to no lap). Sweeping
  * forward once with a non-decreasing lap index makes the resulting ranges
- * contiguous, non-overlapping and exhaustive by construction. This is also why
- * the sweep runs over `rawPoints` and not over the raw FIT records: the record
- * filter below drops null-lat/lng and null-island records first, so record
- * indices and rawPoint indices do not line up.
+ * contiguous, non-overlapping and exhaustive by construction. The sweep is
+ * repeated per retained path, never across a removed anomaly boundary.
  *
  * Returns `undefined` when there is nothing worth showing a selector for.
  *
@@ -54,10 +56,18 @@ interface LapBoundary {
  * production caller.
  */
 export function buildLapsFromFit(
-  rawPoints: RawPoint[],
+  rawInput: RawPoint[] | RawPoint[][],
   fitLaps: unknown[]
 ): ActivityLap[] | undefined {
-  if (rawPoints.length < 2 || fitLaps.length < 2) return undefined
+  const rawPaths: RawPoint[][] =
+    rawInput.length > 0 && Array.isArray(rawInput[0])
+      ? (rawInput as RawPoint[][])
+      : [rawInput as RawPoint[]]
+  const totalPointCount = rawPaths.reduce(
+    (total, path) => total + path.length,
+    0
+  )
+  if (totalPointCount < 2 || fitLaps.length < 2) return undefined
   if (fitLaps.length > MAX_LAPS) return undefined
 
   // Lap number comes from the position in the FIT lap array, which devices
@@ -83,39 +93,64 @@ export function buildLapsFromFit(
   if (boundaries.length < 2) return undefined
   boundaries.sort((a, b) => a.startMs - b.startMs)
 
-  // Forward sweep: each point joins the latest lap whose start time it has
-  // reached. Points before the first boundary fall into lap 0, and points with
-  // no timestamp inherit the current lap rather than being dropped — either
-  // would punch a hole in an otherwise contiguous range.
-  const firstIndex = new Array<number>(boundaries.length).fill(-1)
-  const lastIndex = new Array<number>(boundaries.length).fill(-1)
-  let lapIdx = 0
-  for (let i = 0; i < rawPoints.length; i++) {
-    const ts = rawPoints[i].timestampMs
-    if (ts != null) {
-      while (
-        lapIdx + 1 < boundaries.length &&
-        ts >= boundaries[lapIdx + 1].startMs
-      ) {
-        lapIdx++
+  const rangesByLap = boundaries.map(() => [] as ActivityLapPathRange[])
+  for (let pathIndex = 0; pathIndex < rawPaths.length; pathIndex += 1) {
+    const rawPoints = rawPaths[pathIndex]!
+    let lapIdx = 0
+    let startIndex = -1
+    let activeLap = -1
+    const flush = (endIndex: number) => {
+      if (activeLap === -1 || startIndex === -1) return
+      rangesByLap[activeLap]!.push({ pathIndex, startIndex, endIndex })
+      startIndex = -1
+    }
+    for (let pointIndex = 0; pointIndex < rawPoints.length; pointIndex += 1) {
+      const timestamp = rawPoints[pointIndex]!.timestampMs
+      if (timestamp != null) {
+        while (
+          lapIdx + 1 < boundaries.length &&
+          timestamp >= boundaries[lapIdx + 1]!.startMs
+        ) {
+          lapIdx += 1
+        }
+      }
+      if (activeLap !== lapIdx) {
+        flush(pointIndex - 1)
+        activeLap = lapIdx
+        startIndex = pointIndex
       }
     }
-    if (firstIndex[lapIdx] === -1) firstIndex[lapIdx] = i
-    lastIndex[lapIdx] = i
+    flush(rawPoints.length - 1)
   }
 
   const laps: ActivityLap[] = []
-  for (let k = 0; k < boundaries.length; k++) {
-    if (firstIndex[k] === -1) continue // lap with no surviving GPS points
-    // Extend backwards to the previous lap's last point so the highlighted
-    // polylines are contiguous and lap distances sum to the activity distance.
-    const prev = laps[laps.length - 1]
-    const startIndex = prev ? prev.endIndex : firstIndex[k]
-    const endIndex = lastIndex[k]
-    if (endIndex - startIndex < 1) continue // needs 2+ points to be a LineString
+  let previousRanges: ActivityLapPathRange[] = []
+  for (let k = 0; k < boundaries.length; k += 1) {
+    const ranges = rangesByLap[k]!
+    if (ranges.length === 0) continue
 
-    const slice = rawPoints.slice(startIndex, endIndex + 1)
-    const stats = computeActivityStats(slice, LAP_PROFILE_POINTS)
+    // Adjacent laps share a boundary point only when the ranges touch inside
+    // the same retained path. A removed anomaly gap has no such adjacency.
+    for (const range of ranges) {
+      const previous = previousRanges.find(
+        (candidate) =>
+          candidate.pathIndex === range.pathIndex &&
+          candidate.endIndex + 1 === range.startIndex
+      )
+      if (previous) range.startIndex = previous.endIndex
+    }
+
+    const slices = ranges.map((range) =>
+      rawPaths[range.pathIndex]!.slice(range.startIndex, range.endIndex + 1)
+    )
+    const pointCount = slices.reduce((total, slice) => total + slice.length, 0)
+    if (
+      pointCount < 2 ||
+      !ranges.some((range) => range.endIndex - range.startIndex >= 1)
+    ) {
+      continue
+    }
+    const stats = computeActivityStatsForPaths(slices, LAP_PROFILE_POINTS)
 
     // The shared boundary point means durationMs would also count the gap
     // bridging into this lap — minutes if the user pressed lap while standing
@@ -126,7 +161,8 @@ export function buildLapsFromFit(
       isFinite(boundaries[k].totalElapsedTimeS as number)
         ? (boundaries[k].totalElapsedTimeS as number) * 1000
         : null
-    const durationMs = elapsedMs ?? stats.durationMs
+    const durationMs =
+      ranges.length > 1 ? stats.durationMs : (elapsedMs ?? stats.durationMs)
     const avgPaceMinPerKm =
       durationMs != null && durationMs > 0 && stats.distanceKm > 0
         ? durationMs / 60_000 / stats.distanceKm
@@ -136,11 +172,16 @@ export function buildLapsFromFit(
         ? stats.distanceKm / (durationMs / 3_600_000)
         : null
 
-    const startTs = rawPoints[startIndex].timestampMs
+    const firstSlice = slices[0]!
+    const startTs = firstSlice.find(
+      (point) => point.timestampMs != null && isFinite(point.timestampMs)
+    )?.timestampMs
+    const firstRange = ranges[0]!
     laps.push({
       number: boundaries[k].number,
-      startIndex,
-      endIndex,
+      startIndex: firstRange.startIndex,
+      endIndex: firstRange.endIndex,
+      pathRanges: ranges,
       startedAtMs: startTs != null && isFinite(startTs) ? startTs : null,
       trigger: boundaries[k].trigger,
       stats: {
@@ -153,6 +194,7 @@ export function buildLapsFromFit(
         uniqueDistanceKm: 0,
       },
     })
+    previousRanges = ranges
   }
 
   // One lap spanning the whole activity is what every FIT has; a selector with
@@ -160,7 +202,9 @@ export function buildLapsFromFit(
   return laps.length >= 2 ? laps : undefined
 }
 
-export async function parseFitFile(file: File): Promise<ParsedActivity[]> {
+export async function parseFitFile(
+  file: File
+): Promise<ParsedImportActivity[]> {
   const buffer = await file.arrayBuffer()
   const parser = new FitParser({ force: true, speedUnit: "m/s" })
   const data = await parser.parseAsync(buffer)
@@ -178,47 +222,85 @@ export async function parseFitFile(file: File): Promise<ParsedActivity[]> {
 
   if (validRecords.length < 2) return []
 
-  const rawPoints: RawPoint[] = validRecords.map((r) => {
+  const activityType = normalizeActivityType(
+    data.sessions?.[0]?.sport ?? data.sports?.[0]?.sport
+  )
+  const rawPoints: AnomalyPoint[] = validRecords.map((r, sourcePointIndex) => {
     const alt = r.enhanced_altitude ?? r.altitude
     const ts = fitTimeToMs(r.timestamp)
+    const recordedSpeed = r.enhanced_speed ?? r.speed
     return {
+      sourcePointIndex,
       lng: r.position_long as number,
       lat: r.position_lat as number,
       elevationM: typeof alt === "number" && isFinite(alt) ? alt : undefined,
       timestampMs: isFinite(ts) ? ts : undefined,
+      ...(typeof recordedSpeed === "number" && isFinite(recordedSpeed)
+        ? { recordedSpeedMps: recordedSpeed }
+        : {}),
+      ...(typeof r.gps_accuracy === "number" && isFinite(r.gps_accuracy)
+        ? { gpsAccuracyM: r.gps_accuracy }
+        : {}),
     }
   })
 
-  const coords: ActivityCoords = rawPoints.map((p) => [p.lng, p.lat])
-  const ts = rawPoints.map((p) => p.timestampMs)
-
-  const validTs = ts.filter((t): t is number => t != null && isFinite(t))
-  const stats = computeActivityStats(rawPoints)
-  const laps = buildLapsFromFit(rawPoints, data.laps ?? [])
-  const activityType = normalizeActivityType(
-    data.sessions?.[0]?.sport ?? data.sports?.[0]?.sport
+  const anomaly = detectGpsAnomalies(
+    [{ sourcePathIndex: 0, points: rawPoints }],
+    { activityType }
   )
+  if (anomaly.status === "ambiguous" || anomaly.status === "rejected") {
+    return []
+  }
+
+  const retainedPaths = anomaly.paths
+  const coords = retainedPaths.flatMap((path) =>
+    path.map((point) => [point.lng, point.lat] as [number, number])
+  )
+  const timestamps = retainedPaths.map((path) =>
+    path.map((point) => point.timestampMs ?? null)
+  )
+
+  const validTs = retainedPaths
+    .flat()
+    .map((point) => point.timestampMs)
+    .filter((t): t is number => t != null && isFinite(t))
+  const stats = computeActivityStatsForPaths(retainedPaths)
+  const laps = buildLapsFromFit(retainedPaths, data.laps ?? [])
   return [
     {
       id: createUuid(),
       name: file.name,
       startedAtMs: validTs.length > 0 ? validTs[0] : null,
       coordinates: coords,
-      paths: [coords],
-      ...(ts.some((timestamp) => timestamp != null)
-        ? { pathTimestamps: [ts.map((timestamp) => timestamp ?? null)] }
+      paths: retainedPaths.map((path) =>
+        path.map((point) => [point.lng, point.lat] as [number, number])
+      ),
+      ...(timestamps.some((path) => path.some((timestamp) => timestamp != null))
+        ? { pathTimestamps: timestamps }
         : {}),
       startSunPhase: deriveStartSunPhase(
         coords,
         validTs.length > 0 ? validTs[0] : null
       ),
-      pointTimestamps: ts.every((t) => t == null)
+      pointTimestamps: timestamps.every((path) =>
+        path.every((timestamp) => timestamp == null)
+      )
         ? undefined
-        : ts.map((t) => t ?? -1),
+        : timestamps.flatMap((path) => path.map((t) => t ?? -1)),
       format: "fit",
       ...(activityType ? { activityType } : {}),
       stats: { ...stats, uniqueDistanceKm: stats.distanceKm },
       ...(laps ? { laps } : {}),
+      ...(anomaly.status !== "clean"
+        ? {
+            gpsAnomalyReport: {
+              status: anomaly.status,
+              counts: anomaly.counts,
+              examples: anomaly.examples,
+              work: anomaly.work,
+            },
+          }
+        : {}),
     },
   ]
 }

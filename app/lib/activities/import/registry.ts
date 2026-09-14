@@ -1,6 +1,6 @@
-import type { ParsedActivity } from "~/types/activities"
+import type { ParsedImportActivity } from "~/lib/parsers/types"
 
-export type ActivityParser = (file: File) => Promise<ParsedActivity[]>
+export type ActivityParser = (file: File) => Promise<ParsedImportActivity[]>
 
 export type ActivityFileFormat = "gpx" | "fit"
 

@@ -58,7 +58,7 @@ export function useMapLifecycle(
     showActivities: optionsRef.current.showActivities,
     showFog: optionsRef.current.showFog,
     selectedActivityIds: optionsRef.current.selectedActivityIds,
-    highlightCoordinates: optionsRef.current.highlightCoordinates,
+    highlightPaths: optionsRef.current.highlightPaths,
     savedPoints: optionsRef.current.savedPoints,
     showSavedPoints: optionsRef.current.showSavedPoints,
   })
