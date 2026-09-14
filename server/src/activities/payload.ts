@@ -33,10 +33,17 @@ const statsSchema = z.object({
   elevationProfile: z.array(elevationPointSchema),
 })
 
+const lapPathRangeSchema = z.object({
+  pathIndex: z.number().int().nonnegative(),
+  startIndex: z.number().int().nonnegative(),
+  endIndex: z.number().int().nonnegative(),
+})
+
 const lapSchema = z.object({
   number: z.number().int(),
   startIndex: z.number().int().nonnegative(),
   endIndex: z.number().int().nonnegative(),
+  pathRanges: z.array(lapPathRangeSchema).min(1).optional(),
   startedAtMs: finite.nullable(),
   trigger: z.string().optional(),
   stats: statsSchema,

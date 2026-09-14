@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test"
-import type { ActivityMeta, ActivityUploadPayload } from "~shared/api"
+import type {
+  ActivityMeta,
+  ActivityUploadPayload,
+  LegacyActivityUploadPayload,
+} from "~shared/api"
 import {
   parseActivityPayload,
   parseManifestPage,
@@ -10,7 +14,7 @@ import {
 import { computeContentHash } from "~/lib/activityHash"
 import type { ParsedActivity } from "~/types/activities"
 
-function payload(): ActivityUploadPayload {
+function payload(): LegacyActivityUploadPayload {
   return {
     name: "walk.gpx",
     startedAtMs: 0,
@@ -114,6 +118,49 @@ describe("sync transport validation", () => {
     })
     expect("coordinates" in wire).toBe(false)
     expect("pointTimestamps" in wire).toBe(false)
+  })
+
+  test("validates path-aware lap ranges against downloaded paths", () => {
+    const { coordinates: _coordinates, ...base } = payload()
+    const canonical = {
+      ...base,
+      paths: [
+        [
+          [14, 50],
+          [14.01, 50.01],
+        ],
+        [
+          [15, 51],
+          [15.01, 51.01],
+        ],
+      ],
+      laps: [
+        {
+          number: 1,
+          startIndex: 0,
+          endIndex: 1,
+          pathRanges: [
+            { pathIndex: 0, startIndex: 0, endIndex: 1 },
+            { pathIndex: 1, startIndex: 0, endIndex: 1 },
+          ],
+          startedAtMs: 0,
+          stats: payload().stats,
+        },
+      ],
+    } as ActivityUploadPayload
+
+    expect(parseActivityPayload(canonical)).toEqual(canonical)
+    expectSyncTransportError(() =>
+      parseActivityPayload({
+        ...canonical,
+        laps: [
+          {
+            ...canonical.laps![0],
+            pathRanges: [{ pathIndex: 4, startIndex: 0, endIndex: 1 }],
+          },
+        ],
+      })
+    )
   })
 
   test("rejects a downloaded body whose geometry does not match the hash", async () => {

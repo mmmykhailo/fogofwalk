@@ -1092,8 +1092,9 @@ export function createActivitySyncExecutor(
         throwIfSyncAborted(signal)
         const localId = activityIdFor(snapshot, undefined, payload.contentHash)
         const coordinates =
-          result.payload.coordinates ??
-          flattenActivityPaths(result.payload.paths ?? [])
+          "coordinates" in result.payload
+            ? result.payload.coordinates
+            : flattenActivityPaths(result.payload.paths)
         const activity: ParsedActivity = {
           ...result.payload,
           coordinates,
