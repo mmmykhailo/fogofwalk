@@ -229,13 +229,10 @@ export function computeActivityStatsForPaths(
     distanceOffset += part.distanceKm
   }
 
-  const firstTimestampMs = paths
-    .flatMap((path) => path)
-    .find((point) => point.timestampMs != null)?.timestampMs
-  const flattened = paths.flatMap((path) => path)
-  const lastTimestampMs = [...flattened]
-    .reverse()
-    .find((point) => point.timestampMs != null)?.timestampMs
+  const firstPath = paths.find((path) => path.length > 0)
+  const lastPath = [...paths].reverse().find((path) => path.length > 0)
+  const firstTimestampMs = firstPath?.[0]?.timestampMs
+  const lastTimestampMs = lastPath?.[lastPath.length - 1]?.timestampMs
   const durationMs =
     firstTimestampMs != null && lastTimestampMs != null
       ? lastTimestampMs - firstTimestampMs

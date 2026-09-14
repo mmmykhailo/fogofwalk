@@ -4,13 +4,13 @@ import { computeActivityStatsForPaths } from "./stats"
 function point(
   lng: number,
   lat: number,
-  timestampMs: number
+  timestampMs?: number
 ): {
   lng: number
   lat: number
-  timestampMs: number
+  timestampMs?: number
 } {
-  return { lng, lat, timestampMs }
+  return { lng, lat, ...(timestampMs == null ? {} : { timestampMs }) }
 }
 
 describe("computeActivityStatsForPaths", () => {
@@ -46,5 +46,19 @@ describe("computeActivityStatsForPaths", () => {
       result.distanceKm,
       6
     )
+  })
+
+  test("requires timestamps on both retained activity endpoints for duration", () => {
+    const missingFirst = computeActivityStatsForPaths([
+      [point(14, 50), point(14.01, 50, 2_000)],
+      [point(15, 50, 60_000), point(15.01, 50, 61_000)],
+    ])
+    const missingLast = computeActivityStatsForPaths([
+      [point(14, 50, 1_000), point(14.01, 50, 2_000)],
+      [point(15, 50, 60_000), point(15.01, 50)],
+    ])
+
+    expect(missingFirst.durationMs).toBeNull()
+    expect(missingLast.durationMs).toBeNull()
   })
 })
