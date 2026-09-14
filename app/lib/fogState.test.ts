@@ -15,6 +15,9 @@ import {
   FOG_ALGORITHM_VERSION,
   FOG_PARTITION_SCHEME_VERSION,
   FOG_PROTOCOL_VERSION,
+  type FogDiagnostics,
+  type FogRequest,
+  type FogSnapshot,
 } from "~/lib/fog/protocol"
 import type { ParsedActivity } from "~/types/activities"
 
@@ -86,6 +89,34 @@ function activity(id: string): ParsedActivity {
       avgSpeedKmh: null,
       avgMovingSpeedKmh: null,
       elevationProfile: [],
+    },
+  }
+}
+
+function snapshotForRequest(
+  request: FogRequest,
+  diagnostics: Partial<FogDiagnostics> = {}
+): FogSnapshot {
+  return {
+    generation: request.generation,
+    libraryRevision: request.libraryRevision,
+    coverageRevision: request.coverageRevision,
+    mode: request.mode,
+    algorithmVersion: FOG_ALGORITHM_VERSION,
+    partitionSchemeVersion: FOG_PARTITION_SCHEME_VERSION,
+    completeness: "complete",
+    geometry: worldFogGeoJSON(),
+    diagnostics: {
+      processed: request.activities.length,
+      total: request.activities.length,
+      inputPoints: 0,
+      outputPoints: 0,
+      featureCount: 0,
+      vertexCount: 0,
+      warnings: [],
+      errors: [],
+      degraded: false,
+      ...diagnostics,
     },
   }
 }
@@ -464,6 +495,116 @@ describe("fog worker run state", () => {
       activities: [
         { id: second.id, name: second.name, coordinates: second.coordinates },
       ],
+    })
+  })
+
+  test("keeps append progress request-local when snapshots are cumulative", () => {
+    const messages: unknown[] = []
+    const base = activity("base")
+    const added = Array.from({ length: 209 }, (_, index) =>
+      activity(`added-${index}`)
+    )
+    mapStore.worker = {
+      postMessage(message: unknown) {
+        messages.push(message)
+      },
+    } as unknown as Worker
+    mapStore.activities = [base]
+    mapStore.runId = 30
+    mapStore.libraryRevision = 1
+    mapStore.coverageRevision = 1
+    mapStore.fogMode = "corridor"
+
+    postToFogWorker({
+      type: "PROCESS_ACTIVITIES",
+      activities: [base],
+      mode: "corridor",
+      kind: "rebuild",
+      libraryRevision: 1,
+      coverageRevision: 1,
+    })
+    const baseRequest = messages[0] as FogRequest
+    const baseSnapshot = snapshotForRequest(baseRequest)
+    fogCoordinator.handleReply({
+      type: "DONE",
+      protocolVersion: FOG_PROTOCOL_VERSION,
+      requestId: baseRequest.requestId,
+      generation: baseRequest.generation,
+      snapshot: baseSnapshot,
+    })
+    recordFogSnapshot(baseSnapshot)
+
+    mapStore.activities = [base, ...added]
+    mapStore.libraryRevision = 2
+    mapStore.coverageRevision = 2
+    postToFogWorker({
+      type: "PROCESS_ACTIVITIES",
+      activities: added,
+      mode: "corridor",
+      kind: "append",
+      libraryRevision: 2,
+      coverageRevision: 2,
+    })
+
+    const appendRequest = messages[1] as FogRequest
+    expect(appendRequest.kind).toBe("append")
+    expect(appendRequest.activities).toHaveLength(209)
+    expect(getFogStatus()).toMatchObject({
+      requestId: appendRequest.requestId,
+      processed: 0,
+      total: 209,
+    })
+
+    const progressReply = {
+      type: "PROGRESS" as const,
+      protocolVersion: FOG_PROTOCOL_VERSION,
+      requestId: appendRequest.requestId,
+      generation: appendRequest.generation,
+      libraryRevision: appendRequest.libraryRevision,
+      coverageRevision: appendRequest.coverageRevision,
+      mode: appendRequest.mode,
+      processed: 100,
+      total: 209,
+      stage: "buffering" as const,
+    }
+    expect(fogCoordinator.handleReply(progressReply).accepted).toBe(true)
+    expect(getFogStatus()).toMatchObject({ processed: 100, total: 209 })
+
+    const interimSnapshot = snapshotForRequest(appendRequest, {
+      processed: 101,
+      total: 210,
+    })
+    recordFogSnapshot(interimSnapshot, false)
+    expect(getFogStatus()).toMatchObject({ processed: 100, total: 209 })
+
+    expect(
+      fogCoordinator.handleReply({ ...progressReply, processed: 90 }).accepted
+    ).toBe(true)
+    expect(getFogStatus()).toMatchObject({ processed: 100, total: 209 })
+
+    expect(
+      fogCoordinator.handleReply({ ...progressReply, processed: 150 }).accepted
+    ).toBe(true)
+    expect(getFogStatus()).toMatchObject({ processed: 150, total: 209 })
+
+    const finalSnapshot = snapshotForRequest(appendRequest, {
+      processed: 210,
+      total: 210,
+    })
+    const terminal = fogCoordinator.handleReply({
+      type: "DONE",
+      protocolVersion: FOG_PROTOCOL_VERSION,
+      requestId: appendRequest.requestId,
+      generation: appendRequest.generation,
+      snapshot: finalSnapshot,
+    })
+    expect(terminal).toMatchObject({ accepted: true, terminal: true })
+    recordFogSnapshot(finalSnapshot)
+    expect(getFogStatus()).toMatchObject({
+      requestId: appendRequest.requestId,
+      processed: 209,
+      total: 209,
+      phase: "idle",
     })
   })
 

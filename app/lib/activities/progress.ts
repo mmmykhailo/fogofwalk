@@ -107,12 +107,13 @@ function rowsFromObserved(
   observedRows: ActivityProgressObservedRows | readonly ActivityProgressRow[]
 ): ActivityProgressObservedRows {
   if (Array.isArray(observedRows)) {
-    return observedRows.reduce<ActivityProgressObservedRows>((rows, row) => {
+    const rows: ActivityProgressObservedRows = {}
+    for (const row of observedRows as readonly ActivityProgressRow[]) {
       rows[row.stage] = row
-      return rows
-    }, {})
+    }
+    return rows
   }
-  return observedRows
+  return observedRows as ActivityProgressObservedRows
 }
 
 export function getActivityProgressIdentities(

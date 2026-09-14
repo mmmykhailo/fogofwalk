@@ -584,6 +584,7 @@ export const fogCoordinator = createFogCoordinator(
       })
       updateFogStatus({
         phase: "processing",
+        requestId: request.requestId,
         generation: request.generation,
         libraryRevision: request.libraryRevision,
         coverageRevision: request.coverageRevision,
@@ -605,6 +606,12 @@ export const fogCoordinator = createFogCoordinator(
       })
     },
     onProgress: (progress, context) => {
+      if (fogStatus.requestId !== context.request.requestId) return
+      const total = context.request.activities.length
+      const processed = Math.max(
+        fogStatus.processed,
+        clampFogProgress(progress.processed, total)
+      )
       recordDiagnostic({
         subsystem: "fog",
         operationId: context.request.requestId,
@@ -615,12 +622,13 @@ export const fogCoordinator = createFogCoordinator(
       })
       updateFogStatus({
         phase: fogStatus.phase === "degraded" ? "degraded" : "processing",
+        requestId: context.request.requestId,
         generation: context.request.generation,
         libraryRevision: context.request.libraryRevision,
         coverageRevision: context.request.coverageRevision,
         mode: context.request.mode,
-        processed: progress.processed,
-        total: progress.total,
+        processed,
+        total,
       })
     },
     onError: (error) => {
@@ -666,6 +674,7 @@ export const fogCoordinator = createFogCoordinator(
       })
       updateFogStatus({
         phase: "recovering",
+        requestId: context.request.requestId,
         generation: context.request.generation,
         libraryRevision: context.request.libraryRevision,
         coverageRevision: context.request.coverageRevision,
@@ -716,6 +725,7 @@ export const fogCoordinator = createFogCoordinator(
       if (terminal.status === "failed") {
         updateFogStatus({
           phase: "failed",
+          requestId: terminal.context.request.requestId,
           error: terminal.error ?? "Fog processing failed.",
           retryable: true,
         })
@@ -723,6 +733,9 @@ export const fogCoordinator = createFogCoordinator(
         const diagnostics = terminal.snapshot.diagnostics
         updateFogStatus({
           phase: "degraded",
+          requestId: terminal.context.request.requestId,
+          processed: terminal.context.request.activities.length,
+          total: terminal.context.request.activities.length,
           error:
             diagnostics.errors[0] ??
             "Fog completed with reduced coverage; your activities are safe.",
@@ -744,10 +757,12 @@ export const fogCoordinator = createFogCoordinator(
       } else if (
         terminal.status === "cancelled" &&
         !fogCoordinator.activeRequest &&
-        !fogCoordinator.queuedSnapshot
+        !fogCoordinator.queuedSnapshot &&
+        terminal.context.request.generation === mapStore.runId
       ) {
         updateFogStatus({
           phase: "idle",
+          requestId: null,
           processed: 0,
           total: 0,
           error: null,
@@ -762,6 +777,12 @@ export const fogCoordinator = createFogCoordinator(
           repairedActivityCount: 0,
           rejectedActivityCount: 0,
           geometryFallbackCount: 0,
+        })
+      } else if (terminal.status === "complete" && terminal.snapshot) {
+        updateFogStatus({
+          requestId: terminal.context.request.requestId,
+          processed: terminal.context.request.activities.length,
+          total: terminal.context.request.activities.length,
         })
       }
     },
@@ -787,6 +808,12 @@ function workerPointCount(activities: readonly FogWorkerActivity[]): number {
         : activity.coordinates.length),
     0
   )
+}
+
+function clampFogProgress(processed: number, total: number): number {
+  const maximum = Number.isFinite(total) ? Math.max(0, total) : 0
+  const current = Number.isFinite(processed) ? processed : 0
+  return Math.min(maximum, Math.max(0, current))
 }
 
 function snapshotGeometryMetrics(snapshot: FogSnapshot) {
@@ -1031,8 +1058,6 @@ export function recordFogSnapshot(
     libraryRevision: snapshot.libraryRevision,
     coverageRevision: snapshot.coverageRevision,
     mode: snapshot.mode,
-    processed: snapshot.diagnostics.processed,
-    total: snapshot.diagnostics.total,
     error: terminal
       ? (diagnostics.errors[0] ??
         (diagnostics.degraded
@@ -1077,6 +1102,7 @@ export function startFogRun(): number {
   mapStore.renderSourceRevision = null
   updateFogStatus({
     phase: "processing",
+    requestId: null,
     generation: mapStore.runId,
     libraryRevision: mapStore.libraryRevision,
     coverageRevision: mapStore.coverageRevision,
