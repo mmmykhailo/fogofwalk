@@ -249,6 +249,33 @@ describe("activity progress session", () => {
     expect(replacement.fogRequestId).toBe("fog-2")
   })
 
+  test("starts a fog-only display session after a dismissed import", () => {
+    const imported = merge(
+      createActivityProgressSession(),
+      importStatus({
+        phase: "complete",
+        completedFiles: 3,
+        isSaveStageVisible: true,
+        savedFileIndexes: { 0: true, 1: true, 2: true },
+      }),
+      fogStatus()
+    )
+    const rebuilt = merge(
+      imported,
+      importStatus({ phase: "complete", isVisible: false }),
+      fogStatus({
+        phase: "processing",
+        requestId: "fog-2",
+        processed: 0,
+        total: 3,
+      })
+    )
+
+    expect(getActivityProgressRows(rebuilt).map((row) => row.stage)).toEqual([
+      "fog",
+    ])
+  })
+
   test("only considers positive, fully complete rows complete", () => {
     const empty = createActivityProgressSession()
     expect(isActivityProgressSessionComplete(empty)).toBe(false)

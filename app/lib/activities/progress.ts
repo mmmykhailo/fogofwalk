@@ -211,6 +211,7 @@ export function mergeActivityProgressSession(
     hasFogObservation &&
     (identities.fogRequestId !== session.fogRequestId ||
       identities.fogGeneration !== session.fogGeneration)
+  const isFogOnlyReplacement = isNewFogRequest && !hasImportObservation
   const nextRows: Partial<Record<ActivityProgressStage, ActivityProgressRow>> =
     {
       ...session.rows,
@@ -221,6 +222,10 @@ export function mergeActivityProgressSession(
     delete nextRows.saved
   }
   if (isNewFogRequest) delete nextRows.fog
+  if (isFogOnlyReplacement) {
+    delete nextRows.parsing
+    delete nextRows.saved
+  }
 
   for (const stage of ACTIVITY_PROGRESS_STAGE_ORDER) {
     const row = observed[stage]
@@ -230,9 +235,11 @@ export function mergeActivityProgressSession(
 
   const nextSession: ActivityProgressSession = {
     rows: nextRows,
-    importOperationId: hasImportObservation
-      ? identities.importOperationId
-      : session.importOperationId,
+    importOperationId: isFogOnlyReplacement
+      ? null
+      : hasImportObservation
+        ? identities.importOperationId
+        : session.importOperationId,
     fogRequestId: hasFogObservation
       ? identities.fogRequestId
       : session.fogRequestId,

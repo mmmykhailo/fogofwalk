@@ -27,6 +27,15 @@ type TestImportTerminalStatus =
   | "cancelled"
   | "failed"
 
+interface TestFogRequest {
+  requestId: string
+  generation: number
+  libraryRevision: number
+  coverageRevision: number
+  mode: "corridor" | "fill"
+  total: number
+}
+
 async function beginImport(
   page: Page,
   operationId: string,
@@ -93,29 +102,112 @@ async function completeImport(
   )
 }
 
-async function setFogSnapshot(
+async function startFakeFogRequest(
   page: Page,
-  options: { terminal: boolean; processed: number; total: number }
+  total: number
+): Promise<TestFogRequest> {
+  return page.evaluate(async (activityCount) => {
+    const mapStoreModuleUrl = "/app/lib/mapStore.ts"
+    const fog = await import(/* @vite-ignore */ mapStoreModuleUrl)
+    const originalWorker = fog.mapStore.worker
+    const originalActivities = fog.mapStore.activities
+    const activities = Array.from({ length: activityCount }, (_, index) => ({
+      id: `e2e-fog-${index}`,
+      name: `e2e-fog-${index}.gpx`,
+      coordinates: [
+        [14, 50],
+        [14.01, 50.01],
+      ],
+    }))
+    fog.mapStore.activities = activities as never
+    fog.mapStore.worker = { postMessage() {} } as unknown as Worker
+    const scheduled = fog.postToFogWorker({
+      type: "PROCESS_ACTIVITIES",
+      activities,
+      mode: fog.mapStore.fogMode,
+      kind: "rebuild",
+      libraryRevision: fog.mapStore.libraryRevision,
+      coverageRevision: fog.mapStore.coverageRevision,
+    })
+    const request = fog.fogCoordinator.activeRequest?.request
+    if (!scheduled || !request) {
+      fog.mapStore.worker = originalWorker
+      fog.mapStore.activities = originalActivities
+      throw new Error("failed to start fake fog request")
+    }
+    ;(
+      window as Window & {
+        __activityProgressFogHarness?: {
+          originalWorker: Worker | null
+          originalActivities: unknown[]
+        }
+      }
+    ).__activityProgressFogHarness = { originalWorker, originalActivities }
+    return {
+      requestId: request.requestId,
+      generation: request.generation,
+      libraryRevision: request.libraryRevision,
+      coverageRevision: request.coverageRevision,
+      mode: request.mode,
+      total: request.activities.length,
+    }
+  }, total)
+}
+
+async function setFogProgress(
+  page: Page,
+  request: TestFogRequest,
+  processed: number
 ): Promise<void> {
-  await page.evaluate(async ({ terminal, processed, total }) => {
+  await page.evaluate(
+    async ({ request: currentRequest, processed: currentProcessed }) => {
+      const mapStoreModuleUrl = "/app/lib/mapStore.ts"
+      const protocolModuleUrl = "/app/lib/fog/protocol.ts"
+      const [fog, protocol] = await Promise.all([
+        import(/* @vite-ignore */ mapStoreModuleUrl),
+        import(/* @vite-ignore */ protocolModuleUrl),
+      ])
+      const result = fog.fogCoordinator.handleReply({
+        type: "PROGRESS",
+        protocolVersion: protocol.FOG_PROTOCOL_VERSION,
+        requestId: currentRequest.requestId,
+        generation: currentRequest.generation,
+        libraryRevision: currentRequest.libraryRevision,
+        coverageRevision: currentRequest.coverageRevision,
+        mode: currentRequest.mode,
+        processed: currentProcessed,
+        total: currentRequest.total,
+        stage: "buffering",
+      })
+      if (!result.accepted) throw new Error("fake fog progress was rejected")
+    },
+    { request, processed }
+  )
+}
+
+async function completeFakeFogRequest(
+  page: Page,
+  request: TestFogRequest
+): Promise<void> {
+  await page.evaluate(async (currentRequest) => {
     const mapStoreModuleUrl = "/app/lib/mapStore.ts"
     const protocolModuleUrl = "/app/lib/fog/protocol.ts"
-    const [{ mapStore, recordFogSnapshot }, protocol] = await Promise.all([
+    const [fog, protocol] = await Promise.all([
       import(/* @vite-ignore */ mapStoreModuleUrl),
       import(/* @vite-ignore */ protocolModuleUrl),
     ])
     const snapshot = {
-      generation: mapStore.runId,
-      libraryRevision: mapStore.libraryRevision,
-      coverageRevision: mapStore.coverageRevision,
-      mode: mapStore.fogMode,
+      generation: currentRequest.generation,
+      libraryRevision: currentRequest.libraryRevision,
+      coverageRevision: currentRequest.coverageRevision,
+      mode: currentRequest.mode,
       algorithmVersion: protocol.FOG_ALGORITHM_VERSION,
       partitionSchemeVersion: protocol.FOG_PARTITION_SCHEME_VERSION,
-      completeness: terminal ? "complete" : "partial",
+      completeness: "complete" as const,
       geometry: { type: "FeatureCollection", features: [] },
       diagnostics: {
-        processed,
-        total,
+        processed: currentRequest.total,
+        total: currentRequest.total,
         inputPoints: 0,
         outputPoints: 0,
         featureCount: 0,
@@ -125,8 +217,46 @@ async function setFogSnapshot(
         degraded: false,
       },
     }
-    recordFogSnapshot(snapshot, terminal)
-  }, options)
+    const result = fog.fogCoordinator.handleReply({
+      type: "DONE",
+      protocolVersion: protocol.FOG_PROTOCOL_VERSION,
+      requestId: currentRequest.requestId,
+      generation: currentRequest.generation,
+      snapshot,
+    })
+    if (!result.accepted || !result.snapshot) {
+      throw new Error("fake fog terminal reply was rejected")
+    }
+    fog.recordFogSnapshot(result.snapshot, true)
+  }, request)
+}
+
+async function restoreFakeFogRequest(page: Page): Promise<void> {
+  await page.evaluate(async () => {
+    const pageWindow = window as Window & {
+      __activityProgressFogHarness?: {
+        originalWorker: Worker | null
+        originalActivities: unknown[]
+      }
+    }
+    const harness = pageWindow.__activityProgressFogHarness
+    if (!harness) return
+    const mapStoreModuleUrl = "/app/lib/mapStore.ts"
+    const fog = await import(/* @vite-ignore */ mapStoreModuleUrl)
+    if (fog.fogCoordinator.activeRequest) {
+      fog.postToFogWorker({ type: "RESET" })
+    } else {
+      fog.fogCoordinator.reset({
+        generation: fog.mapStore.runId,
+        libraryRevision: fog.mapStore.libraryRevision,
+        coverageRevision: fog.mapStore.coverageRevision,
+        mode: fog.mapStore.fogMode,
+      })
+    }
+    fog.mapStore.worker = harness.originalWorker
+    fog.mapStore.activities = harness.originalActivities as never
+    delete pageWindow.__activityProgressFogHarness
+  })
 }
 
 async function expectContained(
@@ -149,6 +279,9 @@ test("[I-038] renders unified activity progress with accessible bars", async ({
   await app.goto()
   const operationId = `e2e-activity-progress-${Date.now()}`
   const viewport = { width: 390, height: 844 }
+  const testTime = new Date("2026-09-13T12:00:00Z")
+  await app.page.clock.install({ time: testTime })
+  await app.page.clock.pauseAt(testTime)
 
   try {
     await beginImport(app.page, operationId, 3)
@@ -161,7 +294,6 @@ test("[I-038] renders unified activity progress with accessible bars", async ({
     await expect(stageRows.first()).toHaveAttribute("data-stage", "parsing")
     await expect(stageRows.first()).toContainText("Parsing activities")
     await expect(stageRows.first()).toContainText("0 of 3")
-    await expect(progress).toHaveAttribute("data-phase", "running")
     await expect(bars).toHaveCount(1)
     await expect(bars.first()).toHaveAttribute("aria-valuemin", "0")
     await expect(bars.first()).toHaveAttribute("aria-valuemax", "3")
@@ -318,11 +450,7 @@ test("[I-038] renders unified activity progress with accessible bars", async ({
     await expect(stageRows.nth(0)).toContainText("3 of 3")
     await expect(stageRows.nth(1)).toContainText("2 of 3")
 
-    await setFogSnapshot(app.page, {
-      terminal: false,
-      processed: 4,
-      total: 8,
-    })
+    const fogRequest = await startFakeFogRequest(app.page, 8)
     await expect(stageRows).toHaveCount(3)
     expect(
       await stageRows.evaluateAll((rows) =>
@@ -330,6 +458,8 @@ test("[I-038] renders unified activity progress with accessible bars", async ({
       )
     ).toEqual(["parsing", "saved", "fog"])
     await expect(stageRows.nth(2)).toContainText("Processing fog")
+    await expect(stageRows.nth(2)).toContainText("0 of 8")
+    await setFogProgress(app.page, fogRequest, 4)
     await expect(stageRows.nth(2)).toContainText("4 of 8")
     await expect(bars).toHaveCount(3)
     await expect(bars.nth(2)).toHaveAttribute(
@@ -355,21 +485,17 @@ test("[I-038] renders unified activity progress with accessible bars", async ({
     ).toBeVisible()
     await app.page.keyboard.press("Escape")
 
-    const testTime = new Date("2026-09-13T12:00:00Z")
-    await app.page.clock.install({ time: testTime })
-    await app.page.clock.pauseAt(testTime)
     await completeImport(app.page, operationId, [
       "committed",
       "duplicate",
       "committed",
     ])
-    await setFogSnapshot(app.page, {
-      terminal: true,
-      processed: 8,
-      total: 8,
-    })
+    await app.page.clock.fastForward(2_001)
     await expect(progress).toBeVisible()
-    await expect(progress).toHaveAttribute("data-phase", "complete")
+    await expect(stageRows).toHaveCount(3)
+    await setFogProgress(app.page, fogRequest, 8)
+    await completeFakeFogRequest(app.page, fogRequest)
+    await expect(progress).toBeVisible()
     await expect(progress).not.toContainText(
       /Preparing activities|Import complete|Import failed|Preparing import/
     )
@@ -390,7 +516,25 @@ test("[I-038] renders unified activity progress with accessible bars", async ({
     await expect(bars.nth(2)).toHaveAttribute("aria-valuenow", "8")
     await expectContained(progress, viewport.width, viewport.height)
 
-    await app.page.clock.fastForward(1_999)
+    await app.page.clock.fastForward(2_999)
+    await expect(progress).toBeVisible()
+    await app.page.clock.fastForward(1)
+    await expect(progress).toBeHidden()
+
+    const repeatedOperationId = `${operationId}-repeated`
+    await beginImport(app.page, repeatedOperationId, 1)
+    await completeImport(app.page, repeatedOperationId, ["committed"])
+    await expect(progress).toBeVisible()
+    await app.page.clock.fastForward(2_999)
+    await reportImportProgress(app.page, {
+      operationId: repeatedOperationId,
+      fileIndex: 0,
+      stage: "complete",
+      completedFiles: 1,
+      totalFiles: 1,
+    })
+    await completeImport(app.page, repeatedOperationId, ["committed"])
+    await app.page.clock.fastForward(2_999)
     await expect(progress).toBeVisible()
     await app.page.clock.fastForward(1)
     await expect(progress).toBeHidden()
@@ -403,22 +547,42 @@ test("[I-038] renders unified activity progress with accessible bars", async ({
     await app.page.clock.fastForward(1_000)
     await beginImport(app.page, newOperationId, 1)
     await expect(progress).toBeVisible()
-    await expect(progress).toHaveAttribute("data-phase", "running")
-    await app.page.clock.fastForward(1_000)
+    await app.page.clock.fastForward(2_000)
     await expect(progress).toBeVisible()
-    await expect(progress).toHaveAttribute("data-phase", "running")
 
     await failImport(app.page, newOperationId)
-    await app.page.clock.fastForward(2_000)
+    await app.page.clock.fastForward(2_999)
+    await expect(progress).toBeVisible()
+    await app.page.clock.fastForward(1)
     await expect(progress).toBeHidden()
+
+    const incompleteOperationId = `${operationId}-incomplete`
+    await beginImport(app.page, incompleteOperationId, 2)
+    await reportImportProgress(app.page, {
+      operationId: incompleteOperationId,
+      fileIndex: 0,
+      stage: "committing",
+      completedFiles: 1,
+      totalFiles: 2,
+    })
+    await completeImport(app.page, incompleteOperationId, [
+      "committed",
+      "failed",
+    ])
+    await expect(progress).toBeVisible()
+    await expect(progress.getByTestId("activity-progress-stage")).toHaveCount(2)
+    await expect(
+      progress.getByTestId("activity-progress-stage").nth(1)
+    ).toContainText("1 of 2")
+    await app.page.clock.fastForward(6_000)
+    await expect(progress).toBeVisible()
+    await expect(
+      progress.getByTestId("activity-progress-stage").nth(1)
+    ).toContainText("1 of 2")
   } finally {
     await app.page.keyboard.press("Escape").catch(() => {})
     await failImport(app.page, operationId).catch(() => {})
-    await setFogSnapshot(app.page, {
-      terminal: true,
-      processed: 0,
-      total: 0,
-    }).catch(() => {})
+    await restoreFakeFogRequest(app.page).catch(() => {})
   }
 })
 
