@@ -96,7 +96,8 @@ function activity(id: string): ParsedActivity {
 
 function snapshotForRequest(
   request: FogRequest,
-  diagnostics: Partial<FogDiagnostics> = {}
+  diagnostics: Partial<FogDiagnostics> = {},
+  completeness: FogSnapshot["completeness"] = "complete"
 ): FogSnapshot {
   return {
     generation: request.generation,
@@ -105,7 +106,7 @@ function snapshotForRequest(
     mode: request.mode,
     algorithmVersion: FOG_ALGORITHM_VERSION,
     partitionSchemeVersion: FOG_PARTITION_SCHEME_VERSION,
-    completeness: "complete",
+    completeness,
     geometry: worldFogGeoJSON(),
     diagnostics: {
       processed: request.activities.length,
@@ -606,6 +607,153 @@ describe("fog worker run state", () => {
       processed: 209,
       total: 209,
       phase: "idle",
+    })
+  })
+
+  test("finishes partial requests at their request length while keeping degraded state", () => {
+    const messages: unknown[] = []
+    mapStore.worker = {
+      postMessage(message: unknown) {
+        messages.push(message)
+      },
+    } as unknown as Worker
+    mapStore.activities = [activity("partial")]
+    mapStore.runId = 31
+    mapStore.libraryRevision = 1
+    mapStore.coverageRevision = 1
+    mapStore.fogMode = "corridor"
+
+    postToFogWorker({
+      type: "PROCESS_ACTIVITIES",
+      activities: mapStore.activities,
+      mode: "corridor",
+      kind: "rebuild",
+      libraryRevision: 1,
+      coverageRevision: 1,
+    })
+    const request = messages[0] as FogRequest
+    const snapshot = snapshotForRequest(
+      request,
+      { degraded: true, errors: ["reduced coverage"] },
+      "partial"
+    )
+
+    fogCoordinator.handleReply({
+      type: "DONE",
+      protocolVersion: FOG_PROTOCOL_VERSION,
+      requestId: request.requestId,
+      generation: request.generation,
+      snapshot,
+    })
+
+    expect(getFogStatus()).toMatchObject({
+      phase: "degraded",
+      requestId: request.requestId,
+      processed: 1,
+      total: 1,
+    })
+  })
+
+  test("preserves incomplete progress for a failed request", () => {
+    const messages: unknown[] = []
+    mapStore.worker = {
+      postMessage(message: unknown) {
+        messages.push(message)
+      },
+    } as unknown as Worker
+    mapStore.activities = [activity("failed"), activity("pending")]
+    mapStore.runId = 32
+    mapStore.libraryRevision = 1
+    mapStore.coverageRevision = 1
+    mapStore.fogMode = "corridor"
+
+    postToFogWorker({
+      type: "PROCESS_ACTIVITIES",
+      activities: mapStore.activities,
+      mode: "corridor",
+      kind: "rebuild",
+      libraryRevision: 1,
+      coverageRevision: 1,
+    })
+    const request = messages[0] as FogRequest
+    fogCoordinator.handleReply({
+      type: "PROGRESS",
+      protocolVersion: FOG_PROTOCOL_VERSION,
+      requestId: request.requestId,
+      generation: request.generation,
+      libraryRevision: request.libraryRevision,
+      coverageRevision: request.coverageRevision,
+      mode: request.mode,
+      processed: 1,
+      total: 2,
+      stage: "buffering",
+    })
+    fogCoordinator.handleReply({
+      type: "DONE",
+      protocolVersion: FOG_PROTOCOL_VERSION,
+      requestId: request.requestId,
+      generation: request.generation,
+      snapshot: null,
+    })
+
+    expect(getFogStatus()).toMatchObject({
+      phase: "failed",
+      requestId: request.requestId,
+      processed: 1,
+      total: 2,
+    })
+  })
+
+  test("cancellation never publishes a completed request count", () => {
+    const messages: unknown[] = []
+    mapStore.worker = {
+      postMessage(message: unknown) {
+        messages.push(message)
+      },
+    } as unknown as Worker
+    mapStore.activities = [activity("cancelled"), activity("pending")]
+    mapStore.runId = 33
+    mapStore.libraryRevision = 1
+    mapStore.coverageRevision = 1
+    mapStore.fogMode = "corridor"
+
+    postToFogWorker({
+      type: "PROCESS_ACTIVITIES",
+      activities: mapStore.activities,
+      mode: "corridor",
+      kind: "rebuild",
+      libraryRevision: 1,
+      coverageRevision: 1,
+    })
+    const request = messages[0] as FogRequest
+    fogCoordinator.handleReply({
+      type: "PROGRESS",
+      protocolVersion: FOG_PROTOCOL_VERSION,
+      requestId: request.requestId,
+      generation: request.generation,
+      libraryRevision: request.libraryRevision,
+      coverageRevision: request.coverageRevision,
+      mode: request.mode,
+      processed: 1,
+      total: 2,
+      stage: "buffering",
+    })
+    const cancellation = fogCoordinator.cancel()!
+    fogCoordinator.handleReply({
+      type: "CANCELLED",
+      protocolVersion: FOG_PROTOCOL_VERSION,
+      requestId: cancellation.request.requestId,
+      generation: cancellation.request.generation,
+      libraryRevision: cancellation.request.libraryRevision,
+      coverageRevision: cancellation.request.coverageRevision,
+      mode: cancellation.request.mode,
+    })
+
+    expect(getFogStatus()).toMatchObject({
+      phase: "idle",
+      requestId: null,
+      processed: 0,
+      total: 0,
     })
   })
 
