@@ -93,8 +93,11 @@ async function completeImport(
   )
 }
 
-async function setFogSnapshot(page: Page, terminal: boolean): Promise<void> {
-  await page.evaluate(async (isTerminal: boolean) => {
+async function setFogSnapshot(
+  page: Page,
+  options: { terminal: boolean; processed: number; total: number }
+): Promise<void> {
+  await page.evaluate(async ({ terminal, processed, total }) => {
     const mapStoreModuleUrl = "/app/lib/mapStore.ts"
     const protocolModuleUrl = "/app/lib/fog/protocol.ts"
     const [{ mapStore, recordFogSnapshot }, protocol] = await Promise.all([
@@ -108,11 +111,11 @@ async function setFogSnapshot(page: Page, terminal: boolean): Promise<void> {
       mode: mapStore.fogMode,
       algorithmVersion: protocol.FOG_ALGORITHM_VERSION,
       partitionSchemeVersion: protocol.FOG_PARTITION_SCHEME_VERSION,
-      completeness: isTerminal ? "complete" : "partial",
+      completeness: terminal ? "complete" : "partial",
       geometry: { type: "FeatureCollection", features: [] },
       diagnostics: {
-        processed: 0,
-        total: 0,
+        processed,
+        total,
         inputPoints: 0,
         outputPoints: 0,
         featureCount: 0,
@@ -122,8 +125,8 @@ async function setFogSnapshot(page: Page, terminal: boolean): Promise<void> {
         degraded: false,
       },
     }
-    recordFogSnapshot(snapshot, isTerminal)
-  }, terminal)
+    recordFogSnapshot(snapshot, terminal)
+  }, options)
 }
 
 async function expectContained(
@@ -140,35 +143,30 @@ async function expectContained(
   expect(box.y + box.height).toBeLessThanOrEqual(height)
 }
 
-test("[I-038] renders persistent import stages with accessible bars", async ({
+test("[I-038] renders unified activity progress with accessible bars", async ({
   app,
 }) => {
   await app.goto()
-  const operationId = `e2e-import-progress-${Date.now()}`
+  const operationId = `e2e-activity-progress-${Date.now()}`
   const viewport = { width: 390, height: 844 }
 
   try {
     await beginImport(app.page, operationId, 3)
-    const progress = app.page.getByTestId("import-progress")
-    const stageRows = progress.getByTestId("import-progress-stage")
+    const progress = app.page.getByTestId("activity-progress")
+    const stageRows = progress.getByTestId("activity-progress-stage")
     const bars = progress.getByRole("progressbar")
 
     await expect(progress).toBeVisible()
     await expect(stageRows).toHaveCount(1)
-    await expect(stageRows.first()).toContainText("Queued")
+    await expect(stageRows.first()).toHaveAttribute("data-stage", "parsing")
+    await expect(stageRows.first()).toContainText("Parsing activities")
     await expect(stageRows.first()).toContainText("0 of 3")
-    await expect(progress).toContainText(
-      "Preparing activities · 0 of 3 prepared"
-    )
     await expect(progress).toHaveAttribute("data-phase", "running")
     await expect(bars).toHaveCount(1)
     await expect(bars.first()).toHaveAttribute("aria-valuemin", "0")
     await expect(bars.first()).toHaveAttribute("aria-valuemax", "3")
     await expect(bars.first()).toHaveAttribute("aria-valuenow", "0")
-    await expect(bars.first()).toHaveAttribute(
-      "aria-valuetext",
-      "0 of 3 files settled"
-    )
+    await expect(bars.first()).toHaveAttribute("aria-valuetext", "0 of 3 files")
 
     for (const event of [
       {
@@ -213,52 +211,77 @@ test("[I-038] renders persistent import stages with accessible bars", async ({
         completedFiles: 0,
         totalFiles: 3,
       },
+      {
+        operationId,
+        fileIndex: 0,
+        stage: "ready" as const,
+        completedFiles: 1,
+        totalFiles: 3,
+      },
+      {
+        operationId,
+        fileIndex: 1,
+        stage: "ready" as const,
+        completedFiles: 2,
+        totalFiles: 3,
+      },
     ]) {
       await reportImportProgress(app.page, event)
     }
 
-    await expect(stageRows).toHaveCount(4)
-    expect(
-      await stageRows.evaluateAll((rows) =>
-        rows.map((row) => row.getAttribute("data-stage"))
-      )
-    ).toEqual(["queued", "reading", "parsing", "validating"])
-    for (const row of [0, 1, 2]) {
-      await expect(stageRows.nth(row)).toContainText("2 of 3")
-      await expect(bars.nth(row)).toHaveAttribute("aria-valuenow", "2")
-    }
-    await expect(stageRows.nth(3)).toContainText("0 of 3")
-    await expect(bars.nth(3)).toHaveAttribute("aria-valuenow", "0")
+    await expect(stageRows).toHaveCount(1)
+    await expect(stageRows.first()).toContainText("2 of 3")
+    await expect(progress).not.toContainText(
+      /Queued|Reading files|Validating routes|Waiting to save|Saving activities/
+    )
 
     await reportImportProgress(app.page, {
       operationId,
       fileIndex: 0,
-      stage: "ready",
-      completedFiles: 1,
+      stage: "committing",
+      completedFiles: 2,
       totalFiles: 3,
     })
-    await expect(stageRows).toHaveCount(5)
+    await expect(stageRows).toHaveCount(2)
     expect(
       await stageRows.evaluateAll((rows) =>
         rows.map((row) => row.getAttribute("data-stage"))
       )
-    ).toEqual(["queued", "reading", "parsing", "validating", "ready"])
-    await expect(stageRows.nth(0)).toContainText("2 of 3")
-    await expect(stageRows.nth(1)).toContainText("2 of 3")
-    await expect(stageRows.nth(2)).toContainText("2 of 3")
-    await expect(stageRows.nth(3)).toContainText("1 of 3")
-    await expect(stageRows.nth(4)).toContainText("0 of 3")
+    ).toEqual(["parsing", "saved"])
+    await expect(stageRows.nth(1)).toContainText("Activities saved")
+    await expect(stageRows.nth(1)).toContainText("0 of 3")
+
+    await reportImportProgress(app.page, {
+      operationId,
+      fileIndex: 0,
+      stage: "committed",
+      completedFiles: 2,
+      totalFiles: 3,
+    })
+    await reportImportProgress(app.page, {
+      operationId,
+      fileIndex: 0,
+      stage: "committed",
+      completedFiles: 2,
+      totalFiles: 3,
+    })
+    await expect(stageRows.nth(1)).toContainText("1 of 3")
 
     await reportImportProgress(app.page, {
       operationId,
       fileIndex: 1,
-      stage: "complete",
+      stage: "committing",
       completedFiles: 2,
       totalFiles: 3,
     })
-    await expect(stageRows).toHaveCount(5)
-    await expect(stageRows.nth(3)).toContainText("2 of 3")
-    await expect(stageRows.nth(4)).toContainText("1 of 3")
+    await reportImportProgress(app.page, {
+      operationId,
+      fileIndex: 1,
+      stage: "committed",
+      completedFiles: 2,
+      totalFiles: 3,
+    })
+    await expect(stageRows.nth(1)).toContainText("2 of 3")
 
     for (const event of [
       {
@@ -285,128 +308,45 @@ test("[I-038] renders persistent import stages with accessible bars", async ({
       {
         operationId,
         fileIndex: 2,
-        stage: "ready" as const,
-        completedFiles: 3,
-        totalFiles: 3,
-      },
-      {
-        operationId,
-        fileIndex: 2,
-        stage: "committing" as const,
+        stage: "complete" as const,
         completedFiles: 3,
         totalFiles: 3,
       },
     ]) {
       await reportImportProgress(app.page, event)
     }
+    await expect(stageRows.nth(0)).toContainText("3 of 3")
+    await expect(stageRows.nth(1)).toContainText("2 of 3")
 
-    await expect(stageRows).toHaveCount(6)
+    await setFogSnapshot(app.page, {
+      terminal: false,
+      processed: 4,
+      total: 8,
+    })
+    await expect(stageRows).toHaveCount(3)
     expect(
       await stageRows.evaluateAll((rows) =>
         rows.map((row) => row.getAttribute("data-stage"))
       )
-    ).toEqual([
-      "queued",
-      "reading",
-      "parsing",
-      "validating",
-      "ready",
-      "committing",
-    ])
-    await expect(stageRows.nth(5)).toContainText("1 of 3")
-    await expect(bars.nth(5)).toHaveAttribute("aria-valuenow", "1")
-
-    for (const event of [
-      {
-        operationId,
-        fileIndex: 0,
-        stage: "committing" as const,
-        completedFiles: 3,
-        totalFiles: 3,
-      },
-      {
-        operationId,
-        fileIndex: 0,
-        stage: "committed" as const,
-        completedFiles: 3,
-        totalFiles: 3,
-      },
-      {
-        operationId,
-        fileIndex: 2,
-        stage: "committed" as const,
-        completedFiles: 3,
-        totalFiles: 3,
-      },
-      {
-        operationId,
-        fileIndex: 0,
-        stage: "deriving" as const,
-        completedFiles: 3,
-        totalFiles: 3,
-      },
-      {
-        operationId,
-        fileIndex: 2,
-        stage: "deriving" as const,
-        completedFiles: 3,
-        totalFiles: 3,
-      },
-    ]) {
-      await reportImportProgress(app.page, event)
-    }
-
-    await expect(stageRows).toHaveCount(8)
-    expect(
-      await stageRows.evaluateAll((rows) =>
-        rows.map((row) => row.getAttribute("data-stage"))
-      )
-    ).toEqual([
-      "queued",
-      "reading",
-      "parsing",
-      "validating",
-      "ready",
-      "committing",
-      "committed",
-      "deriving",
-    ])
-    await expect(progress).toContainText(
-      "Preparing activities · 3 of 3 prepared"
+    ).toEqual(["parsing", "saved", "fog"])
+    await expect(stageRows.nth(2)).toContainText("Processing fog")
+    await expect(stageRows.nth(2)).toContainText("4 of 8")
+    await expect(bars).toHaveCount(3)
+    await expect(bars.nth(2)).toHaveAttribute(
+      "aria-valuetext",
+      "4 of 8 activities"
     )
+    await expect(progress.locator("[aria-live], [aria-atomic]")).toHaveCount(0)
     await expect(progress).toHaveAttribute("role", "status")
     await expect(progress).toHaveAttribute("aria-live", "polite")
     await expect(progress).toHaveAttribute("aria-atomic", "true")
-    expect(
-      await stageRows.evaluateAll((rows) =>
-        rows.map((row) => ({
-          role: row.getAttribute("role"),
-          ariaLive: row.getAttribute("aria-live"),
-          ariaAtomic: row.getAttribute("aria-atomic"),
-        }))
-      )
-    ).toEqual(
-      new Array(8).fill({ role: null, ariaLive: null, ariaAtomic: null })
-    )
-    await expect(progress.locator("[aria-live], [aria-atomic]")).toHaveCount(0)
-    expect(
-      await bars.evaluateAll((elements) =>
-        elements.map((element) => ({
-          ariaLive: element.getAttribute("aria-live"),
-          ariaAtomic: element.getAttribute("aria-atomic"),
-        }))
-      )
-    ).toEqual(new Array(8).fill({ ariaLive: null, ariaAtomic: null }))
 
     await app.page.setViewportSize(viewport)
-    await setFogSnapshot(app.page, false)
-    const fogProgress = app.page.getByText(/^\d+\/\d+$/).locator("xpath=..")
     const controls = app.page.getByRole("button", { name: "Open controls" })
     await expect(progress).toBeVisible()
-    await expect(fogProgress).toBeVisible()
     await expect(controls).toBeVisible()
     await expectContained(progress, viewport.width, viewport.height)
-    await expectContained(fogProgress, viewport.width, viewport.height)
+    await expectContained(stageRows.nth(2), viewport.width, viewport.height)
     await expectContained(controls, viewport.width, viewport.height)
     await expect(controls).toBeEnabled()
     await controls.click()
@@ -423,20 +363,31 @@ test("[I-038] renders persistent import stages with accessible bars", async ({
       "duplicate",
       "committed",
     ])
+    await setFogSnapshot(app.page, {
+      terminal: true,
+      processed: 8,
+      total: 8,
+    })
     await expect(progress).toBeVisible()
     await expect(progress).toHaveAttribute("data-phase", "complete")
-    await expect(progress).toContainText("Import complete · 3 files")
-    await expect(stageRows).toHaveCount(8)
-    for (let index = 0; index < 8; index++) {
-      await expect(stageRows.nth(index)).toContainText("3 of 3")
-      await expect(bars.nth(index)).toHaveAttribute("aria-valuemin", "0")
-      await expect(bars.nth(index)).toHaveAttribute("aria-valuemax", "3")
-      await expect(bars.nth(index)).toHaveAttribute("aria-valuenow", "3")
-      await expect(bars.nth(index)).toHaveAttribute(
+    await expect(progress).not.toContainText(
+      /Preparing activities|Import complete|Import failed|Preparing import/
+    )
+    await expect(stageRows).toHaveCount(3)
+    await expect(stageRows.nth(0)).toContainText("3 of 3")
+    await expect(stageRows.nth(1)).toContainText("3 of 3")
+    await expect(stageRows.nth(2)).toContainText("8 of 8")
+    for (const bar of [0, 1]) {
+      await expect(bars.nth(bar)).toHaveAttribute("aria-valuemin", "0")
+      await expect(bars.nth(bar)).toHaveAttribute("aria-valuemax", "3")
+      await expect(bars.nth(bar)).toHaveAttribute("aria-valuenow", "3")
+      await expect(bars.nth(bar)).toHaveAttribute(
         "aria-valuetext",
-        "3 of 3 files settled"
+        "3 of 3 files"
       )
     }
+    await expect(bars.nth(2)).toHaveAttribute("aria-valuemax", "8")
+    await expect(bars.nth(2)).toHaveAttribute("aria-valuenow", "8")
     await expectContained(progress, viewport.width, viewport.height)
 
     await app.page.clock.fastForward(1_999)
@@ -463,6 +414,104 @@ test("[I-038] renders persistent import stages with accessible bars", async ({
   } finally {
     await app.page.keyboard.press("Escape").catch(() => {})
     await failImport(app.page, operationId).catch(() => {})
-    await setFogSnapshot(app.page, true).catch(() => {})
+    await setFogSnapshot(app.page, {
+      terminal: true,
+      processed: 0,
+      total: 0,
+    }).catch(() => {})
   }
+})
+
+test("[I-039] starts Fill loops with only a fresh fog progress row", async ({
+  app,
+}) => {
+  await app.goto()
+  await app.importActivities(2)
+  await app.waitForImportToSettle()
+  await app.page.evaluate(async () => {
+    const moduleUrl = "/app/lib/activities/import/status.ts"
+    const importStatus = await import(/* @vite-ignore */ moduleUrl)
+    const status = importStatus.getImportStatus()
+    if (status.operationId) {
+      importStatus.dismissImportStatus(status.operationId)
+    }
+  })
+
+  await app.page.evaluate(async () => {
+    const moduleUrl = "/app/lib/mapStore.ts"
+    const mapStore = await import(/* @vite-ignore */ moduleUrl)
+    type Observation = {
+      phase: string
+      mode: string
+      processed: number
+      total: number
+    }
+    const observations: Observation[] = []
+    const read = (): Observation => {
+      const status = mapStore.getFogStatus()
+      return {
+        phase: status.phase,
+        mode: status.mode,
+        processed: status.processed,
+        total: status.total,
+      }
+    }
+    observations.push(read())
+    const unsubscribe = mapStore.subscribeFogStatus(() => {
+      observations.push(read())
+    })
+    ;(
+      window as Window & {
+        __activityProgressFogObservation?: {
+          observations: Observation[]
+          unsubscribe: () => void
+        }
+      }
+    ).__activityProgressFogObservation = { observations, unsubscribe }
+  })
+
+  await app.openDrawer()
+  await app.drawer.getByRole("switch", { name: "Fill loops" }).click()
+  await app.closeDrawer()
+
+  const observations = await app.page.evaluate(() => {
+    const pageWindow = window as Window & {
+      __activityProgressFogObservation?: {
+        observations: {
+          phase: string
+          mode: string
+          processed: number
+          total: number
+        }[]
+        unsubscribe: () => void
+      }
+    }
+    const state = pageWindow.__activityProgressFogObservation
+    state?.unsubscribe()
+    return state?.observations ?? []
+  })
+  expect(
+    observations.some(
+      (observation) =>
+        observation.phase === "processing" &&
+        observation.mode === "fill" &&
+        observation.processed === 0 &&
+        observation.total === 2
+    )
+  ).toBe(true)
+
+  const progress = app.page.getByTestId("activity-progress")
+  if (await progress.isVisible().catch(() => false)) {
+    const rows = progress.getByTestId("activity-progress-stage")
+    await expect(rows).toHaveCount(1)
+    await expect(rows.first()).toHaveAttribute("data-stage", "fog")
+    await expect(rows.first()).toContainText("Processing fog")
+    await expect(rows.first()).toContainText("of 2")
+    await expect(progress).not.toContainText("Parsing activities")
+    await expect(progress).not.toContainText("Activities saved")
+  }
+
+  await expect
+    .poll(() => app.fogCacheSummary(), { timeout: 45_000 })
+    .toMatchObject({ fogMode: "fill" })
 })

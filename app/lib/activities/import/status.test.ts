@@ -151,6 +151,13 @@ describe("import status", () => {
       savedFiles: 1,
       isSaveStageVisible: true,
     })
+
+    beginImport("direct-commit", 1)
+    progress("direct-commit", 0, "committed", 0, 1)
+    expect(getImportProgressSnapshot(getImportStatus())).toMatchObject({
+      savedFiles: 1,
+      isSaveStageVisible: true,
+    })
   })
 
   test("rejected and failed files settle parsing without inventing saving", () => {

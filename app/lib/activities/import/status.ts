@@ -135,7 +135,9 @@ export function reportImportProgress(event: ImportProgressEvent): void {
     return
   }
   const isSaveStageVisible =
-    status.isSaveStageVisible || event.stage === "committing"
+    status.isSaveStageVisible ||
+    (stageRank(event.stage) >= stageRank("committing") &&
+      event.stage !== "complete")
   const savedFileIndexes =
     event.stage === "committed"
       ? Object.freeze({ ...status.savedFileIndexes, [event.fileIndex]: true })

@@ -3,8 +3,8 @@ import { DotsThreeIcon } from "@phosphor-icons/react"
 import { Button } from "~/components/ui/button"
 import type { FogMode, MapMode } from "~/types/activities"
 import { MapDrawer } from "~/components/MapDrawer"
-import { FogProgressIndicator, FogStatusNotice } from "~/components/FogProgress"
-import { ImportProgressIndicator } from "~/components/ImportProgress"
+import { FogStatusNotice } from "~/components/FogProgress"
+import { ActivityProgressIndicator } from "~/components/ActivityProgress"
 
 interface ControlPanelProps {
   activityCount: number
@@ -101,8 +101,7 @@ export function ControlPanel({
       {/* FAB — grouped visually with the compass (top-right) */}
       <div className="absolute top-28 right-auto left-1.5 z-10 flex w-[calc(100vw-0.75rem)] items-start justify-end gap-2 sm:right-3 sm:left-auto sm:w-auto">
         <div className="flex min-w-0 flex-1 flex-col items-end gap-2">
-          <ImportProgressIndicator />
-          {isProcessing && <FogProgressIndicator />}
+          <ActivityProgressIndicator />
         </div>
         <Button
           variant="outline"
