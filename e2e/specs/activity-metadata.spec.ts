@@ -59,11 +59,16 @@ test.describe("activity metadata interactions", () => {
 
     await visibility.click()
     await app.page.getByRole("option", { name: "Public", exact: true }).click()
-    await app.page.evaluate(
-      () =>
-        new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
-    )
     await expect(visibility).toContainText("Public")
+    await expect
+      .poll(
+        async () =>
+          ((await readPerformanceCounters(app.page)).idbWriteCalls[
+            "activity-summaries"
+          ] ?? 0) - (before.idbWriteCalls["activity-summaries"] ?? 0),
+        { timeout: 10_000 }
+      )
+      .toBe(1)
 
     const delta = diffPerformanceCounters(
       before,

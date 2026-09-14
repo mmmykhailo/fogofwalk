@@ -10,6 +10,19 @@ const INTERACTIVE_MAP_LAYER_IDS = [
   "activities-hit-layer",
 ] as const
 const MAP_INTERACTIVE_MARKER_SELECTOR = "[data-map-interactive]"
+const TRANSIENT_HOME_ROUTE_ERROR =
+  "No result returned from dataStrategy for route routes/home"
+
+class ReadinessRouteError extends Error {
+  constructor(
+    readonly url: string,
+    readonly heading: string,
+    readonly rootMessage: string
+  ) {
+    super(`App readiness failed at ${url}: ${heading}: ${rootMessage}`)
+    this.name = "ReadinessRouteError"
+  }
+}
 
 /**
  * Page object for the map screen.
@@ -33,6 +46,47 @@ export function createAppPage(
   const drawer = page.locator('[data-vaul-drawer][data-state="open"]')
   const accountRow = page.getByTestId("account-row")
   const signInRow = drawer.getByRole("button", { name: "Sign in" })
+  const uploadDialog = page.getByRole("dialog", {
+    name: /Load activity files/i,
+  })
+  // The root error boundary's Reload button is unique to that boundary. The
+  // heading is read from its parent so nested map ErrorCards cannot masquerade
+  // as a failed route load.
+  const rootReloadButton = page.getByRole("button", {
+    name: "Reload",
+    exact: true,
+  })
+  const rootErrorRegion = rootReloadButton.locator("xpath=..")
+
+  async function throwRootError(): Promise<never> {
+    const heading =
+      (
+        await rootErrorRegion.getByRole("heading").first().textContent()
+      )?.trim() ?? "Unknown root error"
+    const rootMessage =
+      (await rootErrorRegion.locator("p").first().textContent())?.trim() ??
+      "No error message was rendered"
+    throw new ReadinessRouteError(page.url(), heading, rootMessage)
+  }
+
+  async function waitForReadinessLandmark(
+    timeout: number
+  ): Promise<"upload" | "map"> {
+    // A route error is part of the same race as map readiness. Include it in
+    // the first wait so a broken route is reported immediately instead of
+    // becoming a 45-second timeout for a map-only control.
+    const landmark = uploadDialog
+      .or(openDrawerButton)
+      .or(rootReloadButton)
+      .first()
+    await expect(landmark).toBeVisible({ timeout })
+
+    if (await rootReloadButton.isVisible().catch(() => false)) {
+      await throwRootError()
+    }
+    if (await uploadDialog.isVisible().catch(() => false)) return "upload"
+    return "map"
+  }
 
   const app = {
     page,
@@ -55,24 +109,43 @@ export function createAppPage(
     },
 
     async waitUntilReady() {
-      const uploadDialog = page.getByRole("dialog", {
-        name: /Load activity files/i,
-      })
-
       // On an empty library `FileUploadDialog` auto-opens. It is modal, so Base UI
       // marks the rest of the page aria-hidden — which means the readiness button
       // is invisible to role queries *even though* the app is ready. Wait for
-      // whichever arrives, dismiss the dialog, then confirm.
-      await expect(uploadDialog.or(openDrawerButton).first()).toBeVisible({
-        timeout: 45_000,
-      })
+      // whichever success landmark arrives, or fail immediately on the root
+      // error boundary.
+      const firstLandmark = await waitForReadinessLandmark(45_000)
 
-      if (await uploadDialog.isVisible().catch(() => false)) {
+      if (firstLandmark === "upload") {
         await uploadDialog.getByRole("button", { name: "Skip for now" }).click()
         await expect(uploadDialog).toBeHidden()
+        await waitForReadinessLandmark(15_000)
       }
+    },
 
-      await expect(openDrawerButton).toBeVisible({ timeout: 15_000 })
+    /**
+     * Waits for the map after auth, allowing one recovery from the Vite route
+     * module load failure observed during the callback-to-`/map` transition.
+     * Normal navigation uses `waitUntilReady()` directly so application errors
+     * remain fail-fast and no reload loop can hide a deterministic regression.
+     */
+    async waitUntilReadyAfterSignIn() {
+      try {
+        await app.waitUntilReady()
+      } catch (error) {
+        if (
+          !(error instanceof ReadinessRouteError) ||
+          error.rootMessage !== TRANSIENT_HOME_ROUTE_ERROR
+        ) {
+          throw error
+        }
+
+        // completeSignIn() has already persisted the session before the app
+        // navigates here, so one document reload safely retries the failed
+        // dynamic import. A second failure is allowed to escape unchanged.
+        await page.reload()
+        await app.waitUntilReady()
+      }
     },
 
     /** Seeds a persisted photo without depending on EXIF parsing in the test. */
@@ -299,8 +372,16 @@ export function createAppPage(
       const dialog = page.getByRole("dialog", { name: "Sign in" })
       await expect(dialog).toBeVisible()
       await dialog.getByLabel("Local test-user name").fill(accountLogin)
-      await dialog.getByRole("button", { name: "Create" }).click()
-      await app.waitUntilReady()
+      await Promise.all([
+        page.waitForURL((url) => url.pathname === "/auth/callback", {
+          timeout: 30_000,
+        }),
+        dialog.getByRole("button", { name: "Create" }).click(),
+      ])
+      await page.waitForURL((url) => url.pathname === "/map", {
+        timeout: 30_000,
+      })
+      await app.waitUntilReadyAfterSignIn()
       await app.openDrawer()
       await expect(accountRow).toBeVisible({ timeout: 30_000 })
 
