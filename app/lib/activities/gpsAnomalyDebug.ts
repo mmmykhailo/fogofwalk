@@ -142,9 +142,11 @@ function differenceOrNull(
 }
 
 function removalCount(report: GpsAnomalyReport): number {
-  return Object.entries(report.counts.reasons).reduce(
-    (total, [, count]) => total + (count ?? 0),
-    0
+  return (
+    (report.counts.reasons.teleport_spike ?? 0) +
+    (report.counts.reasons.teleport_excursion ?? 0) +
+    (report.counts.reasons.teleport_tail ?? 0) +
+    (report.counts.reasons.ambiguous_discontinuity ?? 0)
   )
 }
 

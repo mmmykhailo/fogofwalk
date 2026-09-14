@@ -186,4 +186,31 @@ describe("GPS anomaly diagnostics", () => {
       expect(capture.debug.map(([label]) => label)).toContain("performance")
     }
   })
+
+  test("does not count structural short-path drops as omitted removals", () => {
+    const capture = captureConsole()
+    const sourcePaths = [
+      source(
+        [0, 0.0001, 0.0002, 0.0003, 0.0004, 10, 0.0005, 0.0006, 0.0007].map(
+          (lng, index) => point(index, lng, index * 1_000)
+        )
+      ),
+      source([point(0, 20, 0)]),
+    ]
+    const result = detectGpsAnomalies(sourcePaths, {
+      activityType: "cycling",
+    })
+    const report = reportFor(result, sourcePaths)
+
+    logGpsAnomalyReport({
+      fileName: "short-path.gpx",
+      activityIndex: 0,
+      report,
+    })
+
+    const output = capture.debug.find(([label]) => label === "output")?.[1] as
+      | { omittedExampleCount?: number }
+      | undefined
+    expect(output?.omittedExampleCount).toBe(0)
+  })
 })
