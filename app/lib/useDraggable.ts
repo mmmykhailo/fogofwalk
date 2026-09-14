@@ -1,4 +1,12 @@
-import { useLayoutEffect, useRef, useState } from "react"
+import {
+  useCallback,
+  useLayoutEffect,
+  useRef,
+  type CSSProperties,
+  type PointerEventHandler,
+  type RefCallback,
+} from "react"
+import { incrementPerformanceCounter } from "~/lib/performance"
 
 interface DraggableOptions {
   /** `Infinity` aligns with the far edge; a negative value offsets from it. */
@@ -20,6 +28,22 @@ interface DraggableBounds {
   viewportWidth: number
   viewportHeight: number
   padding: number
+}
+
+function samePosition(first: Position, second: Position): boolean {
+  return first.x === second.x && first.y === second.y
+}
+
+export function formatDraggableTransform({ x, y }: Position): string {
+  return `translate3d(${x}px, ${y}px, 0)`
+}
+
+function writeDraggableTransform(
+  element: HTMLElement,
+  position: Position
+): void {
+  element.style.transform = formatDraggableTransform(position)
+  incrementPerformanceCounter("draggableTransformWrites")
 }
 
 export function constrainDraggablePosition(
@@ -58,120 +82,224 @@ export function getInitialDraggablePosition(
   )
 }
 
+function isInteractiveTarget(target: EventTarget | null): boolean {
+  return (
+    target instanceof Element &&
+    Boolean(
+      target.closest(
+        "button, a, input, textarea, select, [role='button'], [contenteditable='true']"
+      )
+    )
+  )
+}
+
 export function useDraggable({ x, y, padding = 0 }: DraggableOptions) {
-  const [pos, setPos] = useState<Position>({ x: 0, y: 0 })
-  const [element, setElement] = useState<HTMLDivElement | null>(null)
-  const dragging = useRef(false)
-  const origin = useRef({ x: 0, y: 0 })
-  const posRef = useRef(pos)
-  const hasSetInitialPosition = useRef(false)
+  const elementRef = useRef<HTMLDivElement | null>(null)
+  const isDraggingRef = useRef(false)
+  const pointerIdRef = useRef<number | null>(null)
+  const originRef = useRef({ x: 0, y: 0 })
+  const positionRef = useRef<Position>({ x: 0, y: 0 })
+  const pendingPositionRef = useRef<Position>({ x: 0, y: 0 })
+  const boundsRef = useRef<DraggableBounds | null>(null)
+  const animationFrameRef = useRef<number | null>(null)
+  const activeHandleRef = useRef<HTMLElement | null>(null)
+  const previousTouchActionRef = useRef("")
+  const initializedRef = useRef(false)
+  const optionsRef = useRef({ x, y, padding })
+  optionsRef.current = { x, y, padding }
 
-  const constrainPosition = (position: Position): Position => {
-    if (!element) return position
+  const setElement = useCallback<RefCallback<HTMLDivElement>>((element) => {
+    elementRef.current = element
+  }, [])
 
+  const measureBounds = useCallback((): DraggableBounds | null => {
+    const element = elementRef.current
+    if (!element) return null
     const { width, height } = element.getBoundingClientRect()
-    return constrainDraggablePosition(position, {
+    const nextBounds = {
       width,
       height,
       viewportWidth: window.innerWidth,
       viewportHeight: window.innerHeight,
-      padding,
-    })
-  }
-
-  const updatePosition = (position: Position) => {
-    const constrainedPosition = constrainPosition(position)
-    posRef.current = constrainedPosition
-    setPos(constrainedPosition)
-  }
-
-  const onMouseDown = (e: React.MouseEvent) => {
-    dragging.current = true
-    origin.current = {
-      x: e.clientX - posRef.current.x,
-      y: e.clientY - posRef.current.y,
+      padding: optionsRef.current.padding,
     }
-    e.preventDefault()
-  }
+    boundsRef.current = nextBounds
+    return nextBounds
+  }, [])
 
-  const onTouchStart = (e: React.TouchEvent) => {
-    const touch = e.touches[0]
-    dragging.current = true
-    origin.current = {
-      x: touch.clientX - posRef.current.x,
-      y: touch.clientY - posRef.current.y,
+  const writePosition = useCallback((position: Position) => {
+    const element = elementRef.current
+    if (!element) return
+    positionRef.current = position
+    pendingPositionRef.current = position
+    writeDraggableTransform(element, position)
+  }, [])
+
+  const applyPendingPosition = useCallback(() => {
+    animationFrameRef.current = null
+    const element = elementRef.current
+    const bounds = boundsRef.current
+    if (!element || !bounds) return
+    const nextPosition = constrainDraggablePosition(
+      pendingPositionRef.current,
+      bounds
+    )
+    if (samePosition(positionRef.current, nextPosition)) return
+    positionRef.current = nextPosition
+    writeDraggableTransform(element, nextPosition)
+  }, [])
+
+  const schedulePositionWrite = useCallback(() => {
+    if (animationFrameRef.current !== null) return
+    animationFrameRef.current =
+      window.requestAnimationFrame(applyPendingPosition)
+  }, [applyPendingPosition])
+
+  const releasePointer = useCallback(() => {
+    const pointerId = pointerIdRef.current
+    const handle = activeHandleRef.current
+    if (pointerId !== null && handle?.hasPointerCapture(pointerId)) {
+      handle.releasePointerCapture(pointerId)
     }
-  }
+    if (handle) handle.style.touchAction = previousTouchActionRef.current
+    activeHandleRef.current = null
+    pointerIdRef.current = null
+    isDraggingRef.current = false
+  }, [])
+
+  const flushPosition = useCallback(() => {
+    if (animationFrameRef.current !== null) {
+      window.cancelAnimationFrame(animationFrameRef.current)
+      animationFrameRef.current = null
+    }
+    applyPendingPosition()
+  }, [applyPendingPosition])
+
+  const reclampPosition = useCallback(() => {
+    const bounds = measureBounds()
+    if (!bounds) return
+    const nextPosition = constrainDraggablePosition(positionRef.current, bounds)
+    if (samePosition(positionRef.current, nextPosition)) return
+    writePosition(nextPosition)
+  }, [measureBounds, writePosition])
+
+  const onPointerDown = useCallback<PointerEventHandler<HTMLDivElement>>(
+    (event) => {
+      if (
+        isDraggingRef.current ||
+        !event.isPrimary ||
+        (event.button !== 0 && event.button !== -1) ||
+        isInteractiveTarget(event.target)
+      ) {
+        return
+      }
+
+      const bounds = measureBounds()
+      if (!bounds) return
+      const currentPosition = constrainDraggablePosition(
+        positionRef.current,
+        bounds
+      )
+      if (!samePosition(positionRef.current, currentPosition)) {
+        writePosition(currentPosition)
+      }
+
+      const handle = event.currentTarget
+      isDraggingRef.current = true
+      pointerIdRef.current = event.pointerId
+      activeHandleRef.current = handle
+      previousTouchActionRef.current = handle.style.touchAction
+      handle.style.touchAction = "none"
+      originRef.current = {
+        x: event.clientX - currentPosition.x,
+        y: event.clientY - currentPosition.y,
+      }
+      handle.setPointerCapture(event.pointerId)
+      event.preventDefault()
+      event.stopPropagation()
+    },
+    [measureBounds, writePosition]
+  )
+
+  const onPointerMove = useCallback<PointerEventHandler<HTMLDivElement>>(
+    (event) => {
+      if (!isDraggingRef.current || pointerIdRef.current !== event.pointerId) {
+        return
+      }
+
+      pendingPositionRef.current = {
+        x: event.clientX - originRef.current.x,
+        y: event.clientY - originRef.current.y,
+      }
+      schedulePositionWrite()
+      event.preventDefault()
+      event.stopPropagation()
+    },
+    [schedulePositionWrite]
+  )
+
+  const finishPointer = useCallback<PointerEventHandler<HTMLDivElement>>(
+    (event) => {
+      if (pointerIdRef.current !== event.pointerId) return
+      pendingPositionRef.current = {
+        x: event.clientX - originRef.current.x,
+        y: event.clientY - originRef.current.y,
+      }
+      flushPosition()
+      releasePointer()
+      event.preventDefault()
+      event.stopPropagation()
+    },
+    [flushPosition, releasePointer]
+  )
 
   useLayoutEffect(() => {
-    const setInitialPosition = () => {
-      if (hasSetInitialPosition.current || !element) return
+    const element = elementRef.current
+    if (!element) return
 
-      const { width, height } = element.getBoundingClientRect()
-      hasSetInitialPosition.current = true
-      updatePosition(
-        getInitialDraggablePosition(
-          { x, y },
-          {
-            width,
-            height,
-            viewportWidth: window.innerWidth,
-            viewportHeight: window.innerHeight,
-            padding,
-          }
-        )
+    if (!initializedRef.current) {
+      const initialBounds = measureBounds()
+      if (!initialBounds) return
+      const initialPosition = getInitialDraggablePosition(
+        { x: optionsRef.current.x, y: optionsRef.current.y },
+        initialBounds
       )
+      initializedRef.current = true
+      writePosition(initialPosition)
+    } else {
+      measureBounds()
     }
 
-    setInitialPosition()
+    const resizeObserver =
+      typeof ResizeObserver === "undefined"
+        ? null
+        : new ResizeObserver(reclampPosition)
+    resizeObserver?.observe(element)
+    window.addEventListener("resize", reclampPosition)
 
-    const resize = () => {
-      updatePosition(posRef.current)
-    }
-    const move = (e: MouseEvent) => {
-      if (!dragging.current) return
-      updatePosition({
-        x: e.clientX - origin.current.x,
-        y: e.clientY - origin.current.y,
-      })
-    }
-    const up = () => {
-      dragging.current = false
-    }
-    const touchMove = (e: TouchEvent) => {
-      if (!dragging.current) return
-      const touch = e.touches[0]
-      updatePosition({
-        x: touch.clientX - origin.current.x,
-        y: touch.clientY - origin.current.y,
-      })
-    }
-    const touchEnd = () => {
-      dragging.current = false
-    }
-
-    const resizeObserver = new ResizeObserver(resize)
-    if (element) resizeObserver.observe(element)
-
-    window.addEventListener("resize", resize)
-    window.addEventListener("mousemove", move)
-    window.addEventListener("mouseup", up)
-    window.addEventListener("touchmove", touchMove, { passive: true })
-    window.addEventListener("touchend", touchEnd)
     return () => {
-      resizeObserver.disconnect()
-      window.removeEventListener("resize", resize)
-      window.removeEventListener("mousemove", move)
-      window.removeEventListener("mouseup", up)
-      window.removeEventListener("touchmove", touchMove)
-      window.removeEventListener("touchend", touchEnd)
+      flushPosition()
+      releasePointer()
+      resizeObserver?.disconnect()
+      window.removeEventListener("resize", reclampPosition)
     }
-  }, [element, padding, x, y])
+  }, [
+    flushPosition,
+    measureBounds,
+    reclampPosition,
+    releasePointer,
+    writePosition,
+  ])
 
   return {
-    style: { left: pos.x, top: pos.y } as React.CSSProperties,
+    style: {
+      left: 0,
+      top: 0,
+    } satisfies CSSProperties,
     ref: setElement,
-    onMouseDown,
-    onTouchStart,
+    onPointerDownCapture: onPointerDown,
+    onPointerMoveCapture: onPointerMove,
+    onPointerUpCapture: finishPointer,
+    onPointerCancelCapture: finishPointer,
   }
 }

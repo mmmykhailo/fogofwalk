@@ -92,17 +92,18 @@ test.describe("public profile", () => {
     await app.page.goto(`/map?activity=${encodeURIComponent(id)}`)
     await app.waitUntilReady()
 
-    // Toggle visibility from Private to Public and wait for the debounced
-    // visibility PATCH to actually land, rather than sleeping a guessed delay.
-    const visibilityPatch = app.page.waitForResponse(
+    // Toggle visibility from Private to Public and wait for the compact
+    // metadata update to actually land, rather than sleeping a guessed delay.
+    const visibilityUpdate = app.page.waitForResponse(
       (res) =>
-        res.request().method() === "PATCH" && res.url().includes("/visibility")
+        res.request().method() === "PATCH" &&
+        res.url().endsWith("/api/activities/metadata")
     )
     await app.page
-      .getByRole("combobox", { name: "Activity visibility" })
+      .getByRole("combobox", { name: "Visibility for t1.gpx" })
       .click()
     await app.page.getByRole("option", { name: "Public" }).click()
-    await visibilityPatch
+    await visibilityUpdate
 
     // Publish should show on the public profile.
     await app.page.goto(PUBLIC_PROFILE_URL(login))

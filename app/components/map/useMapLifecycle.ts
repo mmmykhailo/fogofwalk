@@ -3,18 +3,28 @@ import maplibregl from "maplibre-gl"
 import { attachMapInteractions } from "~/components/map/mapInteractions"
 import type { SavedPointTooltipState } from "~/components/map/useSavedPoints"
 import {
+  applyFogDataToMap,
   rehydrateMapPresentation,
   type MapPresentationState,
 } from "~/lib/map/commands"
-import { setupMapLayers } from "~/lib/map/layers"
+import { activitiesFeatureCollection } from "~/lib/map/geojson"
+import { MAP_SOURCE_IDS, setupMapLayers } from "~/lib/map/layers"
 import { mapStore, saveMapPosition } from "~/lib/mapStore"
 import { styleForMapMode } from "~/lib/map/styles"
+import { incrementPerformanceCounter } from "~/lib/performance"
 import type { MapMode } from "~/types/activities"
+
+declare global {
+  interface Window {
+    __fogofwalkE2eMap?: maplibregl.Map
+  }
+}
 
 interface MapLifecycleOptions extends MapPresentationState {
   mapMode: MapMode
   onMapReady?: () => void
   onActivitySelect: (id: string | null) => void
+  onMapBackgroundClick: () => void
   onSavedPointSelect: (id: string) => void
   onSavedPointCreate?: (location: {
     lng: number
@@ -28,7 +38,7 @@ interface MapLifecycleOptions extends MapPresentationState {
 
 interface MapLifecycleResult {
   containerRef: RefObject<HTMLDivElement | null>
-  bearing: number
+  map: maplibregl.Map | null
   zoomIn: () => void
   zoomOut: () => void
   resetOrientation: () => void
@@ -42,7 +52,7 @@ export function useMapLifecycle(
   optionsRef.current = options
   const pendingStyleLoadRef = useRef<(() => void) | null>(null)
   const isInitialStyleLoadedRef = useRef(false)
-  const [bearing, setBearing] = useState(0)
+  const [mapInstance, setMapInstance] = useState<maplibregl.Map | null>(null)
 
   const currentPresentation = (): MapPresentationState => ({
     showActivities: optionsRef.current.showActivities,
@@ -56,6 +66,7 @@ export function useMapLifecycle(
   useEffect(() => {
     const container = containerRef.current
     if (!container || mapStore.map) return
+    let disposed = false
 
     const initialMode = optionsRef.current.mapMode
     const map = new maplibregl.Map({
@@ -65,20 +76,90 @@ export function useMapLifecycle(
       zoom: mapStore.initialZoom ?? 5,
       minZoom: 5,
       pitch: initialMode === "relief" ? 45 : 0,
+      canvasContextAttributes: {
+        preserveDrawingBuffer: import.meta.env.VITE_E2E === "1",
+      },
       attributionControl: { compact: false },
     })
     mapStore.map = map
+    setMapInstance(map)
+    if (import.meta.env.VITE_E2E === "1") {
+      window.__fogofwalkE2eMap = map
+    }
+    const mapSurface =
+      container.closest<HTMLElement>("[data-map-cache]") ?? container
 
-    map.on("rotate", () => setBearing(map.getBearing()))
-    map.on("moveend", () => {
+    const rehydrateAfterContextRestore = () => {
+      if (disposed) return
+      setupMapLayers(map, optionsRef.current.mapMode)
+      mapStore.sourcesReady = true
+      const activitiesSource = map.getSource(MAP_SOURCE_IDS.activities) as
+        | maplibregl.GeoJSONSource
+        | undefined
+      if (activitiesSource) {
+        incrementPerformanceCounter("mapSourceSetDataCalls")
+        activitiesSource.setData(
+          activitiesFeatureCollection(mapStore.activities)
+        )
+      }
+      optionsRef.current.invalidateActivitiesCache()
+      rehydrateMapPresentation(map, currentPresentation())
+      applyFogDataToMap(map)
+      isInitialStyleLoadedRef.current = true
+      optionsRef.current.rebuildPhotoMarkers()
+    }
+
+    const waitForContextStyle = () => {
+      const pending = pendingStyleLoadRef.current
+      if (pending) map.off("style.load", pending)
+      pendingStyleLoadRef.current = null
+
+      const onStyleLoad = () => {
+        if (pendingStyleLoadRef.current !== onStyleLoad) return
+        map.off("style.load", onStyleLoad)
+        pendingStyleLoadRef.current = null
+        rehydrateAfterContextRestore()
+      }
+      pendingStyleLoadRef.current = onStyleLoad
+      map.on("style.load", onStyleLoad)
+      // Context restoration may have completed the style before MapLibre emits
+      // its restoration event. In that case the event has already been missed,
+      // but the style readiness check still lets us re-add the custom layer.
+      if (map.isStyleLoaded()) onStyleLoad()
+    }
+
+    const handleContextLost = () => {
+      mapStore.sourcesReady = false
+      mapStore.renderSourceRevision = null
+    }
+    const handleContextRestored = () => {
+      mapStore.sourcesReady = false
+      mapStore.renderSourceRevision = null
+      waitForContextStyle()
+    }
+    map.on("webglcontextlost", handleContextLost)
+    map.on("webglcontextrestored", handleContextRestored)
+
+    const handleMoveStart = () => {
+      mapSurface.dataset.mapMoving = ""
+    }
+    const handleMoveEnd = () => {
+      delete mapSurface.dataset.mapMoving
       const center = map.getCenter()
       saveMapPosition([center.lng, center.lat], map.getZoom())
-    })
+    }
+    const handleMapRemove = () => {
+      delete mapSurface.dataset.mapMoving
+    }
+    map.on("movestart", handleMoveStart)
+    map.on("moveend", handleMoveEnd)
+    map.on("remove", handleMapRemove)
 
     const detachMapInteractions = attachMapInteractions(map, {
       isShowingSavedPoints: () => optionsRef.current.showSavedPoints,
       getSavedPoints: () => optionsRef.current.savedPoints,
       onActivitySelect: (id) => optionsRef.current.onActivitySelect(id),
+      onMapBackgroundClick: () => optionsRef.current.onMapBackgroundClick(),
       onSavedPointSelect: (id) => optionsRef.current.onSavedPointSelect(id),
       onSavedPointCreate: (location) =>
         optionsRef.current.onSavedPointCreate?.(location),
@@ -89,8 +170,9 @@ export function useMapLifecycle(
     map.once("load", () => {
       map.resize()
       setupMapLayers(map, initialMode)
-      rehydrateMapPresentation(map, currentPresentation())
       mapStore.sourcesReady = true
+      rehydrateMapPresentation(map, currentPresentation())
+      applyFogDataToMap(map)
       isInitialStyleLoadedRef.current = true
       optionsRef.current.rebuildPhotoMarkers()
       optionsRef.current.onMapReady?.()
@@ -99,9 +181,21 @@ export function useMapLifecycle(
     map.on("zoomend", () => optionsRef.current.rebuildPhotoMarkers())
 
     return () => {
+      disposed = true
       detachMapInteractions()
+      map.off("webglcontextlost", handleContextLost)
+      map.off("webglcontextrestored", handleContextRestored)
+      map.off("movestart", handleMoveStart)
+      map.off("moveend", handleMoveEnd)
+      map.off("remove", handleMapRemove)
+      delete mapSurface.dataset.mapMoving
       mapStore.sourcesReady = false
+      mapStore.renderSourceRevision = null
       mapStore.map = null
+      setMapInstance(null)
+      if (window.__fogofwalkE2eMap === map) {
+        delete window.__fogofwalkE2eMap
+      }
       if (pendingStyleLoadRef.current) {
         map.off("style.load", pendingStyleLoadRef.current)
         pendingStyleLoadRef.current = null
@@ -119,6 +213,7 @@ export function useMapLifecycle(
       pendingStyleLoadRef.current = null
     }
     mapStore.sourcesReady = false
+    mapStore.renderSourceRevision = null
 
     const onStyleLoad = () => {
       if (pendingStyleLoadRef.current !== onStyleLoad) return
@@ -126,13 +221,14 @@ export function useMapLifecycle(
       pendingStyleLoadRef.current = null
 
       setupMapLayers(map, options.mapMode)
+      mapStore.sourcesReady = true
       optionsRef.current.invalidateActivitiesCache()
       rehydrateMapPresentation(map, currentPresentation())
+      applyFogDataToMap(map)
       map.easeTo({
         pitch: options.mapMode === "relief" ? 45 : 0,
         duration: 400,
       })
-      mapStore.sourcesReady = true
       optionsRef.current.rebuildPhotoMarkers()
     }
 
@@ -143,7 +239,7 @@ export function useMapLifecycle(
 
   return {
     containerRef,
-    bearing,
+    map: mapInstance,
     zoomIn: () => mapStore.map?.zoomIn(),
     zoomOut: () => mapStore.map?.zoomOut(),
     resetOrientation: () =>

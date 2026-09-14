@@ -23,24 +23,39 @@ export function setUnauthorizedHandler(handler: (() => void) | null) {
 }
 
 /** An error carrying the server's machine-readable code, when it sent one. */
-export class ApiRequestError extends Error {
+export type ApiRequestError = Error & {
+  readonly name: "ApiRequestError"
   readonly status: number
   readonly code: ApiErrorCode | "network"
   /** How long to wait before retrying. Only ever set on `rate_limited`. */
   readonly retryAfterMs: number | null
+}
 
-  constructor(
-    status: number,
-    code: ApiErrorCode | "network",
-    message: string,
-    retryAfterMs: number | null = null
-  ) {
-    super(message)
-    this.name = "ApiRequestError"
-    this.status = status
-    this.code = code
-    this.retryAfterMs = retryAfterMs
-  }
+export function createApiRequestError(
+  status: number,
+  code: ApiErrorCode | "network",
+  message: string,
+  retryAfterMs: number | null = null
+): ApiRequestError {
+  const error = new Error(message) as ApiRequestError
+  Object.assign(error, {
+    name: "ApiRequestError",
+    status,
+    code,
+    retryAfterMs,
+  })
+  return error
+}
+
+export function isApiRequestError(error: unknown): error is ApiRequestError {
+  return (
+    error instanceof Error &&
+    error.name === "ApiRequestError" &&
+    typeof (error as Partial<ApiRequestError>).status === "number" &&
+    typeof (error as Partial<ApiRequestError>).code === "string" &&
+    ((error as Partial<ApiRequestError>).retryAfterMs === null ||
+      typeof (error as Partial<ApiRequestError>).retryAfterMs === "number")
+  )
 }
 
 const FRIENDLY_MESSAGES: Partial<Record<ApiErrorCode | "network", string>> = {
@@ -52,7 +67,7 @@ const FRIENDLY_MESSAGES: Partial<Record<ApiErrorCode | "network", string>> = {
 }
 
 export function friendlyMessage(err: unknown): string {
-  if (err instanceof ApiRequestError) {
+  if (isApiRequestError(err)) {
     return FRIENDLY_MESSAGES[err.code] ?? err.message
   }
   return err instanceof Error ? err.message : "Something went wrong."
@@ -94,7 +109,7 @@ async function request(path: string, opts: RequestOptions): Promise<Response> {
   } catch (err) {
     if (err instanceof DOMException && err.name === "AbortError") throw err
     reportServerUnreachable()
-    throw new ApiRequestError(0, "network", "Network request failed")
+    throw createApiRequestError(0, "network", "Network request failed")
   }
 
   // A response — even an error one — proves the server is up.
@@ -130,7 +145,7 @@ async function request(path: string, opts: RequestOptions): Promise<Response> {
     onUnauthorized?.()
   }
 
-  throw new ApiRequestError(res.status, code, message, retryAfterMs)
+  throw createApiRequestError(res.status, code, message, retryAfterMs)
 }
 
 export async function apiGet<T>(

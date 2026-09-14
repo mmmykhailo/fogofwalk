@@ -1,11 +1,13 @@
 import { useRef, useEffect } from "react"
+import { useState } from "react"
+import type maplibregl from "maplibre-gl"
 import { PlusIcon, MinusIcon, NavigationArrowIcon } from "@phosphor-icons/react"
 import { Button } from "~/components/ui/button"
 import { ButtonGroup } from "~/components/ui/button-group"
 import { cn } from "~/lib/utils"
 
 interface MapCompassProps {
-  bearing: number
+  map: maplibregl.Map | null
   onZoomIn: () => void
   onZoomOut: () => void
   onReset: () => void
@@ -13,14 +15,48 @@ interface MapCompassProps {
 }
 
 export function MapCompass({
-  bearing,
+  map,
   onZoomIn,
   onZoomOut,
   onReset,
   className,
 }: MapCompassProps) {
   const iconRef = useRef<SVGSVGElement>(null)
-  const accumulatedRef = useRef(45 - bearing)
+  const accumulatedRef = useRef(45)
+  const [bearing, setBearing] = useState(0)
+  const latestBearingRef = useRef(0)
+  const renderedBearingRef = useRef(0)
+  const animationFrameRef = useRef<number | null>(null)
+
+  useEffect(() => {
+    if (!map) return
+    let disposed = false
+
+    const publishBearing = () => {
+      animationFrameRef.current = null
+      if (disposed) return
+      const nextBearing = Math.round(latestBearingRef.current * 10) / 10
+      if (nextBearing === renderedBearingRef.current) return
+      renderedBearingRef.current = nextBearing
+      setBearing(nextBearing)
+    }
+    const handleRotate = () => {
+      latestBearingRef.current = map.getBearing()
+      if (animationFrameRef.current !== null) return
+      animationFrameRef.current = requestAnimationFrame(publishBearing)
+    }
+
+    map.on("rotate", handleRotate)
+    handleRotate()
+    return () => {
+      disposed = true
+      map.off("rotate", handleRotate)
+      if (animationFrameRef.current !== null) {
+        cancelAnimationFrame(animationFrameRef.current)
+        animationFrameRef.current = null
+      }
+    }
+  }, [map])
 
   useEffect(() => {
     const target = 45 - bearing

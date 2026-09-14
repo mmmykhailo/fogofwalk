@@ -3,7 +3,8 @@ import { DotsThreeIcon } from "@phosphor-icons/react"
 import { Button } from "~/components/ui/button"
 import type { FogMode, MapMode } from "~/types/activities"
 import { MapDrawer } from "~/components/MapDrawer"
-import { FogProgressIndicator } from "~/components/FogProgress"
+import { FogStatusNotice } from "~/components/FogStatusNotice"
+import { ActivityProgress } from "~/components/ActivityProgress"
 
 interface ControlPanelProps {
   activityCount: number
@@ -14,6 +15,7 @@ interface ControlPanelProps {
   onShowFogChange: (value: boolean) => void
   fogMode: FogMode
   onFogModeChange: (mode: FogMode) => void
+  onRetryFog: () => void
   mapMode: MapMode
   onMapModeChange: (mode: MapMode) => void
   onAddFiles: (files: FileList) => void
@@ -39,6 +41,7 @@ export function ControlPanel({
   onShowFogChange,
   fogMode,
   onFogModeChange,
+  onRetryFog,
   mapMode,
   onMapModeChange,
   onAddFiles,
@@ -96,17 +99,22 @@ export function ControlPanel({
       />
 
       {/* FAB — grouped visually with the compass (top-right) */}
-      <div className="absolute top-28 right-1.5 z-10 flex items-center gap-2 sm:right-3">
-        {isProcessing && <FogProgressIndicator activityCount={activityCount} />}
+      <div className="absolute top-28 right-auto left-1.5 z-10 flex w-[calc(100vw-0.75rem)] items-start justify-end gap-2 sm:right-3 sm:left-auto sm:w-auto">
+        <div className="flex min-w-0 flex-1 flex-col items-end gap-2">
+          <ActivityProgress />
+        </div>
         <Button
           variant="outline"
           size="icon"
-          className="border-0 bg-background/80 shadow-sm backdrop-blur-md"
+          className="shrink-0 self-start border-0 bg-background/80 shadow-sm backdrop-blur-md"
           onClick={() => setIsDrawerOpen(true)}
           aria-label="Open controls"
         >
           <DotsThreeIcon weight="bold" size={20} />
         </Button>
+      </div>
+      <div className="absolute top-38 right-1.5 z-10 sm:right-3">
+        <FogStatusNotice onRetry={onRetryFog} />
       </div>
 
       {/* All controls in one drawer */}

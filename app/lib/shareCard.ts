@@ -1,5 +1,6 @@
 import type { ParsedActivity } from "~/types/activities"
 import type { PhotoEntry } from "~/types/photos"
+import { pathsForActivity } from "~shared/activityContract"
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -197,9 +198,11 @@ export function filterPhotosForActivity(
   activity: ParsedActivity
 ): PhotoEntry[] {
   return photos.filter((p) =>
-    activity.coordinates.some(
-      ([lng, lat]) =>
-        Math.abs(lng - p.lng) < 1e-5 && Math.abs(lat - p.lat) < 1e-5
+    pathsForActivity(activity).some((path) =>
+      path.some(
+        ([lng, lat]) =>
+          Math.abs(lng - p.lng) < 1e-5 && Math.abs(lat - p.lat) < 1e-5
+      )
     )
   )
 }
@@ -235,11 +238,13 @@ function drawRoutes(
     minLat = Infinity,
     maxLat = -Infinity
   for (const t of activities) {
-    for (const [lng, lat] of t.coordinates) {
-      if (lng < minLng) minLng = lng
-      if (lng > maxLng) maxLng = lng
-      if (lat < minLat) minLat = lat
-      if (lat > maxLat) maxLat = lat
+    for (const path of pathsForActivity(t)) {
+      for (const [lng, lat] of path) {
+        if (lng < minLng) minLng = lng
+        if (lng > maxLng) maxLng = lng
+        if (lat < minLat) minLat = lat
+        if (lat > maxLat) maxLat = lat
+      }
     }
   }
   if (!isFinite(minLng)) return
@@ -260,38 +265,41 @@ function drawRoutes(
 
   for (const activity of activities) {
     const MAX_PTS = 2000
-    const { coordinates } = activity
-    const step =
-      coordinates.length > MAX_PTS ? Math.ceil(coordinates.length / MAX_PTS) : 1
-    const pts = coordinates.filter((_, i) => i % step === 0)
-    if (pts.length < 2) continue
+    for (const coordinates of pathsForActivity(activity)) {
+      const step =
+        coordinates.length > MAX_PTS
+          ? Math.ceil(coordinates.length / MAX_PTS)
+          : 1
+      const pts = coordinates.filter((_, i) => i % step === 0)
+      if (pts.length < 2) continue
 
-    const buildPath = () => {
-      ctx.beginPath()
-      ctx.moveTo(toX(pts[0][0]), toY(pts[0][1]))
-      for (let i = 1; i < pts.length; i++)
-        ctx.lineTo(toX(pts[i][0]), toY(pts[i][1]))
+      const buildPath = () => {
+        ctx.beginPath()
+        ctx.moveTo(toX(pts[0]![0]), toY(pts[0]![1]))
+        for (let i = 1; i < pts.length; i++)
+          ctx.lineTo(toX(pts[i]![0]), toY(pts[i]![1]))
+      }
+
+      ctx.save()
+      ctx.strokeStyle = `${ACTIVITY_COLOR}50`
+      ctx.lineWidth = 22
+      ctx.lineCap = "round"
+      ctx.lineJoin = "round"
+      ctx.shadowColor = ACTIVITY_COLOR
+      ctx.shadowBlur = 30
+      buildPath()
+      ctx.stroke()
+      ctx.restore()
+
+      ctx.save()
+      ctx.strokeStyle = ACTIVITY_COLOR
+      ctx.lineWidth = 7
+      ctx.lineCap = "round"
+      ctx.lineJoin = "round"
+      buildPath()
+      ctx.stroke()
+      ctx.restore()
     }
-
-    ctx.save()
-    ctx.strokeStyle = `${ACTIVITY_COLOR}50`
-    ctx.lineWidth = 22
-    ctx.lineCap = "round"
-    ctx.lineJoin = "round"
-    ctx.shadowColor = ACTIVITY_COLOR
-    ctx.shadowBlur = 30
-    buildPath()
-    ctx.stroke()
-    ctx.restore()
-
-    ctx.save()
-    ctx.strokeStyle = ACTIVITY_COLOR
-    ctx.lineWidth = 7
-    ctx.lineCap = "round"
-    ctx.lineJoin = "round"
-    buildPath()
-    ctx.stroke()
-    ctx.restore()
   }
 }
 
@@ -370,7 +378,7 @@ export interface ShareCardOptions {
   subtitle: string | null
   photo: PhotoEntry | null
   mapBaseSnapshot: ImageBitmap | null
-  mapActivityPointsPerActivity: Array<{ x: number; y: number }[]> | null
+  mapActivityPointsPerActivity: Array<Array<{ x: number; y: number }[]>> | null
   backgroundMode: BackgroundMode
   blurAmount: number
 }
@@ -408,8 +416,10 @@ export async function drawShareCard(
   } else if (backgroundMode === "map" && mapBaseSnapshot) {
     drawImageBackground(ctx, mapBaseSnapshot, W, H, blurAmount, 0.35)
     if (mapActivityPointsPerActivity) {
-      for (const pts of mapActivityPointsPerActivity) {
-        if (pts.length >= 2) drawRouteFromPixels(ctx, pts)
+      for (const paths of mapActivityPointsPerActivity) {
+        for (const pts of paths) {
+          if (pts.length >= 2) drawRouteFromPixels(ctx, pts)
+        }
       }
     }
   } else {

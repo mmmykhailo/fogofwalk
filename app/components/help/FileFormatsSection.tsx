@@ -69,8 +69,9 @@ export function FileFormatsSection() {
         </CardHeader>
         <CardContent className="space-y-3">
           <p className="text-sm text-muted-foreground">
-            Binary format from Garmin devices. Contains the same GPS data as
-            GPX.
+            Compact binary format used by Garmin and many other sports devices.
+            It can include recorded laps and activity metadata as well as the
+            GPS track.
           </p>
           <ul className="space-y-1 text-sm text-muted-foreground">
             <li>

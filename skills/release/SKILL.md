@@ -9,8 +9,9 @@ Use this skill for a requested Fog of Walk release. Read `docs/releases.md`
 before changing version files.
 
 The root `package.json` and `server/package.json` are one release version.
-Always use `bun run release [patch|minor|major]`; do not edit either version by
-hand. The command updates both package files and generates the changelog entry.
+Always use `bun run release:patch`, `bun run release` (minor), or
+`bun run release:major`; do not edit either version by hand. The scripts update
+both package files and generate the changelog entry.
 
 Before running it, inspect `git status --short`. Preserve unrelated changes
 and do not include them in a release commit. Review the generated changelog and

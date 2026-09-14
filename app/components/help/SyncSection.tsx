@@ -6,12 +6,13 @@ export function SyncSection() {
       <p>
         Everything described so far is local. Fog of Walk needs no account, and
         until you sign in it never sends your data anywhere — the fog, your
-        activities and your photos are computed and stored on the device you are
-        using.
+        activities, saved points and photos are computed and stored on the
+        device you are using.
       </p>
       <p>
         Signing in adds an optional sync server on top of that, so the same
-        library shows up on your phone and your laptop. You can open it from the{" "}
+        activity library and saved points show up on your phone and laptop. You
+        can open it from the{" "}
         <strong className="text-foreground">Account</strong> entry in the menu.
         It is entirely up to you: nothing leaves the device unless you sign in.
       </p>
@@ -26,14 +27,15 @@ export function SyncSection() {
         </li>
         <li>
           <strong className="text-foreground">
-            Only activities are uploaded. Photos are never uploaded
+            Activities and saved points are uploaded. Photos are never uploaded
           </strong>{" "}
           — they stay on the device that imported them, which also means they do
           not appear on your other devices
         </li>
         <li>
-          Once signed in, syncing happens by itself — after an import, when you
-          return to the tab, and periodically while it is open
+          Once signed in, syncing happens by itself — after activity or
+          saved-point changes, when you return to the tab, when the browser
+          comes online, and periodically while the page is visible
         </li>
         <li>
           The same activity imported on two devices is recognised as one,
@@ -46,18 +48,20 @@ export function SyncSection() {
           until its owner adds you
         </li>
         <li>
-          After you delete an activity locally without removing it from the
-          server, sync pauses until you reload — otherwise the next sync would
-          simply download it again
+          After you clear local data, or delete an activity locally without
+          removing it from the server, automatic sync pauses. Reload the page or
+          press <em>Sync now</em> to resume; server copies can then download
+          again
         </li>
       </ul>
       <Alert>
         <AlertTitle>Sync means trusting the server's operator</AlertTitle>
         <AlertDescription>
-          Synced activities are stored on the server without encryption, so
-          whoever runs it can see where you have been. Only sign in if you trust
-          them — or run your own server. Staying signed out keeps everything on
-          your device, with no loss of features other than sync itself.
+          Synced activities and saved points are stored on the server without
+          end-to-end encryption, so whoever runs it can see where you have been
+          and the places you saved. Only sign in if you trust them — or run your
+          own server. Staying signed out keeps everything on your device, with
+          no loss of local features.
         </AlertDescription>
       </Alert>
     </div>

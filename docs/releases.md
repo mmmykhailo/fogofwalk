@@ -10,9 +10,9 @@ Finish and commit the changes intended for the release first. Then, on the
 release branch, run one of these commands:
 
 ```bash
-bun run release        # patch
-bun run release minor
-bun run release major
+bun run release:patch  # patch
+bun run release        # minor
+bun run release:major  # major
 ```
 
 The command updates both package versions and prepends the commit subjects

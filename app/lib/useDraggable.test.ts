@@ -1,8 +1,15 @@
 import { expect, test } from "bun:test"
 import {
   constrainDraggablePosition,
+  formatDraggableTransform,
   getInitialDraggablePosition,
 } from "./useDraggable"
+
+test("useDraggable formats visual movement as a 3d transform", () => {
+  expect(formatDraggableTransform({ x: 24, y: 48 })).toBe(
+    "translate3d(24px, 48px, 0)"
+  )
+})
 
 test("useDraggable uses negative initial coordinates as far-edge offsets", () => {
   expect(

@@ -1,4 +1,5 @@
 import { haversineKm } from "~/lib/stats"
+import type { ActivityCoords, ActivityPaths } from "~shared/activities"
 
 // 0.001° ≈ 111 m per cell, matching FOG_CLEAR_RADIUS_METERS = 100 m.
 const GRID_SCALE = 1000
@@ -9,7 +10,20 @@ const GRID_HEIGHT = 180_003
 
 export interface UniqueDistanceActivity {
   id: string
-  coordinates: [number, number][]
+  /** Legacy one-path projection. */
+  coordinates?: ActivityCoords
+  /** Canonical geometry; paths must never be joined to one another. */
+  paths?: ActivityPaths
+}
+
+function pathsForUniqueDistance(
+  activity: UniqueDistanceActivity
+): ActivityPaths {
+  return activity.paths && activity.paths.length > 0
+    ? activity.paths
+    : activity.coordinates
+      ? [activity.coordinates]
+      : []
 }
 
 /** Packs a grid coordinate into a collision-free integer below Number.MAX_SAFE_INTEGER. */
@@ -33,27 +47,27 @@ export function computePerActivityUniqueDistances(
   for (const activity of activities) {
     let activityUniqueKm = 0
     const activityCentres = new Set<number>()
-    const coords = activity.coordinates
+    for (const coords of pathsForUniqueDistance(activity)) {
+      for (let i = 1; i < coords.length; i++) {
+        const [lng1, lat1] = coords[i - 1]!
+        const [lng2, lat2] = coords[i]!
+        const cx = Math.round(((lng1 + lng2) / 2) * GRID_SCALE)
+        const cy = Math.round(((lat1 + lat2) / 2) * GRID_SCALE)
+        activityCentres.add(cellKey(cx, cy))
 
-    for (let i = 1; i < coords.length; i++) {
-      const [lng1, lat1] = coords[i - 1]
-      const [lng2, lat2] = coords[i]
-      const cx = Math.round(((lng1 + lng2) / 2) * GRID_SCALE)
-      const cy = Math.round(((lat1 + lat2) / 2) * GRID_SCALE)
-      activityCentres.add(cellKey(cx, cy))
-
-      let wasExplored = false
-      for (let dx = -1; dx <= 1 && !wasExplored; dx++) {
-        for (let dy = -1; dy <= 1; dy++) {
-          if (exploredCentres.has(cellKey(cx + dx, cy + dy))) {
-            wasExplored = true
-            break
+        let wasExplored = false
+        for (let dx = -1; dx <= 1 && !wasExplored; dx++) {
+          for (let dy = -1; dy <= 1; dy++) {
+            if (exploredCentres.has(cellKey(cx + dx, cy + dy))) {
+              wasExplored = true
+              break
+            }
           }
         }
-      }
 
-      if (!wasExplored) {
-        activityUniqueKm += haversineKm(lng1, lat1, lng2, lat2)
+        if (!wasExplored) {
+          activityUniqueKm += haversineKm(lng1, lat1, lng2, lat2)
+        }
       }
     }
 

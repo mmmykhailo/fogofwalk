@@ -1,10 +1,17 @@
 import { ACTIVITY_TYPES } from "~/types/activities"
 import type { ParsedActivity, FogMode } from "~/types/activities"
+import {
+  FOG_ALGORITHM_VERSION,
+  FOG_PARTITION_SCHEME_VERSION,
+  type FogRenderData,
+} from "~/lib/fog/protocol"
+import { validateFogRenderData } from "~/lib/fog/engine/validate"
 import type { ServerUser, UserCapabilities } from "~shared/api"
 import type { PhotoEntry } from "~/types/photos"
 import type { SavedPoint } from "~shared/saved-points"
 import type { ActivitySummary } from "~/types/activitySummary"
 import type { ActivityType, StartSunPhase } from "~/types/activities"
+import { incrementPerformanceCounter } from "~/lib/performance"
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -19,8 +26,13 @@ interface StoredPhoto {
 
 export interface FogCache {
   activityIds: string[]
+  coverageRevision: number
   fogMode: FogMode
-  fogData: GeoJSON.Feature<GeoJSON.Polygon | GeoJSON.MultiPolygon>
+  algorithmVersion: typeof FOG_ALGORITHM_VERSION
+  partitionSchemeVersion: typeof FOG_PARTITION_SCHEME_VERSION
+  /** Only complete positive projections are safe to restore as a base. */
+  completeness: "complete"
+  fogData: FogRenderData
 }
 
 interface PrefEntry {
@@ -31,9 +43,28 @@ interface PrefEntry {
 export interface UniqueDistanceState {
   version: number
   activityIds: string[]
+  /** Activity membership/geometry revision represented by the marker. */
+  coverageRevision: number
 }
 
-const UNIQUE_DISTANCE_VERSION = 1
+export type UniqueDistanceSaveResult =
+  | { status: "saved"; coverageRevision: number }
+  | {
+      status: "stale"
+      expectedCoverageRevision: number
+      actualCoverageRevision: number | null
+    }
+  | { status: "unavailable"; error: Error }
+  | { status: "failed"; error: unknown }
+
+export interface SaveUniqueDistancesOptions {
+  /** Only write when library-meta still has this coverage revision. */
+  coverageRevision?: number
+  /** Compatibility cleanup for callers that still pass a deleted id. */
+  deletedActivityId?: string
+}
+
+const UNIQUE_DISTANCE_VERSION = 3
 const START_SUN_PHASES = [
   "before_sunrise",
   "daylight",
@@ -97,7 +128,7 @@ export function activityToSummary(
   }
 }
 
-function isActivitySummary(value: unknown): value is ActivitySummary {
+export function isActivitySummary(value: unknown): value is ActivitySummary {
   if (value == null || typeof value !== "object") return false
   const summary = value as Partial<ActivitySummary>
   const stats = summary.stats
@@ -168,7 +199,7 @@ function sortActivitySummaries(
 // ─── DB singleton ──────────────────────────────────────────────────────────────
 
 const DB_NAME = "fogofwalk"
-const DB_VERSION = 4
+const DB_VERSION = 7
 
 let dbPromise: Promise<IDBDatabase | null> | null = null
 let activitySummariesFallback: ActivitySummary[] | null = null
@@ -220,8 +251,42 @@ function getDb(): Promise<IDBDatabase | null> {
         if (!db.objectStoreNames.contains("prefs")) {
           db.createObjectStore("prefs", { keyPath: "key" })
         }
+        if (!db.objectStoreNames.contains("library-meta")) {
+          db.createObjectStore("library-meta", { keyPath: "key" })
+        }
+        if (!db.objectStoreNames.contains("sync-state")) {
+          db.createObjectStore("sync-state", { keyPath: "id" })
+        }
+        if (!db.objectStoreNames.contains("sync-outbox")) {
+          const outboxStore = db.createObjectStore("sync-outbox", {
+            keyPath: "id",
+          })
+          outboxStore.createIndex("dedupeKey", "dedupeKey", { unique: true })
+          outboxStore.createIndex("statusAvailableAt", [
+            "status",
+            "availableAt",
+          ])
+          outboxStore.createIndex("leaseUntil", "leaseUntil")
+        } else {
+          const outboxStore = tx.objectStore("sync-outbox")
+          if (!outboxStore.indexNames.contains("dedupeKey")) {
+            outboxStore.createIndex("dedupeKey", "dedupeKey", { unique: true })
+          }
+          if (outboxStore.indexNames.contains("stateAvailableAt")) {
+            outboxStore.deleteIndex("stateAvailableAt")
+          }
+          if (!outboxStore.indexNames.contains("statusAvailableAt")) {
+            outboxStore.createIndex("statusAvailableAt", [
+              "status",
+              "availableAt",
+            ])
+          }
+          if (!outboxStore.indexNames.contains("leaseUntil")) {
+            outboxStore.createIndex("leaseUntil", "leaseUntil")
+          }
+        }
 
-        if (e.oldVersion < 4) {
+        if (e.oldVersion < 7) {
           const activityStore = tx.objectStore("activities")
           const summaryStore = tx.objectStore("activity-summaries")
           const cursorRequest = activityStore.openCursor()
@@ -249,6 +314,17 @@ function getDb(): Promise<IDBDatabase | null> {
     }
   })
   return dbPromise
+}
+
+/**
+ * Shared database handle for the activity-library repository.
+ *
+ * The legacy storage helpers intentionally remain available during migration,
+ * but the canonical activity service must be able to report an unavailable
+ * database instead of treating it as an empty library.
+ */
+export async function openStorageDatabase(): Promise<IDBDatabase | null> {
+  return getDb()
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -309,6 +385,33 @@ export async function saveActivities(
   }
 }
 
+/**
+ * Apply read-time defaults for records written before the current activity
+ * schema. This is intentionally non-mutating so a failed projection or a
+ * caller holding the raw IDB result cannot observe a partial migration.
+ */
+export function migrateStoredActivity(
+  activity: StoredActivity
+): ParsedActivity {
+  const startedAtMs =
+    activity.startedAtMs === undefined
+      ? (activity.pointTimestamps?.find(
+          (timestamp) => timestamp != null && isFinite(timestamp)
+        ) ?? null)
+      : activity.startedAtMs
+
+  return {
+    ...activity,
+    startedAtMs,
+    isPublic: activity.isPublic ?? false,
+    stats: {
+      ...activity.stats,
+      uniqueDistanceKm:
+        activity.stats.uniqueDistanceKm ?? activity.stats.distanceKm,
+    },
+  } as ParsedActivity
+}
+
 /** Load all persisted activities, overlaying the small metadata store. */
 export async function loadActivities(): Promise<ParsedActivity[]> {
   if (fullActivitiesLoad) return fullActivitiesLoad
@@ -336,12 +439,8 @@ async function loadFullActivities(): Promise<ParsedActivity[]> {
         .filter(isActivitySummary)
         .map((summary) => [summary.id, summary])
     )
-    for (const activity of activities) {
-      activity.startedAtMs = getStoredStartedAt(activity)
-      activity.isPublic = activity.isPublic ?? false
-      if (activity.stats.uniqueDistanceKm === undefined) {
-        activity.stats.uniqueDistanceKm = activity.stats.distanceKm
-      }
+    return activities.map((storedActivity) => {
+      const activity = migrateStoredActivity(storedActivity)
       const summary = summaryById.get(activity.id)
       if (summary) {
         activity.name = summary.name
@@ -351,12 +450,26 @@ async function loadFullActivities(): Promise<ParsedActivity[]> {
         activity.contentHash = summary.contentHash
         activity.isPublic = summary.isPublic ?? false
       }
-    }
-    return activities as ParsedActivity[]
+      return activity
+    })
   } catch (err) {
     console.warn("[storage] loadActivities failed:", err)
     return []
   }
+}
+
+/**
+ * Pure guard used immediately before writing a derived projection. A missing
+ * expected revision means the caller opted out of stale-write protection.
+ */
+export function isUniqueDistanceRevisionCurrent(
+  expectedLibraryRevision: number | undefined,
+  actualLibraryRevision: number | null
+): boolean {
+  return (
+    expectedLibraryRevision === undefined ||
+    expectedLibraryRevision === actualLibraryRevision
+  )
 }
 
 /** Load activities without touching the derived summary store. */
@@ -528,56 +641,82 @@ export async function loadUniqueDistanceState(): Promise<UniqueDistanceState | n
 
 export function areUniqueDistancesCurrent(
   activities: ParsedActivity[],
-  state: UniqueDistanceState | null
+  state: UniqueDistanceState | null,
+  coverageRevision?: number
 ): boolean {
   if (
     state?.version !== UNIQUE_DISTANCE_VERSION ||
-    state.activityIds.length !== activities.length
+    state.activityIds.length !== activities.length ||
+    (coverageRevision !== undefined &&
+      state.coverageRevision !== coverageRevision)
   ) {
     return false
   }
-  return activities.every(
-    (activity, index) => activity.id === state.activityIds[index]
-  )
+  const activityIds = activities.map((activity) => activity.id).sort()
+  const savedIds = [...state.activityIds].sort()
+  return activities.every((_, index) => activityIds[index] === savedIds[index])
 }
 
-/** Atomically persists recalculated values, summaries, their marker, and an optional deletion. */
+/** Atomically persists recalculated values, their marker, and an optional deletion. */
 export async function saveUniqueDistances(
   activities: ParsedActivity[],
-  deletedActivityId?: string
-): Promise<boolean> {
+  options: SaveUniqueDistancesOptions = {}
+): Promise<UniqueDistanceSaveResult> {
   invalidateActivitySummariesFallback()
   const db = await getDb()
-  if (!db) return true
+  if (!db) {
+    return {
+      status: "unavailable",
+      error: new Error("IndexedDB is unavailable."),
+    }
+  }
   let tx: IDBTransaction | null = null
   try {
-    tx = db.transaction(
-      ["activities", "activity-summaries", "prefs"],
-      "readwrite"
-    )
+    tx = db.transaction(["activities", "prefs", "library-meta"], "readwrite")
     const activityStore = tx.objectStore("activities")
-    const summaryStore = tx.objectStore("activity-summaries")
-    if (deletedActivityId) {
-      activityStore.delete(deletedActivityId)
-      summaryStore.delete(deletedActivityId)
+    const metaStore = tx.objectStore("library-meta")
+    const rawMeta = await promisifyRequest<
+      { key?: unknown; coverageRevision?: unknown } | undefined
+    >(metaStore.get("library"))
+    const actualCoverageRevision =
+      typeof rawMeta?.coverageRevision === "number" &&
+      Number.isSafeInteger(rawMeta.coverageRevision) &&
+      rawMeta.coverageRevision >= 0
+        ? rawMeta.coverageRevision
+        : null
+    if (
+      options.coverageRevision !== undefined &&
+      !isUniqueDistanceRevisionCurrent(
+        options.coverageRevision,
+        actualCoverageRevision
+      )
+    ) {
+      tx.abort()
+      return {
+        status: "stale",
+        expectedCoverageRevision: options.coverageRevision,
+        actualCoverageRevision,
+      }
     }
-    for (const activity of activities) {
-      activityStore.put(activity)
-      summaryStore.put(activityToSummary(activity))
+    if (options.deletedActivityId) {
+      activityStore.delete(options.deletedActivityId)
     }
+    for (const activity of activities) activityStore.put(activity)
+    const revision = options.coverageRevision ?? actualCoverageRevision ?? 0
     tx.objectStore("prefs").put({
       key: "uniqueDistanceState",
       value: {
         version: UNIQUE_DISTANCE_VERSION,
-        activityIds: activities.map((activity) => activity.id),
+        coverageRevision: revision,
+        activityIds: activities.map((activity) => activity.id).sort(),
       } satisfies UniqueDistanceState,
     } satisfies PrefEntry)
     await waitForTransaction(tx)
-    return true
+    return { status: "saved", coverageRevision: revision }
   } catch (err) {
     abortTransaction(tx)
     console.warn("[storage] saveUniqueDistances failed:", err)
-    return false
+    return { status: "failed", error: err }
   }
 }
 
@@ -657,11 +796,9 @@ export async function savePhotos(photos: PhotoEntry[]): Promise<void> {
   }
 }
 
-/**
- * Load all persisted photos, recreating objectUrl for each File.
- * Returns [] on any error.
- */
+/** Load all persisted photos without allocating document-owned object URLs. */
 export async function loadPhotos(): Promise<PhotoEntry[]> {
+  incrementPerformanceCounter("photoStoreReads")
   const db = await getDb()
   if (!db) return []
   try {
@@ -675,7 +812,6 @@ export async function loadPhotos(): Promise<PhotoEntry[]> {
       takenAtMs: s.takenAtMs,
       lng: s.lng,
       lat: s.lat,
-      objectUrl: URL.createObjectURL(s.file),
     }))
   } catch (err) {
     console.warn("[storage] loadPhotos failed:", err)
@@ -726,6 +862,7 @@ export async function saveSavedPoints(points: SavedPoint[]): Promise<void> {
 
 /** Load all saved points. Returns [] on any error. */
 export async function loadSavedPoints(): Promise<SavedPoint[]> {
+  incrementPerformanceCounter("savedPointStoreReads")
   const db = await getDb()
   if (!db) return []
   try {
@@ -773,9 +910,18 @@ export async function clearSavedPoints(): Promise<void> {
 
 // ─── Prefs helpers ─────────────────────────────────────────────────────────────
 
-async function prefSet(key: string, value: unknown): Promise<void> {
+async function prefSet(
+  key: string,
+  value: unknown,
+  options: { throwOnError?: boolean } = {}
+): Promise<void> {
   const db = await getDb()
-  if (!db) return
+  if (!db) {
+    if (options.throwOnError) {
+      throw new Error("Local storage is unavailable.")
+    }
+    return
+  }
   try {
     const entry: PrefEntry = { key, value }
     const tx = db.transaction("prefs", "readwrite")
@@ -786,10 +932,12 @@ async function prefSet(key: string, value: unknown): Promise<void> {
     })
   } catch (err) {
     console.warn(`[storage] prefSet(${key}) failed:`, err)
+    if (options.throwOnError) throw err
   }
 }
 
 async function prefGet<T>(key: string): Promise<T | null> {
+  incrementPerformanceCounter("preferenceStoreReads")
   const db = await getDb()
   if (!db) return null
   try {
@@ -832,16 +980,47 @@ export async function loadFogMode(): Promise<FogMode | null> {
 // ─── Fog cache ─────────────────────────────────────────────────────────────────
 
 export async function saveFogCache(cache: FogCache): Promise<void> {
-  return prefSet("fogCache", cache)
+  const validation = validateFogRenderData(cache.fogData, {
+    allowInteriorRings: true,
+  })
+  if (!validation.ok) {
+    throw new Error("Fog cache geometry is invalid.")
+  }
+  return prefSet("fogCache", cache, { throwOnError: true })
 }
 
 export async function loadFogCache(): Promise<FogCache | null> {
-  const cache = await prefGet<FogCache & { trackIds?: string[] }>("fogCache")
+  const cache = await prefGet<Partial<FogCache> & { trackIds?: string[] }>(
+    "fogCache"
+  )
   if (!cache) return null
-  if (!cache.activityIds && cache.trackIds) {
-    return { ...cache, activityIds: cache.trackIds }
+  const activityIds = cache.activityIds ?? cache.trackIds
+  if (
+    !activityIds ||
+    typeof cache.coverageRevision !== "number" ||
+    !Number.isSafeInteger(cache.coverageRevision) ||
+    cache.coverageRevision < 0 ||
+    cache.algorithmVersion !== FOG_ALGORITHM_VERSION ||
+    cache.partitionSchemeVersion !== FOG_PARTITION_SCHEME_VERSION ||
+    cache.completeness !== "complete" ||
+    (cache.fogMode !== "corridor" && cache.fogMode !== "fill")
+  ) {
+    return null
   }
-  return cache
+  if (!cache.fogData) return null
+  const validation = validateFogRenderData(cache.fogData, {
+    allowInteriorRings: true,
+  })
+  if (!validation.ok) return null
+  return {
+    activityIds,
+    coverageRevision: cache.coverageRevision,
+    fogMode: cache.fogMode,
+    algorithmVersion: FOG_ALGORITHM_VERSION,
+    partitionSchemeVersion: FOG_PARTITION_SCHEME_VERSION,
+    completeness: "complete",
+    fogData: cache.fogData,
+  }
 }
 
 export async function clearFogCache(): Promise<void> {
@@ -855,9 +1034,23 @@ export async function clearFogCache(): Promise<void> {
 export function isFogCacheValid(
   cache: FogCache,
   currentActivityIds: string[],
-  currentFogMode: FogMode
+  currentFogMode: FogMode,
+  currentCoverageRevision?: number
 ): boolean {
   if (cache.fogMode !== currentFogMode) return false
+  if (
+    currentCoverageRevision !== undefined &&
+    cache.coverageRevision !== currentCoverageRevision
+  ) {
+    return false
+  }
+  if (
+    cache.algorithmVersion !== FOG_ALGORITHM_VERSION ||
+    cache.partitionSchemeVersion !== FOG_PARTITION_SCHEME_VERSION ||
+    cache.completeness !== "complete"
+  ) {
+    return false
+  }
   if (cache.activityIds.length !== currentActivityIds.length) return false
   const cacheSet = new Set(cache.activityIds)
   return currentActivityIds.every((id) => cacheSet.has(id))
@@ -929,16 +1122,139 @@ export interface SyncState {
   outboundSavedPointIds?: string[]
   /** Local deletions awaiting a successful saved-point tombstone. */
   outboundSavedPointDeletionIds?: string[]
-  /** Last-write-wins metadata patches awaiting a successful server update. */
-  outboundActivityMetadata?: Record<string, PendingActivityMetadataUpdate>
-  /** Legacy hash-only outbox, migrated on the next sync from local summaries. */
-  /** @deprecated Use outboundActivityMetadata. */
-  outboundActivityUpdateHashes?: string[]
+  /** Short-lived cross-tab sync leadership lease. */
+  syncLeaseOwner?: string
+  syncLeaseUntil?: number
 }
 
-export interface PendingActivityMetadataUpdate {
-  isPublic?: boolean
-  activityType?: ActivityType | null
+/** Sync state owned exclusively by the saved-point reconciler. */
+export interface SavedPointSyncState {
+  /** Saved-point manifest cursor, independent from the activity cursor. */
+  cursor: number
+  lastSyncAt: number
+  /** Known remote saved-point ids retained across incremental windows. */
+  serverPointIds: string[]
+  /** Point ids first associated with this account on this device. */
+  ownedIds: string[]
+  /** Saved-point tombstones already applied locally, id → deletedAt. */
+  appliedTombstones: Record<string, number>
+  /** Local creates/edits awaiting a successful upsert. */
+  outboundIds: string[]
+  /** Local deletions awaiting a successful tombstone. */
+  outboundDeletionIds: string[]
+}
+
+const SAVED_POINT_SYNC_STATE_KEY = "savedPointSyncState"
+const SAVED_POINT_SYNC_STATE_ACCOUNT_PREFIX = `${SAVED_POINT_SYNC_STATE_KEY}:`
+
+export function savedPointSyncStateKey(accountId?: string): string {
+  return accountId === undefined
+    ? SAVED_POINT_SYNC_STATE_KEY
+    : `${SAVED_POINT_SYNC_STATE_ACCOUNT_PREFIX}${encodeURIComponent(accountId)}`
+}
+
+function accountIdFromSavedPointSyncStateKey(key: string): string | null {
+  if (!key.startsWith(SAVED_POINT_SYNC_STATE_ACCOUNT_PREFIX)) return null
+  try {
+    return decodeURIComponent(
+      key.slice(SAVED_POINT_SYNC_STATE_ACCOUNT_PREFIX.length)
+    )
+  } catch {
+    return null
+  }
+}
+
+function uniqueIds(...groups: (readonly string[] | undefined)[]): string[] {
+  return [...new Set(groups.flatMap((group) => group ?? []))]
+}
+
+function isSavedPointSyncState(value: unknown): value is SavedPointSyncState {
+  if (!value || typeof value !== "object") return false
+  const candidate = value as Partial<SavedPointSyncState>
+  const isStringArray = (input: unknown): input is string[] =>
+    Array.isArray(input) && input.every((entry) => typeof entry === "string")
+  const isTombstoneMap = (input: unknown): input is Record<string, number> =>
+    typeof input === "object" &&
+    input !== null &&
+    !Array.isArray(input) &&
+    Object.values(input).every(
+      (deletedAt) =>
+        typeof deletedAt === "number" &&
+        Number.isFinite(deletedAt) &&
+        deletedAt >= 0
+    )
+  return (
+    typeof candidate.cursor === "number" &&
+    Number.isFinite(candidate.cursor) &&
+    candidate.cursor >= 0 &&
+    typeof candidate.lastSyncAt === "number" &&
+    Number.isFinite(candidate.lastSyncAt) &&
+    candidate.lastSyncAt >= 0 &&
+    isStringArray(candidate.serverPointIds) &&
+    (candidate.ownedIds === undefined || isStringArray(candidate.ownedIds)) &&
+    isTombstoneMap(candidate.appliedTombstones) &&
+    isStringArray(candidate.outboundIds) &&
+    isStringArray(candidate.outboundDeletionIds)
+  )
+}
+
+function normalizeSavedPointSyncState(
+  value: unknown
+): SavedPointSyncState | null {
+  if (!isSavedPointSyncState(value)) return null
+  return {
+    cursor: value.cursor,
+    lastSyncAt: value.lastSyncAt,
+    serverPointIds: [...value.serverPointIds],
+    ownedIds: uniqueIds(
+      value.ownedIds,
+      value.serverPointIds,
+      value.outboundIds,
+      value.outboundDeletionIds
+    ),
+    appliedTombstones: { ...value.appliedTombstones },
+    outboundIds: [...value.outboundIds],
+    outboundDeletionIds: [...value.outboundDeletionIds],
+  }
+}
+
+export function migrateSavedPointSyncState(
+  state: SyncState
+): SavedPointSyncState | null {
+  if (
+    state.savedPointsCursor === undefined &&
+    state.serverSavedPointIds === undefined &&
+    state.appliedSavedPointTombstones === undefined &&
+    state.outboundSavedPointIds === undefined &&
+    state.outboundSavedPointDeletionIds === undefined
+  ) {
+    return null
+  }
+  return {
+    cursor: state.savedPointsCursor ?? 0,
+    lastSyncAt: state.lastSyncAt,
+    serverPointIds: [...(state.serverSavedPointIds ?? [])],
+    ownedIds: uniqueIds(
+      state.serverSavedPointIds,
+      state.outboundSavedPointIds,
+      state.outboundSavedPointDeletionIds
+    ),
+    appliedTombstones: {
+      ...(state.appliedSavedPointTombstones ?? {}),
+    },
+    outboundIds: [...(state.outboundSavedPointIds ?? [])],
+    outboundDeletionIds: [...(state.outboundSavedPointDeletionIds ?? [])],
+  }
+}
+
+const EMPTY_SAVED_POINT_SYNC_STATE: SavedPointSyncState = {
+  cursor: 0,
+  lastSyncAt: 0,
+  serverPointIds: [],
+  ownedIds: [],
+  appliedTombstones: {},
+  outboundIds: [],
+  outboundDeletionIds: [],
 }
 
 export async function saveSyncState(state: SyncState): Promise<void> {
@@ -949,8 +1265,218 @@ export async function loadSyncState(): Promise<SyncState | null> {
   return prefGet<SyncState>("syncState")
 }
 
-export async function clearSyncState(): Promise<void> {
-  return prefDelete("syncState")
+export async function saveSavedPointSyncState(
+  state: SavedPointSyncState,
+  accountId?: string
+): Promise<void> {
+  return prefSet(savedPointSyncStateKey(accountId), state)
+}
+
+/**
+ * Read the saved-point state in the same transaction used for any one-time
+ * namespace migration. Keeping this operation transactional prevents two tabs
+ * from both adopting the unscoped record or interleaving a state update.
+ */
+async function readSavedPointSyncStateInTransaction(
+  store: IDBObjectStore,
+  accountId?: string
+): Promise<SavedPointSyncState | null> {
+  const key = savedPointSyncStateKey(accountId)
+  const current = await promisifyRequest<PrefEntry | undefined>(store.get(key))
+  const normalized = normalizeSavedPointSyncState(current?.value)
+  if (normalized) {
+    // Older dedicated records did not carry ownership metadata. Persist the
+    // derived value once, while still returning a defensive copy to callers.
+    if (
+      !current?.value ||
+      !Array.isArray((current.value as Partial<SavedPointSyncState>).ownedIds)
+    ) {
+      store.put({ key, value: normalized })
+    }
+    return normalized
+  }
+
+  // A signed-in account adopts the unscoped saved-point state only once. The
+  // sign-out path removes this base key, while account-scoped records survive
+  // so another account cannot inherit its cursor or pending work.
+  if (accountId !== undefined) {
+    const unscoped = await promisifyRequest<PrefEntry | undefined>(
+      store.get(SAVED_POINT_SYNC_STATE_KEY)
+    )
+    const unscopedState = normalizeSavedPointSyncState(unscoped?.value)
+    if (unscopedState) {
+      store.put({ key, value: unscopedState })
+      store.delete(SAVED_POINT_SYNC_STATE_KEY)
+      return unscopedState
+    }
+  }
+
+  // The activity repository may still need this legacy record to migrate its
+  // own fields. Copy saved-point fields before that repository can remove it;
+  // deliberately leave `syncState` in place for the activity migration.
+  const legacy = await promisifyRequest<PrefEntry | undefined>(
+    store.get("syncState")
+  )
+  if (
+    legacy &&
+    typeof legacy.value === "object" &&
+    legacy.value !== null &&
+    !Array.isArray(legacy.value)
+  ) {
+    const migrated = normalizeSavedPointSyncState(
+      migrateSavedPointSyncState(legacy.value as SyncState)
+    )
+    if (migrated) {
+      store.put({ key, value: migrated })
+      return migrated
+    }
+  }
+  return null
+}
+
+export async function loadSavedPointSyncState(
+  accountId?: string
+): Promise<SavedPointSyncState | null> {
+  const db = await getDb()
+  if (!db) return null
+  try {
+    const tx = db.transaction("prefs", "readwrite")
+    const state = await readSavedPointSyncStateInTransaction(
+      tx.objectStore("prefs"),
+      accountId
+    )
+    await new Promise<void>((resolve, reject) => {
+      tx.oncomplete = () => resolve()
+      tx.onerror = () => reject(tx.error)
+      tx.onabort = () => reject(tx.error)
+    })
+    return state
+  } catch (err) {
+    console.warn(
+      `[storage] loadSavedPointSyncState(${accountId ?? "unscoped"}) failed:`,
+      err
+    )
+    return null
+  }
+}
+
+/**
+ * Atomically read, transform, and persist one account's saved-point state.
+ * This is the only API used for queued point mutations so cursor and outbox
+ * fields cannot be lost to a stale read-modify-write from another tab.
+ */
+export async function updateSavedPointSyncState(
+  accountId: string | undefined,
+  update: (state: SavedPointSyncState | null) => SavedPointSyncState | null
+): Promise<SavedPointSyncState | null> {
+  const db = await getDb()
+  if (!db) return null
+  try {
+    const tx = db.transaction("prefs", "readwrite")
+    const store = tx.objectStore("prefs")
+    const current = await readSavedPointSyncStateInTransaction(store, accountId)
+    const next = update(current)
+    const key = savedPointSyncStateKey(accountId)
+    if (next === null) {
+      store.delete(key)
+    } else {
+      const normalized = normalizeSavedPointSyncState(next)
+      if (!normalized) throw new Error("Invalid saved-point sync state")
+      store.put({ key, value: normalized })
+    }
+    await new Promise<void>((resolve, reject) => {
+      tx.oncomplete = () => resolve()
+      tx.onerror = () => reject(tx.error)
+      tx.onabort = () => reject(tx.error)
+    })
+    return next === null ? null : normalizeSavedPointSyncState(next)
+  } catch (err) {
+    console.warn(
+      `[storage] updateSavedPointSyncState(${accountId ?? "unscoped"}) failed:`,
+      err
+    )
+    return null
+  }
+}
+
+/** Load valid account-scoped point state for cross-account ownership checks. */
+export async function loadAccountSavedPointSyncStates(): Promise<
+  Map<string, SavedPointSyncState>
+> {
+  const db = await getDb()
+  if (!db) return new Map()
+  try {
+    const tx = db.transaction("prefs", "readonly")
+    const entries = await promisifyRequest<PrefEntry[]>(
+      tx.objectStore("prefs").getAll()
+    )
+    await new Promise<void>((resolve, reject) => {
+      tx.oncomplete = () => resolve()
+      tx.onerror = () => reject(tx.error)
+      tx.onabort = () => reject(tx.error)
+    })
+    const states = new Map<string, SavedPointSyncState>()
+    for (const entry of entries) {
+      if (typeof entry.key !== "string") continue
+      const accountId = accountIdFromSavedPointSyncStateKey(entry.key)
+      if (accountId === null) continue
+      const state = normalizeSavedPointSyncState(entry.value)
+      if (state) states.set(accountId, state)
+    }
+    return states
+  } catch (err) {
+    console.warn("[storage] loadAccountSavedPointSyncStates failed:", err)
+    return new Map()
+  }
+}
+
+export function emptySavedPointSyncState(): SavedPointSyncState {
+  return {
+    ...EMPTY_SAVED_POINT_SYNC_STATE,
+    appliedTombstones: {},
+  }
+}
+
+export async function clearSyncState(
+  options: { allAccounts?: boolean } = {}
+): Promise<void> {
+  const db = await getDb()
+  if (!db) return
+  try {
+    const tx = db.transaction(["sync-state", "prefs"], "readwrite")
+    const stateStore = tx.objectStore("sync-state")
+    const prefsStore = tx.objectStore("prefs")
+    if (options.allAccounts) {
+      const keys = await promisifyRequest<IDBValidKey[]>(
+        stateStore.getAllKeys()
+      )
+      for (const key of keys) stateStore.delete(key)
+      const prefKeys = await promisifyRequest<IDBValidKey[]>(
+        prefsStore.getAllKeys()
+      )
+      for (const key of prefKeys) {
+        if (
+          typeof key === "string" &&
+          (key === "syncState" ||
+            key === SAVED_POINT_SYNC_STATE_KEY ||
+            key.startsWith(SAVED_POINT_SYNC_STATE_ACCOUNT_PREFIX))
+        ) {
+          prefsStore.delete(key)
+        }
+      }
+    } else {
+      stateStore.delete("default")
+      prefsStore.delete("syncState")
+      prefsStore.delete(SAVED_POINT_SYNC_STATE_KEY)
+    }
+    await new Promise<void>((resolve, reject) => {
+      tx.oncomplete = () => resolve()
+      tx.onerror = () => reject(tx.error)
+      tx.onabort = () => reject(tx.error)
+    })
+  } catch (err) {
+    console.warn("[storage] clearSyncState failed:", err)
+  }
 }
 
 // ─── Clear all ────────────────────────────────────────────────────────────────
@@ -963,13 +1489,17 @@ export async function clearSyncState(): Promise<void> {
  * *is* dropped, so the next sync re-walks the manifest from zero rather than
  * believing it is already up to date with activities that are gone.
  */
-export async function clearAll(): Promise<void> {
+export async function clearAll(
+  options: { includeActivities?: boolean } = {}
+): Promise<void> {
+  const activityClear =
+    options.includeActivities === false ? Promise.resolve() : clearActivities()
   await Promise.all([
-    clearActivities(),
+    activityClear,
     clearPhotos(),
     clearSavedPoints(),
     prefDelete("fogCache"),
-    prefDelete("syncState"),
+    clearSyncState({ allAccounts: true }),
     prefDelete("uniqueDistanceState"),
   ])
 }

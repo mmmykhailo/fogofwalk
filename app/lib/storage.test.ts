@@ -1,3 +1,4 @@
+import { toActivityStorageError } from "~/lib/activities/errors"
 import {
   afterAll,
   beforeAll,
@@ -11,16 +12,32 @@ import {
   activityToSummary,
   clearActivities,
   deleteActivity,
+  isUniqueDistanceRevisionCurrent,
   loadActivitySummaries,
+  migrateStoredActivity,
   saveActivities,
+  type StoredActivity,
 } from "./storage"
+import { createIndexedDbActivityLibraryRepository } from "./activities/repository"
 
 type StoreName =
   | "activities"
   | "activity-summaries"
+  | "library-meta"
   | "photos"
   | "saved-points"
   | "prefs"
+  | "sync-outbox"
+  | "sync-state"
+
+class FakeUpgradeObjectStore {
+  readonly indexNames = {
+    contains: (_name: string) => false,
+  }
+
+  createIndex(): void {}
+  deleteIndex(): void {}
+}
 
 class FakeRequest<T> {
   result!: T
@@ -42,8 +59,9 @@ class FakeDatabase {
     contains: (name: string) => this.stores.has(name as StoreName),
   }
 
-  createObjectStore(name: string): void {
+  createObjectStore(name: string): FakeUpgradeObjectStore {
     this.stores.set(name as StoreName, new Map())
+    return new FakeUpgradeObjectStore()
   }
 
   deleteObjectStore(name: string): void {
@@ -171,7 +189,8 @@ class FakeObjectStore {
 
   put(value: unknown): IDBRequest<unknown> {
     return this.tx.enqueue(() => {
-      const id = (value as { id?: unknown }).id
+      const record = value as { id?: unknown; key?: unknown }
+      const id = record.id ?? record.key
       if (typeof id !== "string") throw new Error("missing key")
       this.tx.readStore(this.name).set(id, structuredClone(value))
       return id
@@ -276,7 +295,7 @@ class FakeIndexedDb {
         request.onupgradeneeded?.({
           target: request,
           oldVersion: 0,
-          newVersion: 4,
+          newVersion: 7,
         } as unknown as IDBVersionChangeEvent)
       }
       request.result = this.database!
@@ -301,6 +320,32 @@ function activity(id: string, startedAtMs: number): ParsedActivity {
       uniqueDistanceKm: 1,
       elevationGainM: 0,
       elevationLossM: 0,
+      hasElevation: false,
+      durationMs: null,
+      movingTimeMs: null,
+      avgPaceMinPerKm: null,
+      avgMovingPaceMinPerKm: null,
+      avgSpeedKmh: null,
+      avgMovingSpeedKmh: null,
+      elevationProfile: [],
+    },
+  }
+}
+
+function legacyActivity(): StoredActivity {
+  return {
+    id: "legacy-id",
+    name: "legacy.gpx",
+    coordinates: [
+      [14, 50],
+      [14.01, 50.01],
+    ],
+    pointTimestamps: [Number.NaN, 1234],
+    format: "gpx",
+    stats: {
+      distanceKm: 4.2,
+      elevationGainM: 3,
+      elevationLossM: 1,
       hasElevation: false,
       durationMs: null,
       movingTimeMs: null,
@@ -353,6 +398,32 @@ describe("activity summary storage recovery", () => {
     await expect(loadActivitySummaries()).resolves.toEqual(loaded)
     expect(fakeIndexedDb.database!.metrics.activityGetAll).toBe(0)
     expect(fakeIndexedDb.database!.metrics.activityGetAllKeys).toBe(1)
+  })
+
+  test("persists legacy library metadata during the summary-only migration", async () => {
+    const first = activity("first", 100)
+    await saveActivities([first])
+    fakeIndexedDb.database!.raw("library-meta").set("library", {
+      key: "library",
+      schemaVersion: 1,
+      revision: 6,
+    })
+    fakeIndexedDb.database!.resetMetrics()
+
+    const repository = createIndexedDbActivityLibraryRepository()
+    await expect(repository.loadSummarySnapshot()).resolves.toMatchObject({
+      revision: 6,
+      coverageRevision: 6,
+    })
+    expect(fakeIndexedDb.database!.raw("library-meta").get("library")).toEqual(
+      {
+        key: "library",
+        schemaVersion: 2,
+        revision: 6,
+        coverageRevision: 6,
+      }
+    )
+    expect(fakeIndexedDb.database!.metrics.activityGetAll).toBe(0)
   })
 
   test("repairs an orphan and missing summary when counts still match", async () => {
@@ -444,5 +515,64 @@ describe("activity summary storage recovery", () => {
     expect(fakeIndexedDb.database!.raw("activity-summaries").has("first")).toBe(
       true
     )
+  })
+})
+
+describe("storage migration seams", () => {
+  test("fills legacy activity defaults without mutating the stored record", () => {
+    const legacy = legacyActivity()
+    const migrated = migrateStoredActivity(legacy)
+
+    expect(migrated).toMatchObject({
+      id: "legacy-id",
+      startedAtMs: 1234,
+      isPublic: false,
+      stats: { uniqueDistanceKm: 4.2 },
+    })
+    expect(legacy).not.toHaveProperty("startedAtMs")
+    expect(legacy).not.toHaveProperty("isPublic")
+    expect(legacy.stats).not.toHaveProperty("uniqueDistanceKm")
+    expect(migrated.coordinates).toEqual(legacy.coordinates)
+  })
+
+  test("preserves explicit current-schema values", () => {
+    const current = {
+      ...legacyActivity(),
+      startedAtMs: 9876,
+      isPublic: true,
+      stats: { ...legacyActivity().stats, uniqueDistanceKm: 1.5 },
+    }
+
+    expect(migrateStoredActivity(current)).toMatchObject({
+      startedAtMs: 9876,
+      isPublic: true,
+      stats: { uniqueDistanceKm: 1.5 },
+    })
+  })
+
+  test("rejects a stale unique-distance write before derived data is saved", () => {
+    expect(isUniqueDistanceRevisionCurrent(8, 8)).toBe(true)
+    expect(isUniqueDistanceRevisionCurrent(8, 9)).toBe(false)
+    expect(isUniqueDistanceRevisionCurrent(8, null)).toBe(false)
+    expect(isUniqueDistanceRevisionCurrent(undefined, null)).toBe(true)
+  })
+})
+
+describe("storage failure classification", () => {
+  test.each([
+    ["AbortError", "transaction-aborted", true],
+    ["QuotaExceededError", "quota", false],
+    ["DataCloneError", "serialization", false],
+  ] as const)("maps IndexedDB %s to %s", (name, code, retryable) => {
+    const error = toActivityStorageError(
+      new DOMException("IndexedDB operation failed", name),
+      "saving the activity library"
+    )
+
+    expect(error).toMatchObject({
+      name: "ActivityStorageError",
+      code,
+      retryable,
+    })
   })
 })

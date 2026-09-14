@@ -1,14 +1,40 @@
 import type maplibregl from "maplibre-gl"
+import { useSyncExternalStore } from "react"
 import type {
   ParsedActivity,
   FogMode,
-  WorkerInboundMessage,
+  FogWorkerCommand,
+  FogWorkerActivity,
 } from "~/types/activities"
-import type { ActivitySummary } from "~/types/activitySummary"
 import { sortActivities } from "~/lib/statsAggregator"
-import { clearFogCache, loadActivities } from "~/lib/storage"
-import { ensureUniqueDistancesCurrent } from "~/lib/uniqueDistanceRepair"
-import { worldFogFeature } from "~/lib/fogGeometry"
+import { emptyBoundedFog } from "~/lib/fog/engine/aggregate"
+import type { FogRenderData } from "~/lib/fog/protocol"
+import { createFogCoordinator } from "~/lib/fog/coordinator"
+import { pathsForActivity } from "~shared/activityContract"
+import { createActivityLibrary } from "~/lib/activities/library"
+import type {
+  LibraryChange,
+  LibrarySnapshot,
+} from "~/lib/activities/libraryEvents"
+import { createUuid } from "~/lib/uuid"
+import { isServerEnabled } from "~/lib/server/config"
+import { createActivityUploadOutboxItem } from "~/lib/server/sync/activityEffects"
+import { createUniqueDistanceProjection } from "~/lib/uniqueDistanceProjection"
+import type { FogSnapshot } from "~/lib/fog/protocol"
+import { recordDiagnostic } from "~/lib/diagnostics"
+import type { ActivitySummary } from "~/types/activitySummary"
+import { activityToSummary } from "~/lib/storage"
+import type {
+  LibraryMetadataCommit,
+  LibrarySummarySnapshot,
+} from "~/lib/activities/libraryEvents"
+
+declare global {
+  interface Window {
+    /** Test-only readiness seam for deterministic map interaction fixtures. */
+    __fogofwalkE2eMapStore?: Pick<MapStore, "sourcesReady">
+  }
+}
 
 // ─── Map position persistence (localStorage — synchronous, survives page unload) ──
 
@@ -62,15 +88,32 @@ const _savedPosition =
 
 export type ActivityHydration = "unloaded" | "summaries" | "full"
 
+export interface ActivitySummaryStoreSnapshot {
+  hydrated: boolean
+  revision: number
+  coverageRevision: number
+  summaries: readonly ActivitySummary[]
+}
+
+const emptyActivitySummarySnapshot: ActivitySummaryStoreSnapshot = {
+  hydrated: false,
+  revision: 0,
+  coverageRevision: 0,
+  summaries: Object.freeze([]),
+}
+
+let activitySummarySnapshot: ActivitySummaryStoreSnapshot =
+  emptyActivitySummarySnapshot
+let activityMetadataRevision = 0
+const activitySummaryListeners = new Set<() => void>()
+
 interface MapStore {
   map: maplibregl.Map | null
   worker: Worker | null
-  fogData: GeoJSON.Feature<GeoJSON.Polygon | GeoJSON.MultiPolygon> | null
+  fogData: FogRenderData | null
   activities: ParsedActivity[]
   activitySummaries: ActivitySummary[]
   activityHydration: ActivityHydration
-  isProcessing: boolean
-  processedCount: number
   sourcesReady: boolean
   /** Current fog mode — kept in sync with React state so MapView can read it without a prop. */
   fogMode: FogMode
@@ -78,35 +121,25 @@ interface MapStore {
   initialCenter: [number, number] | null
   /** Map zoom restored from localStorage; used once by MapView on initialization. */
   initialZoom: number | null
-  /**
-   * True when activities were restored but the fog cache was stale, triggering a
-   * worker reprocess. MapView skips fitBounds in this case so the saved map
-   * position is preserved.
-   */
-  isRestoreReprocess: boolean
-  /**
-   * Generation token for fog-worker runs. Bumped by `startFogRun()` wherever
-   * the app abandons in-flight work (fog-mode toggle, delete-activity, clear-all).
-   * Every message to and from the worker carries it.
-   */
+  /** Generation token for fog-worker runs. */
   runId: number
-  /**
-   * True between posting PROCESS_ACTIVITIES and the matching DONE.
-   *
-   * The progress UI cannot just assume work is outstanding after an action:
-   * the worker can finish a small batch *before* the action returns, since the
-   * action still has IDB writes (and, when signed in, a network round trip) to
-   * get through. Setting `isProcessing` unconditionally in that window strands
-   * "Processing 0 of N…" forever, because the only thing that clears it — DONE
-   * — has already been and gone.
-   */
-  isFogRunInFlight: boolean
-  /** Number of PROCESS_ACTIVITIES messages in the current run awaiting DONE. */
-  pendingFogJobs: number
-  /** Activity ids contained in, or already queued for, the current worker run. */
-  fogWorkerActivityIds: Set<string>
-  /** Fog mode used to build the current worker run's internal accumulators. */
-  fogWorkerMode: FogMode | null
+  /** Identity of the latest accepted complete/in-progress fog snapshot. */
+  fogSnapshot: {
+    generation: number
+    libraryRevision: number
+    coverageRevision: number
+    mode: FogMode
+    algorithmVersion: number
+    partitionSchemeVersion: number
+  } | null
+  /** Library revision most recently delivered to the active fog map source. */
+  renderSourceRevision: number | null
+  /** Revision of the canonical activity snapshot projected into this store. */
+  libraryRevision: number
+  /** Revision for which unique-distance values have been applied to this projection. */
+  uniqueDistanceProjectionRevision: number | null
+  /** Activity membership/geometry revision projected into the fog map. */
+  coverageRevision: number
   /** True once MapView is ready to receive fog-worker replies. */
   isFogWorkerListenerReady: boolean
   /**
@@ -117,8 +150,40 @@ interface MapStore {
   shareCardCache: {
     activityId: string
     baseMap: ImageBitmap
-    activityPoints: { x: number; y: number }[]
+    activityPoints: Array<{ x: number; y: number }[]>
   } | null
+}
+
+export type FogProjectionPhase =
+  | "idle"
+  | "processing"
+  | "recovering"
+  | "degraded"
+  | "failed"
+
+export interface FogProjectionStatus {
+  phase: FogProjectionPhase
+  requestId: string | null
+  generation: number
+  libraryRevision: number
+  coverageRevision: number
+  mode: FogMode
+  processed: number
+  total: number
+  error: string | null
+  warnings: string[]
+  recoveryAttempts: number
+  retryable: boolean
+  warningCounts: Record<string, number>
+  errorCounts: Record<string, number>
+  infoCounts: Record<string, number>
+  coverageReducedCounts: Record<string, number>
+  normalizedActivityCount: number
+  coverageReducedActivityCount: number
+  /** Compatibility alias for coverageReducedActivityCount. */
+  repairedActivityCount: number
+  rejectedActivityCount: number
+  geometryFallbackCount: number
 }
 
 export const mapStore: MapStore = {
@@ -128,33 +193,164 @@ export const mapStore: MapStore = {
   activities: [],
   activitySummaries: [],
   activityHydration: "unloaded",
-  isProcessing: false,
-  processedCount: 0,
   sourcesReady: false,
   fogMode: "corridor",
   initialCenter: _savedPosition?.center ?? null,
   initialZoom: _savedPosition?.zoom ?? null,
-  isRestoreReprocess: false,
   runId: 0,
-  isFogRunInFlight: false,
-  pendingFogJobs: 0,
-  fogWorkerActivityIds: new Set(),
-  fogWorkerMode: null,
+  fogSnapshot: null,
+  renderSourceRevision: null,
+  libraryRevision: 0,
+  uniqueDistanceProjectionRevision: null,
+  coverageRevision: 0,
   isFogWorkerListenerReady: false,
   shareCardCache: null,
 }
 
-/** Replace the in-memory full library and make its hydration state explicit. */
-export function setFullActivities(activities: ParsedActivity[]): void {
-  mapStore.activities = activities
-  mapStore.activitySummaries = []
-  mapStore.activityHydration = "full"
+if (import.meta.env.VITE_E2E === "1" && typeof window !== "undefined") {
+  window.__fogofwalkE2eMapStore = mapStore
+}
+
+function detachFogWorker(worker: Worker): void {
+  worker.onmessage = null
+  worker.onerror = null
+  worker.onmessageerror = null
+  worker.terminate()
+}
+
+/** Create the page-owned fog worker with a safe pre-bridge failure handler. */
+export function createFogWorker(): Worker {
+  if (typeof Worker === "undefined") {
+    throw new Error("Fog workers are unavailable in this environment.")
+  }
+
+  const worker = new Worker(
+    new URL("../workers/fogWorker.ts", import.meta.url),
+    { type: "module" }
+  )
+  mapStore.worker = worker
+
+  // The loader creates the worker before MapView mounts and can therefore have
+  // a short window without the bridge's handlers. Keep recovery safe in that
+  // window; the bridge replaces these handlers once it is ready.
+  const handleFailure = (reason: unknown) => {
+    if (mapStore.worker !== worker) return
+    replaceFogWorker(worker)
+    fogCoordinator.handleWorkerFailure(reason)
+  }
+  worker.onerror = (event) => {
+    console.error("[worker] uncaught fog worker error", event)
+    handleFailure(event.error ?? event.message)
+  }
+  worker.onmessageerror = () => {
+    handleFailure(new Error("Fog worker message could not be decoded."))
+  }
+  return worker
+}
+
+/** Terminate a failed fog worker and install a fresh one for recovery. */
+export function replaceFogWorker(
+  failedWorker: Worker | null = mapStore.worker
+): Worker | null {
+  const current = mapStore.worker
+  if (failedWorker && failedWorker !== current) {
+    detachFogWorker(failedWorker)
+    return current
+  }
+
+  if (current) {
+    detachFogWorker(current)
+    mapStore.worker = null
+  }
+
+  try {
+    return createFogWorker()
+  } catch {
+    mapStore.worker = null
+    return null
+  }
+}
+
+function freezeActivitySummary(summary: ActivitySummary): ActivitySummary {
+  return Object.freeze({
+    ...summary,
+    stats: Object.freeze({ ...summary.stats }),
+  })
+}
+
+function sameActivitySummary(
+  first: ActivitySummary,
+  second: ActivitySummary
+): boolean {
+  return (
+    first.id === second.id &&
+    first.name === second.name &&
+    first.startedAtMs === second.startedAtMs &&
+    first.activityType === second.activityType &&
+    first.startSunPhase === second.startSunPhase &&
+    first.contentHash === second.contentHash &&
+    first.isPublic === second.isPublic &&
+    first.stats.distanceKm === second.stats.distanceKm &&
+    first.stats.durationMs === second.stats.durationMs &&
+    first.stats.elevationGainM === second.stats.elevationGainM &&
+    first.stats.avgMovingSpeedKmh === second.stats.avgMovingSpeedKmh
+  )
+}
+
+function publishActivitySummarySnapshot(
+  summaries: readonly ActivitySummary[],
+  revision: number,
+  coverageRevision: number,
+  metadataBatch = false
+): void {
+  const nextSummaries = Object.freeze(summaries.map(freezeActivitySummary))
+  const previous = activitySummarySnapshot
+  const unchanged =
+    previous.hydrated &&
+    previous.revision === revision &&
+    previous.coverageRevision === coverageRevision &&
+    previous.summaries.length === nextSummaries.length &&
+    previous.summaries.every((summary, index) =>
+      sameActivitySummary(summary, nextSummaries[index]!)
+    )
+  if (unchanged) return
+
+  activitySummarySnapshot = {
+    hydrated: true,
+    revision,
+    coverageRevision,
+    summaries: nextSummaries,
+  }
+  if (metadataBatch) activityMetadataRevision++
+  for (const listener of activitySummaryListeners) listener()
 }
 
 /** Replace the lightweight library used by non-map routes. */
 export function setActivitySummaries(summaries: ActivitySummary[]): void {
+  if (mapStore.activityHydration === "full") return
   mapStore.activitySummaries = summaries
   mapStore.activityHydration = "summaries"
+  publishActivitySummarySnapshot(
+    summaries,
+    mapStore.libraryRevision,
+    mapStore.coverageRevision
+  )
+}
+
+/** Adopt a summary snapshot that already carries canonical revision metadata. */
+export function setActivitySummarySnapshot(
+  snapshot: LibrarySummarySnapshot
+): void {
+  if (mapStore.activityHydration === "full") return
+  mapStore.activitySummaries = [...snapshot.summaries]
+  mapStore.activityHydration = "summaries"
+  mapStore.libraryRevision = snapshot.revision
+  mapStore.coverageRevision = snapshot.coverageRevision
+  publishActivitySummarySnapshot(
+    snapshot.summaries,
+    snapshot.revision,
+    snapshot.coverageRevision
+  )
 }
 
 /** Update the summary cache after a metadata-only edit. */
@@ -163,82 +359,732 @@ export function updateActivitySummaries(
 ): void {
   if (mapStore.activityHydration !== "summaries") return
   const byId = new Map(updates.map((activity) => [activity.id, activity]))
-  mapStore.activitySummaries = mapStore.activitySummaries.map(
+  const summaries = mapStore.activitySummaries.map(
     (activity) => byId.get(activity.id) ?? activity
+  )
+  mapStore.activitySummaries = summaries
+  publishActivitySummarySnapshot(
+    summaries,
+    mapStore.libraryRevision,
+    mapStore.coverageRevision,
+    updates.length > 0
   )
 }
 
-/** Merge server metadata into either the full or summary in-memory cache. */
+/** Apply an authoritative summary-only library event without touching geometry. */
+export function applyActivitySummarySnapshot(
+  snapshot: LibrarySummarySnapshot,
+  commit?: LibraryMetadataCommit
+): void {
+  mapStore.libraryRevision = snapshot.revision
+  mapStore.coverageRevision = snapshot.coverageRevision
+  if (mapStore.activityHydration === "full") {
+    mapStore.activities = mergeMetadataSnapshot(
+      mapStore.activities,
+      snapshot.summaries
+    )
+    publishActivitySummarySnapshot(
+      mapStore.activities.map(activityToSummary),
+      snapshot.revision,
+      snapshot.coverageRevision,
+      Boolean(commit?.updated.length)
+    )
+    return
+  }
+  mapStore.activitySummaries = [...snapshot.summaries]
+  mapStore.activityHydration = "summaries"
+  publishActivitySummarySnapshot(
+    snapshot.summaries,
+    snapshot.revision,
+    snapshot.coverageRevision,
+    Boolean(commit?.updated.length)
+  )
+}
+
+/** Merge server metadata into the currently hydrated render cache. */
 export function applyActivityMetadata(
   updates: readonly ActivitySummary[]
 ): void {
   if (mapStore.activityHydration === "full") {
-    const byId = new Map(updates.map((activity) => [activity.id, activity]))
-    setFullActivities(
-      mapStore.activities.map((activity) => {
-        const summary = byId.get(activity.id)
-        if (!summary) return activity
-        return {
-          ...activity,
-          name: summary.name,
-          startedAtMs: summary.startedAtMs,
-          activityType: summary.activityType,
-          startSunPhase: summary.startSunPhase,
-          contentHash: summary.contentHash,
-          isPublic: summary.isPublic,
-        }
-      })
+    mapStore.activities = mergeMetadataSnapshot(mapStore.activities, updates)
+    publishActivitySummarySnapshot(
+      mapStore.activities.map(activityToSummary),
+      mapStore.libraryRevision,
+      mapStore.coverageRevision,
+      updates.length > 0
     )
     return
   }
   updateActivitySummaries(updates)
 }
 
-export function clearFullActivities(): void {
-  setFullActivities([])
+export function getActivitySummarySnapshot(): ActivitySummaryStoreSnapshot {
+  return activitySummarySnapshot
 }
 
-let fullHydration: Promise<ParsedActivity[]> | null = null
+export function subscribeActivitySummarySnapshot(
+  listener: () => void
+): () => void {
+  activitySummaryListeners.add(listener)
+  return () => activitySummaryListeners.delete(listener)
+}
 
-/** Coalesced full-library hydrator for map, stats, fog, sharing, and sync. */
-export function hydrateFullActivities(): Promise<ParsedActivity[]> {
-  if (mapStore.activityHydration === "full") {
-    return Promise.resolve(mapStore.activities)
+export function useActivitySummarySnapshot(): ActivitySummaryStoreSnapshot {
+  return useSyncExternalStore(
+    subscribeActivitySummarySnapshot,
+    getActivitySummarySnapshot,
+    getActivitySummarySnapshot
+  )
+}
+
+export function getActivityMetadataRevision(): number {
+  return activityMetadataRevision
+}
+
+export function useActivityMetadataRevision(): number {
+  return useSyncExternalStore(
+    subscribeActivitySummarySnapshot,
+    getActivityMetadataRevision,
+    getActivityMetadataRevision
+  )
+}
+
+const fogStatusListeners = new Set<() => void>()
+
+let fogStatus: FogProjectionStatus = {
+  phase: "idle",
+  requestId: null,
+  generation: mapStore.runId,
+  libraryRevision: mapStore.libraryRevision,
+  coverageRevision: mapStore.coverageRevision,
+  mode: mapStore.fogMode,
+  processed: 0,
+  total: 0,
+  error: null,
+  warnings: [],
+  recoveryAttempts: 0,
+  retryable: false,
+  warningCounts: {},
+  errorCounts: {},
+  infoCounts: {},
+  coverageReducedCounts: {},
+  normalizedActivityCount: 0,
+  coverageReducedActivityCount: 0,
+  repairedActivityCount: 0,
+  rejectedActivityCount: 0,
+  geometryFallbackCount: 0,
+}
+
+function sameCounts(
+  first: Record<string, number>,
+  second: Record<string, number>
+): boolean {
+  const firstEntries = Object.entries(first)
+  const secondEntries = Object.entries(second)
+  return (
+    firstEntries.length === secondEntries.length &&
+    firstEntries.every(([key, value]) => second[key] === value)
+  )
+}
+
+function updateFogStatus(
+  update:
+    | Partial<FogProjectionStatus>
+    | ((current: FogProjectionStatus) => FogProjectionStatus)
+): void {
+  const next =
+    typeof update === "function"
+      ? update(fogStatus)
+      : { ...fogStatus, ...update }
+  if (
+    next.phase === fogStatus.phase &&
+    next.requestId === fogStatus.requestId &&
+    next.generation === fogStatus.generation &&
+    next.libraryRevision === fogStatus.libraryRevision &&
+    next.coverageRevision === fogStatus.coverageRevision &&
+    next.mode === fogStatus.mode &&
+    next.processed === fogStatus.processed &&
+    next.total === fogStatus.total &&
+    next.error === fogStatus.error &&
+    next.recoveryAttempts === fogStatus.recoveryAttempts &&
+    sameCounts(next.infoCounts, fogStatus.infoCounts) &&
+    sameCounts(next.coverageReducedCounts, fogStatus.coverageReducedCounts) &&
+    next.normalizedActivityCount === fogStatus.normalizedActivityCount &&
+    next.coverageReducedActivityCount ===
+      fogStatus.coverageReducedActivityCount &&
+    next.retryable === fogStatus.retryable &&
+    next.repairedActivityCount === fogStatus.repairedActivityCount &&
+    next.rejectedActivityCount === fogStatus.rejectedActivityCount &&
+    next.geometryFallbackCount === fogStatus.geometryFallbackCount &&
+    sameCounts(next.warningCounts, fogStatus.warningCounts) &&
+    sameCounts(next.errorCounts, fogStatus.errorCounts) &&
+    next.warnings.length === fogStatus.warnings.length &&
+    next.warnings.every(
+      (warning, index) => warning === fogStatus.warnings[index]
+    )
+  ) {
+    return
   }
-  if (fullHydration) return fullHydration
-  fullHydration = loadActivities()
-    .then((activities) => {
-      setFullActivities(sortActivities(activities))
-      return mapStore.activities
+  fogStatus = {
+    ...next,
+    warnings: [...next.warnings],
+    warningCounts: { ...next.warningCounts },
+    errorCounts: { ...next.errorCounts },
+    infoCounts: { ...next.infoCounts },
+    coverageReducedCounts: { ...next.coverageReducedCounts },
+  }
+  for (const listener of fogStatusListeners) listener()
+}
+
+/** Canonical activity ownership lives in ActivityLibrary; this is its map projection. */
+export const activityLibrary = createActivityLibrary()
+let activityLibrarySubscription: (() => void) | null = null
+activityLibrary.subscribeMetadata((snapshot, commit) => {
+  applyActivitySummarySnapshot(snapshot, commit)
+})
+
+/** Revision-keyed derived-stat projection; canonical activity commits do not wait for it. */
+export const uniqueDistanceProjection = createUniqueDistanceProjection(
+  {},
+  {
+    onError: ({ coverageRevision, error }) =>
+      console.warn(
+        `[projection] unique distance failed for coverage revision ${coverageRevision}:`,
+        error
+      ),
+    onComplete: ({ coverageRevision, activities }) => {
+      if (mapStore.coverageRevision !== coverageRevision) return
+      mapStore.activities = mergeUniqueDistanceStats(
+        mapStore.activities,
+        activities
+      )
+      mapStore.uniqueDistanceProjectionRevision = coverageRevision
+    },
+  }
+)
+
+/** Revision-aware owner of fog requests; mapStore keeps only its UI projection. */
+export const fogCoordinator = createFogCoordinator(
+  {
+    send: (request) => {
+      if (!mapStore.worker) throw new Error("Fog worker is unavailable")
+      mapStore.worker.postMessage(request)
+    },
+  },
+  {
+    onRequest: ({ request }) => {
+      recordDiagnostic({
+        subsystem: "fog",
+        operationId: request.requestId,
+        libraryRevision: request.libraryRevision,
+        stage: request.kind,
+        itemCount: request.activities.length,
+        pointCount: workerPointCount(request.activities),
+        result: "started",
+      })
+      updateFogStatus({
+        phase: "processing",
+        requestId: request.requestId,
+        generation: request.generation,
+        libraryRevision: request.libraryRevision,
+        coverageRevision: request.coverageRevision,
+        mode: request.mode,
+        processed: 0,
+        total: request.activities.length,
+        error: null,
+        warnings: [],
+        retryable: false,
+        warningCounts: {},
+        errorCounts: {},
+        infoCounts: {},
+        coverageReducedCounts: {},
+        normalizedActivityCount: 0,
+        coverageReducedActivityCount: 0,
+        repairedActivityCount: 0,
+        rejectedActivityCount: 0,
+        geometryFallbackCount: 0,
+      })
+    },
+    onProgress: (progress, context) => {
+      if (fogStatus.requestId !== context.request.requestId) return
+      const total = context.request.activities.length
+      const processed = Math.max(
+        fogStatus.processed,
+        clampFogProgress(progress.processed, total)
+      )
+      recordDiagnostic({
+        subsystem: "fog",
+        operationId: context.request.requestId,
+        libraryRevision: context.request.libraryRevision,
+        stage: progress.stage,
+        itemCount: progress.total,
+        result: "progress",
+      })
+      updateFogStatus({
+        phase: fogStatus.phase === "degraded" ? "degraded" : "processing",
+        requestId: context.request.requestId,
+        generation: context.request.generation,
+        libraryRevision: context.request.libraryRevision,
+        coverageRevision: context.request.coverageRevision,
+        mode: context.request.mode,
+        processed,
+        total,
+      })
+    },
+    onError: (error) => {
+      recordDiagnostic({
+        subsystem: "fog",
+        operationId: error.context?.request.requestId,
+        libraryRevision: error.context?.request.libraryRevision,
+        stage: "error",
+        itemCount: error.context?.request.activities.length,
+        result: error.kind === "protocol" ? "degraded" : "failed",
+        errorCode:
+          error.kind === "worker"
+            ? "worker-failed"
+            : error.kind === "engine"
+              ? "engine-failed"
+              : "protocol-error",
+        retryability:
+          error.kind === "worker"
+            ? "retryable"
+            : error.kind === "protocol"
+              ? "permanent"
+              : "permanent",
+      })
+      updateFogStatus((current) => ({
+        ...current,
+        phase:
+          error.kind === "worker" || error.kind === "engine"
+            ? "failed"
+            : "degraded",
+        error: error.message,
+        retryable: error.kind === "worker",
+      }))
+    },
+    onRecovery: (context) => {
+      recordDiagnostic({
+        subsystem: "fog",
+        operationId: context.request.requestId,
+        libraryRevision: context.request.libraryRevision,
+        stage: "recovery",
+        itemCount: context.request.activities.length,
+        result: "started",
+        retryability: "retryable",
+      })
+      updateFogStatus({
+        phase: "recovering",
+        requestId: context.request.requestId,
+        generation: context.request.generation,
+        libraryRevision: context.request.libraryRevision,
+        coverageRevision: context.request.coverageRevision,
+        mode: context.request.mode,
+        processed: 0,
+        total: context.request.activities.length,
+        recoveryAttempts: 1,
+        retryable: true,
+      })
+    },
+    onTerminal: (terminal) => {
+      recordDiagnostic({
+        subsystem: "fog",
+        operationId: terminal.context.request.requestId,
+        libraryRevision: terminal.context.request.libraryRevision,
+        stage: "complete",
+        itemCount: terminal.context.request.activities.length,
+        ...(terminal.snapshot
+          ? {
+              pointCount: terminal.snapshot.diagnostics.outputPoints,
+              geometry: snapshotGeometryMetrics(terminal.snapshot),
+            }
+          : {}),
+        result: terminal.status === "complete" ? "success" : terminal.status,
+        ...(terminal.status === "failed"
+          ? { errorCode: "fog-processing-failed", retryability: "retryable" }
+          : {}),
+        ...(terminal.snapshot
+          ? {
+              warningCounts: terminal.snapshot.diagnostics.warningCounts,
+              errorCounts: terminal.snapshot.diagnostics.errorCounts,
+              infoCounts: terminal.snapshot.diagnostics.infoCounts,
+              coverageReducedCounts:
+                terminal.snapshot.diagnostics.coverageReducedCounts,
+              normalizedActivityCount:
+                terminal.snapshot.diagnostics.normalizedActivityCount,
+              coverageReducedActivityCount:
+                terminal.snapshot.diagnostics.coverageReducedActivityCount,
+              repairedActivityCount:
+                terminal.snapshot.diagnostics.repairedActivityCount,
+              rejectedActivityCount:
+                terminal.snapshot.diagnostics.rejectedActivityCount,
+              geometryFallbackCount:
+                terminal.snapshot.diagnostics.geometryFallbackCount,
+            }
+          : {}),
+      })
+      if (terminal.status === "failed") {
+        updateFogStatus({
+          phase: "failed",
+          requestId: terminal.context.request.requestId,
+          error: terminal.error ?? "Fog processing failed.",
+          retryable: true,
+        })
+      } else if (terminal.status === "partial" && terminal.snapshot) {
+        const diagnostics = terminal.snapshot.diagnostics
+        updateFogStatus({
+          phase: "degraded",
+          requestId: terminal.context.request.requestId,
+          processed: terminal.context.request.activities.length,
+          total: terminal.context.request.activities.length,
+          error:
+            diagnostics.errors[0] ??
+            "Fog completed with reduced coverage; your activities are safe.",
+          warnings: [...diagnostics.warnings, ...diagnostics.errors],
+          retryable: false,
+          warningCounts: { ...(diagnostics.warningCounts ?? {}) },
+          errorCounts: { ...(diagnostics.errorCounts ?? {}) },
+          infoCounts: { ...(diagnostics.infoCounts ?? {}) },
+          coverageReducedCounts: {
+            ...(diagnostics.coverageReducedCounts ?? {}),
+          },
+          normalizedActivityCount: diagnostics.normalizedActivityCount ?? 0,
+          coverageReducedActivityCount:
+            diagnostics.coverageReducedActivityCount ?? 0,
+          repairedActivityCount: diagnostics.repairedActivityCount ?? 0,
+          rejectedActivityCount: diagnostics.rejectedActivityCount ?? 0,
+          geometryFallbackCount: diagnostics.geometryFallbackCount ?? 0,
+        })
+      } else if (
+        terminal.status === "cancelled" &&
+        !fogCoordinator.activeRequest &&
+        !fogCoordinator.queuedSnapshot &&
+        terminal.context.request.generation === mapStore.runId
+      ) {
+        updateFogStatus({
+          phase: "idle",
+          requestId: null,
+          processed: 0,
+          total: 0,
+          error: null,
+          warnings: [],
+          retryable: false,
+          warningCounts: {},
+          errorCounts: {},
+          infoCounts: {},
+          coverageReducedCounts: {},
+          normalizedActivityCount: 0,
+          coverageReducedActivityCount: 0,
+          repairedActivityCount: 0,
+          rejectedActivityCount: 0,
+          geometryFallbackCount: 0,
+        })
+      } else if (terminal.status === "complete" && terminal.snapshot) {
+        updateFogStatus({
+          phase: "idle",
+          requestId: terminal.context.request.requestId,
+          processed: terminal.context.request.activities.length,
+          total: terminal.context.request.activities.length,
+        })
+      }
+    },
+  }
+)
+
+function cloneActivities(
+  activities: readonly ParsedActivity[]
+): ParsedActivity[] {
+  const copy =
+    typeof structuredClone === "function"
+      ? structuredClone([...activities])
+      : JSON.parse(JSON.stringify(activities))
+  return sortActivities(copy as ParsedActivity[])
+}
+
+function workerPointCount(activities: readonly FogWorkerActivity[]): number {
+  return activities.reduce(
+    (count, activity) =>
+      count +
+      (activity.paths
+        ? activity.paths.reduce((pathCount, path) => pathCount + path.length, 0)
+        : activity.coordinates.length),
+    0
+  )
+}
+
+function clampFogProgress(processed: number, total: number): number {
+  const maximum = Number.isFinite(total) ? Math.max(0, total) : 0
+  const current = Number.isFinite(processed) ? processed : 0
+  return Math.min(maximum, Math.max(0, current))
+}
+
+function snapshotGeometryMetrics(snapshot: FogSnapshot) {
+  return {
+    inputPoints: snapshot.diagnostics.inputPoints,
+    outputPoints: snapshot.diagnostics.outputPoints,
+    featureCount: snapshot.diagnostics.featureCount,
+    vertexCount: snapshot.diagnostics.vertexCount,
+  }
+}
+
+function toFogWorkerActivity(activity: FogWorkerActivity): FogWorkerActivity {
+  return {
+    id: activity.id,
+    name: activity.name,
+    coordinates: activity.coordinates,
+    ...(activity.paths ? { paths: pathsForActivity(activity) } : {}),
+  }
+}
+
+function mergeMetadataSnapshot(
+  currentActivities: readonly ParsedActivity[],
+  snapshotActivities: ReadonlyArray<
+    Pick<
+      ParsedActivity,
+      | "id"
+      | "name"
+      | "startedAtMs"
+      | "activityType"
+      | "startSunPhase"
+      | "contentHash"
+      | "isPublic"
+    >
+  >
+): ParsedActivity[] {
+  const nextById = new Map(
+    snapshotActivities.map((activity) => [activity.id, activity])
+  )
+  return currentActivities.map((activity) => {
+    const next = nextById.get(activity.id)
+    if (!next) return activity
+    if (
+      activity.name === next.name &&
+      activity.startedAtMs === next.startedAtMs &&
+      activity.activityType === next.activityType &&
+      activity.startSunPhase === next.startSunPhase &&
+      activity.contentHash === next.contentHash &&
+      activity.isPublic === next.isPublic
+    ) {
+      return activity
+    }
+    return {
+      ...activity,
+      name: next.name,
+      startedAtMs: next.startedAtMs,
+      activityType: next.activityType,
+      startSunPhase: next.startSunPhase,
+      contentHash: next.contentHash,
+      isPublic: next.isPublic,
+    }
+  })
+}
+
+/** Merge only derived unique-distance values into the latest activity projection. */
+export function mergeUniqueDistanceStats(
+  currentActivities: readonly ParsedActivity[],
+  projectedActivities: readonly ParsedActivity[]
+): ParsedActivity[] {
+  const projectedById = new Map(
+    projectedActivities.map((activity) => [activity.id, activity])
+  )
+  return currentActivities.map((activity) => {
+    const projected = projectedById.get(activity.id)
+    if (
+      !projected ||
+      projected.stats.uniqueDistanceKm === activity.stats.uniqueDistanceKm
+    ) {
+      return activity
+    }
+    return {
+      ...activity,
+      stats: {
+        ...activity.stats,
+        uniqueDistanceKm: projected.stats.uniqueDistanceKm,
+      },
+    }
+  })
+}
+
+function applyLibrarySnapshot(
+  snapshot: LibrarySnapshot,
+  change?: LibraryChange
+): void {
+  const wasFullyHydrated = mapStore.activityHydration === "full"
+  const coverageChanged =
+    mapStore.coverageRevision !== snapshot.coverageRevision
+  if (
+    mapStore.activityHydration !== "full" ||
+    coverageChanged ||
+    change?.domains.geometry ||
+    change?.domains.membership
+  ) {
+    mapStore.activities = cloneActivities(snapshot.activities)
+    mapStore.uniqueDistanceProjectionRevision = null
+  } else if (change?.domains.metadata) {
+    mapStore.activities = mergeMetadataSnapshot(
+      mapStore.activities,
+      snapshot.activities
+    )
+  } else if (change?.domains.statistics) {
+    const statsById = new Map(
+      snapshot.activities.map((activity) => [activity.id, activity.stats])
+    )
+    mapStore.activities = mapStore.activities.map((activity) => {
+      const stats = statsById.get(activity.id)
+      return stats ? { ...activity, stats } : activity
     })
-    .finally(() => {
-      fullHydration = null
-    })
-  return fullHydration
+  }
+  mapStore.activitySummaries = []
+  mapStore.activityHydration = "full"
+  mapStore.libraryRevision = snapshot.revision
+  mapStore.coverageRevision = snapshot.coverageRevision
+  publishActivitySummarySnapshot(
+    mapStore.activities.map(activityToSummary),
+    snapshot.revision,
+    snapshot.coverageRevision,
+    Boolean(change?.domains.metadata && change.updated.length > 0)
+  )
+  const coverageDomainChanged = Boolean(
+    change?.domains.membership || change?.domains.geometry
+  )
+  if (!wasFullyHydrated || coverageChanged || coverageDomainChanged) {
+    uniqueDistanceProjection.schedule(snapshot)
+  }
 }
 
-const fogProgressListeners = new Set<() => void>()
+function applyFogLibraryChange(
+  snapshot: LibrarySnapshot,
+  change: LibraryChange
+): void {
+  if (
+    change.domains.statistics &&
+    !change.domains.membership &&
+    !change.domains.geometry
+  ) {
+    return
+  }
+  if (!change.domains.membership && !change.domains.geometry) return
+  if (!mapStore.worker) {
+    if (change.updated.length > 0 || change.removed.length > 0) {
+      rebuildFogProjection(mapStore.fogMode)
+    } else {
+      updateFogStatus({
+        phase: "failed",
+        generation: mapStore.runId,
+        libraryRevision: snapshot.revision,
+        coverageRevision: snapshot.coverageRevision,
+        mode: mapStore.fogMode,
+        total: snapshot.activities.length,
+        error: "Fog processing is unavailable. Retry to clear the new route.",
+        retryable: true,
+      })
+    }
+    return
+  }
 
-/** Subscribe narrowly to worker progress without rerendering the home route. */
-export function subscribeFogProgress(listener: () => void): () => void {
-  fogProgressListeners.add(listener)
-  return () => fogProgressListeners.delete(listener)
+  if (change.updated.length > 0 || change.removed.length > 0) {
+    // A removal or revisioned update invalidates the worker accumulator. The
+    // coordinator owns the reset/rebuild identity; this projection only
+    // clears the render-side snapshot before the replacement arrives.
+    rebuildFogProjection(mapStore.fogMode)
+    return
+  }
+
+  // Additions can extend the exact completed base. FogCoordinator falls back
+  // to a full rebuild when the restored worker has no durable base state.
+  postToFogWorker({
+    type: "PROCESS_ACTIVITIES",
+    activities: change.added,
+    mode: mapStore.fogMode,
+    kind: "append",
+    libraryRevision: snapshot.revision,
+    coverageRevision: snapshot.coverageRevision,
+  })
 }
 
-export function getFogProcessedCount(): number {
-  return mapStore.processedCount
+/** Load and bind the canonical activity library to the map render projection. */
+export async function initializeActivityLibrary(): Promise<ParsedActivity[]> {
+  if (!activityLibrarySubscription) {
+    activityLibrarySubscription = activityLibrary.subscribe(
+      (snapshot, change) => {
+        applyLibrarySnapshot(snapshot, change)
+        applyFogLibraryChange(snapshot, change)
+      }
+    )
+  }
+  const snapshot = await activityLibrary.initialize()
+  applyLibrarySnapshot(snapshot)
+  return cloneActivities(snapshot.activities)
 }
 
-/** Update worker progress and notify only the UI that displays it. */
-export function setFogProcessedCount(processedCount: number): void {
-  if (mapStore.processedCount === processedCount) return
-  mapStore.processedCount = processedCount
-  for (const listener of fogProgressListeners) listener()
+/** Apply a canonical snapshot from another route/service to the render store. */
+export function setActivityProjection(snapshot: LibrarySnapshot): void {
+  applyLibrarySnapshot(snapshot)
 }
 
-type DistributiveOmit<T, K extends keyof T> = T extends unknown
-  ? Omit<T, K>
-  : never
+export function subscribeFogStatus(listener: () => void): () => void {
+  fogStatusListeners.add(listener)
+  return () => fogStatusListeners.delete(listener)
+}
+
+export function getFogStatus(): FogProjectionStatus {
+  return fogStatus
+}
+
+export function recordFogSnapshot(
+  snapshot: FogSnapshot,
+  terminal = true
+): void {
+  if (
+    snapshot.generation !== mapStore.runId ||
+    snapshot.coverageRevision !== mapStore.coverageRevision ||
+    snapshot.mode !== mapStore.fogMode
+  ) {
+    return
+  }
+  const diagnostics = snapshot.diagnostics
+  const coverageReducedActivityCount =
+    diagnostics.coverageReducedActivityCount ??
+    diagnostics.repairedActivityCount ??
+    0
+  const isCompleteSnapshot =
+    snapshot.completeness === "complete" &&
+    !diagnostics.degraded &&
+    coverageReducedActivityCount === 0 &&
+    (diagnostics.rejectedActivityCount ?? 0) === 0 &&
+    (diagnostics.geometryFallbackCount ?? 0) === 0 &&
+    diagnostics.errors.length === 0
+  updateFogStatus({
+    phase: !terminal ? "processing" : isCompleteSnapshot ? "idle" : "degraded",
+    generation: snapshot.generation,
+    libraryRevision: snapshot.libraryRevision,
+    coverageRevision: snapshot.coverageRevision,
+    mode: snapshot.mode,
+    error: terminal
+      ? (diagnostics.errors[0] ??
+        (diagnostics.degraded
+          ? "Fog was rebuilt with reduced coverage."
+          : null))
+      : null,
+    warnings: [...diagnostics.warnings, ...diagnostics.errors],
+    recoveryAttempts: 0,
+    retryable: false,
+    warningCounts: { ...(diagnostics.warningCounts ?? {}) },
+    errorCounts: { ...(diagnostics.errorCounts ?? {}) },
+    infoCounts: { ...(diagnostics.infoCounts ?? {}) },
+    coverageReducedCounts: { ...(diagnostics.coverageReducedCounts ?? {}) },
+    normalizedActivityCount: diagnostics.normalizedActivityCount ?? 0,
+    coverageReducedActivityCount,
+    repairedActivityCount: coverageReducedActivityCount,
+    rejectedActivityCount: diagnostics.rejectedActivityCount ?? 0,
+    geometryFallbackCount: diagnostics.geometryFallbackCount ?? 0,
+  })
+}
+
+export function useFogStatus(): FogProjectionStatus {
+  // Kept here rather than in a component module so all map surfaces consume
+  // the same revisioned projection state.
+  return useSyncExternalStore(subscribeFogStatus, getFogStatus, getFogStatus)
+}
 
 /**
  * Begins a new fog-worker generation, abandoning whatever is in flight.
@@ -248,56 +1094,170 @@ type DistributiveOmit<T, K extends keyof T> = T extends unknown
  * and every reply is dropped, leaving the progress bar stuck.
  *
  * Only call this where the app genuinely discards prior work. Additions normally
- * join the current run; the cache-cold exception deliberately starts over because
- * there is no worker state to preserve.
+ * join the current run; the coordinator rebuilds from the canonical projection
+ * when a restored worker has no completed base.
  */
 export function startFogRun(): number {
   mapStore.runId++
-  mapStore.isRestoreReprocess = false
-  mapStore.fogWorkerMode = null
+  mapStore.fogSnapshot = null
+  mapStore.renderSourceRevision = null
+  updateFogStatus({
+    phase: "processing",
+    requestId: null,
+    generation: mapStore.runId,
+    libraryRevision: mapStore.libraryRevision,
+    coverageRevision: mapStore.coverageRevision,
+    mode: mapStore.fogMode,
+    processed: 0,
+    total: mapStore.activities.length,
+    error: null,
+    warnings: [],
+    recoveryAttempts: 0,
+    retryable: false,
+    warningCounts: {},
+    errorCounts: {},
+    infoCounts: {},
+    coverageReducedCounts: {},
+    normalizedActivityCount: 0,
+    coverageReducedActivityCount: 0,
+    repairedActivityCount: 0,
+    rejectedActivityCount: 0,
+    geometryFallbackCount: 0,
+  })
   return mapStore.runId
 }
 
-/** Posts to the fog worker, stamping the current run id. */
-export function postToFogWorker(
-  msg: DistributiveOmit<WorkerInboundMessage, "runId">
-): void {
+/** Posts a versioned request to the fog worker, stamping the current run id. */
+export function postToFogWorker(msg: FogWorkerCommand): boolean {
   if (msg.type === "PROCESS_ACTIVITIES") {
-    if (mapStore.fogWorkerMode === null) mapStore.fogWorkerMode = msg.mode
-    mapStore.pendingFogJobs++
-    mapStore.isFogRunInFlight = true
-    for (const activity of msg.activities) {
-      mapStore.fogWorkerActivityIds.add(activity.id)
-    }
+    const worker = mapStore.worker
+    if (!worker) return false
 
+    const libraryRevision = msg.libraryRevision ?? mapStore.libraryRevision
+    const coverageRevision = msg.coverageRevision ?? mapStore.coverageRevision
+    const completed = fogCoordinator.completedSnapshot
+    const hasCompatibleBase =
+      completed !== null &&
+      completed.generation === mapStore.runId &&
+      completed.mode === msg.mode &&
+      completed.coverageRevision < coverageRevision
+    const kind = msg.kind ?? (hasCompatibleBase ? "append" : "rebuild")
     // ParsedActivity contains timestamps, laps, statistics, and other metadata.
     // Project at the worker boundary so structured cloning only copies what fog
     // processing needs, including when the full library is replayed.
-    mapStore.worker?.postMessage({
-      ...msg,
-      activities: msg.activities.map(({ id, name, coordinates }) => ({
-        id,
-        name,
-        coordinates,
-      })),
-      runId: mapStore.runId,
-    } satisfies WorkerInboundMessage)
-    return
+    const activities = msg.activities.map(toFogWorkerActivity)
+    const allActivities = mapStore.activities.map(toFogWorkerActivity)
+    try {
+      const context = fogCoordinator.schedule(
+        {
+          generation: mapStore.runId,
+          libraryRevision,
+          coverageRevision,
+          mode: msg.mode,
+          activities: allActivities,
+        },
+        {
+          appendActivities: kind === "append" ? activities : [],
+          forceRebuild: kind === "rebuild",
+        }
+      )
+      if (!context && !fogCoordinator.queuedSnapshot) return false
+      return true
+    } catch {
+      return false
+    }
   }
   if (msg.type === "RESET") {
-    mapStore.pendingFogJobs = 0
-    mapStore.isFogRunInFlight = false
-    mapStore.fogWorkerActivityIds.clear()
-    mapStore.fogWorkerMode = null
+    mapStore.fogSnapshot = null
   }
-  mapStore.worker?.postMessage({ ...msg, runId: mapStore.runId })
+  if (!mapStore.worker) return false
+  try {
+    fogCoordinator.reset({
+      generation: mapStore.runId,
+      libraryRevision: mapStore.libraryRevision,
+      coverageRevision: mapStore.coverageRevision,
+      mode: mapStore.fogMode,
+    })
+    return true
+  } catch {
+    return false
+  }
 }
 
-/** Records one batch completion. Returns true only when the whole run is idle. */
-export function finishFogJob(): boolean {
-  mapStore.pendingFogJobs = Math.max(0, mapStore.pendingFogJobs - 1)
-  mapStore.isFogRunInFlight = mapStore.pendingFogJobs > 0
-  return !mapStore.isFogRunInFlight
+/** Start a complete fog projection for the current committed library revision. */
+export function rebuildFogProjection(
+  mode: FogMode = mapStore.fogMode
+): boolean {
+  mapStore.fogMode = mode
+  mapStore.fogData = null
+  const generation = startFogRun()
+  const resetPosted = postToFogWorker({ type: "RESET" })
+  if (!resetPosted) {
+    updateFogStatus({
+      phase: "failed",
+      generation,
+      libraryRevision: mapStore.libraryRevision,
+      coverageRevision: mapStore.coverageRevision,
+      mode,
+      error: "Fog processing is unavailable. Retry to rebuild the map.",
+      retryable: true,
+    })
+    return false
+  }
+  if (mapStore.activities.length === 0) {
+    updateFogStatus({
+      phase: "idle",
+      processed: 0,
+      total: 0,
+      error: null,
+      warnings: [],
+      retryable: false,
+      warningCounts: {},
+      errorCounts: {},
+      infoCounts: {},
+      coverageReducedCounts: {},
+      normalizedActivityCount: 0,
+      coverageReducedActivityCount: 0,
+      repairedActivityCount: 0,
+      rejectedActivityCount: 0,
+      geometryFallbackCount: 0,
+    })
+    return true
+  }
+  const scheduled = postToFogWorker({
+    type: "PROCESS_ACTIVITIES",
+    activities: mapStore.activities,
+    mode,
+    kind: "rebuild",
+    libraryRevision: mapStore.libraryRevision,
+    coverageRevision: mapStore.coverageRevision,
+  })
+  if (!scheduled) {
+    updateFogStatus({
+      phase: "failed",
+      error: "Fog processing could not be scheduled. Retry to rebuild the map.",
+      retryable: true,
+    })
+  }
+  return scheduled
+}
+
+/** Abandon the current fog run and clear its render projection. */
+export function clearFogProjection(): void {
+  mapStore.fogData = null
+  const generation = startFogRun()
+  if (!postToFogWorker({ type: "RESET" })) {
+    updateFogStatus({
+      phase: mapStore.activities.length === 0 ? "idle" : "failed",
+      generation,
+      processed: 0,
+      total: mapStore.activities.length,
+      error:
+        mapStore.activities.length === 0
+          ? null
+          : "Fog processing is unavailable. Retry to rebuild the map.",
+    })
+  }
 }
 
 /**
@@ -308,82 +1268,57 @@ export function queueAddedActivitiesForFog(
   added: ParsedActivity[],
   mode: FogMode
 ): void {
-  const addedIds = new Set(added.map((activity) => activity.id))
-  const missing = mapStore.activities.filter(
-    (activity) => !mapStore.fogWorkerActivityIds.has(activity.id)
-  )
-  if (missing.length === 0) return
-
-  // The worker already contains the previous library and lacks only this
-  // addition, so it is safe to extend the current run incrementally. Its
-  // accumulator is mode-specific, however: never append corridor work to a
-  // fill run (or vice versa).
-  const isModeCompatible =
-    mapStore.fogWorkerActivityIds.size === 0 || mapStore.fogWorkerMode === mode
-  if (
-    missing.every((activity) => addedIds.has(activity.id)) &&
-    isModeCompatible
-  ) {
-    postToFogWorker({ type: "PROCESS_ACTIVITIES", activities: missing, mode })
-    return
-  }
-
-  startFogRun()
-  postToFogWorker({ type: "RESET" })
+  if (added.length === 0) return
   postToFogWorker({
     type: "PROCESS_ACTIVITIES",
-    activities: mapStore.activities,
+    activities: added,
     mode,
+    kind: "append",
+    libraryRevision: mapStore.libraryRevision,
+    coverageRevision: mapStore.coverageRevision,
   })
 }
 
 /**
- * Add newly-acquired activities to the library: merge, recompute unique distances,
- * hand them to the fog worker, persist, invalidate the fog cache.
+ * Add newly-acquired activities to the canonical library.
  *
- * Both entry points for new activities go through here — the `add-files` action and
- * the sync engine's downloads — so a downloaded activity is indistinguishable from
- * an imported one.
- *
- * Normally it **joins** the current fog run and posts only the additions. The
- * exception is a worker that has only a restored render cache: because that
- * cache cannot hydrate its accumulators, the first addition replays the library.
+ * The library subscription owns both derived projections, so imported and
+ * downloaded activities follow the same fog and unique-distance path after the
+ * durable commit returns.
  */
 export async function ingestActivities(
   newActivities: ParsedActivity[]
 ): Promise<ParsedActivity[]> {
-  // Drop anything already held under the same content hash. Re-importing a
-  // file, or importing one the server had just restored, must not produce two
-  // identical activities — content-addressing is what makes that detectable.
-  // Activities with no hash (imported before sync existed) are always kept.
-  const present = new Set(
-    mapStore.activities.map((t) => t.contentHash).filter(Boolean)
+  await initializeActivityLibrary()
+  const operationId = createUuid()
+  const result = await activityLibrary.dispatch(
+    {
+      type: "import",
+      operationId,
+      activities: newActivities,
+    },
+    {
+      outbox: isServerEnabled
+        ? (commit) =>
+            commit.change.added.flatMap((activity) => {
+              const item = createActivityUploadOutboxItem(
+                activity,
+                operationId,
+                commit.snapshot.revision
+              )
+              return item ? [item] : []
+            })
+        : [],
+    }
   )
-  const added = newActivities.filter((t) => {
-    if (!t.contentHash) return true
-    if (present.has(t.contentHash)) return false
-    present.add(t.contentHash)
-    return true
-  })
-
-  // Returns what was actually taken, never what was offered. Callers drive the
-  // progress UI off this: reporting the offered count when everything was a
-  // duplicate leaves "Processing 0 of N…" on screen forever, because no
-  // PROCESS_ACTIVITIES was posted and so no DONE ever comes back.
+  const added = result.change.added
   if (added.length === 0) return added
 
-  setFullActivities(sortActivities([...mapStore.activities, ...added]))
-  // A backdated addition can change every later activity's unique distance.
-  await ensureUniqueDistancesCurrent(mapStore.activities)
-  await clearFogCache()
-  // Start processing only after invalidation finishes. A small worker batch can
-  // otherwise save its fresh cache first and have this call erase it afterward.
-  // Read the mode at queue time. Parsing and IDB writes are asynchronous, and
-  // the user may have changed the control since the import was submitted.
-  queueAddedActivitiesForFog(added, mapStore.fogMode)
+  // The canonical commit has completed. Fog starts immediately and derived
+  // work/cache invalidation are independent projections of that revision.
   return added
 }
 
-export function worldFogGeoJSON(): GeoJSON.Feature<GeoJSON.Polygon> {
-  return worldFogFeature()
+export function worldFogGeoJSON(): FogRenderData {
+  return emptyBoundedFog().fogData
 }

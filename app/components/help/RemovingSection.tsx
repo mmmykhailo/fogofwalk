@@ -27,11 +27,11 @@ export const REMOVAL_KINDS: {
     where: "in the menu",
     body: (
       <>
-        Wipes every activity, photo and the fog from{" "}
+        Wipes every activity, photo, saved point and the fog from{" "}
         <strong className="text-foreground">this device only</strong>. It
         deliberately leaves the server untouched, so if you are signed in your
-        activities will download again on the next sync. Photos are not synced,
-        so those are gone for good.
+        activities and saved points can download again when sync resumes. Photos
+        are not synced, so those are gone for good.
       </>
     ),
   },
@@ -42,8 +42,10 @@ export const REMOVAL_KINDS: {
     body: (
       <>
         Deletes your activities from the server. Your other devices keep the
-        copies they already have; they simply stop syncing them. Below it,{" "}
-        <em>delete account</em> erases your account server-side entirely.
+        copies they already have; they simply stop syncing them. Saved points
+        are not affected by this activity-only action. Below it,{" "}
+        <em>delete account</em> erases the account and all of its server-side
+        activities and saved points.
       </>
     ),
   },
@@ -70,9 +72,10 @@ export function RemovingSection() {
         ))}
       </div>
       <p>
-        In short: <em>Clear all</em> is a local reset and is undone by sync;{" "}
-        <em>Remove all</em> is the server-side one. Neither is recoverable, and
-        both ask you to confirm first.
+        In short: <em>Clear all</em> is a local reset whose synced data can
+        return; <em>Remove all</em> deletes only the server's activity copies.
+        Local-only photos cleared from the device are not recoverable. Both
+        actions ask you to confirm first.
       </p>
     </div>
   )

@@ -15,24 +15,30 @@ function referenceImplementation(
 
   for (const activity of activities) {
     let uniqueKm = 0
-    for (let i = 1; i < activity.coordinates.length; i++) {
-      const [lng1, lat1] = activity.coordinates[i - 1]
-      const [lng2, lat2] = activity.coordinates[i]
-      const cx = Math.round(((lng1 + lng2) / 2) * GRID_SCALE)
-      const cy = Math.round(((lat1 + lat2) / 2) * GRID_SCALE)
-      if (!explored.has(`${cx},${cy}`)) {
-        uniqueKm += haversineKm(lng1, lat1, lng2, lat2)
+    const paths =
+      activity.paths ?? (activity.coordinates ? [activity.coordinates] : [])
+    for (const coordinates of paths) {
+      for (let i = 1; i < coordinates.length; i++) {
+        const [lng1, lat1] = coordinates[i - 1]!
+        const [lng2, lat2] = coordinates[i]!
+        const cx = Math.round(((lng1 + lng2) / 2) * GRID_SCALE)
+        const cy = Math.round(((lat1 + lat2) / 2) * GRID_SCALE)
+        if (!explored.has(`${cx},${cy}`)) {
+          uniqueKm += haversineKm(lng1, lat1, lng2, lat2)
+        }
       }
     }
 
-    for (let i = 1; i < activity.coordinates.length; i++) {
-      const [lng1, lat1] = activity.coordinates[i - 1]
-      const [lng2, lat2] = activity.coordinates[i]
-      const cx = Math.round(((lng1 + lng2) / 2) * GRID_SCALE)
-      const cy = Math.round(((lat1 + lat2) / 2) * GRID_SCALE)
-      for (let dx = -1; dx <= 1; dx++) {
-        for (let dy = -1; dy <= 1; dy++) {
-          explored.add(`${cx + dx},${cy + dy}`)
+    for (const coordinates of paths) {
+      for (let i = 1; i < coordinates.length; i++) {
+        const [lng1, lat1] = coordinates[i - 1]!
+        const [lng2, lat2] = coordinates[i]!
+        const cx = Math.round(((lng1 + lng2) / 2) * GRID_SCALE)
+        const cy = Math.round(((lat1 + lat2) / 2) * GRID_SCALE)
+        for (let dx = -1; dx <= 1; dx++) {
+          for (let dy = -1; dy <= 1; dy++) {
+            explored.add(`${cx + dx},${cy + dy}`)
+          }
         }
       }
     }
@@ -91,5 +97,23 @@ describe("computePerActivityUniqueDistances", () => {
       haversineKm(14.4, 50.08, 14.40001, 50.08001) +
       haversineKm(14.40001, 50.08001, 14.40002, 50.08002)
     expect(result.get("dense")).toBeCloseTo(expected, 12)
+  })
+
+  test("[I-037] does not invent a segment between disconnected paths", () => {
+    const paths: [number, number][][] = [
+      [
+        [0, 0],
+        [0.001, 0],
+      ],
+      [
+        [1, 1],
+        [1.001, 1],
+      ],
+    ]
+    const result = computePerActivityUniqueDistances([
+      { id: "disconnected", paths },
+    ])
+    const expected = haversineKm(0, 0, 0.001, 0) + haversineKm(1, 1, 1.001, 1)
+    expect(result.get("disconnected")).toBeCloseTo(expected, 12)
   })
 })

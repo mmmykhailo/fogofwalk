@@ -1,12 +1,8 @@
-import { applyActivityMetadata, mapStore } from "~/lib/mapStore"
+import { activityLibrary } from "~/lib/mapStore"
 import { canSync, getAuthState, initAuth } from "~/lib/server/authStore"
 import { friendlyMessage } from "~/lib/server/apiClient"
 import { updateActivityVisibility } from "~/lib/server/activityVisibility"
-import {
-  activityToSummary,
-  loadActivitySummaries,
-  updateActivityMetadata,
-} from "~/lib/storage"
+import { createUuid } from "~/lib/uuid"
 
 export type PublicActivityActionResult =
   | { ok: true; intent: "hide-activity"; contentHash: string }
@@ -19,22 +15,17 @@ function failedHide(error: string): PublicActivityActionResult {
 }
 
 async function reconcileLocalVisibility(contentHash: string): Promise<void> {
-  const summaries =
-    mapStore.activityHydration === "full"
-      ? mapStore.activities.map(activityToSummary)
-      : mapStore.activityHydration === "summaries"
-        ? mapStore.activitySummaries
-        : await loadActivitySummaries()
-  const summary = summaries.find(
+  const snapshot = await activityLibrary.initializeSummarySnapshot()
+  const summary = snapshot.summaries.find(
     (activity) => activity.contentHash === contentHash
   )
   if (!summary) return
 
-  const updated = { ...summary, isPublic: false }
-  if (!(await updateActivityMetadata([{ id: updated.id, isPublic: false }]))) {
-    throw new Error("The local activity summary could not be updated.")
-  }
-  applyActivityMetadata([updated])
+  await activityLibrary.dispatchMetadata({
+    type: "updateMetadata",
+    operationId: createUuid(),
+    patches: [{ id: summary.id, isPublic: false }],
+  })
 }
 
 interface PublicActivityActionArgs {

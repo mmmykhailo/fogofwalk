@@ -2,25 +2,111 @@
 
 This is the detailed companion to [AGENTS.md](../AGENTS.md). It documents invariants that are easy to break while changing the map, parsers, persistence, photos, laps, or offline support.
 
+The current pipeline is split across `app/lib/activities/`, `app/lib/fog/`,
+`app/lib/map/`, and their colocated unit tests. Browser-level regressions live
+in `e2e/specs/activity-progress.spec.ts`, `fog-worker.spec.ts`,
+`fog-visual.spec.ts`, `paths.spec.ts`, and the map interaction specs below it.
+
 ## Processing pipeline
 
-Files are parsed into `ParsedActivity[]` on the main thread, then posted to `workers/fogWorker.ts`. The worker simplifies each activity at `ACTIVITY_SIMPLIFY_TOLERANCE`, buffers it, reports lightweight progress every five activities, and emits an updated fog polygon every 300 ms. Corridor mode also flushes after five pending buffers so a fast buffering pass cannot leave one long final clipping operation. `MapView` writes that GeoJSON directly to the fog source.
+The bounded parser pool in `app/lib/activities/import/service.ts` parses files
+on the main thread, normalizes and hashes each activity, and commits the
+accepted batch once through `ActivityLibrary`. The committed revision is then
+projected to `app/workers/fogWorker.ts`. Its engine simplifies each activity at
+`ACTIVITY_SIMPLIFY_TOLERANCE`, buffers it, reports request-local progress, and
+emits an updated positive explored-mask collection at most every 300 ms.
+`useFogWorkerBridge` validates current revisioned snapshots and writes them to
+the fog custom layer, which supplies the surrounding world stencil.
 
 There are two distinct simplification tolerances. `ACTIVITY_SIMPLIFY_TOLERANCE` (0.0005, about 55 m) applies before buffering; `SIMPLIFY_TOLERANCE` (0.0001, about 11 m) applies to emitted fog. Swapping them visibly degrades the fog boundary or wastes a large vertex budget.
 
-Corridor mode clears only the buffered route. Fill mode unions all activity buffers, strips inner rings, and removes the resulting filled shape from world fog, so closed loops clear their interiors.
+Corridor mode clears only the buffered route. Fill mode indexes intersecting
+activity buffers and performs Turf unions in normalized Web Mercator, then
+strips inner rings. A merged component is unprojected only as a temporary copy
+for pre-commit render validation; the projected merged component remains the
+accumulator source of truth. Final emission independently unprojects the
+accumulator components, simplifies them with `SIMPLIFY_TOLERANCE`, and
+validates them again. This lets closed loops clear their interiors without
+constructing a world-minus-route polygon.
 
-Every worker message carries a `runId`. Only call `startFogRun()` when discarding existing work (mode toggle, delete, clear all), and always follow it with `RESET`. Adding activities and restore reprocessing join the existing run. The worker yields a macrotask between activities and serializes same-run batches, so resets cannot land mid-activity.
+The previous world-minus-mask representation had a confirmed MapLibre failure
+mode: `geojson-vt` could clip a long route-shaped interior ring against source
+tile bounds and Earcut could emit overlapping triangles. The current custom
+positive-mask layer avoids that inverse topology. Do not reintroduce the
+world-minus-route polygon or treat `maxzoom` freezing and source-option tuning
+as production fixes.
+
+This final emission stage is deliberately separate from input simplification
+and never mutates the worker accumulator. Each feature is checked for finite
+bounded coordinates,
+closed non-zero-area rings, topology, and independent feature, vertex, and
+serialized-byte limits. The validator reports `valid`, `invalid`,
+`budget_exceeded`, or `cancelled`; a work-budget result is not treated as proof
+that the geometry is invalid.
+
+Validation and aggregation are feature-local. If one explored component cannot
+be validated or exceeds a technical budget, it is omitted while unrelated
+validated components remain visible. The resulting snapshot is `partial`, is
+not a cache or append base, and is not written as a complete cache. Only a
+complete snapshot with a current library/mode/algorithm identity can seed an
+append or be cached.
+
+Input normalization retains exact coded event counts and only a bounded set of
+redacted examples. Duplicate coalescing and antimeridian splitting are
+coverage-neutral informational events; dropped points/paths, input budgets,
+validation failures, and geometry fallbacks are coverage-reduced outcomes.
+The UI reads these coded counters rather than the bounded example-array length,
+so a normal complete run with thousands of duplicate GPS points stays quiet.
+
+Every worker envelope carries a protocol version, request id, and generation
+(`runId`); progress and snapshot messages also carry the library revision,
+coverage revision, and fog mode. Use the projection helpers in
+`app/lib/mapStore.ts`; low-level calls to
+`startFogRun()` are only for abandoning existing work and must be followed
+immediately by `postToFogWorker({ type: "RESET" })`. Additions normally append
+to a compatible complete base. The coordinator coalesces newer committed
+snapshots, forces a rebuild when the base is missing or partial, rejects stale
+replies, and permits one worker-recovery rebuild. The worker yields a macrotask
+between activities and serializes jobs.
+
+Import progress is a batch snapshot over the bounded parser pool: parsing and save progress share one compact stage panel with downstream fog-worker progress. Parsing and save bars remain file-based: each selected file has its own lifecycle stage, each determinate bar uses the immutable number of selected files, and a rejected, failed, or cancelled file settles every displayed stage it can no longer reach. `completedFiles` counts files whose local reading, parsing, normalization, validation, and hashing preparation has ended; an accepted file then waits at `Waiting to save` until the one ordered durable library commit starts. Fog progress is request-activity-based and reads the generation-aware worker status, so an append can count only newly added activities while a rebuild counts the complete replay request. Reached rows stay together in one display session while shown progress is incomplete or either source is active. Once every shown row is complete and both sources are terminal, the whole panel hides after three quiet seconds; a terminal row that remains incomplete is not silently dismissed. A mode toggle starts only a fresh fog row at zero for the new full-library generation. `FogProjectionStatus.processed` and `.total` are request-local, while `FogSnapshot.diagnostics.processed` and `.total` may be cumulative when an append extends an existing worker accumulator.
 
 ## Storage and restore
 
-IndexedDB stores activities, photos, and preferences. Preferences include fog mode/cache, session, and sync state. `clearAll()` preserves the session and user controls such as fog mode, while clearing the derived fog cache and sync state. `loadActivities()` performs read-time migrations for missing `startedAtMs` and `uniqueDistanceKm`; do not re-save old records merely to migrate them.
+IndexedDB stores full activities, activity summaries, library revision metadata,
+photos, saved points, preferences, account-scoped sync state/outboxes, and
+derived caches. Preferences include fog mode/cache and the session.
+`clearAll()` preserves the session and user controls such as fog mode, while
+clearing local library data, photos, saved points, derived caches, and all sync
+state. `loadActivities()` performs read-time defaults for missing
+`startedAtMs`, `isPublic`, and `uniqueDistanceKm`; do not re-save old records
+merely to apply those defaults. Metadata-only edits update the summary overlay
+without reading or rewriting geometry.
 
-Map position deliberately uses synchronous localStorage (`fogofwalk:mapPosition`) on each `moveend`; IndexedDB writes can be lost during navigation. A stale fog cache sets `mapStore.isRestoreReprocess`, which reprocesses without fitting bounds and preserves the saved position.
+Map position deliberately uses synchronous localStorage
+(`fogofwalk:mapPosition`) on each `moveend`; IndexedDB writes can be lost during
+navigation. When the loader rejects a stale or absent fog cache it leaves
+`mapStore.fogData` null, and `home.tsx` schedules a restore rebuild after the
+map bridge is ready without fitting bounds, preserving the saved position.
 
 A restored fog cache is render-only: it cannot reconstruct the worker's internal corridor or fill accumulators. The first later import or sync addition therefore resets the worker and replays the full library. Once that replay is queued, later additions can join the run incrementally again.
 
-Use `mapStore.sourcesReady`, not `map.loaded()`, before operating on map sources. A style change destroys custom sources and layers, so `setupMapLayers` must re-add fog, activities, laps, and photos.
+Use `mapStore.sourcesReady`, not `map.loaded()`, before operating on map
+sources. A style change or WebGL-context replacement destroys custom state, so
+`setupMapLayers` must re-add fog, activities, lap highlighting, saved points,
+and marker images; photo DOM markers are rebuilt separately.
+
+Saved points render as one atomic shared symbol marker per point, with the
+white centre, coloured body, and white outer stroke kept together. Marker
+stacking uses sanitized `createdAt` values, and the shared transparent hit layer
+uses the same ordering so selection agrees with what is visible. The fixed
+palette marker images are re-registered inside `setupMapLayers()` after style or
+WebGL context replacement, before the custom sources are marked ready.
+
+Map background detection uses the centralized interactive-target registry, not
+fog geometry or fog visibility. During a style reload, the interaction helpers
+query only hit layers that are currently installed, so a temporary missing
+layer remains an empty-map click rather than an invalid MapLibre query.
 
 ## Files, photos, and laps
 
@@ -32,4 +118,8 @@ FIT laps store coordinate index ranges only. Build lap statistics during parsing
 
 ## PWA
 
-Workbox builds `app/sw.ts` into `sw.js`, caches the shell and map resources, and implements the web share target. Its contract spans `public/site.webmanifest`, `app/sw.ts`, and `routes/home.tsx`; change those three together.
+Workbox builds `app/sw.ts` into `sw.js`, precaches the app shell, caches standard
+map resources, and implements the GPX/FIT web share target. Its contract spans
+`public/site.webmanifest`, `app/sw.ts`, and `app/routes/home.tsx`; change those
+three together. Shared files remain in `share-target-queue` until the import
+action returns a terminal result so a failed import stays retryable.

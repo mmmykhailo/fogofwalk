@@ -1,4 +1,5 @@
 import type { ParsedActivity } from "~/types/activities"
+import { pathsForActivity } from "~shared/activityContract"
 import type {
   UniqueDistanceRequest,
   UniqueDistanceResponse,
@@ -47,9 +48,9 @@ export function computeUniqueDistancesInWorker(
     pending.set(requestId, { resolve, reject })
     getWorker().postMessage({
       requestId,
-      activities: activities.map(({ id, coordinates }) => ({
-        id,
-        coordinates,
+      activities: activities.map((activity) => ({
+        id: activity.id,
+        paths: pathsForActivity(activity),
       })),
     } satisfies UniqueDistanceRequest)
   })

@@ -204,6 +204,10 @@ export async function parseFitFile(file: File): Promise<ParsedActivity[]> {
       name: file.name,
       startedAtMs: validTs.length > 0 ? validTs[0] : null,
       coordinates: coords,
+      paths: [coords],
+      ...(ts.some((timestamp) => timestamp != null)
+        ? { pathTimestamps: [ts.map((timestamp) => timestamp ?? null)] }
+        : {}),
       startSunPhase: deriveStartSunPhase(
         coords,
         validTs.length > 0 ? validTs[0] : null

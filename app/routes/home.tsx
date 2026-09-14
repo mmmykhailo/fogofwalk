@@ -1,4 +1,11 @@
-import { useState, useEffect, useMemo, useRef } from "react"
+import {
+  useState,
+  useEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useCallback,
+} from "react"
 import {
   Outlet,
   useFetcher,
@@ -8,7 +15,6 @@ import {
   useSearchParams,
 } from "react-router"
 import type { ShouldRevalidateFunction } from "react-router"
-import { featureCollection, lineString } from "@turf/helpers"
 import bbox from "@turf/bbox"
 import type { Route } from "./+types/home"
 import { MapView } from "~/components/map/MapView"
@@ -35,42 +41,53 @@ import {
 } from "~/components/ui/dialog"
 import { Button } from "~/components/ui/button"
 import {
+  fogCoordinator,
   mapStore,
-  startFogRun,
-  postToFogWorker,
-  ingestActivities,
-  setFogProcessedCount,
+  activityLibrary,
+  createFogWorker,
+  initializeActivityLibrary,
+  rebuildFogProjection,
   setActivitySummaries,
-  setFullActivities,
-  hydrateFullActivities,
+  useActivitySummarySnapshot,
+  useFogStatus,
 } from "~/lib/mapStore"
-import { parseFile } from "~/lib/parsers"
+import { createActivityImportService } from "~/lib/activities/import/service"
+import type { LibraryCommit } from "~/lib/activities/libraryEvents"
+import {
+  beginImport,
+  completeImport,
+  failImport,
+  reportImportProgress,
+} from "~/lib/activities/import/status"
+import type { ImportFailureSummary } from "~/lib/activities/import/service"
+import { createUuid } from "~/lib/uuid"
+import { recordDiagnostic } from "~/lib/diagnostics"
+import { createActivityUploadOutboxItem } from "~/lib/server/sync/activityEffects"
+import { createActivityDeleteOutboxItem } from "~/lib/server/sync/activityEffects"
 import { buildLapActivity, lapSubtitle } from "~/lib/laps"
 import { processPhotoFiles } from "~/lib/photos"
+import { createPhotoUrlOwner, type PhotoUrlOwner } from "~/lib/photoUrls"
 import {
   loadActivitySummaries,
-  activityToSummary,
-  saveUniqueDistances,
-  saveActivities,
   savePhotos,
-  loadPhotos,
   saveFogMode,
-  loadFogMode,
-  loadFogCache,
-  clearFogCache,
   clearAll,
   loadSavedPoints,
   saveSavedPoint,
   deleteSavedPoint as deleteStoredSavedPoint,
-  isFogCacheValid,
 } from "~/lib/storage"
+import {
+  ensureMapBootstrap,
+  updateMapBootstrapActivityCount,
+  updateMapBootstrapCache,
+} from "~/lib/mapBootstrap"
 import { clearMapPosition } from "~/lib/mapStore"
 import { clearRenderedActivityState } from "~/lib/map/commands"
+import { activitiesFeatureCollection } from "~/lib/map/geojson"
 import { initAuth, useAuth } from "~/lib/server/authStore"
-import { apiUrl, isServerEnabled } from "~/lib/server/config"
+import { isServerEnabled } from "~/lib/server/config"
 import {
   ignoreActivityLocally,
-  pushActivityDeletion,
   requestSync,
   setSyncChangeHandler,
   startSyncScheduler,
@@ -78,15 +95,20 @@ import {
   pushSavedPointDeletion,
   pushSavedPointUpdate,
 } from "~/lib/server/syncEngine"
-import { populateUniqueDistances } from "~/lib/statsAggregator"
 import { useMyLocation } from "~/lib/useMyLocation"
-import { useActivityVisibility } from "~/lib/useActivityVisibility"
 import { socialMeta } from "~/lib/socialMeta"
-import { markPerformance, measurePerformance } from "~/lib/performance"
-import { isActivitiesViewOnlyNavigation } from "~/lib/activitiesRoute"
+import {
+  incrementPerformanceCounter,
+  markPerformance,
+  measurePerformance,
+} from "~/lib/performance"
+import { shouldRevalidateHome, withoutSearchParams } from "~/lib/homeRoute"
+import {
+  createInitialMapSurfaceState,
+  mapSurfaceReducer,
+} from "~/lib/map/mapSurfaceState"
 import type { FogMode, MapMode, ParsedActivity } from "~/types/activities"
-import type { ActivitySummary } from "~/types/activitySummary"
-import type { PhotoEntry, PhotoGroup } from "~/types/photos"
+import type { PhotoEntry } from "~/types/photos"
 import {
   isSavedPointColor,
   isValidSavedPointInput,
@@ -106,36 +128,41 @@ export const shouldRevalidate: ShouldRevalidateFunction = ({
   currentUrl,
   nextUrl,
   formMethod,
+  actionResult,
   defaultShouldRevalidate,
-}) => {
-  if (
-    (formMethod == null || formMethod === "GET") &&
-    isActivitiesViewOnlyNavigation(currentUrl, nextUrl)
-  ) {
-    return false
-  }
-  return defaultShouldRevalidate
-}
-
-async function loadPublicSavedPoint(id: string): Promise<SavedPoint | null> {
-  if (!isServerEnabled) return null
-
-  try {
-    const response = await fetch(
-      apiUrl(`/api/public/saved-points/${encodeURIComponent(id)}`)
-    )
-    if (!response.ok) return null
-    const point = (await response.json()) as SavedPoint
-    return isValidSavedPointInput(point) && point.id === id ? point : null
-  } catch {
-    return null
-  }
-}
+}) =>
+  shouldRevalidateHome({
+    currentUrl,
+    nextUrl,
+    formMethod,
+    actionResult,
+    defaultShouldRevalidate,
+  })
 
 // Module-level cache for restored photos — avoids passing File objects through
 // React Router's serialized loader return type (which strips Blob/File methods).
 let _restoredPhotos: PhotoEntry[] = []
 let _restoredSavedPoints: SavedPoint[] = []
+const _publicSavedPointCache = new Map<string, SavedPoint>()
+const PUBLIC_SAVED_POINT_CACHE_LIMIT = 20
+
+function getCachedPublicSavedPoint(id: string): SavedPoint | null {
+  const point = _publicSavedPointCache.get(id)
+  if (!point) return null
+  _publicSavedPointCache.delete(id)
+  _publicSavedPointCache.set(id, point)
+  return point
+}
+
+function cachePublicSavedPoint(point: SavedPoint): void {
+  _publicSavedPointCache.delete(point.id)
+  _publicSavedPointCache.set(point.id, point)
+  while (_publicSavedPointCache.size > PUBLIC_SAVED_POINT_CACHE_LIMIT) {
+    const oldestId = _publicSavedPointCache.keys().next().value
+    if (typeof oldestId !== "string") break
+    _publicSavedPointCache.delete(oldestId)
+  }
+}
 
 export async function clientLoader({
   request,
@@ -143,20 +170,15 @@ export async function clientLoader({
   initialized: boolean
   restoredActivityCount: number
   restoredFogMode: FogMode
-  viewedSavedPoint: SavedPoint | null
+  bootstrapGeneration: number | null
 }> {
+  incrementPerformanceCounter("homeLoaderStarts")
   markPerformance("home:loader:start")
   const pathname = new URL(request.url).pathname
   const isMapRoute = pathname === "/map"
-  let didCreateWorker = false
   if (isMapRoute && !mapStore.worker) {
     console.debug("[clientLoader] creating worker")
-    mapStore.worker = new Worker(
-      new URL("../workers/fogWorker.ts", import.meta.url),
-      { type: "module" }
-    )
-    mapStore.worker.onerror = (e) => console.error("[worker] uncaught error", e)
-    didCreateWorker = true
+    createFogWorker()
     console.debug("[clientLoader] worker created", mapStore.worker)
   }
 
@@ -168,81 +190,32 @@ export async function clientLoader({
   // server exists.
   if (isMapRoute) void initAuth()
 
-  // Restore persisted data in parallel
-  markPerformance("home:idb-load:start")
-  const [
-    loadedActivities,
-    loadedSummaries,
-    photos,
-    savedPoints,
-    fogMode,
-    fogCache,
-  ] = await Promise.all([
-    isMapRoute && mapStore.activityHydration !== "full"
-      ? hydrateFullActivities()
-      : Promise.resolve(null),
-    !isMapRoute && mapStore.activityHydration !== "full"
-      ? loadActivitySummaries()
-      : Promise.resolve(null),
-    loadPhotos(),
-    loadSavedPoints(),
-    loadFogMode(),
-    loadFogCache(),
-  ])
-  markPerformance("home:idb-load:end")
-  measurePerformance(
-    "home:idb-load",
-    "home:idb-load:start",
-    "home:idb-load:end"
-  )
-
-  const restoredFogMode: FogMode = fogMode ?? "corridor"
-  let activities: ParsedActivity[] = mapStore.activities
-  let summaries: ActivitySummary[] = mapStore.activitySummaries
+  let bootstrap: Awaited<ReturnType<typeof ensureMapBootstrap>> | null = null
+  let loadedSummaries = null as Awaited<
+    ReturnType<typeof loadActivitySummaries>
+  > | null
   if (isMapRoute) {
-    activities = loadedActivities ?? mapStore.activities
+    bootstrap = await ensureMapBootstrap()
+    _restoredPhotos = bootstrap.photos
+    _restoredSavedPoints = bootstrap.savedPoints
   } else if (mapStore.activityHydration !== "full") {
-    summaries = loadedSummaries ?? []
+    markPerformance("home:idb-load:start")
+    loadedSummaries = await loadActivitySummaries()
+    markPerformance("home:idb-load:end")
+    measurePerformance(
+      "home:idb-load",
+      "home:idb-load:start",
+      "home:idb-load:end"
+    )
+  }
+  const restoredFogMode = bootstrap?.fogMode ?? mapStore.fogMode
+  const activities = mapStore.activities
+  const summaries =
+    mapStore.activityHydration === "full"
+      ? mapStore.activities
+      : (loadedSummaries ?? mapStore.activitySummaries)
+  if (!isMapRoute && mapStore.activityHydration !== "full") {
     setActivitySummaries(summaries)
-  } else {
-    summaries = activities.map(activityToSummary)
-  }
-  mapStore.fogMode = restoredFogMode
-  _restoredPhotos = photos
-  _restoredSavedPoints = savedPoints
-  const savedPointId = new URL(request.url).searchParams.get("savedPoint")
-  const viewedSavedPoint =
-    savedPointId && !savedPoints.some((point) => point.id === savedPointId)
-      ? await loadPublicSavedPoint(savedPointId)
-      : null
-
-  if (isMapRoute && activities.length > 0) {
-    const activityIds = activities.map((t) => t.id).sort()
-    if (fogCache && isFogCacheValid(fogCache, activityIds, restoredFogMode)) {
-      // Cache hit: restore fog directly — setupMapLayers will use mapStore.fogData
-      mapStore.fogData = fogCache.fogData
-      console.debug(
-        "[clientLoader] restored fog cache for",
-        activities.length,
-        "activities"
-      )
-    } else {
-      // Cache miss: fog will be null, world fog shown until worker reprocesses
-      mapStore.fogData = null
-      mapStore.isRestoreReprocess = true
-      console.debug(
-        "[clientLoader] fog cache stale/absent — will reprocess",
-        activities.length,
-        "activities"
-      )
-    }
-  }
-
-  if (didCreateWorker) {
-    // A rendered cache can paint the map but cannot reconstruct the worker's
-    // corridor/fill accumulators. The first later addition will replay all
-    // activities before returning to incremental processing.
-    mapStore.fogWorkerActivityIds.clear()
   }
 
   // initialCenter/initialZoom are already loaded from localStorage at mapStore module init time.
@@ -252,7 +225,7 @@ export async function clientLoader({
     "[clientLoader] restored",
     activities.length,
     "activities,",
-    photos.length,
+    _restoredPhotos.length,
     "photos"
   )
   markPerformance("home:loader:end")
@@ -261,7 +234,7 @@ export async function clientLoader({
     initialized: true,
     restoredActivityCount: isMapRoute ? activities.length : summaries.length,
     restoredFogMode,
-    viewedSavedPoint,
+    bootstrapGeneration: bootstrap?.generation ?? null,
   }
 }
 clientLoader.hydrate = true as const
@@ -272,63 +245,157 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
 
   if (intent === "add-files") {
     const files = formData.getAll("files") as File[]
-    const mode = formData.get("mode") as FogMode
-    console.debug("[clientAction] add-files", {
-      fileCount: files.length,
-      mode,
-      files: files.map((f) => f.name),
+    const operationId = createUuid()
+    const startedAt = Date.now()
+    beginImport(operationId, files.length)
+    recordDiagnostic({
+      subsystem: "import",
+      operationId,
+      libraryRevision: mapStore.libraryRevision,
+      stage: "accepted",
+      itemCount: files.length,
+      result: "started",
     })
-    const allActivities: ParsedActivity[] = []
-    const failedFiles: string[] = []
-    const results = await Promise.allSettled(files.map((f) => parseFile(f)))
-    for (let i = 0; i < results.length; i++) {
-      const r = results[i]
-      if (r.status === "fulfilled" && r.value.length > 0) {
-        console.debug(
-          "[clientAction] parsed",
-          files[i].name,
-          "→",
-          r.value.length,
-          "activities, first activity coords:",
-          r.value[0]?.coordinates.length
-        )
-        allActivities.push(...r.value)
-      } else {
-        if (r.status === "rejected") {
-          console.warn(
-            `[clientAction] failed to parse ${files[i].name}:`,
-            r.reason
+    const commitState: { value: LibraryCommit | null } = { value: null }
+    const importService = createActivityImportService({
+      signal: request.signal,
+      onProgress: (progress) => {
+        reportImportProgress(progress)
+        recordDiagnostic({
+          subsystem: "import",
+          operationId: progress.operationId,
+          libraryRevision: mapStore.libraryRevision,
+          stage: progress.stage,
+          durationMs: Date.now() - startedAt,
+          itemCount: progress.totalFiles,
+          result: "progress",
+        })
+      },
+      commit: (operationId, activities) =>
+        activityLibrary
+          .dispatch(
+            { type: "import", operationId, activities },
+            {
+              outbox: isServerEnabled
+                ? (commit) =>
+                    commit.change.added.flatMap((activity) => {
+                      const item = createActivityUploadOutboxItem(
+                        activity,
+                        operationId,
+                        commit.snapshot.revision
+                      )
+                      return item ? [item] : []
+                    })
+                : [],
+            }
           )
-        } else {
-          console.warn(`[clientAction] no activities found in ${files[i].name}`)
-        }
-        failedFiles.push(files[i].name)
+          .then((result) => {
+            commitState.value = result
+            return result
+          }),
+    })
+    let batch
+    try {
+      batch = await importService.importFiles(files, operationId)
+      completeImport(batch)
+    } catch (error) {
+      failImport(operationId, error)
+      recordDiagnostic({
+        subsystem: "import",
+        operationId,
+        libraryRevision: mapStore.libraryRevision,
+        stage: "complete",
+        durationMs: Date.now() - startedAt,
+        itemCount: files.length,
+        result: "failed",
+        errorCode: "import-failed",
+        retryability: "retryable",
+      })
+      const failure =
+        error instanceof Error
+          ? error.message
+          : "The activity files could not be imported."
+      const failedFileDetails: ImportFailureSummary[] = files.map((file) => ({
+        name: file.name,
+        status: "failed",
+        error: failure,
+      }))
+      return {
+        intent: "add-files" as const,
+        count: files.length,
+        activityCount: mapStore.activities.length,
+        newActivitiesCount: 0,
+        duplicateCount: 0,
+        missingActivityTypeCount: 0,
+        failedFiles: failedFileDetails.map((file) => file.name),
+        failedFileDetails,
       }
     }
-    console.debug(
-      "[clientAction] total activities parsed:",
-      allActivities.length,
-      "worker ready:",
-      !!mapStore.worker
+    const added = commitState.value?.change.added ?? []
+    const failedOutcomes = batch.files.filter((file) =>
+      ["failed", "rejected", "cancelled"].includes(file.status)
     )
-    // Shared with the sync engine's downloads — merge, recompute, post to the
-    // worker (joining the current run), persist, invalidate the fog cache.
-    // Returns only the activities that were genuinely new.
-    const added = await ingestActivities(allActivities)
-    if (added.length > 0) void requestSync("add-files")
-
+    const importResult = batch.cancelled
+      ? ("cancelled" as const)
+      : failedOutcomes.length === 0
+        ? ("success" as const)
+        : added.length > 0 ||
+            batch.activities.some((activity) => activity.status === "duplicate")
+          ? ("partial" as const)
+          : ("failed" as const)
+    const firstErrorCode = failedOutcomes.find(
+      (file) => file.errorCode
+    )?.errorCode
+    recordDiagnostic({
+      subsystem: "import",
+      operationId,
+      libraryRevision: mapStore.libraryRevision,
+      stage: "complete",
+      durationMs: Date.now() - startedAt,
+      itemCount: batch.files.length,
+      pointCount: added.reduce(
+        (count, activity) => count + activity.coordinates.length,
+        0
+      ),
+      result: importResult,
+      ...(firstErrorCode ? { errorCode: firstErrorCode } : {}),
+      retryability: failedOutcomes.length > 0 ? "retryable" : null,
+    })
+    if (added.length > 0) {
+      void requestSync("add-files")
+    }
+    const failedFiles = batch.files
+      .filter((file) =>
+        ["failed", "rejected", "cancelled"].includes(file.status)
+      )
+      .map((file) => file.name)
+    const failedFileDetails: ImportFailureSummary[] = batch.files
+      .filter((file) =>
+        ["failed", "rejected", "cancelled"].includes(file.status)
+      )
+      .map((file) => ({
+        name: file.name,
+        status: file.status as ImportFailureSummary["status"],
+        ...(file.errorCode ? { errorCode: file.errorCode } : {}),
+        ...(file.error ? { error: file.error } : {}),
+      }))
+    const duplicateCount = batch.activities.filter(
+      (activity) => activity.status === "duplicate"
+    ).length
     return {
       intent: "add-files" as const,
+      homeDataReconciled: true as const,
       count: files.length,
       activityCount: mapStore.activities.length,
       // Must be what was ingested, not what was parsed — the progress UI waits
       // on a worker DONE that only arrives if something was actually posted.
       newActivitiesCount: added.length,
-      duplicateCount: allActivities.length - added.length,
+      duplicateCount,
       missingActivityTypeCount: added.filter(
         (activity) => activity.activityType == null
       ).length,
       failedFiles,
+      failedFileDetails,
     }
   }
 
@@ -336,56 +403,62 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
     // Local only, deliberately. This resets *this device*; the server copies
     // are left alone and sync pulls them back. Deleting them is a separate,
     // explicit action — "Remove all" in the account dialog.
-    mapStore.fogData = null
-    setFullActivities([])
-    setFogProcessedCount(0)
-    // Abandons the in-flight run so its FOG_UPDATEs cannot repaint the map
-    // we just cleared, and its DONE cannot save a stale fog cache.
-    startFogRun()
-    postToFogWorker({ type: "RESET" })
+    await initializeActivityLibrary()
+    await activityLibrary.dispatch({
+      type: "clearLocal",
+      operationId: createUuid(),
+    })
     // Runs synchronously before the fetcher effect resets React selection state.
     clearRenderedActivityState()
-    await clearAll()
+    await clearAll({ includeActivities: false })
     clearMapPosition()
     // Pause automatic syncing. `clearAll` dropped syncState, so the next sync
     // walks from scratch and would download everything straight back — the
     // clear would undo itself within seconds. It resumes on reload, or when
     // the user asks for it with "Sync now".
     suspendAutoSync("clear-all")
-    return { intent: "clear-all" as const, activityCount: 0 }
+    return {
+      intent: "clear-all" as const,
+      homeDataReconciled: true as const,
+      activityCount: 0,
+    }
   }
 
   if (intent === "delete-activity") {
     const activityId = formData.get("activityId") as string
+    const deleteEverywhere = formData.get("alsoOnServer") !== "0"
+
+    await initializeActivityLibrary()
 
     // Captured before the filter — the content hash is what the server keys on.
     const deletedActivity = mapStore.activities.find((t) => t.id === activityId)
 
-    // Remove from in-memory store and recompute unique distances for remaining activities
-    setFullActivities(mapStore.activities.filter((t) => t.id !== activityId))
-    await populateUniqueDistances(mapStore.activities)
-    setFogProcessedCount(0)
-
-    // Reset worker + update map sources immediately
-    // Abandons the in-flight run so its FOG_UPDATEs cannot repaint the map
-    // we just cleared, and its DONE cannot save a stale fog cache.
-    startFogRun()
-    postToFogWorker({ type: "RESET" })
+    const operationId = createUuid()
+    await activityLibrary.dispatch(
+      {
+        type: "delete",
+        operationId,
+        activityId,
+      },
+      {
+        outbox:
+          deleteEverywhere && isServerEnabled
+            ? (commit) =>
+                commit.change.removed.flatMap((activity) => {
+                  const item = createActivityDeleteOutboxItem(
+                    activity,
+                    operationId,
+                    commit.snapshot.revision
+                  )
+                  return item ? [item] : []
+                })
+            : [],
+      }
+    )
+    // The library subscription has already reset/rebuilt the fog projection for
+    // the committed survivor revision. Clear the current map source before its
+    // next validated snapshot arrives.
     clearRenderedActivityState()
-
-    // Persist and invalidate fog cache
-    await saveUniqueDistances(mapStore.activities, activityId)
-    await clearFogCache()
-
-    // Replay only after invalidation finishes. Otherwise a fast worker can save
-    // the rebuilt cache and have clearFogCache erase that fresh result.
-    if (mapStore.activities.length > 0) {
-      postToFogWorker({
-        type: "PROCESS_ACTIVITIES",
-        activities: mapStore.activities,
-        mode: mapStore.fogMode,
-      })
-    }
 
     if (deletedActivity) {
       if (formData.get("alsoOnServer") === "0") {
@@ -393,14 +466,12 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
         // not to download it back on the next sync.
         await ignoreActivityLocally(deletedActivity)
         suspendAutoSync("local-only-delete")
-      } else {
-        // Writes the tombstone that removes it from the user's other devices.
-        await pushActivityDeletion(deletedActivity)
-      }
+      } else requestSync("activity-deletion")
     }
 
     return {
       intent: "delete-activity" as const,
+      homeDataReconciled: true as const,
       activityCount: mapStore.activities.length,
     }
   }
@@ -464,7 +535,11 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
     }
     await saveSavedPoint(localPoint)
     const point = await pushSavedPointUpdate(localPoint)
-    return { intent: "save-saved-point" as const, point }
+    return {
+      intent: "save-saved-point" as const,
+      homeDataReconciled: true as const,
+      point,
+    }
   }
 
   if (intent === "delete-saved-point") {
@@ -477,7 +552,11 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
     }
     await deleteStoredSavedPoint(id)
     await pushSavedPointDeletion(id)
-    return { intent: "delete-saved-point" as const, id }
+    return {
+      intent: "delete-saved-point" as const,
+      homeDataReconciled: true as const,
+      id,
+    }
   }
 
   return null
@@ -486,7 +565,11 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
 export default function Home() {
   const loaderData = useLoaderData<typeof clientLoader>()
   const fetcher = useFetcher<typeof clientAction>()
+  const publicSavedPointFetcher = useFetcher<{
+    point: SavedPoint | null
+  }>()
   const [searchParams, setSearchParams] = useSearchParams()
+  const savedPointQueryId = searchParams.get("savedPoint")
   const location = useLocation()
   const revalidator = useRevalidator()
   const isMapRoute = location.pathname === "/map"
@@ -503,36 +586,87 @@ export default function Home() {
   const [activityCount, setActivityCount] = useState(
     loaderData.restoredActivityCount
   )
-  const [isProcessing, setIsProcessing] = useState(false)
+  const fogStatus = useFogStatus()
+  const activitySummarySnapshot = useActivitySummarySnapshot()
+  const isProcessing =
+    fogStatus.phase === "processing" || fogStatus.phase === "recovering"
   const [showActivities, setShowActivities] = useState(true)
   const [showFog, setShowFog] = useState(true)
   const [fogMode, setFogMode] = useState<FogMode>(loaderData.restoredFogMode)
   const [mapMode, setMapMode] = useState<MapMode>("flat")
   const [showUploadDialog, setShowUploadDialog] = useState(false)
   const [mapReady, setMapReady] = useState(false)
-  const [selectedActivityIds, setSelectedActivityIds] = useState<string[]>([])
-  // Keyed by activity id, not a bare number: a bare number would still match
-  // during the render in which the selection moves to a different activity that
-  // happens to have that lap, flashing the wrong lap and refitting the camera.
-  const [selectedLap, setSelectedLap] = useState<{
-    activityId: string
-    number: number
-  } | null>(null)
-  const [pendingActivityId, setPendingActivityId] = useState<string | null>(
-    null
+  const [mapSurface, dispatchMapSurface] = useReducer(
+    mapSurfaceReducer,
+    undefined,
+    createInitialMapSurfaceState
   )
+  const {
+    selectedActivityIds,
+    selectedLap,
+    pendingActivityId,
+    selectedPhotoGroup: selectedGroup,
+    editingSavedPointId,
+    newSavedPointCoordinate,
+    viewingSavedPoint,
+  } = mapSurface
   const [showShareDialog, setShowShareDialog] = useState(false)
   const [photos, setPhotos] = useState<PhotoEntry[]>(_restoredPhotos)
+  const photosRef = useRef(photos)
+  const replacePhotos = useCallback((nextPhotos: PhotoEntry[]): void => {
+    photosRef.current = nextPhotos
+    setPhotos(nextPhotos)
+    updateMapBootstrapCache({ photos: nextPhotos })
+  }, [])
+  const photoUrlOwnerRef = useRef<PhotoUrlOwner | null>(null)
+  if (!photoUrlOwnerRef.current) {
+    photoUrlOwnerRef.current = createPhotoUrlOwner()
+  }
+  const photoUrlOwner = photoUrlOwnerRef.current
+  useEffect(() => {
+    photoUrlOwner.reconcile(photos)
+  }, [photos, photoUrlOwner])
+  useEffect(() => () => photoUrlOwner.revokeAll(), [photoUrlOwner])
   const [showPhotos, setShowPhotos] = useState(true)
   const [savedPoints, setSavedPoints] =
     useState<SavedPoint[]>(_restoredSavedPoints)
+  const savedPointsRef = useRef(savedPoints)
+  const replaceSavedPoints = useCallback(
+    (nextSavedPoints: SavedPoint[]): void => {
+      savedPointsRef.current = nextSavedPoints
+      setSavedPoints(nextSavedPoints)
+      updateMapBootstrapCache({ savedPoints: nextSavedPoints })
+    },
+    []
+  )
+  const [adoptedBootstrapGeneration, setAdoptedBootstrapGeneration] = useState<
+    number | null
+  >(isMapRoute ? loaderData.bootstrapGeneration : null)
+
+  useEffect(() => {
+    const generation = loaderData.bootstrapGeneration
+    if (
+      !isMapRoute ||
+      generation == null ||
+      adoptedBootstrapGeneration === generation
+    ) {
+      return
+    }
+    setActivityCount(loaderData.restoredActivityCount)
+    setFogMode(loaderData.restoredFogMode)
+    replacePhotos(_restoredPhotos)
+    replaceSavedPoints(_restoredSavedPoints)
+    setAdoptedBootstrapGeneration(generation)
+  }, [
+    adoptedBootstrapGeneration,
+    isMapRoute,
+    loaderData.bootstrapGeneration,
+    loaderData.restoredActivityCount,
+    loaderData.restoredFogMode,
+    replacePhotos,
+    replaceSavedPoints,
+  ])
   const [showSavedPoints, setShowSavedPoints] = useState(true)
-  const [editingSavedPointId, setEditingSavedPointId] = useState<string | null>(
-    null
-  )
-  const [viewingSavedPoint, setViewingSavedPoint] = useState<SavedPoint | null>(
-    null
-  )
   const displayedSavedPoints = useMemo(
     () =>
       viewingSavedPoint
@@ -543,26 +677,25 @@ export default function Home() {
         : savedPoints,
     [savedPoints, viewingSavedPoint]
   )
-  const [newSavedPointCoordinate, setNewSavedPointCoordinate] = useState<
-    [number, number] | null
-  >(null)
+  function clearSearchParams(names: readonly string[]) {
+    const next = withoutSearchParams(searchParams, names)
+    if (!next) return
+    incrementPerformanceCounter("mapUiNavigations")
+    setSearchParams(next, { replace: true })
+  }
 
-  function clearSearchParam(name: string) {
-    setSearchParams(
-      (prev) => {
-        const next = new URLSearchParams(prev)
-        next.delete(name)
-        return next
-      },
-      { replace: true }
-    )
+  function closeActivityDialog() {
+    dispatchMapSurface({ type: "closeActivity" })
+    clearSearchParams(["activity"])
   }
 
   function closeSavedPointDialog() {
-    setEditingSavedPointId(null)
-    setNewSavedPointCoordinate(null)
-    setViewingSavedPoint(null)
-    clearSearchParam("savedPoint")
+    if (savedPointQueryId) {
+      dismissedSavedPointQueryRef.current = savedPointQueryId
+    }
+    publicSavedPointRequestRef.current = null
+    dispatchMapSurface({ type: "closeSavedPoint" })
+    clearSearchParams(["savedPoint"])
   }
   const {
     showMyLocation,
@@ -570,12 +703,22 @@ export default function Home() {
     position: myLocationPosition,
     toggle: handleShowMyLocationChange,
   } = useMyLocation()
-  const [selectedGroup, setSelectedGroup] = useState<PhotoGroup | null>(null)
+
+  function handleMapBackgroundClick() {
+    publicSavedPointRequestRef.current = null
+    dispatchMapSurface({ type: "dismissAll" })
+    clearSearchParams(["activity", "savedPoint"])
+  }
+
   const [photoErrorOpen, setPhotoErrorOpen] = useState(false)
   const [parseFailedFiles, setParseFailedFiles] = useState<string[]>([])
+  const [parseFailureDetails, setParseFailureDetails] = useState<
+    ImportFailureSummary[]
+  >([])
   const [isParseErrorOpen, setIsParseErrorOpen] = useState(false)
   const [duplicateCount, setDuplicateCount] = useState(0)
   const [isDuplicateOpen, setIsDuplicateOpen] = useState(false)
+  const [shareRetryCount, setShareRetryCount] = useState(0)
   const [missingActivityTypeCount, setMissingActivityTypeCount] = useState(0)
   const [isMissingActivityTypeOpen, setIsMissingActivityTypeOpen] =
     useState(false)
@@ -596,11 +739,19 @@ export default function Home() {
     loaderData.restoredActivityCount > 0 && mapStore.fogData === null
   )
   // Set to true when the user uploads new files; cleared after fitBounds fires.
-  // Lets the isProcessing useEffect distinguish new uploads from restore-reprocesses
-  // and fog-mode reprocesses (both of which should NOT zoom the map).
+  // Restore-reprocesses and fog-mode reprocesses should not zoom the map.
   const isNewUploadRef = useRef(false)
   // Activity count before the latest upload so fitBounds can identify the new activities.
   const prevActivityCountRef = useRef(0)
+  // Share-target entries stay in Cache Storage until the import action returns
+  // a terminal result. Keeping the request keys lets a parse/storage failure
+  // remain retryable after reload instead of losing the shared files.
+  const pendingShareRequestsRef = useRef<Request[]>([])
+  const publicSavedPointRequestRef = useRef<{ id: string } | null>(null)
+  // Saving an owned point updates the local collection before the replace
+  // navigation removes ?savedPoint. Ignore that one stale query so the
+  // just-closed editor is not reopened for the updated point.
+  const dismissedSavedPointQueryRef = useRef<string | null>(null)
 
   // A fresh OAuth sign-in can start syncing while this loader is still reading
   // IndexedDB. In that case its first result contains no activities, then the
@@ -614,11 +765,12 @@ export default function Home() {
       return
     }
 
-    if (mapStore.isFogRunInFlight) {
+    if (
+      fogCoordinator.activeRequest !== null ||
+      fogCoordinator.queuedSnapshot !== null
+    ) {
       if (mapStore.isFogWorkerListenerReady) return
-      startFogRun()
-      postToFogWorker({ type: "RESET" })
-      mapStore.isRestoreReprocess = true
+      rebuildFogProjection(mapStore.fogMode)
     }
 
     needsReprocessRef.current = true
@@ -640,10 +792,10 @@ export default function Home() {
     if (!mapReady) return
     const activityId = searchParams.get("activity")
     if (!activityId) return
-    setSelectedActivityIds([activityId])
+    dispatchMapSurface({ type: "openActivityDeepLink", id: activityId })
     const activity = mapStore.activities.find((t) => t.id === activityId)
     if (!activity || !mapStore.map) return
-    const fc = featureCollection([lineString(activity.coordinates)])
+    const fc = activitiesFeatureCollection([activity])
     const [w, s, e, n] = bbox(fc)
     if (isFinite(w)) {
       mapStore.map.fitBounds(
@@ -658,67 +810,150 @@ export default function Home() {
 
   useEffect(() => {
     if (!mapReady) return
-    const id = searchParams.get("savedPoint")
-    if (!id) {
-      // Saving replaces the local point before the URL update commits. That
-      // intermediate render can briefly reselect the point from the stale
-      // query parameter, so an empty URL must actively clear the editor.
-      setEditingSavedPointId(null)
-      setViewingSavedPoint(null)
+    publicSavedPointRequestRef.current = null
+
+    const dismissedQueryId = dismissedSavedPointQueryRef.current
+    if (dismissedQueryId !== null) {
+      if (savedPointQueryId === dismissedQueryId) return
+      dismissedSavedPointQueryRef.current = null
+    }
+
+    if (!savedPointQueryId) {
+      // A public point is the only surface that can exist without a local
+      // owner when the query disappears; close it without touching other
+      // map-owned state.
+      if (viewingSavedPoint !== null) {
+        dispatchMapSurface({ type: "closeSavedPoint" })
+      }
       return
     }
-    const ownedPoint = savedPoints.find((savedPoint) => savedPoint.id === id)
-    const point = ownedPoint ?? loaderData.viewedSavedPoint
-    if (!point || !mapStore.map) return
-    mapStore.map.easeTo({
-      center: [point.lng, point.lat],
-      zoom: Math.max(mapStore.map.getZoom(), 16),
-    })
-    setEditingSavedPointId(ownedPoint?.id ?? null)
-    setViewingSavedPoint(ownedPoint ? null : point)
-  }, [loaderData.viewedSavedPoint, mapReady, savedPoints, searchParams])
 
-  // Handle files shared via the Web Share Target API (PWA installed).
-  // The service worker intercepts the POST to /map?share-target, buffers the
-  // files in Cache Storage, then redirects to /map?from-share. We drain the queue here.
+    const ownedPoint = savedPoints.find(
+      (savedPoint) => savedPoint.id === savedPointQueryId
+    )
+    if (ownedPoint) {
+      if (mapStore.map) {
+        mapStore.map.easeTo({
+          center: [ownedPoint.lng, ownedPoint.lat],
+          zoom: Math.max(mapStore.map.getZoom(), 16),
+        })
+      }
+      dispatchMapSurface({ type: "editSavedPoint", id: ownedPoint.id })
+      return
+    }
+
+    const cachedPoint = getCachedPublicSavedPoint(savedPointQueryId)
+    if (cachedPoint) {
+      if (mapStore.map) {
+        mapStore.map.easeTo({
+          center: [cachedPoint.lng, cachedPoint.lat],
+          zoom: Math.max(mapStore.map.getZoom(), 16),
+        })
+      }
+      dispatchMapSurface({ type: "viewSavedPoint", point: cachedPoint })
+      return
+    }
+
+    if (viewingSavedPoint !== null) {
+      dispatchMapSurface({ type: "closeSavedPoint" })
+    }
+    publicSavedPointRequestRef.current = {
+      id: savedPointQueryId,
+    }
+    publicSavedPointFetcher.load(
+      `/resources/public-saved-points/${encodeURIComponent(savedPointQueryId)}`
+    )
+  }, [mapReady, savedPointQueryId, savedPoints])
+
   useEffect(() => {
-    if (!mapReady || !searchParams.has("from-share")) return
-    ;(async () => {
-      if (!("caches" in window)) return
+    const request = publicSavedPointRequestRef.current
+    const point = publicSavedPointFetcher.data?.point
+    const currentUrlSavedPointId =
+      typeof window === "undefined"
+        ? savedPointQueryId
+        : new URL(window.location.href).searchParams.get("savedPoint")
+    if (
+      !request ||
+      publicSavedPointFetcher.state !== "idle" ||
+      !point ||
+      point.id !== request.id ||
+      savedPointQueryId !== request.id ||
+      currentUrlSavedPointId !== request.id
+    ) {
+      return
+    }
+    cachePublicSavedPoint(point)
+    if (mapStore.map) {
+      mapStore.map.easeTo({
+        center: [point.lng, point.lat],
+        zoom: Math.max(mapStore.map.getZoom(), 16),
+      })
+    }
+    dispatchMapSurface({ type: "viewSavedPoint", point })
+  }, [
+    publicSavedPointFetcher.data,
+    publicSavedPointFetcher.state,
+    savedPointQueryId,
+  ])
+
+  async function drainShareTargetQueue(): Promise<void> {
+    if (!("caches" in window)) return
+    try {
       const cache = await caches.open("share-target-queue")
       const keys = await cache.keys()
-      if (keys.length === 0) return
+      if (keys.length === 0) {
+        clearSearchParams(["from-share"])
+        return
+      }
       const files: File[] = []
-      for (const req of keys) {
-        const res = await cache.match(req)
-        if (!res) continue
-        const name = res.headers.get("X-File-Name") ?? "file"
-        const type = res.headers.get("Content-Type") ?? ""
-        files.push(new File([await res.arrayBuffer()], name, { type }))
-        await cache.delete(req)
+      const importedRequests: Request[] = []
+      for (const request of keys) {
+        const response = await cache.match(request)
+        if (!response) continue
+        const name = response.headers.get("X-File-Name") ?? "file"
+        const type = response.headers.get("Content-Type") ?? ""
+        files.push(new File([await response.arrayBuffer()], name, { type }))
+        importedRequests.push(request)
       }
-      if (files.length > 0) {
-        const dt = new DataTransfer()
-        files.forEach((f) => dt.items.add(f))
-        handleAddFiles(dt.files)
+      if (files.length === 0) return
+      pendingShareRequestsRef.current = importedRequests
+      const dataTransfer = new DataTransfer()
+      files.forEach((file) => dataTransfer.items.add(file))
+      handleAddFiles(dataTransfer.files)
+    } catch (error) {
+      console.warn("[share-target] queue read failed:", error)
+    }
+  }
+
+  async function discardShareTargetQueue(): Promise<void> {
+    pendingShareRequestsRef.current = []
+    try {
+      if ("caches" in window) {
+        const cache = await caches.open("share-target-queue")
+        for (const request of await cache.keys()) await cache.delete(request)
       }
-      // Clean the URL so a page refresh doesn't re-trigger this effect
-      setSearchParams({}, { replace: true })
-    })()
-  }, [mapReady])
+    } catch (error) {
+      console.warn("[share-target] queue discard failed:", error)
+    } finally {
+      clearSearchParams(["from-share"])
+    }
+  }
+
+  // Handle files shared via the Web Share Target API (PWA installed).
+  // The service worker retains the bytes until a terminal durable import. A
+  // retry therefore reads the same queue again instead of relying on File
+  // objects surviving navigation.
+  useEffect(() => {
+    if (!mapReady || !searchParams.has("from-share")) return
+    void drainShareTargetQueue()
+  }, [mapReady, searchParams, shareRetryCount])
 
   // Trigger worker reprocessing when fog cache was stale
   useEffect(() => {
     if (!mapReady || !needsReprocessRef.current) return
     needsReprocessRef.current = false
     if (mapStore.activities.length === 0) return
-    setIsProcessing(true)
-    setFogProcessedCount(0)
-    postToFogWorker({
-      type: "PROCESS_ACTIVITIES",
-      activities: mapStore.activities,
-      mode: loaderData.restoredFogMode,
-    })
+    rebuildFogProjection(loaderData.restoredFogMode)
   }, [mapReady])
 
   // Zoom to activities after a new upload finishes processing.
@@ -734,9 +969,7 @@ export default function Home() {
     if (mapStore.activities.length === 0 || !map) return
 
     // Compute bbox for all activities and check the zoom needed to fit them.
-    const allFc = featureCollection(
-      mapStore.activities.map((t) => lineString(t.coordinates))
-    )
+    const allFc = activitiesFeatureCollection(mapStore.activities)
     const [w, s, e, n] = bbox(allFc)
     if (!isFinite(w)) return
 
@@ -758,9 +991,7 @@ export default function Home() {
         prevActivityCountRef.current
       )
       if (newActivities.length === 0) return
-      const newFc = featureCollection(
-        newActivities.map((t) => lineString(t.coordinates))
-      )
+      const newFc = activitiesFeatureCollection(newActivities)
       const [nw, ns, ne, nn] = bbox(newFc)
       if (isFinite(nw)) {
         map.fitBounds(
@@ -779,18 +1010,34 @@ export default function Home() {
     const data = fetcher.data
     if (!data) return
     if (data.intent === "add-files") {
+      const pendingShareRequests = pendingShareRequestsRef.current
+      if (pendingShareRequests.length > 0 && data.failedFiles.length === 0) {
+        pendingShareRequestsRef.current = []
+        void caches
+          .open("share-target-queue")
+          .then(async (cache) => {
+            for (const request of pendingShareRequests) {
+              await cache.delete(request)
+            }
+            clearSearchParams(["from-share"])
+          })
+          .catch((error) =>
+            console.warn("[share-target] queue acknowledgement failed:", error)
+          )
+      }
+      // Keep a failed share target addressable for a retry after reload. The
+      // files remain in Cache Storage until a fully successful terminal import.
       prevActivityCountRef.current = activityCount // snapshot pre-upload count for fitBounds fallback
       setShowUploadDialog(false)
       if (data.newActivitiesCount > 0) {
         isNewUploadRef.current = true // triggers fitBounds in the isProcessing effect below
         setActivityCount(data.activityCount)
-        // Only if the worker has not already finished — see isFogRunInFlight.
-        setIsProcessing(mapStore.isFogRunInFlight)
-        setFogProcessedCount(0)
+        updateMapBootstrapCache({ activityCount: data.activityCount })
       }
       if (data.failedFiles.length > 0) {
         setMissingActivityTypeCount(data.missingActivityTypeCount)
         setParseFailedFiles(data.failedFiles)
+        setParseFailureDetails(data.failedFileDetails)
         setIsParseErrorOpen(true)
       } else if (data.missingActivityTypeCount > 0) {
         setMissingActivityTypeCount(data.missingActivityTypeCount)
@@ -804,25 +1051,22 @@ export default function Home() {
     }
     if (data.intent === "clear-all") {
       setActivityCount(0)
-      setFogProcessedCount(0)
-      setIsProcessing(false)
-      setSelectedActivityIds([])
-      setPendingActivityId(null)
+      updateMapBootstrapCache({ activityCount: 0 })
+      dispatchMapSurface({ type: "dismissAll" })
       setShowShareDialog(false)
-      setPhotos([])
-      setSelectedGroup(null)
+      replacePhotos([])
+      replaceSavedPoints([])
     }
     if (data.intent === "delete-activity") {
-      setSelectedActivityIds([])
-      setPendingActivityId(null)
+      dispatchMapSurface({ type: "closeActivity" })
       setShowShareDialog(false)
       setActivityCount(data.activityCount)
-      setFogProcessedCount(0)
-      setIsProcessing(data.activityCount > 0 && mapStore.isFogRunInFlight)
+      updateMapBootstrapCache({ activityCount: data.activityCount })
     }
-  }, [fetcher.data])
+  }, [fetcher.data, replacePhotos, replaceSavedPoints])
 
-  // Sync mutates mapStore directly; reconcile the React state it can't reach.
+  // The library subscription updates the activity projection; reconcile the
+  // route-only state that the sync engine cannot reach.
   // Do this only while the map is visible: the parent layout stays mounted for
   // every child page, but sync is intentionally inactive away from /map.
   useEffect(() => {
@@ -836,43 +1080,33 @@ export default function Home() {
         deletedSavedPointIds = [],
       }) => {
         setActivityCount(mapStore.activities.length)
+        updateMapBootstrapActivityCount(mapStore.activities)
 
         if (syncedSavedPoints.length > 0 || deletedSavedPointIds.length > 0) {
-          setSavedPoints((current) => [
-            ...current.filter(
+          const nextSavedPoints = [
+            ...savedPointsRef.current.filter(
               (point) =>
                 !deletedSavedPointIds.includes(point.id) &&
                 !syncedSavedPoints.some((saved) => saved.id === point.id)
             ),
             ...syncedSavedPoints,
-          ])
+          ]
+          replaceSavedPoints(nextSavedPoints)
         }
 
         if (deletedIds.length > 0) {
-          // A removal invalidates the accumulated fog, so the run is abandoned
-          // and the survivors replayed — the same dance as `delete-activity`.
-          setSelectedActivityIds((prev) =>
-            prev.filter((id) => !deletedIds.includes(id))
-          )
-          setPendingActivityId(null)
-          setFogProcessedCount(0)
-          startFogRun()
-          postToFogWorker({ type: "RESET" })
-          clearRenderedActivityState()
-          if (mapStore.activities.length > 0) {
-            postToFogWorker({
-              type: "PROCESS_ACTIVITIES",
-              activities: mapStore.activities,
-              mode: mapStore.fogMode,
-            })
+          // The library subscription already abandoned/rebuilt the worker run;
+          // this callback only reconciles route selection and map sources.
+          for (const deletedId of deletedIds) {
+            dispatchMapSurface({ type: "removeActivity", id: deletedId })
           }
-        }
-
-        if (downloadedCount > 0 || deletedIds.length > 0) {
-          setFogProcessedCount(0)
-          setIsProcessing(
-            mapStore.activities.length > 0 && mapStore.isFogRunInFlight
-          )
+          if (
+            pendingActivityId !== null &&
+            deletedIds.includes(pendingActivityId)
+          ) {
+            dispatchMapSurface({ type: "cancelPendingActivity" })
+          }
+          clearRenderedActivityState()
         }
 
         if (
@@ -887,7 +1121,7 @@ export default function Home() {
       }
     )
     return () => setSyncChangeHandler(null)
-  }, [isMapRoute, revalidator])
+  }, [isMapRoute, replaceSavedPoints, revalidator])
 
   // Fires on a restored session and on a fresh sign-in alike, then keeps the
   // map current. Navigation away from /map tears down the scheduler so other
@@ -899,13 +1133,6 @@ export default function Home() {
     requestSync("auth-ready")
     return startSyncScheduler()
   }, [isMapRoute, isSyncEnabled])
-
-  const visibility = useActivityVisibility((activityId, isPublic) => {
-    const index = mapStore.activities.findIndex((t) => t.id === activityId)
-    if (index >= 0) {
-      mapStore.activities[index]!.isPublic = isPublic
-    }
-  })
 
   function handleAddFiles(files: FileList, mode: FogMode = fogMode) {
     const formData = new FormData()
@@ -920,9 +1147,7 @@ export default function Home() {
   }
 
   function handleClearAll() {
-    photos.forEach((p) => {
-      if (p.objectUrl) URL.revokeObjectURL(p.objectUrl)
-    })
+    photoUrlOwner.revokeAll()
     // Release the cached share-card map bitmap so the GPU memory is freed
     if (mapStore.shareCardCache) {
       mapStore.shareCardCache.baseMap.close()
@@ -948,7 +1173,7 @@ export default function Home() {
       photos
     )
     if (newEntries.length > 0) {
-      setPhotos((prev) => [...prev, ...newEntries])
+      replacePhotos([...photosRef.current, ...newEntries])
       setShowPhotos(true)
       savePhotos(newEntries) // fire-and-forget; quota-aware
     } else {
@@ -976,6 +1201,7 @@ export default function Home() {
   function handleFogModeChange(newMode: FogMode) {
     setFogMode(newMode)
     mapStore.fogMode = newMode
+    updateMapBootstrapCache({ fogMode: newMode })
     saveFogMode(newMode) // fire-and-forget
     // The old cache carries its mode and is rejected on reload. Do not delete it
     // asynchronously here: that deletion can otherwise race and erase the fresh
@@ -983,27 +1209,12 @@ export default function Home() {
     // Abandon whatever the worker is still chewing on: a rapid corridor↔fill
     // toggle must start the new mode immediately rather than queue behind the
     // old one. Replies from the abandoned run are dropped by their stale runId.
-    startFogRun()
-    postToFogWorker({ type: "RESET" })
-    if (mapStore.activities.length === 0) {
-      // Nothing to replay — clear the bar the abandoned run's DONE will no
-      // longer clear.
-      setIsProcessing(false)
-      setFogProcessedCount(0)
-      return
-    }
-    setIsProcessing(true)
-    setFogProcessedCount(0)
-    postToFogWorker({
-      type: "PROCESS_ACTIVITIES",
-      activities: mapStore.activities,
-      mode: newMode,
-    })
+    rebuildFogProjection(newMode)
   }
 
   function handleProcessingComplete() {
-    setIsProcessing(false)
     setActivityCount(mapStore.activities.length)
+    updateMapBootstrapActivityCount(mapStore.activities)
     // fitBounds is handled by the useEffect([isProcessing]) above:
     // it fires after React re-renders, when map state is fully settled.
   }
@@ -1012,22 +1223,11 @@ export default function Home() {
     // Dropped on every selection change so reopening an activity starts on the
     // whole activity rather than silently restoring a zoomed-in lap. The
     // activityId key on selectedLap covers everything this doesn't reach.
-    setSelectedLap(null)
     if (!id) {
-      setSelectedActivityIds([])
-      setPendingActivityId(null)
+      dispatchMapSurface({ type: "closeActivity" })
       return
     }
-    if (selectedActivityIds.includes(id)) {
-      setSelectedActivityIds((prev) => prev.filter((x) => x !== id))
-      setPendingActivityId(null)
-      return
-    }
-    if (selectedActivityIds.length === 0) {
-      setSelectedActivityIds([id])
-    } else {
-      setPendingActivityId(id)
-    }
+    dispatchMapSurface({ type: "toggleMapActivity", id })
   }
 
   const selectedActivities = useMemo(
@@ -1035,7 +1235,7 @@ export default function Home() {
       selectedActivityIds
         .map((id) => mapStore.activities.find((t) => t.id === id))
         .filter((t): t is ParsedActivity => t != null),
-    [selectedActivityIds, activityCount, loaderData]
+    [activitySummarySnapshot, selectedActivityIds]
   )
 
   // Derived and re-validated every render rather than reset imperatively: a
@@ -1051,10 +1251,7 @@ export default function Home() {
       : null
 
   function handleLapSelect(lapNumber: number | null) {
-    const activityId = selectedActivities[0]?.id
-    setSelectedLap(
-      lapNumber != null && activityId ? { activityId, number: lapNumber } : null
-    )
+    dispatchMapSurface({ type: "setLap", number: lapNumber })
   }
 
   // Memoized: a fresh object each render would invalidate ShareDialog's
@@ -1117,10 +1314,16 @@ export default function Home() {
               onProcessingComplete={handleProcessingComplete}
               selectedActivityIds={selectedActivityIds}
               onActivitySelect={handleActivitySelect}
+              onMapBackgroundClick={handleMapBackgroundClick}
               mapMode={mapMode}
               photos={photos}
               showPhotos={showPhotos}
-              onPhotoSelect={setSelectedGroup}
+              ensurePhotoObjectUrl={photoUrlOwner.ensurePhotoObjectUrl}
+              onPhotoSelect={(group) =>
+                group
+                  ? dispatchMapSurface({ type: "selectPhoto", group })
+                  : dispatchMapSurface({ type: "closePhoto" })
+              }
               showMyLocation={showMyLocation}
               myLocation={myLocationPosition}
               highlightCoordinates={highlightCoordinates}
@@ -1129,13 +1332,13 @@ export default function Home() {
               savedPoints={displayedSavedPoints}
               showSavedPoints={showSavedPoints || viewingSavedPoint !== null}
               onSavedPointSelect={(id) => {
-                setViewingSavedPoint(null)
-                setEditingSavedPointId(id)
+                dispatchMapSurface({ type: "editSavedPoint", id })
               }}
               onSavedPointCreate={({ lng, lat }) => {
-                setViewingSavedPoint(null)
-                setEditingSavedPointId(null)
-                setNewSavedPointCoordinate([lng, lat])
+                dispatchMapSurface({
+                  type: "createSavedPoint",
+                  coordinate: [lng, lat],
+                })
               }}
             />
           </ErrorBoundary>
@@ -1150,6 +1353,7 @@ export default function Home() {
                 onShowFogChange={setShowFog}
                 fogMode={fogMode}
                 onFogModeChange={handleFogModeChange}
+                onRetryFog={() => rebuildFogProjection(mapStore.fogMode)}
                 mapMode={mapMode}
                 onMapModeChange={setMapMode}
                 onAddFiles={handleAddFiles}
@@ -1175,18 +1379,22 @@ export default function Home() {
                   coordinate={newSavedPointCoordinate}
                   onClose={closeSavedPointDialog}
                   onSave={(point) => {
-                    setSavedPoints((points) => [
-                      ...points.filter((saved) => saved.id !== point.id),
+                    const nextSavedPoints = [
+                      ...savedPointsRef.current.filter(
+                        (saved) => saved.id !== point.id
+                      ),
                       point,
-                    ])
+                    ]
+                    replaceSavedPoints(nextSavedPoints)
                     closeSavedPointDialog()
                   }}
                   onDelete={
                     editingSavedPointId
                       ? (id) => {
-                          setSavedPoints((points) =>
-                            points.filter((point) => point.id !== id)
+                          const nextSavedPoints = savedPointsRef.current.filter(
+                            (point) => point.id !== id
                           )
+                          replaceSavedPoints(nextSavedPoints)
                           closeSavedPointDialog()
                         }
                       : undefined
@@ -1219,6 +1427,16 @@ export default function Home() {
                   }
                 }}
                 failedFiles={parseFailedFiles}
+                failureDetails={parseFailureDetails}
+                canRetry={searchParams.has("from-share")}
+                onRetry={() => {
+                  setIsParseErrorOpen(false)
+                  setShareRetryCount((count) => count + 1)
+                }}
+                onDiscard={() => {
+                  setIsParseErrorOpen(false)
+                  void discardShareTargetQueue()
+                }}
               />
               <MissingActivityTypeDialog
                 open={isMissingActivityTypeOpen}
@@ -1235,7 +1453,8 @@ export default function Home() {
               />
               <DraggablePhotoDialog
                 group={selectedGroup}
-                onClose={() => setSelectedGroup(null)}
+                onClose={() => dispatchMapSurface({ type: "closePhoto" })}
+                ensurePhotoObjectUrl={photoUrlOwner.ensurePhotoObjectUrl}
               />
               {selectedActivities.length > 0 && (
                 <ErrorBoundary
@@ -1248,16 +1467,9 @@ export default function Home() {
                   <DraggableActivityDialog
                     activities={selectedActivities}
                     onRemoveActivity={(id) =>
-                      setSelectedActivityIds((prev) =>
-                        prev.filter((x) => x !== id)
-                      )
+                      dispatchMapSurface({ type: "removeActivity", id })
                     }
-                    onClose={() => {
-                      setSelectedActivityIds([])
-                      setSelectedLap(null)
-                      setPendingActivityId(null)
-                      clearSearchParam("activity")
-                    }}
+                    onClose={closeActivityDialog}
                     onShare={() => setShowShareDialog(true)}
                     onDelete={
                       selectedActivities.length === 1
@@ -1270,13 +1482,9 @@ export default function Home() {
                     }
                     activeLap={activeLap}
                     onLapSelect={handleLapSelect}
-                    onVisibilityChange={
+                    canEditVisibility={
                       isSyncEnabled && selectedActivities.length === 1
-                        ? (isPublic) =>
-                            visibility.change(selectedActivities[0], isPublic)
-                        : undefined
                     }
-                    isVisibilityLoading={visibility.isLoading}
                   />
                 </ErrorBoundary>
               )}
@@ -1299,7 +1507,9 @@ export default function Home() {
                 <Dialog
                   open
                   onOpenChange={(open) => {
-                    if (!open) setPendingActivityId(null)
+                    if (!open) {
+                      dispatchMapSurface({ type: "cancelPendingActivity" })
+                    }
                   }}
                 >
                   <DialogContent showCloseButton={false}>
@@ -1312,26 +1522,25 @@ export default function Home() {
                     <DialogFooter className="flex-col gap-2 sm:flex-row">
                       <Button
                         variant="outline"
-                        onClick={() => setPendingActivityId(null)}
+                        onClick={() =>
+                          dispatchMapSurface({ type: "cancelPendingActivity" })
+                        }
                       >
                         Cancel
                       </Button>
                       <Button
                         variant="outline"
                         onClick={() => {
-                          setSelectedActivityIds([pendingActivityId!])
-                          setPendingActivityId(null)
+                          dispatchMapSurface({
+                            type: "replaceWithPendingActivity",
+                          })
                         }}
                       >
                         Replace
                       </Button>
                       <Button
                         onClick={() => {
-                          setSelectedActivityIds((prev) => [
-                            ...prev,
-                            pendingActivityId!,
-                          ])
-                          setPendingActivityId(null)
+                          dispatchMapSurface({ type: "addPendingActivity" })
                         }}
                       >
                         Add to stats

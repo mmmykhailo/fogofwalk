@@ -3,26 +3,27 @@ import { EmptyActivitiesState } from "~/components/activities/EmptyActivitiesSta
 import { ActivityLibrary } from "~/components/activities/ActivityLibrary"
 import { PageShell } from "~/components/PageShell"
 import {
+  activityLibrary,
   mapStore,
-  setActivitySummaries,
-  updateActivitySummaries,
+  setActivitySummarySnapshot,
+  useActivitySummarySnapshot,
 } from "~/lib/mapStore"
-import {
-  activityToSummary,
-  loadActivitySummaries,
-  updateActivitySettings,
-} from "~/lib/storage"
+import { activityToSummary } from "~/lib/storage"
 import type { ActivitySummary } from "~/types/activitySummary"
 import {
   parseActivitySettingsUpdate,
-  type ActivitySettingsActionResult,
+  type ActivityMetadataActionResult,
 } from "~/lib/activitySettings"
 import { canSync, initAuth } from "~/lib/server/authStore"
-import { queueActivityMetadataUpdates } from "~/lib/server/syncEngine"
+import { isServerEnabled } from "~/lib/server/config"
+import { requestSync } from "~/lib/server/syncEngine"
+import { createActivityMetadataOutboxItems } from "~/lib/server/sync/activityEffects"
+import { createUuid } from "~/lib/uuid"
 import type { Route } from "./+types/activities"
 import { markPerformance, measurePerformance } from "~/lib/performance"
 import type { ShouldRevalidateFunction } from "react-router"
 import { isActivitiesViewOnlyNavigation } from "~/lib/activitiesRoute"
+import { isActivityMetadataActionResult } from "~/lib/homeRoute"
 
 export async function clientLoader(): Promise<ActivitySummary[]> {
   markPerformance("activities:loader:start")
@@ -30,18 +31,17 @@ export async function clientLoader(): Promise<ActivitySummary[]> {
   let activities: ActivitySummary[]
   if (mapStore.activityHydration === "full") {
     activities = mapStore.activities.map(activityToSummary)
-  } else if (mapStore.activityHydration === "summaries") {
-    activities = mapStore.activitySummaries
   } else {
     markPerformance("activities:idb-load:start")
-    activities = await loadActivitySummaries()
+    const summarySnapshot = await activityLibrary.initializeSummarySnapshot()
     markPerformance("activities:idb-load:end")
     measurePerformance(
       "activities:idb-load",
       "activities:idb-load:start",
       "activities:idb-load:end"
     )
-    setActivitySummaries(activities)
+    activities = [...summarySnapshot.summaries]
+    setActivitySummarySnapshot(summarySnapshot)
   }
   markPerformance("activities:loader:end")
   measurePerformance(
@@ -56,8 +56,16 @@ export const shouldRevalidate: ShouldRevalidateFunction = ({
   currentUrl,
   nextUrl,
   formMethod,
+  actionResult,
   defaultShouldRevalidate,
 }) => {
+  if (
+    formMethod != null &&
+    formMethod !== "GET" &&
+    isActivityMetadataActionResult(actionResult)
+  ) {
+    return false
+  }
   if (
     (formMethod == null || formMethod === "GET") &&
     isActivitiesViewOnlyNavigation(currentUrl, nextUrl)
@@ -69,104 +77,97 @@ export const shouldRevalidate: ShouldRevalidateFunction = ({
 
 export async function clientAction({
   request,
-}: Route.ClientActionArgs): Promise<ActivitySettingsActionResult | null> {
+}: Route.ClientActionArgs): Promise<ActivityMetadataActionResult | null> {
   const formData = await request.formData()
   if (formData.get("intent") !== "update-activity-settings") return null
 
-  const update = parseActivitySettingsUpdate(formData)
-  if (!update.ok) return update
+  const submittedOperationId = formData.get("operationId")
+  const operationId =
+    typeof submittedOperationId === "string" &&
+    submittedOperationId.length > 0 &&
+    submittedOperationId.length <= 200
+      ? submittedOperationId
+      : createUuid()
+  try {
+    const update = parseActivitySettingsUpdate(formData)
+    if (!update.ok) return { ok: false, operationId, error: update.error }
 
-  const sourceActivities: ActivitySummary[] =
-    mapStore.activities.length > 0
-      ? mapStore.activities.map(activityToSummary)
-      : mapStore.activityHydration === "summaries"
-        ? mapStore.activitySummaries
-        : await loadActivitySummaries()
-  const activityById = new Map(
-    sourceActivities.map((activity) => [activity.id, activity])
-  )
-  const activities = update.activityIds.map((activityId) =>
-    activityById.get(activityId)
-  )
-  if (activities.some((activity) => activity == null)) {
+    const summarySnapshot = await activityLibrary.initializeSummarySnapshot()
+    const activityById = new Map(
+      summarySnapshot.summaries.map((activity) => [activity.id, activity])
+    )
+    const activities = update.activityIds.map((activityId) =>
+      activityById.get(activityId)
+    )
+    if (activities.some((activity) => activity == null)) {
+      return {
+        ok: false,
+        operationId,
+        error: "One or more activities no longer exist.",
+      }
+    }
+
+    const resolved = activities.filter(
+      (activity): activity is NonNullable<typeof activity> => activity != null
+    )
+    if (
+      update.setting === "visibility" &&
+      (!canSync() || resolved.some((activity) => !activity.contentHash))
+    ) {
+      return {
+        ok: false,
+        operationId,
+        error: "Visibility can only be changed for synced activities.",
+      }
+    }
+
+    const patches = resolved.map((activity) =>
+      update.setting === "visibility"
+        ? { id: activity.id, isPublic: update.value }
+        : { id: activity.id, activityType: update.value }
+    )
+    const commit = await activityLibrary.dispatchMetadata(
+      {
+        type: "updateMetadata",
+        operationId,
+        patches,
+      },
+      {
+        metadataOutbox: isServerEnabled
+          ? (result) => {
+              const changedIds = new Set(
+                result.updated.map((activity) => activity.id)
+              )
+              return createActivityMetadataOutboxItems(
+                resolved,
+                patches.filter((patch) => changedIds.has(patch.id)),
+                operationId,
+                result.revision
+              )
+            }
+          : undefined,
+      }
+    )
+    if (commit.updated.length > 0 && isServerEnabled) {
+      requestSync("activity-settings-update")
+    }
+
     return {
-      ok: false as const,
-      error: "One or more activities no longer exist.",
+      ok: true,
+      operationId,
+      revision: commit.revision,
+      coverageRevision: commit.coverageRevision,
+      updated: commit.updated,
     }
-  }
-
-  const resolved = activities as ActivitySummary[]
-  if (
-    update.setting === "visibility" &&
-    (!canSync() || resolved.some((activity) => !activity.contentHash))
-  ) {
+  } catch (error) {
     return {
-      ok: false as const,
-      error: "Visibility can only be changed for synced activities.",
+      ok: false,
+      operationId,
+      error:
+        error instanceof Error
+          ? error.message
+          : "The activity setting could not be saved.",
     }
-  }
-
-  const changed = resolved.filter((activity) =>
-    update.setting === "visibility"
-      ? (activity.isPublic ?? false) !== update.value
-      : activity.activityType !== update.value
-  )
-
-  const changedSummaries = changed.map((activity) => ({
-    ...activity,
-    ...(update.setting === "visibility"
-      ? { isPublic: update.value }
-      : { activityType: update.value }),
-  }))
-  const saved = await updateActivitySettings(
-    changedSummaries.map((activity) => ({
-      id: activity.id,
-      ...(update.setting === "visibility"
-        ? { isPublic: update.value }
-        : { activityType: update.value }),
-    }))
-  )
-  if (!saved) {
-    return {
-      ok: false as const,
-      error: "Activity settings could not be saved.",
-    }
-  }
-
-  const fullById =
-    mapStore.activities.length > 0
-      ? new Map(mapStore.activities.map((activity) => [activity.id, activity]))
-      : null
-  if (fullById) {
-    for (const summary of changedSummaries) {
-      const activity = fullById.get(summary.id)
-      if (!activity) continue
-      if (update.setting === "visibility") activity.isPublic = update.value
-      else activity.activityType = update.value
-    }
-  } else {
-    updateActivitySummaries(changedSummaries)
-  }
-
-  await queueActivityMetadataUpdates(
-    changedSummaries.flatMap((summary) => {
-      if (!summary.contentHash) return []
-      return [
-        {
-          contentHash: summary.contentHash,
-          ...(update.setting === "visibility"
-            ? { isPublic: update.value }
-            : { activityType: update.value }),
-        },
-      ]
-    })
-  )
-
-  return {
-    ok: true as const,
-    updatedActivityIds: changed.map((activity) => activity.id),
-    setting: update.setting,
-    value: update.value,
   }
 }
 
@@ -178,7 +179,11 @@ export function meta({}: Route.MetaArgs) {
 }
 
 export default function MyActivitiesPage() {
-  const activities = useLoaderData<typeof clientLoader>()
+  const loadedActivities = useLoaderData<typeof clientLoader>()
+  const liveSnapshot = useActivitySummarySnapshot()
+  const activities = liveSnapshot.hydrated
+    ? [...liveSnapshot.summaries]
+    : loadedActivities
 
   return (
     <PageShell title="My activities">

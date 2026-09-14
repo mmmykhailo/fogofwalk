@@ -12,6 +12,7 @@ export type * from "~shared/activities"
 export { ACTIVITY_TYPES } from "~shared/activities"
 
 import type { ParsedActivity } from "~shared/activities"
+import type { FogReply, FogRequest } from "~/lib/fog/protocol"
 
 export type FogMode = "corridor" | "fill"
 export type MapMode = "flat" | "relief"
@@ -19,8 +20,22 @@ export type MapMode = "flat" | "relief"
 /** The only activity fields the fog worker needs to build and report geometry. */
 export type FogWorkerActivity = Pick<
   ParsedActivity,
-  "id" | "name" | "coordinates"
+  "id" | "name" | "coordinates" | "paths"
 >
+
+/** Main-thread command shape; postToFogWorker adds protocol identity fields. */
+export type FogWorkerCommand =
+  | {
+      type: "PROCESS_ACTIVITIES"
+      activities: FogWorkerActivity[]
+      mode: FogMode
+      kind?: "rebuild" | "append"
+      libraryRevision?: number
+      coverageRevision?: number
+      baseLibraryRevision?: number
+      baseCoverageRevision?: number
+    }
+  | { type: "RESET" }
 
 /**
  * Every worker message carries a `runId` generation token. Bumping it (via
@@ -28,22 +43,5 @@ export type FogWorkerActivity = Pick<
  * bails out at its next checkpoint, and the main thread drops replies stamped
  * with a stale id so an abandoned run cannot repaint the fog or save its cache.
  */
-export type WorkerInboundMessage =
-  | {
-      type: "PROCESS_ACTIVITIES"
-      activities: FogWorkerActivity[]
-      mode: FogMode
-      runId: number
-    }
-  | { type: "RESET"; runId: number }
-
-export type WorkerOutboundMessage =
-  | {
-      type: "FOG_UPDATE"
-      fogData: GeoJSON.Feature<GeoJSON.Polygon | GeoJSON.MultiPolygon>
-      processedCount: number
-      runId: number
-    }
-  | { type: "PROGRESS"; processedCount: number; runId: number }
-  | { type: "ERROR"; file: string; message: string; runId: number }
-  | { type: "DONE"; processedCount: number; runId: number }
+export type WorkerInboundMessage = FogRequest
+export type WorkerOutboundMessage = FogReply

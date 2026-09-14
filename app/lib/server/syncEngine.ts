@@ -1,10 +1,9 @@
 /**
  * Activity synchronisation.
  *
- * Activity geometry is content-addressed and immutable, so there is nothing to
- * merge there: a hash the server lacks is uploaded, a hash this device lacks is
- * downloaded, and a tombstone deletes locally. Mutable metadata is reconciled
- * separately through the summary-only endpoint.
+ * Activities are content-addressed and immutable, so there is nothing to merge:
+ * a hash the server lacks is uploaded, a hash this device lacks is downloaded,
+ * and a tombstone deletes locally. That is the whole conflict model.
  *
  * Every step is individually resumable — a failed activity is simply retried on
  * the next run, and the manifest cursor only advances after a clean page.
@@ -12,91 +11,70 @@
 
 import { useSyncExternalStore } from "react"
 import type {
-  ManifestPage,
-  ActivityDeleteResponse,
-  ActivityMeta,
-  ActivityMetadataPatch,
-  ActivityTombstone,
-  ActivityUploadPayload,
   SavedPointDeleteResponse,
   SavedPointManifestPage,
   SavedPointTombstone,
   SavedPointUpsertInput,
   SavedPointUpsertResponse,
 } from "~shared/api"
-import {
-  MAX_ACTIVITY_BYTES,
-  SYNC_CONCURRENCY,
-  SYNC_PAGE_SIZE,
-} from "~shared/constants"
+import { SYNC_CONCURRENCY } from "~shared/constants"
 import type { SavedPoint } from "~shared/saved-points"
 import type { ParsedActivity } from "~/types/activities"
-import type { ActivitySummary } from "~/types/activitySummary"
 import {
-  activityToSummary,
-  deleteActivity as deleteActivityFromIdb,
-  loadSyncState,
-  loadActivitySummaries,
-  type PendingActivityMetadataUpdate,
-  saveSyncState,
-  saveActivities,
-  updateActivityMetadata as updateActivityMetadataInStorage,
+  emptySavedPointSyncState,
+  loadAccountSavedPointSyncStates,
+  loadSavedPointSyncState,
+  updateSavedPointSyncState,
   deleteSavedPoint as deleteSavedPointFromIdb,
   loadSavedPoints,
   saveSavedPoint,
   saveSavedPoints,
 } from "~/lib/storage"
 import {
-  applyActivityMetadata,
-  hydrateFullActivities,
-  ingestActivities,
+  activityLibrary,
+  initializeActivityLibrary,
   mapStore,
-  setActivitySummaries,
-  setFullActivities,
 } from "~/lib/mapStore"
 import { backfillContentHashes } from "~/lib/activityHash"
 import { createUuid } from "~/lib/uuid"
-import { apiRaw, apiSend, ApiRequestError, friendlyMessage } from "./apiClient"
-import { updateActivityMetadata } from "./activityMetadata"
-import { canSync } from "./authStore"
+import { recordDiagnostic } from "~/lib/diagnostics"
+import { apiRaw, friendlyMessage } from "./apiClient"
+import { canSync, getAuthState, subscribeAuth } from "./authStore"
+import { isServerEnabled } from "./config"
+import { createApiSyncTransport } from "./sync/transport"
 import {
-  acquireUploadSlot,
-  fallbackBackoffMs,
-  MAX_UPLOAD_RETRIES,
-  penalizeUploads,
-} from "./uploadGate"
+  createIndexedDbSyncRepository,
+  type IndexedDbSyncRepository,
+} from "./sync/repository"
+import { createActivitySyncExecutor } from "./sync/executor"
+import {
+  isSyncCancellationError,
+  throwIfSyncAborted,
+} from "./sync/cancellation"
+import { createSyncScheduler } from "./sync/scheduler"
+import {
+  describeSyncStatus,
+  getSyncStatus,
+  subscribeSyncStatus,
+  applySyncOutboxSummary,
+  setSyncStatus,
+  summarizeSyncOutbox,
+  useSyncStatus,
+  type SyncStatus,
+  type SyncStatusUpdate,
+} from "./sync/status"
+import {
+  createActivityDeleteOutboxItem,
+  createActivityUploadOutboxItem,
+  hasLocalActivityEffectSource,
+} from "./sync/activityEffects"
 
 // ─── Status, published to the drawer ──────────────────────────────────────────
 
-export type SyncStatus =
-  | { phase: "idle"; lastSyncAt: number | null }
-  | { phase: "syncing"; done: number; total: number }
-  | { phase: "error"; message: string; lastSyncAt: number | null }
-
-let status: SyncStatus = { phase: "idle", lastSyncAt: null }
-const listeners = new Set<() => void>()
-
-function notify() {
-  for (const listener of listeners) listener()
-}
-
-function subscribe(listener: () => void): () => void {
-  listeners.add(listener)
-  return () => listeners.delete(listener)
-}
-
-function setStatus(next: SyncStatus) {
-  status = next
-  notify()
-}
-
-export function useSyncStatus(): SyncStatus {
-  return useSyncExternalStore(
-    subscribe,
-    () => status,
-    () => status
-  )
-}
+export type { SyncStatus }
+export { describeSyncStatus, useSyncStatus }
+const setStatus = setSyncStatus
+if (!isServerEnabled) setStatus({ phase: "disabled" })
 
 // ─── Suspension ───────────────────────────────────────────────────────────────
 
@@ -118,7 +96,7 @@ export function isAutoSyncSuspended(): boolean {
 
 export function useIsAutoSyncSuspended(): boolean {
   return useSyncExternalStore(
-    subscribe,
+    subscribeSyncStatus,
     () => isSuspended,
     () => isSuspended
   )
@@ -129,7 +107,10 @@ export function suspendAutoSync(reason: string): void {
   if (isSuspended) return
   isSuspended = true
   console.debug("[sync] auto-sync suspended:", reason)
-  notify()
+  setStatus({
+    phase: "suspended",
+    message: "Sync paused after a local change.",
+  })
 }
 
 /** Resume. Only ever called by an explicit user action. */
@@ -137,7 +118,7 @@ export function resumeAutoSync(): void {
   if (!isSuspended) return
   isSuspended = false
   console.debug("[sync] auto-sync resumed")
-  notify()
+  setStatus({ phase: "idle", message: null })
 }
 
 // ─── Change notification ──────────────────────────────────────────────────────
@@ -158,9 +139,10 @@ export interface SyncChanges {
 let onChanged: ((changes: SyncChanges) => void) | null = null
 
 /**
- * Registered by `home.tsx`. Sync mutates `mapStore` directly, but rebuilding
- * the fog after a remote delete and dropping deleted activities out of the
- * selection are React concerns that belong in the route.
+ * Registered by `home.tsx`. Activity changes are published through the
+ * ActivityLibrary; rebuilding the fog after a remote delete and dropping
+ * deleted activities out of the selection are React concerns that belong in
+ * the route.
  */
 export function setSyncChangeHandler(
   handler: ((changes: SyncChanges) => void) | null
@@ -168,34 +150,230 @@ export function setSyncChangeHandler(
   onChanged = handler
 }
 
-/** Drawer subtitle for the current status. Null when there is nothing to say. */
-export function describeSyncStatus(s: SyncStatus): string | null {
-  if (s.phase === "syncing") return `Syncing ${s.done} of ${s.total}…`
-  if (s.phase === "error") return s.message
-  if (s.lastSyncAt === null) return null
-  const ageMs = Date.now() - s.lastSyncAt
-  if (ageMs < 60_000) return "Synced just now"
-  const minutes = Math.floor(ageMs / 60_000)
-  if (minutes < 60) return `Synced ${minutes} min ago`
-  const hours = Math.floor(minutes / 60)
-  if (hours < 24) return `Synced ${hours}h ago`
-  return `Synced ${Math.floor(hours / 24)}d ago`
-}
-
-// ─── Gzip helpers ─────────────────────────────────────────────────────────────
-
-async function gzip(text: string): Promise<Blob> {
-  const stream = new Blob([text])
-    .stream()
-    .pipeThrough(new CompressionStream("gzip"))
-  return new Response(stream).blob()
-}
-
 // ─── Run loop ─────────────────────────────────────────────────────────────────
 
-let isRunning = false
-/** Set when a trigger fires mid-run: the loop repeats instead of dropping it. */
-let isRerunQueued = false
+// Do not construct sync resources in a serverless build. Besides keeping the
+// disabled bundle inert, this prevents a future transport constructor from
+// accidentally becoming a network prerequisite for local-only use.
+const syncTransport = isServerEnabled ? createApiSyncTransport() : null
+const activitySyncRepository = isServerEnabled
+  ? createIndexedDbSyncRepository()
+  : null
+const accountSyncRepositories = new Map<string, IndexedDbSyncRepository>()
+const syncOwner = isServerEnabled ? `sync-tab:${createUuid()}` : null
+const SYNC_LEASE_MS = 90_000
+let nextSyncRunId = 0
+
+function repositoryForAccount(
+  accountId: string
+): IndexedDbSyncRepository | null {
+  if (!activitySyncRepository) return null
+  const current = accountSyncRepositories.get(accountId)
+  if (current) return current
+  const repository = createIndexedDbSyncRepository(accountId)
+  accountSyncRepositories.set(accountId, repository)
+  return repository
+}
+
+function repositoryForCurrentAccount(): IndexedDbSyncRepository | null {
+  const auth = getAuthState()
+  return auth.status === "signedIn"
+    ? repositoryForAccount(auth.user.id)
+    : activitySyncRepository
+}
+
+function isCurrentSignedInAccount(accountId: string): boolean {
+  const auth = getAuthState()
+  return auth.status === "signedIn" && auth.user.id === accountId
+}
+
+function throwIfSavedPointAccountChanged(accountId: string): void {
+  if (isCurrentSignedInAccount(accountId)) return
+  const error = new Error("Saved-point sync account changed")
+  error.name = "AbortError"
+  throw error
+}
+
+let savedPointOperationTail: Promise<void> = Promise.resolve()
+
+/**
+ * Serialize saved-point network work with local state transitions. Web Locks
+ * covers separate tabs; the promise tail keeps operations in this tab ordered
+ * even in browsers without that API. IndexedDB updates remain transactional as
+ * the final safety net for a legacy browser.
+ */
+async function withSavedPointSyncLock<T>(
+  operation: () => Promise<T>
+): Promise<T> {
+  let release!: () => void
+  const previous = savedPointOperationTail
+  savedPointOperationTail = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  try {
+    await previous
+    if (typeof navigator !== "undefined" && navigator.locks) {
+      return await navigator.locks.request(
+        "fogofwalk:saved-points",
+        { mode: "exclusive" },
+        operation
+      )
+    }
+    return await operation()
+  } finally {
+    release()
+  }
+}
+
+function savedPointStateIds(
+  state: Awaited<ReturnType<typeof loadSavedPointSyncState>>
+): Set<string> {
+  return new Set([
+    ...(state?.ownedIds ?? []),
+    ...(state?.serverPointIds ?? []),
+    ...(state?.outboundIds ?? []),
+    ...(state?.outboundDeletionIds ?? []),
+  ])
+}
+
+async function foreignSavedPointIds(accountId: string): Promise<Set<string>> {
+  const states = await loadAccountSavedPointSyncStates()
+  const ids = new Set<string>()
+  for (const [ownerId, state] of states) {
+    if (ownerId === accountId) continue
+    for (const id of savedPointStateIds(state)) ids.add(id)
+  }
+  return ids
+}
+
+async function foreignActivityHashes(accountId: string): Promise<Set<string>> {
+  if (!activitySyncRepository) return new Set()
+  const hashes = new Set<string>()
+  for (const item of await activitySyncRepository.loadOutbox()) {
+    if (!item.accountId || item.accountId === accountId) continue
+    if (!hasLocalActivityEffectSource(item.payload)) continue
+    const contentHash = (item.payload as { contentHash?: unknown }).contentHash
+    if (typeof contentHash === "string") hashes.add(contentHash)
+  }
+  return hashes
+}
+
+async function publishOutboxStatus(
+  update: SyncStatusUpdate,
+  repository: IndexedDbSyncRepository | null = repositoryForCurrentAccount()
+): Promise<ReturnType<typeof summarizeSyncOutbox> | null> {
+  if (!repository) {
+    setStatus(update)
+    return null
+  }
+  try {
+    const summary = summarizeSyncOutbox(await repository.loadOutbox())
+    applySyncOutboxSummary(summary, update)
+    return summary
+  } catch {
+    // Keep the operation result visible even if the status read itself fails.
+    setStatus(update)
+    return null
+  }
+}
+
+async function acquireSyncLeadership(
+  run: () => Promise<void>
+): Promise<boolean> {
+  const auth = getAuthState()
+  const repository =
+    auth.status === "signedIn" && auth.canSync
+      ? repositoryForAccount(auth.user.id)
+      : null
+  if (!repository || !syncOwner) return false
+  if (auth.status !== "signedIn") return false
+  const accountId = auth.user.id
+  await withSavedPointSyncLock(async () => {
+    await loadSavedPointSyncState(accountId)
+  })
+  if (!isCurrentSignedInAccount(accountId)) return false
+  if (typeof navigator !== "undefined" && navigator.locks) {
+    return navigator.locks.request(
+      `fogofwalk:sync:${accountId}`,
+      { mode: "exclusive", ifAvailable: true },
+      async (lock) => {
+        if (!lock) return false
+        await run()
+        return true
+      }
+    )
+  }
+
+  const acquired = await repository.acquireSyncLease({
+    owner: syncOwner,
+    now: Date.now(),
+    leaseMs: SYNC_LEASE_MS,
+  })
+  if (!acquired) return false
+  try {
+    await run()
+    return true
+  } finally {
+    await repository.releaseSyncLease(syncOwner)
+  }
+}
+
+const syncScheduler = isServerEnabled
+  ? createSyncScheduler({
+      enabled: canSync,
+      execute: (reason) => syncOnce(reason),
+      acquireLeadership: acquireSyncLeadership,
+      onError: (error) => {
+        console.warn("[sync] scheduler failed:", error)
+        void publishOutboxStatus({
+          phase: "error",
+          message: friendlyMessage(error),
+          lastSyncAt:
+            getSyncStatus().phase === "syncing"
+              ? null
+              : getSyncStatus().lastSyncAt,
+        })
+      },
+    })
+  : null
+
+interface ActiveSyncRun {
+  controller: AbortController
+  accountId: string
+}
+
+let activeSyncRun: ActiveSyncRun | null = null
+
+subscribeAuth(() => {
+  const active = activeSyncRun
+  if (!active) return
+  const auth = getAuthState()
+  if (
+    auth.status === "signedIn" &&
+    auth.canSync &&
+    auth.user.id === active.accountId
+  ) {
+    return
+  }
+  active.controller.abort()
+  if (auth.status === "signedIn" && auth.canSync) {
+    syncScheduler?.trigger("account-change")
+  }
+})
+
+async function loadActivitySyncState() {
+  const repository = repositoryForCurrentAccount()
+  if (!repository) {
+    return { cursor: 0, lastSyncAt: 0, serverHashes: [] }
+  }
+  return (
+    (await repository.loadState()) ?? {
+      cursor: 0,
+      lastSyncAt: 0,
+      serverHashes: [],
+    }
+  )
+}
 
 /**
  * Ask for a sync. Cheap and safe to call from anywhere — it no-ops when the
@@ -209,7 +387,7 @@ export function requestSync(
   reason: string,
   options: { manual?: boolean } = {}
 ): void {
-  if (!canSync()) return
+  if (!canSync() || !syncScheduler) return
   if (isSuspended) {
     if (!options.manual) {
       console.debug("[sync] skipped while suspended:", reason)
@@ -217,11 +395,7 @@ export function requestSync(
     }
     resumeAutoSync()
   }
-  if (isRunning) {
-    isRerunQueued = true
-    return
-  }
-  void runSync(reason)
+  syncScheduler.trigger(reason)
 }
 
 /** How often to poll for other devices' changes while the tab is visible. */
@@ -236,6 +410,8 @@ const SYNC_POLL_MS = 5 * 60 * 1000
  * to the tab), the interval covers a tab left open.
  */
 export function startSyncScheduler(): () => void {
+  if (!isServerEnabled || !syncScheduler) return () => {}
+
   const onFocus = () => {
     if (document.visibilityState === "visible") requestSync("focus")
   }
@@ -255,428 +431,280 @@ export function startSyncScheduler(): () => void {
   }
 }
 
-async function runSync(reason: string): Promise<void> {
-  isRunning = true
-  try {
-    do {
-      isRerunQueued = false
-      await syncOnce(reason)
-    } while (isRerunQueued && canSync())
-  } finally {
-    isRunning = false
-  }
-}
-
-function materializeActivityMetadataOutbox(
-  state: Awaited<ReturnType<typeof loadSyncState>>,
-  summaries: readonly ActivitySummary[]
-): Map<string, PendingActivityMetadataUpdate> {
-  const outbox = new Map(Object.entries(state?.outboundActivityMetadata ?? {}))
-  const summariesByHash = new Map(
-    summaries
-      .filter((summary): summary is ActivitySummary & { contentHash: string } =>
-        Boolean(summary.contentHash)
-      )
-      .map((summary) => [summary.contentHash, summary])
-  )
-  for (const hash of state?.outboundActivityUpdateHashes ?? []) {
-    if (outbox.has(hash)) continue
-    const summary = summariesByHash.get(hash)
-    if (!summary) continue
-    outbox.set(hash, {
-      isPublic: summary.isPublic ?? false,
-      activityType: summary.activityType ?? null,
-    })
-  }
-  return outbox
-}
-
 async function syncOnce(reason: string): Promise<void> {
-  const lastSyncAt = status.phase === "syncing" ? null : status.lastSyncAt
+  if (!isServerEnabled || !activitySyncRepository || !syncTransport) return
+  const auth = getAuthState()
+  if (auth.status !== "signedIn" || !auth.canSync) return
+  const repository = repositoryForAccount(auth.user.id)
+  if (!repository) return
+  const active: ActiveSyncRun = {
+    controller: new AbortController(),
+    accountId: auth.user.id,
+  }
+  activeSyncRun = active
+  const { signal } = active.controller
+  const previousStatus = getSyncStatus()
+  const lastSyncAt =
+    previousStatus.phase === "syncing" ? null : previousStatus.lastSyncAt
+  const runId = ++nextSyncRunId
+  const operationId = `sync-${runId}`
+  const startedAt = Date.now()
+  setStatus({
+    phase: "syncing",
+    runId,
+    trigger: reason,
+    done: 0,
+    total: 0,
+    cursorHeld: false,
+    message: null,
+  })
+  recordDiagnostic({
+    subsystem: "sync",
+    operationId,
+    stage: "run",
+    result: "started",
+  })
   console.debug("[sync] start", reason)
 
   try {
+    throwIfSyncAborted(signal)
+    // Imports made before the first authenticated run are intentionally
+    // unscoped. Adopt them before any account-specific work can be sent.
+    await repository.adoptUnscopedOutbox()
+    throwIfSyncAborted(signal)
     // Saved points have their own manifest cursor and are intentionally kept
     // outside activity upload pacing. Reconcile them before activities.
-    await syncSavedPoints()
+    await withSavedPointSyncLock(() => syncSavedPoints(signal, auth.user.id))
+    throwIfSyncAborted(signal)
+    await activityLibrary.initializeSummarySnapshot()
+    throwIfSyncAborted(signal)
 
-    // Activities imported before sync existed have no hash yet.
-    const backfilled = await backfillContentHashes(mapStore.activities)
-    if (backfilled.length > 0) await saveActivities(backfilled)
-
-    const state = await loadSyncState()
-    const since = state?.cursor ?? 0
-    const { serverActivities, deletions, cursor } = await fetchManifest(since)
-
-    // Metadata reconciliation must remain summary-only. A full library is
-    // already in memory on the map, while a non-map route keeps only these
-    // small records. Hydrate later only if a genuinely new geometry upload is
-    // required.
-    const localSummaries: ActivitySummary[] =
-      mapStore.activityHydration === "full"
-        ? mapStore.activities.map(activityToSummary)
-        : mapStore.activityHydration === "summaries"
-          ? mapStore.activitySummaries
-          : await loadActivitySummaries()
-    const metadataOutbox = materializeActivityMetadataOutbox(
-      state,
-      localSummaries
-    )
-    const dirtyActivityHashes = new Set(metadataOutbox.keys())
-    const settledActivityUpdateHashes = new Set<string>()
-    const localByHash = new Map<string, ActivitySummary>()
-    for (const activity of localSummaries) {
-      if (activity.contentHash) localByHash.set(activity.contentHash, activity)
-    }
-    for (const hash of dirtyActivityHashes) {
-      if (!localByHash.has(hash)) {
-        dirtyActivityHashes.delete(hash)
-        settledActivityUpdateHashes.add(hash)
-      }
-    }
-
-    // Accumulated across syncs — this window only describes what changed since
-    // `since`, so the previously-known set has to carry forward.
-    const serverHashes = new Set(since === 0 ? [] : (state?.serverHashes ?? []))
-    for (const t of serverActivities) serverHashes.add(t.contentHash)
-    for (const tomb of deletions) serverHashes.delete(tomb.contentHash)
-
-    // Activities this device deleted locally while choosing to leave the server
-    // copy alone. Without this they would be downloaded straight back.
-    const ignoredHashes = new Set(state?.ignoredHashes ?? [])
-
-    /**
-     * A from-scratch walk converges toward the union of local and server —
-     * never toward deletion.
-     *
-     * With no cursor there is no prior shared state to reconcile against, so a
-     * tombstone says nothing about *this* device: it describes a deletion
-     * relative to a history it no longer has. `clear-all` drops syncState, so
-     * every tombstone the account ever wrote replays here. Honouring them would
-     * delete activities the user had just re-imported and refuse to upload them.
-     *
-     * Incremental walks keep the real semantics — that is where a delete on one
-     * device has to reach the others.
-     */
-    const isFromScratch = since === 0
-
-    const metadataDiffers = (
-      local: Pick<
-        ActivitySummary,
-        "name" | "isPublic" | "activityType" | "startSunPhase"
-      >,
-      server: Pick<
-        ActivityMeta,
-        "name" | "isPublic" | "activityType" | "startSunPhase"
-      >
-    ): boolean =>
-      local.name !== server.name ||
-      Boolean(local.isPublic) !== server.isPublic ||
-      local.activityType !== server.activityType ||
-      local.startSunPhase !== server.startSunPhase
-
-    /**
-     * A tombstone must be acted on exactly once per device.
-     *
-     * The server's cursor is an *inclusive* lower bound (deliberately — it is
-     * how a row written in the same millisecond as the read is not lost), so
-     * the newest tombstones are re-served on the following sync. Without this
-     * memory, re-importing a file you had just deleted gets it silently deleted
-     * again and refused for upload, because the same tombstone applies twice.
-     */
-    const applied = new Map<string, number>(
-      Object.entries(state?.appliedTombstones ?? {})
-    )
-    const freshTombstones = deletions.filter(
-      (tomb) => applied.get(tomb.contentHash) !== tomb.deletedAt
-    )
-    const freshDeletedHashes = new Set(
-      freshTombstones.map((tomb) => tomb.contentHash)
-    )
-
-    const toMetadataUpload = [...metadataOutbox.entries()].flatMap(
-      ([contentHash, patch]) => {
-        const activity = localByHash.get(contentHash)
-        if (
-          !activity ||
-          !serverHashes.has(contentHash) ||
-          (!isFromScratch && freshDeletedHashes.has(contentHash)) ||
-          ignoredHashes.has(contentHash)
-        )
-          return []
-        return [
-          {
+    // Activities imported before sync existed have no hash yet. Hash
+    // backfill is the exceptional path that genuinely needs full geometry;
+    // an ordinary metadata sync stays summary-only.
+    const summaries = activityLibrary.getSummarySnapshot().summaries
+    if (summaries.some((activity) => !activity.contentHash)) {
+      await initializeActivityLibrary()
+      throwIfSyncAborted(signal)
+      const backfillCandidates = activityLibrary
+        .getSnapshot()
+        .activities.map((activity) => structuredClone(activity))
+      const backfilled = await backfillContentHashes(backfillCandidates)
+      throwIfSyncAborted(signal)
+      if (backfilled.length > 0) {
+        throwIfSyncAborted(signal)
+        await activityLibrary.dispatch({
+          type: "applyRemote",
+          operationId: createUuid(),
+          changes: backfilled.map((activity) => ({
+            type: "upsert" as const,
             activity,
-            patch: { contentHash, ...patch } satisfies ActivityMetadataPatch,
-          },
-        ]
+          })),
+        })
+        throwIfSyncAborted(signal)
       }
+    }
+
+    const excludedLocalHashes = await foreignActivityHashes(auth.user.id)
+    await runActivitySync(
+      lastSyncAt,
+      operationId,
+      startedAt,
+      signal,
+      repository,
+      excludedLocalHashes
     )
-    const fullUploadSummaries = [...localByHash.values()].filter((activity) => {
-      if (!activity.contentHash) return false
-      return (
-        !serverHashes.has(activity.contentHash) &&
-        (isFromScratch || !freshDeletedHashes.has(activity.contentHash)) &&
-        !ignoredHashes.has(activity.contentHash)
-      )
-    })
-    const toMetadataDownload = serverActivities.filter((server) => {
-      if (ignoredHashes.has(server.contentHash)) return false
-      const local = localByHash.get(server.contentHash)
-      if (!local) return false
-      return (
-        !dirtyActivityHashes.has(server.contentHash) &&
-        metadataDiffers(local, server)
-      )
-    })
-    const toDownload = serverActivities.filter(
-      (server) =>
-        !ignoredHashes.has(server.contentHash) &&
-        !localByHash.has(server.contentHash)
-    )
-    const toDelete = isFromScratch
-      ? []
-      : [...freshDeletedHashes].filter((h) => localByHash.has(h))
-
-    // Recorded even when not acted on, so a from-scratch walk cannot leave the
-    // whole backlog primed to fire on the next incremental sync.
-    for (const tomb of deletions) applied.set(tomb.contentHash, tomb.deletedAt)
-
-    if (fullUploadSummaries.length > 0) {
-      // A metadata-only edit never reaches this branch. This is deliberately
-      // lazy so an activities page can synchronize thousands of settings using
-      // summaries without reading any geometry from IndexedDB.
-      if (mapStore.activityHydration !== "full") await hydrateFullActivities()
-    }
-    const fullActivitiesByHash = new Map(
-      mapStore.activities
-        .filter((activity) => activity.contentHash)
-        .map((activity) => [activity.contentHash!, activity])
-    )
-    const fullUploads = fullUploadSummaries.map((summary) => {
-      const activity = fullActivitiesByHash.get(summary.contentHash!)
-      if (!activity) {
-        throw new Error(
-          `Activity ${summary.contentHash} is not fully available`
-        )
-      }
-      return activity
-    })
-
-    const total =
-      toMetadataUpload.length +
-      fullUploads.length +
-      toMetadataDownload.length +
-      toDownload.length +
-      toDelete.length
-    if (total === 0) {
-      await finish(
-        cursor,
-        serverHashes,
-        ignoredHashes,
-        applied,
-        dirtyActivityHashes,
-        metadataOutbox,
-        settledActivityUpdateHashes
-      )
-      return
-    }
-
-    let done = 0
-    const step = () => setStatus({ phase: "syncing", done: ++done, total })
-    setStatus({ phase: "syncing", done: 0, total })
-
-    // Deletions first — cheap, and it shrinks what we might re-upload.
-    const deletedIds: string[] = []
-    for (const hash of toDelete) {
-      const activity = localByHash.get(hash)
-      if (activity) {
-        await removeLocalActivity(activity)
-        deletedIds.push(activity.id)
-      }
-      dirtyActivityHashes.delete(hash)
-      settledActivityUpdateHashes.add(hash)
-      step()
-    }
-
-    const metadataUploadBatches = chunk(toMetadataUpload, SYNC_PAGE_SIZE)
-    const metadataUploadFailures = await pooled(
-      metadataUploadBatches,
-      async (batch) => {
-        const updated = await updateActivityMetadata(
-          batch.map((item) => item.patch)
-        )
-        const updatedByHash = new Map(
-          updated.map((activity) => [activity.contentHash, activity])
-        )
-        if (
-          updated.length !== batch.length ||
-          batch.some((item) => !updatedByHash.has(item.activity.contentHash!))
-        ) {
-          throw new Error(
-            "Activity metadata update returned an incomplete result"
-          )
-        }
-        for (const item of batch) {
-          serverHashes.add(item.activity.contentHash!)
-          if (dirtyActivityHashes.delete(item.activity.contentHash!)) {
-            settledActivityUpdateHashes.add(item.activity.contentHash!)
-          }
-          step()
-        }
-      }
-    )
-
-    let oversizedUploadFailures = 0
-    const uploadFailures = await pooled(fullUploads, async (activity) => {
-      try {
-        await uploadActivity(activity)
-      } catch (err) {
-        if (err instanceof ApiRequestError && err.code === "too_large") {
-          oversizedUploadFailures++
-        }
-        throw err
-      }
-      // Only on success: a failed upload must be retried next run.
-      if (activity.contentHash) {
-        serverHashes.add(activity.contentHash)
-        if (dirtyActivityHashes.delete(activity.contentHash)) {
-          settledActivityUpdateHashes.add(activity.contentHash)
-        }
-      }
-      step()
-    })
-
-    const updatedSummaries = toMetadataDownload.map((server) => {
-      const local = localByHash.get(server.contentHash)!
-      return {
-        ...local,
-        name: server.name,
-        startedAtMs: server.startedAtMs,
-        activityType: server.activityType,
-        startSunPhase: server.startSunPhase,
-        contentHash: server.contentHash,
-        isPublic: server.isPublic,
-      }
-    })
-    if (updatedSummaries.length > 0) {
-      const saved = await updateActivityMetadataInStorage(
-        updatedSummaries.map((summary) => ({
-          id: summary.id,
-          name: summary.name,
-          isPublic: summary.isPublic,
-          activityType: summary.activityType,
-          startSunPhase: summary.startSunPhase,
-        }))
-      )
-      if (!saved) throw new Error("Activity metadata could not be saved")
-      applyActivityMetadata(updatedSummaries)
-      for (const _summary of updatedSummaries) step()
-    }
-
-    const downloaded: ParsedActivity[] = []
-    const downloadFailures = await pooled(toDownload, async (meta) => {
-      const activity = await downloadActivity(meta)
-      if (activity) {
-        downloaded.push(activity)
-      }
-      step()
-    })
-    // One ingest for the whole batch: a single worker post and a single
-    // unique-distance pass rather than one per activity.
-    if (downloaded.length > 0) await ingestActivities(downloaded)
-
-    if (
-      downloaded.length > 0 ||
-      updatedSummaries.length > 0 ||
-      deletedIds.length > 0
-    ) {
-      onChanged?.({
-        downloadedCount: downloaded.length,
-        updatedCount: updatedSummaries.length,
-        deletedIds,
-      })
-    }
-
-    if (downloadFailures > 0) {
-      // Hold the cursor where it was. Advancing past an activity we failed to
-      // fetch would skip it forever — the window never covers it again.
-      console.warn(`[sync] ${downloadFailures} download(s) failed; cursor held`)
-      await finish(
-        since,
-        serverHashes,
-        ignoredHashes,
-        applied,
-        dirtyActivityHashes,
-        metadataOutbox,
-        settledActivityUpdateHashes
-      )
-      setStatus({
-        phase: "error",
-        message: "Some activities couldn't be downloaded",
-        lastSyncAt,
-      })
-      return
-    }
-
-    await finish(
-      cursor,
-      serverHashes,
-      ignoredHashes,
-      applied,
-      dirtyActivityHashes,
-      metadataOutbox,
-      settledActivityUpdateHashes
-    )
-    if (metadataUploadFailures > 0 || uploadFailures > 0) {
-      setStatus({
-        phase: "error",
-        message:
-          oversizedUploadFailures > 0
-            ? "That activity is too large to upload."
-            : metadataUploadFailures > 0
-              ? "Some activity changes couldn't be synced"
-              : "Some activities couldn't be uploaded",
-        lastSyncAt: Date.now(),
-      })
-    }
+    return
   } catch (err) {
+    if (signal.aborted || isSyncCancellationError(err)) {
+      if (activeSyncRun === active) {
+        setStatus({
+          phase: "idle",
+          message: null,
+          cursorHeld: false,
+        })
+      }
+      console.debug("[sync] cancelled", reason)
+      return
+    }
     console.warn("[sync] failed:", err)
-    setStatus({ phase: "error", message: friendlyMessage(err), lastSyncAt })
+    recordDiagnostic({
+      subsystem: "sync",
+      operationId,
+      stage: "run",
+      durationMs: Date.now() - startedAt,
+      result: "failed",
+      errorCode: "sync-failed",
+      retryability: "retryable",
+    })
+    await publishOutboxStatus(
+      {
+        phase: "error",
+        message: friendlyMessage(err),
+        lastSyncAt,
+        cursorHeld: false,
+      },
+      repository
+    )
+  } finally {
+    if (activeSyncRun === active) activeSyncRun = null
   }
 }
 
+async function runActivitySync(
+  lastSyncAt: number | null,
+  operationId: string,
+  startedAt: number,
+  signal: AbortSignal,
+  repository: IndexedDbSyncRepository,
+  excludedLocalHashes: ReadonlySet<string>
+): Promise<void> {
+  if (!syncTransport) return
+  throwIfSyncAborted(signal)
+  setStatus({ phase: "syncing", done: 0, total: 0 })
+  const result = await createActivitySyncExecutor({
+    repository,
+    library: activityLibrary,
+    transport: syncTransport,
+    excludedLocalHashes: [...excludedLocalHashes],
+    signal,
+    onProgress: ({ done, total }) => {
+      setStatus({ phase: "syncing", done, total })
+      recordDiagnostic({
+        subsystem: "sync",
+        operationId,
+        stage: "page",
+        itemCount: total,
+        result: "progress",
+      })
+    },
+  }).run()
+  throwIfSyncAborted(signal)
+
+  // Metadata-only manifest echoes already reach every live projection through
+  // ActivityLibrary. Notify the route only for membership changes that it
+  // must reconcile locally; otherwise Home would revalidate its bootstrap
+  // loader for a change that cannot affect map geometry.
+  if (result.downloadedCount > 0 || result.deletedIds.length > 0) {
+    onChanged?.({
+      downloadedCount: result.downloadedCount,
+      updatedCount: result.updatedCount,
+      deletedIds: result.deletedIds,
+    })
+  }
+
+  if (result.failures.length > 0) {
+    const permanent = result.failures.find((failure) => !failure.retryable)
+    const message =
+      permanent?.message ??
+      (result.cursorHeld
+        ? "Some activities couldn't be received"
+        : "Some activities couldn't be uploaded")
+    const summary = await publishOutboxStatus(
+      {
+        phase: result.cursorHeld ? "partial" : "waiting",
+        message,
+        lastSyncAt:
+          result.state.lastSyncAt > 0 ? result.state.lastSyncAt : lastSyncAt,
+        cursorHeld: result.cursorHeld,
+      },
+      repository
+    )
+    if (permanent || summary?.permanentCount) {
+      setStatus({ phase: "permanent" })
+    }
+    recordDiagnostic({
+      subsystem: "sync",
+      operationId,
+      stage: "complete",
+      durationMs: Date.now() - startedAt,
+      itemCount:
+        result.downloadedCount + result.updatedCount + result.deletedIds.length,
+      result: permanent || summary?.permanentCount ? "failed" : "partial",
+      errorCode: permanent ? "permanent-sync-failure" : "sync-effects-pending",
+      retryability: permanent ? "permanent" : "retryable",
+    })
+    return
+  }
+
+  const summary = await publishOutboxStatus(
+    {
+      phase: "idle",
+      lastSyncAt: result.state.lastSyncAt,
+      cursorHeld: false,
+      message: null,
+    },
+    repository
+  )
+  if (summary?.permanentCount) {
+    setStatus({
+      phase: "permanent",
+      message: "Some local changes cannot be synced.",
+    })
+  }
+  recordDiagnostic({
+    subsystem: "sync",
+    operationId,
+    stage: "complete",
+    durationMs: Date.now() - startedAt,
+    itemCount:
+      result.downloadedCount + result.updatedCount + result.deletedIds.length,
+    result: summary?.permanentCount ? "failed" : "success",
+    ...(summary?.permanentCount
+      ? { errorCode: "permanent-sync-failure", retryability: "permanent" }
+      : {}),
+  })
+  console.debug("[sync] done")
+}
+
 /** Reconcile remote point changes/deletions, then upload local outbound edits. */
-async function syncSavedPoints(): Promise<void> {
-  const state = await loadSyncState()
-  const since = state?.savedPointsCursor ?? 0
+async function syncSavedPoints(
+  signal: AbortSignal | undefined,
+  accountId: string
+): Promise<void> {
+  throwIfSyncAborted(signal)
+  throwIfSavedPointAccountChanged(accountId)
+  const state = await loadSavedPointSyncState(accountId)
+  throwIfSyncAborted(signal)
+  throwIfSavedPointAccountChanged(accountId)
+  const foreignOwnedIds = await foreignSavedPointIds(accountId)
+  throwIfSyncAborted(signal)
+  throwIfSavedPointAccountChanged(accountId)
+  const since = state?.cursor ?? 0
   const isFromScratch = since === 0
-  const { serverPoints, deletions, cursor } =
-    await fetchSavedPointsManifest(since)
+  const { serverPoints, deletions, cursor } = await fetchSavedPointsManifest(
+    since,
+    signal
+  )
+  throwIfSyncAborted(signal)
   const localById = new Map(
     (await loadSavedPoints()).map((point) => [point.id, point])
   )
-  const serverIds = new Set(
-    isFromScratch ? [] : (state?.serverSavedPointIds ?? [])
-  )
+  throwIfSyncAborted(signal)
+  throwIfSavedPointAccountChanged(accountId)
+  const ownedIds = savedPointStateIds(state)
+  for (const point of localById.values()) {
+    if (!foreignOwnedIds.has(point.id)) ownedIds.add(point.id)
+  }
+  const serverIds = new Set(isFromScratch ? [] : (state?.serverPointIds ?? []))
   for (const point of serverPoints) serverIds.add(point.id)
   for (const tombstone of deletions) serverIds.delete(tombstone.id)
 
   const applied = new Map<string, number>(
-    Object.entries(state?.appliedSavedPointTombstones ?? {})
+    Object.entries(state?.appliedTombstones ?? {})
   )
   const freshTombstones = deletions.filter(
     (tombstone) => applied.get(tombstone.id) !== tombstone.deletedAt
   )
-  const dirtyIds = new Set(state?.outboundSavedPointIds ?? [])
-  const outboundDeletionIds = new Set(
-    state?.outboundSavedPointDeletionIds ?? []
-  )
+  const dirtyIds = new Set(state?.outboundIds ?? [])
+  const outboundDeletionIds = new Set(state?.outboundDeletionIds ?? [])
   const deletedIds: string[] = []
   if (!isFromScratch) {
     for (const tombstone of freshTombstones) {
+      throwIfSyncAborted(signal)
       if (localById.has(tombstone.id)) {
         await deleteSavedPointFromIdb(tombstone.id)
+        throwIfSyncAborted(signal)
         localById.delete(tombstone.id)
         deletedIds.push(tombstone.id)
       }
@@ -693,50 +721,93 @@ async function syncSavedPoints(): Promise<void> {
     (point) => !dirtyIds.has(point.id) && !outboundDeletionIds.has(point.id)
   )
   if (remoteUpdates.length > 0) {
+    throwIfSyncAborted(signal)
     await saveSavedPoints(remoteUpdates)
+    throwIfSyncAborted(signal)
+    throwIfSavedPointAccountChanged(accountId)
     for (const point of remoteUpdates) localById.set(point.id, point)
+    for (const point of remoteUpdates) ownedIds.add(point.id)
   }
 
   const deletedThisWindow = new Set(freshTombstones.map((tomb) => tomb.id))
   const deletionFailures = await pooled(
     [...outboundDeletionIds],
     async (id) => {
-      const deletedAt = await deleteSavedPointOnServer(id)
+      const deletedAt = await deleteSavedPointOnServer(id, signal, accountId)
+      throwIfSyncAborted(signal)
       serverIds.delete(id)
       dirtyIds.delete(id)
       outboundDeletionIds.delete(id)
       applied.set(id, deletedAt)
-    }
+    },
+    signal
   )
+  throwIfSyncAborted(signal)
   const toUpload = [...localById.values()].filter(
     (point) =>
+      !foreignOwnedIds.has(point.id) &&
       !outboundDeletionIds.has(point.id) &&
       (dirtyIds.has(point.id) || !serverIds.has(point.id)) &&
       (isFromScratch || !deletedThisWindow.has(point.id))
   )
-  const failures = await pooled(toUpload, async (point) => {
-    const saved = await uploadSavedPoint(point)
-    localById.set(saved.id, saved)
-    serverIds.add(saved.id)
-    dirtyIds.delete(saved.id)
-  })
+  for (const point of toUpload) ownedIds.add(point.id)
+  const uploadedIds = new Set<string>()
+  const failures = await pooled(
+    toUpload,
+    async (point) => {
+      const saved = await uploadSavedPoint(point, signal, accountId)
+      throwIfSyncAborted(signal)
+      throwIfSavedPointAccountChanged(accountId)
+      localById.set(saved.id, saved)
+      serverIds.add(saved.id)
+      dirtyIds.delete(saved.id)
+      uploadedIds.add(saved.id)
+    },
+    signal
+  )
+  throwIfSyncAborted(signal)
 
   const cutoff = cursor - TOMBSTONE_MEMORY_MS
   const appliedSavedPointTombstones: Record<string, number> = {}
   for (const [id, deletedAt] of applied) {
     if (deletedAt >= cutoff) appliedSavedPointTombstones[id] = deletedAt
   }
-  await saveSyncState({
-    cursor: state?.cursor ?? 0,
-    lastSyncAt: state?.lastSyncAt ?? 0,
-    serverHashes: state?.serverHashes ?? [],
-    ...state,
-    savedPointsCursor: cursor,
-    serverSavedPointIds: [...serverIds],
-    appliedSavedPointTombstones,
-    outboundSavedPointIds: [...dirtyIds],
-    outboundSavedPointDeletionIds: [...outboundDeletionIds],
+  await updateSavedPointSyncState(accountId, (latest) => {
+    const current = latest ?? emptySavedPointSyncState()
+    const initialOutboundIds = new Set(state?.outboundIds ?? [])
+    const initialDeletionIds = new Set(state?.outboundDeletionIds ?? [])
+    const outboundIds = new Set(
+      (current.outboundIds ?? []).filter((id) => !initialOutboundIds.has(id))
+    )
+    const outboundDeletionIdsToSave = new Set(
+      (current.outboundDeletionIds ?? []).filter(
+        (id) => !initialDeletionIds.has(id)
+      )
+    )
+    for (const id of dirtyIds) outboundIds.add(id)
+    for (const id of outboundDeletionIds) outboundDeletionIdsToSave.add(id)
+    for (const id of uploadedIds) outboundIds.delete(id)
+
+    const mergedTombstones: Record<string, number> = {
+      ...current.appliedTombstones,
+    }
+    for (const [id, deletedAt] of Object.entries(appliedSavedPointTombstones)) {
+      if ((mergedTombstones[id] ?? 0) < deletedAt) {
+        mergedTombstones[id] = deletedAt
+      }
+    }
+    return {
+      cursor: Math.max(current.cursor, cursor),
+      lastSyncAt: Math.max(current.lastSyncAt, state?.lastSyncAt ?? 0),
+      serverPointIds: [...serverIds],
+      ownedIds: [...new Set([...current.ownedIds, ...ownedIds])],
+      appliedTombstones: mergedTombstones,
+      outboundIds: [...outboundIds],
+      outboundDeletionIds: [...outboundDeletionIdsToSave],
+    }
   })
+  throwIfSyncAborted(signal)
+  throwIfSavedPointAccountChanged(accountId)
   if (remoteUpdates.length > 0 || deletedIds.length > 0) {
     onChanged?.({
       downloadedCount: 0,
@@ -751,68 +822,7 @@ async function syncSavedPoints(): Promise<void> {
   }
 }
 
-/**
- * Tombstones older than this are dropped from the applied-set. Only the newest
- * are ever re-served (the cursor is an inclusive bound), so the memory needs to
- * cover the boundary, not all history — otherwise it grows without limit.
- */
 const TOMBSTONE_MEMORY_MS = 7 * 24 * 60 * 60 * 1000
-
-async function finish(
-  cursor: number,
-  serverHashes: Set<string>,
-  ignoredHashes: Set<string>,
-  applied: Map<string, number>,
-  dirtyActivityHashes: Set<string>,
-  metadataOutbox: Map<string, PendingActivityMetadataUpdate>,
-  settledActivityUpdateHashes: Set<string>
-): Promise<void> {
-  // Saved-point synchronisation maintains an independent cursor in the same
-  // preference record. Preserve it while activity sync advances its cursor.
-  const existing = await loadSyncState()
-  const lastSyncAt = Date.now()
-  const cutoff = cursor - TOMBSTONE_MEMORY_MS
-  const appliedTombstones: Record<string, number> = {}
-  for (const [hash, deletedAt] of applied) {
-    if (deletedAt >= cutoff) appliedTombstones[hash] = deletedAt
-  }
-  const outboundActivityMetadata = new Map(
-    Object.entries(existing?.outboundActivityMetadata ?? {})
-  )
-  if (!isRerunQueued) {
-    for (const hash of settledActivityUpdateHashes) {
-      outboundActivityMetadata.delete(hash)
-    }
-    for (const hash of dirtyActivityHashes) {
-      const patch = metadataOutbox.get(hash)
-      if (patch) outboundActivityMetadata.set(hash, patch)
-    }
-  } else {
-    // A settings action may have written a newer last-write-wins value while
-    // this run was in flight. Preserve that value; only restore snapshot
-    // entries that are not present in the current persisted outbox.
-    for (const [hash, patch] of metadataOutbox) {
-      if (!outboundActivityMetadata.has(hash)) {
-        outboundActivityMetadata.set(hash, patch)
-      }
-    }
-  }
-  await saveSyncState({
-    savedPointsCursor: existing?.savedPointsCursor,
-    serverSavedPointIds: existing?.serverSavedPointIds,
-    appliedSavedPointTombstones: existing?.appliedSavedPointTombstones,
-    outboundSavedPointIds: existing?.outboundSavedPointIds,
-    outboundSavedPointDeletionIds: existing?.outboundSavedPointDeletionIds,
-    outboundActivityMetadata: Object.fromEntries(outboundActivityMetadata),
-    cursor,
-    lastSyncAt,
-    serverHashes: [...serverHashes],
-    ignoredHashes: [...ignoredHashes],
-    appliedTombstones,
-  })
-  setStatus({ phase: "idle", lastSyncAt })
-  console.debug("[sync] done")
-}
 
 /**
  * Runs `fn` over `items` with a bounded number in flight.
@@ -823,18 +833,25 @@ async function finish(
  */
 async function pooled<T>(
   items: T[],
-  fn: (item: T) => Promise<void>
+  fn: (item: T) => Promise<void>,
+  signal?: AbortSignal
 ): Promise<number> {
+  throwIfSyncAborted(signal)
   let next = 0
   let failed = 0
   const workers = Array.from(
     { length: Math.min(SYNC_CONCURRENCY, items.length) },
     async () => {
       while (next < items.length) {
+        throwIfSyncAborted(signal)
         const item = items[next++]
         try {
           await fn(item)
         } catch (err) {
+          if (signal?.aborted || isSyncCancellationError(err)) {
+            throwIfSyncAborted(signal)
+            throw err
+          }
           failed++
           console.warn("[sync] item failed:", err)
         }
@@ -842,37 +859,14 @@ async function pooled<T>(
     }
   )
   await Promise.all(workers)
+  throwIfSyncAborted(signal)
   return failed
 }
 
-// ─── Manifest ─────────────────────────────────────────────────────────────────
-
-async function fetchManifest(since: number): Promise<{
-  serverActivities: ActivityMeta[]
-  deletions: ActivityTombstone[]
-  cursor: number
-}> {
-  const serverActivities: ActivityMeta[] = []
-  const deletions: ActivityTombstone[] = []
-  let cursor = since
-
-  // Follow `hasMore` to the end; the server pages by (updatedAt, contentHash).
-  for (;;) {
-    const res = await apiRaw(
-      "GET",
-      `/api/activities/manifest?since=${encodeURIComponent(String(cursor))}`
-    )
-    const page = (await res.json()) as ManifestPage
-    serverActivities.push(...page.activities)
-    deletions.push(...page.deletions)
-    cursor = page.cursor
-    if (!page.hasMore) break
-  }
-
-  return { serverActivities, deletions, cursor }
-}
-
-async function fetchSavedPointsManifest(since: number): Promise<{
+async function fetchSavedPointsManifest(
+  since: number,
+  signal?: AbortSignal
+): Promise<{
   serverPoints: SavedPoint[]
   deletions: SavedPointTombstone[]
   cursor: number
@@ -881,11 +875,14 @@ async function fetchSavedPointsManifest(since: number): Promise<{
   const deletions: SavedPointTombstone[] = []
   let cursor = since
   for (;;) {
+    throwIfSyncAborted(signal)
     const res = await apiRaw(
       "GET",
-      `/api/saved-points/manifest?since=${encodeURIComponent(String(cursor))}`
+      `/api/saved-points/manifest?since=${encodeURIComponent(String(cursor))}`,
+      { signal }
     )
     const page = (await res.json()) as SavedPointManifestPage
+    throwIfSyncAborted(signal)
     serverPoints.push(...page.savedPoints)
     deletions.push(...page.deletions)
     cursor = page.cursor
@@ -894,86 +891,13 @@ async function fetchSavedPointsManifest(since: number): Promise<{
   return { serverPoints, deletions, cursor }
 }
 
-// ─── Upload / download / delete ───────────────────────────────────────────────
-
-function chunk<T>(items: T[], size: number): T[][] {
-  const batches: T[][] = []
-  for (let index = 0; index < items.length; index += size) {
-    batches.push(items.slice(index, index + size))
-  }
-  return batches
-}
-
-export class ActivityUploadTooLargeError extends Error {
-  readonly contentHash: string
-  readonly activityName: string
-  readonly actualBytes: number
-  readonly maxBytes: number
-
-  constructor(activity: ParsedActivity, actualBytes: number) {
-    super(
-      `Activity “${activity.name}” is too large to upload (${actualBytes} bytes; limit ${MAX_ACTIVITY_BYTES}).`
-    )
-    this.name = "ActivityUploadTooLargeError"
-    this.contentHash = activity.contentHash ?? ""
-    this.activityName = activity.name
-    this.actualBytes = actualBytes
-    this.maxBytes = MAX_ACTIVITY_BYTES
-  }
-}
-
-async function uploadActivity(activity: ParsedActivity): Promise<void> {
-  const { id: _id, ...rest } = activity
-  const payload: ActivityUploadPayload = {
-    ...rest,
-    // Recomputed per-library on the receiving device; uploading it would ship
-    // a number that is only meaningful relative to this device's other activities.
-    stats: { ...activity.stats, uniqueDistanceKm: 0 },
-  }
-
-  const body = await gzip(JSON.stringify(payload))
-  if (body.size > MAX_ACTIVITY_BYTES) {
-    console.warn(
-      "[sync] activity too large to upload:",
-      activity.name,
-      body.size
-    )
-    throw new ActivityUploadTooLargeError(activity, body.size)
-  }
-
-  // Bounded retry rather than one shot: the only expected failure here is the
-  // upload rate limit, and dropping the activity for the whole run over it means
-  // waiting for a later sync trigger to try again. `acquireUploadSlot` should
-  // keep us under the limit in the first place — this is the fallback for when
-  // the client's view of the window and the server's disagree.
-  for (let attempt = 0; ; attempt++) {
-    await acquireUploadSlot()
-    try {
-      await apiSend("PUT", `/api/activities/${activity.contentHash}`, {
-        rawBody: body,
-        headers: {
-          "Content-Type": "application/json",
-          "Content-Encoding": "gzip",
-        },
-      })
-      return
-    } catch (err) {
-      // Another device won the race and stored the identical bytes first.
-      if (err instanceof ApiRequestError && err.status === 409) return
-      if (
-        err instanceof ApiRequestError &&
-        err.status === 429 &&
-        attempt < MAX_UPLOAD_RETRIES - 1
-      ) {
-        penalizeUploads(err.retryAfterMs ?? fallbackBackoffMs(attempt))
-        continue
-      }
-      throw err
-    }
-  }
-}
-
-async function uploadSavedPoint(point: SavedPoint): Promise<SavedPoint> {
+async function uploadSavedPoint(
+  point: SavedPoint,
+  signal?: AbortSignal,
+  accountId?: string
+): Promise<SavedPoint> {
+  throwIfSyncAborted(signal)
+  if (accountId) throwIfSavedPointAccountChanged(accountId)
   const input: SavedPointUpsertInput = {
     id: point.id,
     lng: point.lng,
@@ -985,15 +909,28 @@ async function uploadSavedPoint(point: SavedPoint): Promise<SavedPoint> {
   }
   const res = await apiRaw("PUT", `/api/saved-points/${point.id}`, {
     body: input,
+    signal,
   })
   const { savedPoint } = (await res.json()) as SavedPointUpsertResponse
+  throwIfSyncAborted(signal)
+  if (accountId) throwIfSavedPointAccountChanged(accountId)
   await saveSavedPoint(savedPoint)
+  throwIfSyncAborted(signal)
+  if (accountId) throwIfSavedPointAccountChanged(accountId)
   return savedPoint
 }
 
-async function deleteSavedPointOnServer(id: string): Promise<number> {
-  const res = await apiRaw("DELETE", `/api/saved-points/${id}`)
+async function deleteSavedPointOnServer(
+  id: string,
+  signal?: AbortSignal,
+  accountId?: string
+): Promise<number> {
+  throwIfSyncAborted(signal)
+  if (accountId) throwIfSavedPointAccountChanged(accountId)
+  const res = await apiRaw("DELETE", `/api/saved-points/${id}`, { signal })
   const { deletedAt } = (await res.json()) as SavedPointDeleteResponse
+  throwIfSyncAborted(signal)
+  if (accountId) throwIfSavedPointAccountChanged(accountId)
   return deletedAt
 }
 
@@ -1004,131 +941,99 @@ async function deleteSavedPointOnServer(id: string): Promise<number> {
 export async function pushSavedPointUpdate(
   point: SavedPoint
 ): Promise<SavedPoint> {
-  const state = (await loadSyncState()) ?? {
-    cursor: 0,
-    lastSyncAt: 0,
-    serverHashes: [],
-  }
-  const outbound = new Set(state.outboundSavedPointIds ?? [])
-  outbound.add(point.id)
-  const outboundDeletions = new Set(state.outboundSavedPointDeletionIds ?? [])
-  outboundDeletions.delete(point.id)
-  await saveSyncState({
-    ...state,
-    outboundSavedPointIds: [...outbound],
-    outboundSavedPointDeletionIds: [...outboundDeletions],
-  })
-  if (!canSync()) return point
-  try {
-    const saved = await uploadSavedPoint(point)
-    outbound.delete(point.id)
-    await saveSyncState({
-      ...state,
-      outboundSavedPointIds: [...outbound],
-      outboundSavedPointDeletionIds: [...outboundDeletions],
+  const auth = getAuthState()
+  const accountId = auth.status === "signedIn" ? auth.user.id : undefined
+  return withSavedPointSyncLock(async () => {
+    const queued = await updateSavedPointSyncState(accountId, (current) => {
+      const state = current ?? emptySavedPointSyncState()
+      const outbound = new Set(state.outboundIds)
+      outbound.add(point.id)
+      const outboundDeletions = new Set(state.outboundDeletionIds)
+      outboundDeletions.delete(point.id)
+      return {
+        ...state,
+        ownedIds: [...new Set([...state.ownedIds, point.id])],
+        outboundIds: [...outbound],
+        outboundDeletionIds: [...outboundDeletions],
+      }
     })
-    requestSync("saved-point-update")
-    return saved
-  } catch (err) {
-    console.warn("[sync] failed to propagate saved-point update:", err)
-    return point
-  }
+    if (!queued || !canSync() || !accountId) return point
+    try {
+      const saved = await uploadSavedPoint(point, undefined, accountId)
+      await updateSavedPointSyncState(accountId, (current) => {
+        const state = current ?? emptySavedPointSyncState()
+        const outbound = new Set(state.outboundIds)
+        outbound.delete(point.id)
+        return { ...state, outboundIds: [...outbound] }
+      })
+      requestSync("saved-point-update")
+      return saved
+    } catch (err) {
+      if (!isSyncCancellationError(err)) {
+        console.warn("[sync] failed to propagate saved-point update:", err)
+      }
+      return point
+    }
+  })
 }
 
 /** Queue a local deletion and try to propagate its tombstone immediately. */
 export async function pushSavedPointDeletion(id: string): Promise<void> {
-  const state = (await loadSyncState()) ?? {
-    cursor: 0,
-    lastSyncAt: 0,
-    serverHashes: [],
-  }
-  const outbound = new Set(state.outboundSavedPointIds ?? [])
-  const outboundDeletions = new Set(state.outboundSavedPointDeletionIds ?? [])
-  outbound.delete(id)
-  outboundDeletions.add(id)
-  await saveSyncState({
-    ...state,
-    outboundSavedPointIds: [...outbound],
-    outboundSavedPointDeletionIds: [...outboundDeletions],
-  })
-  if (!canSync()) return
-  try {
-    const deletedAt = await deleteSavedPointOnServer(id)
-    outboundDeletions.delete(id)
-    await saveSyncState({
-      ...state,
-      outboundSavedPointIds: [...outbound],
-      outboundSavedPointDeletionIds: [...outboundDeletions],
-      appliedSavedPointTombstones: {
-        ...(state.appliedSavedPointTombstones ?? {}),
-        [id]: deletedAt,
-      },
+  const auth = getAuthState()
+  const accountId = auth.status === "signedIn" ? auth.user.id : undefined
+  await withSavedPointSyncLock(async () => {
+    const queued = await updateSavedPointSyncState(accountId, (current) => {
+      const state = current ?? emptySavedPointSyncState()
+      const outbound = new Set(state.outboundIds)
+      const outboundDeletions = new Set(state.outboundDeletionIds)
+      outbound.delete(id)
+      outboundDeletions.add(id)
+      return {
+        ...state,
+        ownedIds: [...new Set([...state.ownedIds, id])],
+        outboundIds: [...outbound],
+        outboundDeletionIds: [...outboundDeletions],
+      }
     })
-    requestSync("saved-point-deletion")
-  } catch (err) {
-    console.warn("[sync] failed to propagate saved-point deletion:", err)
-  }
-}
-
-/** Persist last-write-wins metadata edits and let sync upload them later. */
-export async function queueActivityMetadataUpdates(
-  updates: readonly ActivityMetadataPatch[]
-): Promise<void> {
-  if (updates.length === 0) return
-
-  const state = (await loadSyncState()) ?? {
-    cursor: 0,
-    lastSyncAt: 0,
-    serverHashes: [],
-  }
-  const { outboundActivityUpdateHashes: _legacy, ...stateWithoutLegacy } =
-    state
-  const outbox = new Map(Object.entries(state.outboundActivityMetadata ?? {}))
-  for (const update of updates) {
-    const { contentHash, ...patch } = update
-    if (Object.keys(patch).length === 0) continue
-    outbox.set(contentHash, {
-      ...(outbox.get(contentHash) ?? {}),
-      ...patch,
-    })
-  }
-  await saveSyncState({
-    ...stateWithoutLegacy,
-    outboundActivityMetadata: Object.fromEntries(outbox),
+    if (!queued || !canSync() || !accountId) return
+    try {
+      const deletedAt = await deleteSavedPointOnServer(id, undefined, accountId)
+      await updateSavedPointSyncState(accountId, (current) => {
+        const state = current ?? emptySavedPointSyncState()
+        const outboundDeletions = new Set(state.outboundDeletionIds)
+        outboundDeletions.delete(id)
+        return {
+          ...state,
+          outboundDeletionIds: [...outboundDeletions],
+          appliedTombstones: {
+            ...state.appliedTombstones,
+            [id]: deletedAt,
+          },
+        }
+      })
+      requestSync("saved-point-deletion")
+    } catch (err) {
+      if (!isSyncCancellationError(err)) {
+        console.warn("[sync] failed to propagate saved-point deletion:", err)
+      }
+    }
   })
-  if (isRunning) isRerunQueued = true
-  requestSync("activity-settings")
 }
 
-async function downloadActivity(
-  meta: ActivityMeta,
-  localId?: string
-): Promise<ParsedActivity | null> {
-  const res = await apiRaw("GET", `/api/activities/${meta.contentHash}`)
-  const payload = (await res.json()) as ActivityUploadPayload
-  return {
-    ...payload,
-    // Ids are per-device; the content hash is the shared identity.
-    id: localId ?? createUuid(),
-    contentHash: meta.contentHash,
-    name: meta.name,
-    isPublic: meta.isPublic,
-    activityType: meta.activityType ?? payload.activityType,
-    startSunPhase: meta.startSunPhase ?? payload.startSunPhase,
-  }
-}
-
-async function removeLocalActivity(
-  activity: Pick<ActivitySummary, "id">
+/** Compatibility facade for callers that already committed a local update. */
+export async function pushActivityUpdate(
+  activity: ParsedActivity
 ): Promise<void> {
-  if (mapStore.activityHydration === "full") {
-    setFullActivities(mapStore.activities.filter((t) => t.id !== activity.id))
-  } else if (mapStore.activityHydration === "summaries") {
-    setActivitySummaries(
-      mapStore.activitySummaries.filter((summary) => summary.id !== activity.id)
-    )
-  }
-  await deleteActivityFromIdb(activity.id)
+  const repository = repositoryForCurrentAccount()
+  if (!isServerEnabled || !repository || !activity.contentHash) return
+  const item = createActivityUploadOutboxItem(
+    activity,
+    createUuid(),
+    activityLibrary.getSnapshot().revision
+  )
+  if (!item) return
+  await repository.enqueueOutbox(item)
+  requestSync("activity-update")
 }
 
 /**
@@ -1138,45 +1043,16 @@ async function removeLocalActivity(
 export async function pushActivityDeletion(
   activity: ParsedActivity
 ): Promise<void> {
-  if (!canSync() || !activity.contentHash) return
-  try {
-    const res = await apiRaw(
-      "DELETE",
-      `/api/activities/${activity.contentHash}`
-    )
-    const { deletedAt } = (await res.json()) as ActivityDeleteResponse
-    // Record our own tombstone as already applied. Without this the next sync
-    // reads it back out of the manifest as news and deletes the activity again —
-    // including a copy the user has deliberately re-imported since.
-    await recordAppliedTombstone(activity.contentHash, deletedAt)
-  } catch (err) {
-    console.warn("[sync] failed to propagate deletion:", err)
-  }
-}
-
-async function recordAppliedTombstone(
-  contentHash: string,
-  deletedAt: number
-): Promise<void> {
-  const state = (await loadSyncState()) ?? {
-    cursor: 0,
-    lastSyncAt: 0,
-    serverHashes: [],
-  }
-  const { outboundActivityUpdateHashes: _legacy, ...stateWithoutLegacy } =
-    state
-  await saveSyncState({
-    ...stateWithoutLegacy,
-    outboundActivityMetadata: Object.fromEntries(
-      Object.entries(state.outboundActivityMetadata ?? {}).filter(
-        ([hash]) => hash !== contentHash
-      )
-    ),
-    appliedTombstones: {
-      ...(state.appliedTombstones ?? {}),
-      [contentHash]: deletedAt,
-    },
-  })
+  const repository = repositoryForCurrentAccount()
+  if (!isServerEnabled || !repository || !activity.contentHash) return
+  const item = createActivityDeleteOutboxItem(
+    activity,
+    createUuid(),
+    activityLibrary.getSnapshot().revision
+  )
+  if (!item) return
+  await repository.enqueueOutbox(item)
+  requestSync("activity-deletion")
 }
 
 /**
@@ -1197,34 +1073,16 @@ export async function ignoreActivityLocally(
  * a sync still has to record the decision, or the very first sync would undo it.
  */
 async function addIgnoredHashes(hashes: string[]): Promise<void> {
-  if (hashes.length === 0) return
-  const state = (await loadSyncState()) ?? {
-    cursor: 0,
-    lastSyncAt: 0,
-    serverHashes: [],
-  }
-  const { outboundActivityUpdateHashes: _legacy, ...stateWithoutLegacy } =
-    state
+  const repository = repositoryForCurrentAccount()
+  if (hashes.length === 0 || !repository) return
+  const state = await loadActivitySyncState()
   const ignored = new Set(state.ignoredHashes ?? [])
-  const outboundActivityUpdates = new Map(
-    Object.entries(state.outboundActivityMetadata ?? {})
-  )
-  for (const hash of state.outboundActivityUpdateHashes ?? []) {
-    outboundActivityUpdates.delete(hash)
-  }
   const before = ignored.size
   for (const hash of hashes) ignored.add(hash)
-  for (const hash of hashes) outboundActivityUpdates.delete(hash)
-  if (
-    ignored.size === before &&
-    outboundActivityUpdates.size ===
-      Object.keys(state.outboundActivityMetadata ?? {}).length
-  )
-    return
-  await saveSyncState({
-    ...stateWithoutLegacy,
+  if (ignored.size === before) return
+  await repository.saveState({
+    ...state,
     ignoredHashes: [...ignored],
-    outboundActivityMetadata: Object.fromEntries(outboundActivityUpdates),
   })
 }
 

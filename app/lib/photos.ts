@@ -2,6 +2,10 @@ import exifr from "exifr"
 import type { ParsedActivity } from "~/types/activities"
 import type { PhotoEntry } from "~/types/photos"
 import { createUuid } from "~/lib/uuid"
+import {
+  pathTimestampsForActivity,
+  pathsForActivity,
+} from "~shared/activityContract"
 
 const MATCH_TOLERANCE_MS = 5 * 60 * 1000
 
@@ -45,15 +49,20 @@ export function matchPhotoToActivity(
   let bestCoord: [number, number] | null = null
 
   for (const activity of activities) {
-    const ts = activity.pointTimestamps
-    if (!ts) continue
-    for (let i = 0; i < ts.length; i++) {
-      const t = ts[i]
-      if (t == null || t < 0) continue
-      const dt = Math.abs(t - photoMs)
-      if (dt < bestDt && dt <= MATCH_TOLERANCE_MS) {
-        bestDt = dt
-        bestCoord = activity.coordinates[i]
+    const timestamps = pathTimestampsForActivity(activity)
+    if (!timestamps) continue
+    const paths = pathsForActivity(activity)
+    for (let pathIndex = 0; pathIndex < paths.length; pathIndex += 1) {
+      const path = paths[pathIndex]!
+      const ts = timestamps[pathIndex] ?? []
+      for (let i = 0; i < Math.min(ts.length, path.length); i += 1) {
+        const t = ts[i]
+        if (t == null || t < 0) continue
+        const dt = Math.abs(t - photoMs)
+        if (dt < bestDt && dt <= MATCH_TOLERANCE_MS) {
+          bestDt = dt
+          bestCoord = path[i]!
+        }
       }
     }
   }

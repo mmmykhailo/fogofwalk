@@ -35,7 +35,7 @@ import { AccountDrawerItem } from "~/components/account/AccountDrawerItem"
 import { AccountDialog } from "~/components/account/AccountDialog"
 import { SignInDialog } from "~/components/account/SignInDialog"
 import { TransitionLink } from "~/components/TransitionLink"
-import { FogProgressText } from "~/components/FogProgress"
+import { FogProgressText } from "~/components/FogProgressText"
 import { useAuth } from "~/lib/server/authStore"
 import type { clientLoader as accessRequestLoader } from "~/routes/account.access-request"
 import type { FogMode, MapMode } from "~/types/activities"
@@ -173,11 +173,7 @@ export function MapDrawer({
                 </ItemMedia>
                 <ItemContent>
                   <ItemTitle>
-                    {isProcessing ? (
-                      <FogProgressText activityCount={activityCount} />
-                    ) : (
-                      "Add files"
-                    )}
+                    {isProcessing ? <FogProgressText /> : "Add files"}
                   </ItemTitle>
                 </ItemContent>
               </Item>
@@ -498,7 +494,7 @@ export function MapDrawer({
                 className="py-1 text-center text-xs text-muted-foreground"
               >
                 {isProcessing ? (
-                  <FogProgressText activityCount={activityCount} />
+                  <FogProgressText />
                 ) : (
                   [
                     activityCount > 0 &&

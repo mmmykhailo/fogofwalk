@@ -1,4 +1,4 @@
-import type { MouseEventHandler, ReactNode, TouchEventHandler } from "react"
+import type { PointerEventHandler, ReactNode } from "react"
 import { cn } from "~/lib/utils"
 import { useDraggable } from "~/lib/useDraggable"
 
@@ -14,8 +14,10 @@ interface DraggableDialogProps {
 }
 
 interface DraggableDialogHandleProps {
-  onMouseDown: MouseEventHandler
-  onTouchStart: TouchEventHandler
+  onPointerDownCapture: PointerEventHandler<HTMLDivElement>
+  onPointerMoveCapture: PointerEventHandler<HTMLDivElement>
+  onPointerUpCapture: PointerEventHandler<HTMLDivElement>
+  onPointerCancelCapture: PointerEventHandler<HTMLDivElement>
 }
 
 /** A fixed-position desktop dialog with an opt-in draggable handle. */
@@ -26,7 +28,14 @@ export function DraggableDialog({
   y = 0,
   padding = 12,
 }: DraggableDialogProps) {
-  const { style, ref, onMouseDown, onTouchStart } = useDraggable({
+  const {
+    style,
+    ref,
+    onPointerDownCapture,
+    onPointerMoveCapture,
+    onPointerUpCapture,
+    onPointerCancelCapture,
+  } = useDraggable({
     x,
     y,
     padding,
@@ -34,7 +43,12 @@ export function DraggableDialog({
 
   return (
     <div ref={ref} className={cn("absolute", className)} style={style}>
-      {children({ onMouseDown, onTouchStart })}
+      {children({
+        onPointerDownCapture,
+        onPointerMoveCapture,
+        onPointerUpCapture,
+        onPointerCancelCapture,
+      })}
     </div>
   )
 }

@@ -29,7 +29,9 @@ import {
 } from "~/components/ui/drawer"
 import { useIsMobile } from "~/lib/useIsMobile"
 import { DraggableDialog } from "~/components/DraggableDialog"
+import { PerformanceCommitMarker } from "~/components/PerformanceCommitMarker"
 import { computeCompositeStats } from "~/lib/shareCard"
+import { activityToSummary } from "~/lib/storage"
 import { DeleteActivityDialog } from "./DeleteActivityDialog"
 import { MultiActivityStats } from "./MultiActivityStats"
 import { SingleActivityStats } from "./SingleActivityStats"
@@ -44,9 +46,7 @@ interface DraggableActivityDialogProps {
   /** The selected lap, already validated by the parent. Null = whole activity. */
   activeLap?: ActivityLap | null
   onLapSelect?: (lapNumber: number | null) => void
-  /** Called when the user changes the single activity's public/private setting. */
-  onVisibilityChange?: (isPublic: boolean) => void
-  isVisibilityLoading?: boolean
+  canEditVisibility?: boolean
 }
 
 const EMPTY_STATS: ActivityStats = {
@@ -76,8 +76,7 @@ export function DraggableActivityDialog({
   onDelete,
   activeLap = null,
   onLapSelect,
-  onVisibilityChange,
-  isVisibilityLoading,
+  canEditVisibility = false,
 }: DraggableActivityDialogProps) {
   const isMulti = activities.length > 1
   const activity = activities[0]
@@ -166,9 +165,8 @@ export function DraggableActivityDialog({
         laps={activity?.laps}
         activeLap={activeLap}
         onLapSelect={onLapSelect}
-        isPublic={activity?.isPublic}
-        onVisibilityChange={onVisibilityChange}
-        isVisibilityLoading={isVisibilityLoading}
+        activitySummary={activity ? activityToSummary(activity) : undefined}
+        canEditVisibility={canEditVisibility}
       />
     )
 
@@ -219,13 +217,16 @@ export function DraggableActivityDialog({
 
   return (
     <DraggableDialog className="z-10 w-80">
-      {({ onMouseDown, onTouchStart }) => (
+      {(dragHandleProps) => (
         <>
+          <PerformanceCommitMarker
+            counter="mapDialogCommits"
+            mark="map:dialog:commit"
+          />
           <Card className="bg-background/80 backdrop-blur-md">
             <CardHeader
-              onMouseDown={onMouseDown}
-              onTouchStart={onTouchStart}
-              className="cursor-grab select-none active:cursor-grabbing"
+              {...dragHandleProps}
+              className="cursor-grab touch-none select-none active:cursor-grabbing"
             >
               <CardTitle className="truncate">{panelTitle}</CardTitle>
               <CardAction>{actionButtons}</CardAction>

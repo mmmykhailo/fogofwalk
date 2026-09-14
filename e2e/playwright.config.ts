@@ -46,12 +46,30 @@ export default defineConfig({
   projects: [
     {
       name: "synced",
-      testIgnore: /serverless\.spec\.ts/,
+      testIgnore:
+        /(?:serverless|fog-visual|fog-worker|paths|activities-performance|map-interaction-performance)\.spec\.ts/,
       use: { ...devices["Desktop Chrome"], baseURL: WEB_URL },
     },
     {
       name: "serverless",
       testMatch: /serverless\.spec\.ts/,
+      use: { ...devices["Desktop Chrome"], baseURL: WEB_URL_SERVERLESS },
+    },
+    {
+      name: "fog-visual",
+      testMatch: /fog-visual\.spec\.ts/,
+      // These tests synchronously read SwiftShader pixels on every render.
+      workers: 1,
+      use: { ...devices["Desktop Chrome"], baseURL: WEB_URL_SERVERLESS },
+    },
+    {
+      name: "fog-worker",
+      testMatch: /fog-worker\.spec\.ts/,
+      use: { ...devices["Desktop Chrome"], baseURL: WEB_URL_SERVERLESS },
+    },
+    {
+      name: "paths",
+      testMatch: /paths\.spec\.ts/,
       use: { ...devices["Desktop Chrome"], baseURL: WEB_URL_SERVERLESS },
     },
   ],

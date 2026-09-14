@@ -11,6 +11,7 @@ import {
 import { apiGet, friendlyMessage } from "~/lib/server/apiClient"
 import { signOut, useAuth } from "~/lib/server/authStore"
 import { requestSync } from "~/lib/server/syncEngine"
+import { downloadDiagnostics } from "~/lib/diagnostics"
 import { useServerHealth } from "~/lib/server/serverHealth"
 import { AccountAvatar } from "./AccountAvatar"
 import { AccessRequestBlock } from "./AccessRequestBlock"
@@ -58,6 +59,7 @@ export function AccountDialog({
   const [isSigningOut, setIsSigningOut] = useState(false)
   const [isExporting, setIsExporting] = useState(false)
   const [exportSuccess, setExportSuccess] = useState(false)
+  const [diagnosticsSuccess, setDiagnosticsSuccess] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   // Never reopen onto a half-finished destructive flow.
@@ -67,6 +69,7 @@ export function AccountDialog({
       setIsPurgeConfirmOpen(false)
       setPurgedCount(null)
       setExportSuccess(false)
+      setDiagnosticsSuccess(false)
       setError(null)
     }
   }, [open])
@@ -87,6 +90,16 @@ export function AccountDialog({
     } finally {
       setIsExporting(false)
     }
+  }
+
+  function handleDiagnosticsExport() {
+    setError(null)
+    if (!downloadDiagnostics()) {
+      setError("Diagnostics are only available in a browser.")
+      return
+    }
+    setDiagnosticsSuccess(true)
+    window.setTimeout(() => setDiagnosticsSuccess(false), 3000)
   }
 
   if (auth.status !== "signedIn") return null
@@ -200,6 +213,26 @@ export function AccountDialog({
                 {getExportButtonLabel(isExporting, exportSuccess)}
               </Button>
             </div>
+          </div>
+        )}
+
+        {!isDeleteConfirmOpen && (
+          <div className="flex items-center gap-3 p-3 ring-1 ring-foreground/10">
+            <div className="min-w-0 flex-1">
+              <p className="text-xs font-medium">Local diagnostics</p>
+              <p className="text-xs text-muted-foreground">
+                Download a support report without routes, file names, or account
+                credentials
+              </p>
+            </div>
+            <Button
+              data-testid="download-diagnostics"
+              variant="outline"
+              size="sm"
+              onClick={handleDiagnosticsExport}
+            >
+              {diagnosticsSuccess ? "Downloaded!" : "Download diagnostics"}
+            </Button>
           </div>
         )}
 

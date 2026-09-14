@@ -24,12 +24,13 @@ const STEPS = [
     ),
   },
   {
-    title: "Add photos (optional)",
+    title: "Add photos and saved points (optional)",
     body: (
       <>
         upload photos taken during your activities. They appear as markers on
         the map at the location where you were when the photo was taken, matched
-        by timestamp.
+        by timestamp. You can also long-press or right-click the map to save a
+        named place.
       </>
     ),
   },
@@ -47,10 +48,10 @@ const STEPS = [
     title: "Your data stays on your device",
     body: (
       <>
-        activities, photos and the fog itself are stored in your browser. No
-        account is needed and nothing is uploaded by default. Optional cloud
-        sync exists for people who want their activities on more than one device
-        — see <em>Syncing across devices</em> below.
+        activities, photos, saved points and the fog itself are stored in your
+        browser. No account is needed and nothing is uploaded by default.
+        Optional sync exists for people who want activities and saved points on
+        more than one device — see <em>Syncing across devices</em> below.
       </>
     ),
   },

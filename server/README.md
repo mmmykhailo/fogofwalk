@@ -3,15 +3,14 @@
 Optional companion to the Fog of Walk SPA. Without it the app is exactly what
 it has always been: a fully client-side, server-less map. With it, and with
 `VITE_API_URL` set at build time, the same static bundle gains GitHub sign-in
-and background activity sync.
+and background activity and saved-point sync, public profiles, achievements,
+and account administration.
 
 It is a standalone **Bun** package — not a workspace of the client. `bun
 install` at the repository root never pulls these dependencies, and the GitHub
-Pages workflow is untouched. The only thing the two sides share is `../shared`.
-`shared/activities.ts` and `shared/api.ts` are type-only and vanish at compile time;
-`shared/constants.ts` is not — the client imports `HASH_COORD_PRECISION`,
-`MAX_ACTIVITY_BYTES` and `SYNC_CONCURRENCY` as runtime values, so those literals do
-reach the browser bundle. Keep it free of anything heavier than a constant.
+Pages workflow is untouched. The only thing the two sides share is `../shared`:
+wire types, activity identity/geometry helpers, saved-point validation, and
+runtime constants. Keep runtime shared modules browser-safe and lightweight.
 
 Runtime dependencies are `hono` and `zod` (both MIT). Everything else
 — HTTP, SQLite, gzip, hashing, tests, env loading — is the Bun runtime itself.
@@ -66,14 +65,30 @@ a missing or malformed one aborts startup with a message naming it.
 | POST   | `/api/auth/exchange`                          | —       | Handoff code → bearer token.                                                                                 |
 | POST   | `/api/auth/logout`                            | session | Revokes this session.                                                                                        |
 | GET    | `/api/me`                                     | session | User + capabilities.                                                                                         |
-| GET    | `/api/account/export`                         | session | Full JSON export of the requesting user's account data.                                                      |
-| DELETE | `/api/account`                                | session | Erases the account server-side.                                                                              |
+| GET    | `/api/access-request`                         | session | Current access request, if any.                                                                              |
+| POST   | `/api/access-request`                         | session | Creates an idempotent sync-access request for a pending account.                                             |
+| GET    | `/api/account/export`                         | session | Full JSON export, including activities and saved points.                                                     |
+| DELETE | `/api/account`                                | session | Erases the account, server activities, saved points, identities, and sessions.                               |
 | GET    | `/api/activities/manifest?since=<cursor>`     | allowed | Metadata + tombstones page.                                                                                  |
 | PATCH  | `/api/activities/metadata`                    | allowed | Atomic metadata-only batch update; max `SYNC_PAGE_SIZE` items.                                               |
 | PUT    | `/api/activities/:contentHash`                | allowed | Gzipped upload, idempotent.                                                                                  |
 | GET    | `/api/activities/:contentHash`                | allowed | The gzipped activity JSON.                                                                                   |
+| PATCH  | `/api/activities/:contentHash/visibility`     | allowed | Compatibility endpoint for one visibility update.                                                            |
 | DELETE | `/api/activities`                             | allowed | Purge every activity for this user. **No tombstones** — other devices keep their copies. Backs "Remove all". |
 | DELETE | `/api/activities/:contentHash`                | allowed | Delete + tombstone. Returns the tombstone's `deletedAt`.                                                     |
+| GET    | `/api/saved-points/manifest?since=<cursor>`   | allowed | Saved-point changes + tombstones page.                                                                       |
+| GET    | `/api/saved-points`                           | allowed | All saved points for this user.                                                                              |
+| PUT    | `/api/saved-points/:id`                       | allowed | Creates or replaces one saved point; at most 5,000 per user.                                                 |
+| DELETE | `/api/saved-points/:id`                       | allowed | Delete + tombstone.                                                                                          |
+| GET    | `/api/public/saved-points/:id`                | —       | One public saved point.                                                                                      |
+| GET    | `/api/public/users/:handle`                   | —       | Bounded public-profile overview.                                                                             |
+| GET    | `/api/public/users/:handle/activities?page=N` | —       | Public activities, 48 per page.                                                                              |
+| GET    | `/api/public/users/:handle/saved-points`      | —       | All public saved points for a profile.                                                                       |
+
+Administrative routes under `/api/admin` require a configured administrator.
+They expose the bootstrap data, access-request decisions, user status/deletion,
+Telegram settings and testing, and notification retries used by the `/admin`
+page.
 
 Non-2xx bodies are always `{ error, message? }` with `error` drawn from
 `ApiErrorCode` in `shared/api.ts`.
@@ -103,14 +118,15 @@ New access is requested in the account dialog and decided at `/admin`; only
 stored there as an encrypted write-only secret. Rotating `SESSION_SECRET`
 invalidates the saved bot token and requires entering it again.
 
-Anyone can complete OAuth; everyone lands as `status = 'pending'` and gets a
-`403 { error: "not_allowed" }` from every `/api/activities/*` route. `/api/me`
-still works, so the UI can greet them by name and explain the situation.
+Anyone can complete OAuth. A new non-administrator lands as
+`status = 'pending'` and gets a `403 { error: "not_allowed" }` from activity
+and saved-point sync routes. `/api/me`, access requests, account export, and
+account deletion still work. Identities listed in `ADMIN_LOGINS` are promoted
+to `allowed` when they sign in.
 
 Administrators approve, reject, block, or re-enable accounts in `/admin`.
 Blocking is persistent: an administrator must explicitly change a blocked
 account's status before it can sync again.
-demoted by removing it from the list.
 
 ## Registering the GitHub OAuth app
 
@@ -157,18 +173,19 @@ Routes, middleware and the client dialog need no change: `/start` and
 there is no method that can read an activity without naming its owner, so
 cross-user isolation is a property of the interface rather than of its callers.
 
-| Driver           | Metadata                                | Geometry                                 | Status          |
-| ---------------- | --------------------------------------- | ---------------------------------------- | --------------- |
-| `sqlite-fs`      | `bun:sqlite` at `DATA_DIR/fogofwalk.db` | `DATA_DIR/blobs/<userId>/<hash>.json.gz` | **default**     |
-| `memory`         | Maps                                    | Maps                                     | tests only      |
-| `sqlite-blob`    | same DB                                 | `BLOB` column                            | extension point |
-| `postgres-bytea` | Postgres via `Bun.sql`                  | `bytea`                                  | extension point |
-| `postgres-s3`    | Postgres via `Bun.sql`                  | `Bun.s3`                                 | extension point |
+| Driver           | Metadata                                | Geometry                                 | Status               |
+| ---------------- | --------------------------------------- | ---------------------------------------- | -------------------- |
+| `sqlite-fs`      | `bun:sqlite` at `DATA_DIR/fogofwalk.db` | `DATA_DIR/blobs/<userId>/<hash>.json.gz` | implemented, default |
+| `memory`         | Maps                                    | Maps                                     | implemented, tests   |
+| `sqlite-blob`    | same DB                                 | `BLOB` column                            | proposed extension   |
+| `postgres-bytea` | Postgres via `Bun.sql`                  | `bytea`                                  | proposed extension   |
+| `postgres-s3`    | Postgres via `Bun.sql`                  | `Bun.s3`                                 | proposed extension   |
 
 To add one: implement `ServerStore` in `src/store/<driver>.ts`, add a `case` to
 `src/store/index.ts` (the only module allowed to import a concrete driver), and
-document its variables here. All four production options are reachable with Bun
-built-ins, so none of them adds a dependency.
+document its variables here. Only `sqlite-fs` and `memory` are currently valid
+`STORE_DRIVER` values; the proposed options can be built with Bun APIs without
+adding a runtime dependency.
 
 > **Licensing:** this is commercial software. Several popular self-hosted sync
 > backends ship **AGPL** server components — do not adopt one as a driver.
@@ -200,14 +217,18 @@ and content hash.
   not churn every other device's manifest.
 - Deletes write a **tombstone** so other devices learn about them, and are
   idempotent — deleting an unknown hash still records one.
+- Saved points use an independent paged manifest, cursor, outbox, and tombstone
+  state. Server timestamps provide last-write-wins updates; a from-scratch sync
+  does not replay old tombstones against local data.
 - The manifest cursor is a timestamp used as an **inclusive** lower bound, and
   a page never splits a millisecond. The reasoning, including the two ways this
   goes wrong, is in the header comment of `src/store/manifestPaging.ts`.
 - `PATCH /api/activities/metadata` accepts at most `SYNC_PAGE_SIZE` strict,
-  non-empty updates and applies the whole batch atomically. It changes only
-  `isPublic` and `activityType`, so it never reads or rewrites geometry; unknown
-  hashes reject the entire batch. Manifest metadata is authoritative for these
-  mutable fields, while the gzipped blob remains the geometry payload.
+  non-empty updates and applies the whole batch atomically. It can change
+  `name`, `isPublic`, `activityType`, and `startSunPhase` without reading or
+  rewriting geometry; unknown hashes reject the entire batch. Manifest metadata
+  is authoritative for these mutable fields, while the gzipped blob remains the
+  geometry payload.
 - `MAX_ACTIVITY_BYTES` (8 MB, from `shared/constants.ts`) is enforced _while_
   reading the body, and decompression is capped too, so neither a huge upload
   nor a zip bomb gets buffered.
@@ -223,9 +244,10 @@ and content hash.
 ## Deployment
 
 Production runs on a Debian VPS as a plain systemd unit — Bun executing the
-TypeScript directly, Caddy in front for TLS. `.github/workflows/deploy-server.yml`
-does it on every push to `master` that touches `server/**` or `shared/**`, and on
-manual dispatch. Everything the VPS needs is in [`deploy/`](deploy/).
+TypeScript directly, Caddy in front for TLS. The release-only
+`.github/workflows/deploy-server.yml` runs on pushes to `master` that change
+`server/package.json`; ordinary `server/**` and `shared/**` commits do not deploy
+until the next version bump. Everything the VPS needs is in [`deploy/`](deploy/).
 
 The in-process export controls are only one layer. Keep `HOST=127.0.0.1` when
 Caddy is present, apply per-IP throttling and connection/request timeouts at
@@ -309,8 +331,9 @@ Caddy is the only way in.
    ssh-keygen -lf <(ssh-keyscan -t ed25519 "$VPS_HOST")      # locally, must match
    ```
 
-6. Run the workflow from the Actions tab (`workflow_dispatch`) rather than
-   waiting for a push, so a configuration mistake is isolated from a code change.
+6. Push a reviewed release commit containing the matching client and server
+   version bump. Changing `server/package.json` starts the first deployment;
+   the workflow has no manual-dispatch trigger.
 
 ### What a deploy does
 

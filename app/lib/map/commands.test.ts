@@ -1,11 +1,12 @@
 import { describe, expect, test } from "bun:test"
 import {
   applyActivitySelectionPaint,
+  applyFogDataToMap,
   clearRenderedActivityState,
   rehydrateMapPresentation,
   setLapHighlightData,
 } from "~/lib/map/commands"
-import { mapStore } from "~/lib/mapStore"
+import { mapStore, worldFogGeoJSON } from "~/lib/mapStore"
 
 describe("map rendering commands", () => {
   test("sets the default activity paint when nothing is selected", () => {
@@ -41,6 +42,55 @@ describe("map rendering commands", () => {
     expect(data).toEqual({ type: "FeatureCollection", features: [] })
   })
 
+  test("publishes a fog source revision only after sources are ready", () => {
+    const previousSourcesReady = mapStore.sourcesReady
+    const previousRevision = mapStore.renderSourceRevision
+    mapStore.sourcesReady = false
+    mapStore.renderSourceRevision = 8
+    const calls: unknown[] = []
+    const map = {
+      getSource: () => ({ setData: (data: unknown) => calls.push(data) }),
+    }
+
+    try {
+      expect(applyFogDataToMap(map as never, worldFogGeoJSON(), 3)).toBe(false)
+      expect(calls).toHaveLength(0)
+
+      mapStore.sourcesReady = true
+      expect(applyFogDataToMap(map as never, worldFogGeoJSON(), 3)).toBe(true)
+      expect(calls).toHaveLength(1)
+      expect(mapStore.renderSourceRevision).toBe(3)
+    } finally {
+      mapStore.sourcesReady = previousSourcesReady
+      mapStore.renderSourceRevision = previousRevision
+    }
+  })
+
+  test("updates the implementation behind a custom fog layer", () => {
+    const previousSourcesReady = mapStore.sourcesReady
+    const previousRevision = mapStore.renderSourceRevision
+    mapStore.sourcesReady = true
+    mapStore.renderSourceRevision = null
+    let data: unknown
+    const map = {
+      getLayer: () => ({
+        implementation: {
+          setData: (next: unknown) => (data = next),
+        },
+      }),
+      getSource: () => undefined,
+    }
+
+    try {
+      expect(applyFogDataToMap(map as never, worldFogGeoJSON(), 4)).toBe(true)
+      expect(data).toEqual(worldFogGeoJSON())
+      expect(mapStore.renderSourceRevision as unknown).toBe(4)
+    } finally {
+      mapStore.sourcesReady = previousSourcesReady
+      mapStore.renderSourceRevision = previousRevision
+    }
+  })
+
   test("rehydrates a relief style without requiring a fog layer", () => {
     const layoutCalls: unknown[][] = []
     const paintCalls: unknown[][] = []
@@ -63,7 +113,7 @@ describe("map rendering commands", () => {
     expect(layoutCalls.some(([id]) => id === "fog-layer")).toBe(false)
     expect(
       layoutCalls.filter(([, property]) => property === "visibility")
-    ).toHaveLength(6)
+    ).toHaveLength(5)
     expect(paintCalls).toHaveLength(3)
   })
 

@@ -2,7 +2,7 @@ import { useLoaderData } from "react-router"
 import { FootprintsIcon } from "@phosphor-icons/react"
 import { PageShell } from "~/components/PageShell"
 import type { Route } from "./+types/stats"
-import { hydrateFullActivities, mapStore } from "~/lib/mapStore"
+import { initializeActivityLibrary, mapStore } from "~/lib/mapStore"
 import {
   sortActivities,
   computeLifetimeTotals,
@@ -15,7 +15,6 @@ import {
   type Streaks,
   type PersonalRecords,
 } from "~/lib/statsAggregator"
-import { ensureUniqueDistancesCurrent } from "~/lib/uniqueDistanceRepair"
 import { StatCards } from "~/components/stats/StatCards"
 import { WeeklyChart } from "~/components/stats/WeeklyChart"
 import { StreaksCard } from "~/components/stats/StreaksCard"
@@ -37,11 +36,11 @@ export async function clientLoader(): Promise<StatsLoaderData> {
   // Prefer in-memory activities (always current — updated before the IDB write in
   // clientAction). Fall back to IDB only when navigating directly to /stats on
   // a fresh page load before the home clientLoader has run.
-  let activities = mapStore.activities
-  if (mapStore.activityHydration !== "full") {
-    activities = await hydrateFullActivities()
-  }
-  await ensureUniqueDistancesCurrent(activities)
+  await initializeActivityLibrary()
+  // The map-store projection is updated by the unique-distance coordinator
+  // after a durable revision-keyed save, so a later stats render can use the
+  // latest derived values without making the loader wait for the worker.
+  const activities = sortActivities(mapStore.activities)
   const now = Date.now()
   return {
     totals: computeLifetimeTotals(activities),

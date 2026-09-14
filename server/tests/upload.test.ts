@@ -13,11 +13,12 @@ import {
 } from "../src/activities/body"
 import {
   canonicalHashString,
+  contentHashMatches,
   computeContentHash,
   isContentHash,
 } from "../src/activities/contentHash"
 import { parseActivityUpload } from "../src/activities/payload"
-import { makeStats, makeActivity } from "./helpers"
+import { makeStats, makeActivity, setup, signIn, authHeaders } from "./helpers"
 
 describe("content hash", () => {
   test("uses the canonical form shared with the client", () => {
@@ -77,11 +78,113 @@ describe("content hash", () => {
       await computeContentHash(base)
     )
   })
+
+  test("uses a distinct path-aware identity for disconnected geometry", () => {
+    const separated = canonicalHashString({
+      format: "gpx",
+      startedAtMs: 42,
+      paths: [
+        [
+          [1, 2],
+          [3, 4],
+        ],
+        [
+          [5, 6],
+          [7, 8],
+        ],
+      ],
+    })
+    const flattened = canonicalHashString({
+      format: "gpx",
+      startedAtMs: 42,
+      paths: [
+        [
+          [1, 2],
+          [3, 4],
+          [5, 6],
+          [7, 8],
+        ],
+      ],
+    })
+    expect(separated).toContain("v2|gpx|42|2|2:")
+    expect(separated).not.toBe(flattened)
+  })
+
+  test("accepts a legacy single-path hash for a canonical single path", async () => {
+    const coordinates = [
+      [1, 2],
+      [3, 4],
+    ] as [number, number][]
+    const legacyHash = await computeContentHash({
+      format: "gpx",
+      startedAtMs: 42,
+      coordinates,
+    })
+    expect(
+      await contentHashMatches(
+        { format: "gpx", startedAtMs: 42, paths: [coordinates] },
+        legacyHash
+      )
+    ).toBe(true)
+  })
+
+  test("accepts a canonical multi-path upload and records all points", async () => {
+    const { app, store } = setup()
+    const { token, user } = await signIn(store)
+    const legacy = makeActivity()
+    const { coordinates, pointTimestamps, ...metadata } = legacy
+    const payload = {
+      ...metadata,
+      paths: [coordinates.slice(0, 2), coordinates.slice(1)],
+      pathTimestamps: [pointTimestamps!.slice(0, 2), pointTimestamps!.slice(1)],
+    }
+    const hash = await computeContentHash({
+      format: payload.format,
+      startedAtMs: payload.startedAtMs,
+      paths: payload.paths,
+    })
+    const response = await app.request(`/api/activities/${hash}`, {
+      method: "PUT",
+      headers: {
+        ...authHeaders(token),
+        "Content-Type": "application/json",
+        "Content-Encoding": "gzip",
+      },
+      body: Bun.gzipSync(new TextEncoder().encode(JSON.stringify(payload))),
+    })
+
+    expect(response.status).toBe(200)
+    const responseBody = (await response.json()) as { pointCount: number }
+    expect(responseBody.pointCount).toBe(4)
+    expect((await store.listManifest(user.id, 0)).activities).toHaveLength(1)
+  })
 })
 
 describe("payload validation", () => {
   test("accepts a well-formed activity", () => {
     expect(parseActivityUpload(makeActivity()).ok).toBe(true)
+  })
+
+  test("accepts path-aware payloads and rejects path timestamp drift", () => {
+    const { coordinates, pointTimestamps, ...metadata } = makeActivity()
+    const payload = {
+      ...metadata,
+      paths: [coordinates.slice(0, 2), coordinates.slice(1)],
+      pathTimestamps: [pointTimestamps!.slice(0, 2), pointTimestamps!.slice(1)],
+    }
+    expect(parseActivityUpload(payload).ok).toBe(true)
+    expect(
+      parseActivityUpload({
+        ...payload,
+        pathTimestamps: [
+          pointTimestamps!.slice(0, 1),
+          pointTimestamps!.slice(1),
+        ],
+      })
+    ).toMatchObject({
+      ok: false,
+      message: expect.stringContaining("aligned"),
+    })
   })
 
   test("rejects nonsense", () => {

@@ -34,11 +34,14 @@ export function makeActivity(
     [13.401, 52.501],
     [13.402, 52.502],
   ]
+  const points = overrides.coordinates ?? coordinates
   return {
     name: "Morning run",
     startedAtMs: 1_700_000_000_000,
-    coordinates,
-    pointTimestamps: [1_700_000_000_000, 1_700_000_001_000, 1_700_000_002_000],
+    coordinates: points,
+    pointTimestamps: points.map(
+      (_, index) => 1_700_000_000_000 + index * 1_000
+    ),
     format: "gpx",
     stats: makeStats(),
     ...overrides,

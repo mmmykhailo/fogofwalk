@@ -3,7 +3,8 @@ import { ElevationChart } from "~/components/ElevationChart"
 import { formatPace } from "~/lib/statsFormatters"
 import { LapSelector } from "./LapSelector"
 import { StatRow } from "./StatRow"
-import { VisibilitySelect } from "./VisibilitySelect"
+import { ActivityVisibilityControl } from "~/components/activities/ActivityVisibilityControl"
+import type { ActivitySummary } from "~/types/activitySummary"
 import {
   formatDistance,
   formatDuration,
@@ -17,9 +18,8 @@ interface SingleActivityStatsProps {
   laps?: ActivityLap[]
   activeLap: ActivityLap | null
   onLapSelect?: (lapNumber: number | null) => void
-  isPublic?: boolean
-  onVisibilityChange?: (isPublic: boolean) => void
-  isVisibilityLoading?: boolean
+  activitySummary?: ActivitySummary
+  canEditVisibility?: boolean
 }
 
 export function SingleActivityStats({
@@ -27,9 +27,8 @@ export function SingleActivityStats({
   laps,
   activeLap,
   onLapSelect,
-  isPublic,
-  onVisibilityChange,
-  isVisibilityLoading,
+  activitySummary,
+  canEditVisibility = false,
 }: SingleActivityStatsProps) {
   // Read from the displayed stats, not from the activity — with a lap selected the
   // activity's unique km over the lap's distance would print over 100%. Laps
@@ -45,11 +44,10 @@ export function SingleActivityStats({
           onLapSelect={onLapSelect}
         />
       )}
-      {onVisibilityChange && (
-        <VisibilitySelect
-          isPublic={isPublic ?? false}
-          onChange={onVisibilityChange}
-          disabled={isVisibilityLoading}
+      {activitySummary && canEditVisibility && (
+        <ActivityVisibilityControl
+          activity={activitySummary}
+          canEdit={canEditVisibility}
         />
       )}
       <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">

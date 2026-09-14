@@ -3,6 +3,7 @@ import { expect, test } from "@playwright/test"
 import {
   makePerformanceActivities,
   corruptPerformanceSummary,
+  diffPerformanceCounters,
   readPerformanceCounters,
   readPerformanceMetrics,
   readActivityStorage,
@@ -33,6 +34,25 @@ function expectRequiredTimings(
     expect(value).not.toBeNull()
     expect(Number.isFinite(value)).toBe(true)
   }
+}
+
+function expectNoActivityStorageWork(
+  delta: ReturnType<typeof diffPerformanceCounters>
+): void {
+  expect(delta.homeLoaderStarts).toBe(0)
+  expect(delta.homeBootstrapStarts).toBe(0)
+  expect(delta.fullActivityLoads).toBe(0)
+  expect(delta.activitySummaryReads).toBe(0)
+  expect(delta.uniqueDistanceWorkerRequests).toBe(0)
+  expect(Object.values(delta.idbGetCalls).every((count) => count === 0)).toBe(
+    true
+  )
+  expect(
+    Object.values(delta.idbGetAllCalls).every((count) => count === 0)
+  ).toBe(true)
+  expect(Object.values(delta.idbWriteCalls).every((count) => count === 0)).toBe(
+    true
+  )
 }
 
 test.describe("activities performance fixture", () => {
@@ -87,6 +107,55 @@ test.describe("activities performance fixture", () => {
     }
   }
 
+  test("commits an activity-type edit through the targeted metadata path", async ({
+    page,
+  }) => {
+    const activities = makePerformanceActivities(100, "metadata")
+    const target = activities.at(-1)!
+    await seedPerformanceDatabase(page, activities, true)
+    await page.goto("/activities?sort=date")
+
+    const typeSelect = page.getByRole("combobox", {
+      name: `Activity type for ${target.name}`,
+    })
+    await expect(typeSelect).toBeVisible()
+    const before = await readPerformanceCounters(page)
+
+    await typeSelect.click()
+    await page.getByRole("option", { name: "Cycling", exact: true }).click()
+    await page.evaluate(
+      () =>
+        new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+    )
+    await expect(typeSelect).toContainText("Cycling")
+    await expect
+      .poll(
+        async () =>
+          ((await readPerformanceCounters(page)).idbWriteCalls[
+            "activity-summaries"
+          ] ?? 0) - (before.idbWriteCalls["activity-summaries"] ?? 0)
+      )
+      .toBe(1)
+
+    const delta = diffPerformanceCounters(
+      before,
+      await readPerformanceCounters(page)
+    )
+    expect(delta.homeLoaderStarts).toBe(0)
+    expect(delta.fullActivityLoads).toBe(0)
+    expect(delta.uniqueDistanceWorkerRequests).toBe(0)
+    expect(delta.fogWorkerRebuildRequests).toBe(0)
+    expect(delta.fogWorkerAppendRequests).toBe(0)
+    expect(delta.mapSourceSetDataCalls).toBe(0)
+    expect(delta.activityPaintUpdates).toBe(0)
+    expect(delta.idbGetAllCalls.activities ?? 0).toBe(0)
+    expect(delta.idbGetCalls.activities ?? 0).toBe(0)
+    expect(delta.idbWriteCalls.activities ?? 0).toBe(0)
+    expect(delta.idbGetCalls["activity-summaries"] ?? 0).toBe(1)
+    expect(delta.idbWriteCalls["activity-summaries"] ?? 0).toBe(1)
+    expect(delta.idbWriteCalls["library-meta"] ?? 0).toBe(1)
+  })
+
   test("repairs stale unique distances on stats, not activities", async ({
     page,
   }) => {
@@ -110,8 +179,12 @@ test.describe("activities performance fixture", () => {
     expect(statsCounters.fullActivityLoads).toBe(1)
     expect(statsCounters.uniqueDistanceWorkerRequests).toBe(1)
     expect(statsCounters.activitySummaryReads).toBeGreaterThanOrEqual(1)
-    const statsMetrics = await readPerformanceMetrics(page, "metadata", 100)
-    expect(statsMetrics.uniqueDistanceMs).not.toBeNull()
+    await expect
+      .poll(
+        async () =>
+          (await readPerformanceMetrics(page, "metadata", 100)).uniqueDistanceMs
+      )
+      .not.toBeNull()
   })
 
   test("keeps global sort order and selection across pages", async ({
@@ -243,7 +316,11 @@ test.describe("activities performance fixture", () => {
         .length,
     }))
     expect(after).toEqual(before)
-    expect(await readPerformanceCounters(page)).toEqual(beforeCounters)
+    const delta = diffPerformanceCounters(
+      beforeCounters,
+      await readPerformanceCounters(page)
+    )
+    expectNoActivityStorageWork(delta)
   })
 
   test("normalizes malformed and stale page values", async ({ page }) => {
@@ -399,7 +476,12 @@ test.describe("activities performance fixture", () => {
         .length,
     }))
     expect(after).toEqual(before)
-    expect(await readPerformanceCounters(page)).toEqual(beforeCounters)
+    expectNoActivityStorageWork(
+      diffPerformanceCounters(
+        beforeCounters,
+        await readPerformanceCounters(page)
+      )
+    )
   })
 
   test("upgrades a v3 database and derives summaries", async ({ page }) => {
@@ -411,7 +493,7 @@ test.describe("activities performance fixture", () => {
     await expect
       .poll(() => readActivityStorage(page))
       .toEqual({
-        version: 4,
+        version: 7,
         activityCount: 1,
         summaryCount: 1,
         activityIds: [activity.id],
@@ -431,7 +513,7 @@ test.describe("activities performance fixture", () => {
     await expect
       .poll(() => readActivityStorage(page))
       .toEqual({
-        version: 4,
+        version: 7,
         activityCount: 1,
         summaryCount: 1,
         activityIds: [activity.id],
@@ -439,7 +521,7 @@ test.describe("activities performance fixture", () => {
       })
   })
 
-  test("creates an empty v4 library without phantom summaries", async ({
+  test("creates an empty current library without phantom summaries", async ({
     page,
   }) => {
     await seedPerformanceDatabase(page, [], true)
@@ -450,7 +532,7 @@ test.describe("activities performance fixture", () => {
     await expect
       .poll(() => readActivityStorage(page))
       .toEqual({
-        version: 4,
+        version: 7,
         activityCount: 0,
         summaryCount: 0,
         activityIds: [],

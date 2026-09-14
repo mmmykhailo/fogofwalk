@@ -3,12 +3,22 @@ import maplibregl from "maplibre-gl"
 import type { ParsedActivity } from "~/types/activities"
 import { MAP_STYLE_URL, ACTIVITY_COLOR } from "~/constants/fog"
 import { CARD_WIDTH, CARD_HEIGHT } from "~/lib/shareCard"
+import { pathsForActivity } from "~shared/activityContract"
+
+declare global {
+  interface Window {
+    __fogofwalkE2eShareGeometry?: unknown
+  }
+}
+
+type ProjectedPath = { x: number; y: number }[]
+type ProjectedPathsPerActivity = ProjectedPath[]
 
 interface ShareMapViewProps {
   activities: ParsedActivity[]
   onReady: (
     baseMap: ImageBitmap,
-    activityPointsPerActivity: Array<{ x: number; y: number }[]>
+    activityPointsPerActivity: ProjectedPathsPerActivity[]
   ) => void
 }
 
@@ -20,8 +30,8 @@ interface ShareMapViewProps {
  * 1. After base tiles are idle (no activity layers): capture the base map bitmap.
  *    This bitmap is safe to blur without blurring the activities.
  * 2. Add one layer per activity, wait for the second idle, then project each
- *    activity's coordinates to canvas pixels. One pixel array per activity is
- *    returned so callers can draw them as separate paths.
+ *    activity paths to canvas pixels. One path array per disconnected path is
+ *    returned so callers never draw an invented bridge.
  *
  * The container is positioned off-screen so the map renders without being
  * visible to the user.
@@ -47,6 +57,9 @@ export function ShareMapView({ activities, onReady }: ShareMapViewProps) {
       canvasContextAttributes: { preserveDrawingBuffer: true },
       attributionControl: false,
     })
+    if (import.meta.env.VITE_E2E === "1") {
+      window.__fogofwalkE2eShareGeometry = undefined
+    }
 
     let captured = false
 
@@ -72,11 +85,13 @@ export function ShareMapView({ activities, onReady }: ShareMapViewProps) {
         minLat = Infinity,
         maxLat = -Infinity
       for (const t of activities) {
-        for (const [lng, lat] of t.coordinates) {
-          if (lng < minLng) minLng = lng
-          if (lng > maxLng) maxLng = lng
-          if (lat < minLat) minLat = lat
-          if (lat > maxLat) maxLat = lat
+        for (const path of pathsForActivity(t)) {
+          for (const [lng, lat] of path) {
+            if (lng < minLng) minLng = lng
+            if (lng > maxLng) maxLng = lng
+            if (lat < minLat) minLat = lat
+            if (lat > maxLat) maxLat = lat
+          }
         }
       }
 
@@ -104,14 +119,26 @@ export function ShareMapView({ activities, onReady }: ShareMapViewProps) {
 
         // Add one source + layer per activity
         activities.forEach((t, i) => {
+          const paths = pathsForActivity(t).filter((path) => path.length >= 2)
+          if (paths.length === 0) return
+          const geometry =
+            paths.length === 1
+              ? {
+                  type: "LineString" as const,
+                  coordinates: paths[0] as [number, number][],
+                }
+              : {
+                  type: "MultiLineString" as const,
+                  coordinates: paths as [number, number][][],
+                }
+          if (import.meta.env.VITE_E2E === "1" && i === 0) {
+            window.__fogofwalkE2eShareGeometry = geometry
+          }
           map.addSource(`share-activity-${i}`, {
             type: "geojson",
             data: {
               type: "Feature",
-              geometry: {
-                type: "LineString",
-                coordinates: t.coordinates as [number, number][],
-              },
+              geometry,
               properties: {},
             },
           })
@@ -135,19 +162,21 @@ export function ShareMapView({ activities, onReady }: ShareMapViewProps) {
           clearTimeout(fallbackTimer)
 
           const MAX_PTS = 2000
-          const activityPointsPerActivity = activities.map((t) => {
-            const { coordinates } = t
-            const step =
-              coordinates.length > MAX_PTS
-                ? Math.ceil(coordinates.length / MAX_PTS)
-                : 1
-            return coordinates
-              .filter((_, i) => i % step === 0)
-              .map(([lng, lat]) => {
-                const pt = map.project([lng, lat] as [number, number])
-                return { x: pt.x, y: pt.y }
+          const activityPointsPerActivity: ProjectedPathsPerActivity[] =
+            activities.map((t) =>
+              pathsForActivity(t).map((coordinates) => {
+                const step =
+                  coordinates.length > MAX_PTS
+                    ? Math.ceil(coordinates.length / MAX_PTS)
+                    : 1
+                return coordinates
+                  .filter((_, i) => i % step === 0)
+                  .map(([lng, lat]) => {
+                    const pt = map.project([lng, lat] as [number, number])
+                    return { x: pt.x, y: pt.y }
+                  })
               })
-          })
+            )
 
           onReadyRef.current(baseMapBitmap, activityPointsPerActivity)
         })

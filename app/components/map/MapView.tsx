@@ -3,6 +3,7 @@ import type { MapMode, ActivityCoords } from "~/types/activities"
 import type { PhotoEntry, PhotoGroup } from "~/types/photos"
 import type { SavedPoint } from "~shared/saved-points"
 import { MapCompass } from "~/components/map/MapCompass"
+import { PerformanceCommitMarker } from "~/components/PerformanceCommitMarker"
 import { useFogWorkerBridge } from "~/components/map/useFogWorkerBridge"
 import { useMapLifecycle } from "~/components/map/useMapLifecycle"
 import { useMapPresentation } from "~/components/map/useMapPresentation"
@@ -18,9 +19,11 @@ interface MapViewProps {
   showFog: boolean
   selectedActivityIds: string[]
   onActivitySelect: (id: string | null) => void
+  onMapBackgroundClick: () => void
   mapMode: MapMode
   photos: PhotoEntry[]
   showPhotos: boolean
+  ensurePhotoObjectUrl: (photo: PhotoEntry) => string
   onPhotoSelect: (group: PhotoGroup | null) => void
   showMyLocation: boolean
   /** Current geolocation as [lng, lat], or null while unavailable. */
@@ -48,9 +51,11 @@ export function MapView({
   showFog,
   selectedActivityIds,
   onActivitySelect,
+  onMapBackgroundClick,
   mapMode,
   photos,
   showPhotos,
+  ensurePhotoObjectUrl,
   onPhotoSelect,
   showMyLocation,
   myLocation,
@@ -67,9 +72,10 @@ export function MapView({
   const { rebuildPhotoMarkers } = usePhotoMarkers(
     photos,
     showPhotos,
-    onPhotoSelect
+    onPhotoSelect,
+    ensurePhotoObjectUrl
   )
-  const { containerRef, bearing, zoomIn, zoomOut, resetOrientation } =
+  const { containerRef, map, zoomIn, zoomOut, resetOrientation } =
     useMapLifecycle({
       mapMode,
       showActivities,
@@ -80,6 +86,7 @@ export function MapView({
       showSavedPoints,
       onMapReady,
       onActivitySelect,
+      onMapBackgroundClick,
       onSavedPointSelect,
       onSavedPointCreate,
       onSavedPointTooltipChange: setSavedPointTooltip,
@@ -100,9 +107,13 @@ export function MapView({
 
   return (
     <>
+      <PerformanceCommitMarker
+        counter="mapRouteCommits"
+        mark="map:route:commit"
+      />
       <div ref={containerRef} className="absolute inset-0 h-screen" />
       <MapCompass
-        bearing={bearing}
+        map={map}
         onZoomIn={zoomIn}
         onZoomOut={zoomOut}
         onReset={resetOrientation}

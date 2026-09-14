@@ -204,3 +204,91 @@ export function computeActivityStats(
     elevationProfile,
   }
 }
+
+/**
+ * Compute activity statistics without inventing a segment between paths.
+ * Distances, moving time, elevation and profiles are combined per path; only
+ * the display duration spans the first and last timestamp in sequence.
+ */
+export function computeActivityStatsForPaths(
+  paths: RawPoint[][],
+  maxProfilePoints: number = MAX_PROFILE_POINTS
+): Omit<ActivityStats, "uniqueDistanceKm"> {
+  if (paths.length === 1)
+    return computeActivityStats(paths[0]!, maxProfilePoints)
+
+  const parts = paths.map((path) =>
+    computeActivityStats(path, maxProfilePoints)
+  )
+  const distanceKm = parts.reduce((total, part) => total + part.distanceKm, 0)
+  const movingTimeValues = parts
+    .map((part) => part.movingTimeMs)
+    .filter((value): value is number => value != null)
+  const profiles: ElevationPoint[] = []
+  let distanceOffset = 0
+  for (const part of parts) {
+    profiles.push(
+      ...part.elevationProfile.map((point) => ({
+        distanceKm: point.distanceKm + distanceOffset,
+        elevationM: point.elevationM,
+      }))
+    )
+    distanceOffset += part.distanceKm
+  }
+
+  const firstTimestampMs = paths
+    .flatMap((path) => path)
+    .find((point) => point.timestampMs != null)?.timestampMs
+  const flattened = paths.flatMap((path) => path)
+  const lastTimestampMs = [...flattened]
+    .reverse()
+    .find((point) => point.timestampMs != null)?.timestampMs
+  const durationMs =
+    firstTimestampMs != null && lastTimestampMs != null
+      ? lastTimestampMs - firstTimestampMs
+      : null
+  const movingTimeMs =
+    movingTimeValues.length > 0
+      ? movingTimeValues.reduce((total, value) => total + value, 0)
+      : null
+  const hasElevation = parts.some((part) => part.hasElevation)
+  const elevationProfile =
+    profiles.length <= maxProfilePoints
+      ? profiles
+      : profiles.filter(
+          (_, index) =>
+            index % Math.ceil(profiles.length / maxProfilePoints) === 0
+        )
+
+  return {
+    distanceKm,
+    elevationGainM: parts.reduce(
+      (total, part) => total + part.elevationGainM,
+      0
+    ),
+    elevationLossM: parts.reduce(
+      (total, part) => total + part.elevationLossM,
+      0
+    ),
+    hasElevation,
+    durationMs,
+    movingTimeMs,
+    avgPaceMinPerKm:
+      durationMs != null && durationMs > 0 && distanceKm > 0
+        ? durationMs / 60_000 / distanceKm
+        : null,
+    avgMovingPaceMinPerKm:
+      movingTimeMs != null && movingTimeMs > 0 && distanceKm > 0
+        ? movingTimeMs / 60_000 / distanceKm
+        : null,
+    avgSpeedKmh:
+      durationMs != null && durationMs > 0 && distanceKm > 0
+        ? distanceKm / (durationMs / 3_600_000)
+        : null,
+    avgMovingSpeedKmh:
+      movingTimeMs != null && movingTimeMs > 0 && distanceKm > 0
+        ? distanceKm / (movingTimeMs / 3_600_000)
+        : null,
+    elevationProfile,
+  }
+}

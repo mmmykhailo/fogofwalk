@@ -11,6 +11,45 @@ bun run build
 bun run test
 ```
 
+### Interaction performance verification
+
+The interaction benchmark runs against the production build and is the source
+of timing comparisons. It covers dense and compact activity libraries, fog and
+activity overlay combinations, map dialogs, desktop pointer gestures, and
+mobile touch pan/rotate:
+
+```bash
+cd e2e && bun run test:performance
+```
+
+The performance configuration covers six activity-library datasets (metadata
+and geometry fixtures at 100, 500, and 2,000 activities), sampled map
+interaction scenarios, and desktop dialog pointer-move coalescing, for 22
+benchmark tests in total. It is intentionally isolated from the functional
+suite, runs with one worker and non-parallel execution, and should not be split
+across workers merely to reduce wall-clock time. Deterministic work-count,
+DOM-bound, long-task, and pointer-coalescing assertions are the gates; raw
+Chromium/SwiftShader frame gaps are diagnostic because renderer performance
+varies between hosts.
+
+The default E2E command is the functional suite only:
+
+```bash
+cd e2e && bun run test
+```
+
+It lists 70 tests and excludes `activities-performance.spec.ts` and
+`map-interaction-performance.spec.ts`, which are owned by
+`bun run test:performance` (22 tests). Run both responsibilities in sequence
+with the explicit aggregate command:
+
+```bash
+cd e2e && bun run test:all
+```
+
+Regression runs retain their JSON metrics and Playwright traces in the E2E
+test-results directory rather than committing machine-specific baselines.
+
 Run `bun run typecheck` after every application change. The repository has Prettier drift, so format only the files you changed with `bunx prettier --write <paths>` rather than `bun run format`.
 
 The sync server and E2E suite are independent packages:
@@ -26,7 +65,8 @@ When creating a worktree, symlink the primary worktree's ignored `.env` and `ser
 
 ## UI conventions
 
-- Outside `components/ui/`, every presentational component has its own file. Route modules export only route concerns; extract rendered subcomponents.
+- Avoid nested ternary operators.
+- Outside `components/ui/`, every presentational component has its own file, with the file name matching the component name. Route modules export only route concerns; extract rendered subcomponents.
 - Use `Grid` from `app/components/Grid.tsx` for responsive page-section grids. Its `columns` prop declares breakpoint-specific counts; its spacing is always `gap-3`. Use raw CSS Grid only for component-internal layouts or specialised visualisations.
 - Name boolean React state `isFoo` / `setIsFoo`.
 - Build conditional class names with `cn` from `~/lib/utils`; do not import `clsx` directly.

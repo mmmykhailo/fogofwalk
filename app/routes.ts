@@ -7,6 +7,10 @@ import {
 
 export default [
   index("routes/landing.tsx"),
+  route(
+    "resources/public-saved-points/:savedPointId",
+    "routes/public-saved-point-resource.ts"
+  ),
   layout("routes/home.tsx", [
     route("map", "routes/map-index.tsx"),
     route("help", "routes/help.tsx"),

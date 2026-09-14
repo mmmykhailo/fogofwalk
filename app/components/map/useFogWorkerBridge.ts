@@ -1,22 +1,66 @@
 import { useCallback, useEffect, useRef } from "react"
 import type maplibregl from "maplibre-gl"
 import { activitiesFeatureCollection } from "~/lib/map/geojson"
+import { applyFogDataToMap } from "~/lib/map/commands"
 import { MAP_SOURCE_IDS } from "~/lib/map/layers"
-import { finishFogJob, mapStore, setFogProcessedCount } from "~/lib/mapStore"
+import {
+  fogCoordinator,
+  createFogWorker,
+  mapStore,
+  recordFogSnapshot,
+  replaceFogWorker,
+} from "~/lib/mapStore"
 import { saveFogCache } from "~/lib/storage"
-import type { WorkerOutboundMessage } from "~/types/activities"
+import { recordDiagnostic } from "~/lib/diagnostics"
+import {
+  FOG_ALGORITHM_VERSION,
+  FOG_PARTITION_SCHEME_VERSION,
+  FOG_PROTOCOL_VERSION,
+  type FogReply,
+  type FogSnapshot,
+} from "~/lib/fog/protocol"
+import { validateFogRenderData } from "~/lib/fog/engine/validate"
+import { createFogWorkerWatchdog } from "~/lib/fog/watchdog"
+import { incrementPerformanceCounter } from "~/lib/performance"
 
 type ProcessingComplete = () => void
 
-/** Bridges authoritative fog-worker state into the UI and live map sources. */
+function isCurrentSnapshot(snapshot: FogSnapshot): boolean {
+  return (
+    snapshot.generation === mapStore.runId &&
+    snapshot.coverageRevision === mapStore.coverageRevision &&
+    snapshot.mode === mapStore.fogMode &&
+    snapshot.algorithmVersion === FOG_ALGORITHM_VERSION &&
+    snapshot.partitionSchemeVersion === FOG_PARTITION_SCHEME_VERSION &&
+    validateFogRenderData(snapshot.geometry, { allowInteriorRings: true }).ok
+  )
+}
+
+function isCacheableSnapshot(snapshot: FogSnapshot): boolean {
+  const diagnostics = snapshot.diagnostics
+  const coverageReducedActivityCount =
+    diagnostics.coverageReducedActivityCount ??
+    diagnostics.repairedActivityCount ??
+    0
+  return (
+    snapshot.completeness === "complete" &&
+    !diagnostics.degraded &&
+    coverageReducedActivityCount === 0 &&
+    (diagnostics.rejectedActivityCount ?? 0) === 0 &&
+    (diagnostics.geometryFallbackCount ?? 0) === 0 &&
+    diagnostics.errors.length === 0
+  )
+}
+
+/** Bridges authoritative revisioned fog snapshots into the UI and map sources. */
 export function useFogWorkerBridge(onProcessingComplete?: ProcessingComplete): {
   invalidateActivitiesCache: () => void
 } {
   const onProcessingCompleteRef = useRef(onProcessingComplete)
   onProcessingCompleteRef.current = onProcessingComplete
 
-  // Avoid rebuilding and re-uploading the same activity GeoJSON on every
-  // 300 ms FOG_UPDATE. The id key also catches delete+add with equal counts.
+  // Avoid rebuilding and re-uploading the same activity GeoJSON on every fog
+  // update. The revision catches delete+add with equal activity counts.
   const cachedActivitiesGeoJSON = useRef<ReturnType<
     typeof activitiesFeatureCollection
   > | null>(null)
@@ -28,63 +72,113 @@ export function useFogWorkerBridge(onProcessingComplete?: ProcessingComplete): {
   }, [])
 
   useEffect(() => {
-    const worker = mapStore.worker
-    if (!worker) return
+    const initialWorker = mapStore.worker ?? createFogWorker()
+    let attachedWorker: Worker | null = initialWorker
+    let disposed = false
+    let replacing = false
 
-    const handleMessage = (event: MessageEvent<WorkerOutboundMessage>) => {
-      const message = event.data
-      const map = mapStore.map
+    function attachWorker(worker: Worker): void {
+      attachedWorker = worker
+      worker.onmessage = handleMessage
+      worker.onerror = (event) => handleError(event, worker)
+      worker.onmessageerror = () => handleMessageError(worker)
+      mapStore.isFogWorkerListenerReady = true
+    }
 
-      // Already-queued replies from an abandoned run must not mutate state.
-      if (message.runId !== mapStore.runId) return
-
-      if (message.type === "ERROR") {
-        mapStore.fogWorkerActivityIds.clear()
-        console.warn(
-          `[worker] fog failed for ${message.file}: ${message.message}`
-        )
+    function failWorker(reason: unknown, failedWorker: Worker): void {
+      if (
+        disposed ||
+        replacing ||
+        attachedWorker !== failedWorker ||
+        mapStore.worker !== failedWorker
+      ) {
         return
       }
+      replacing = true
+      const replacement = replaceFogWorker(failedWorker)
+      attachedWorker = replacement
+      if (replacement) attachWorker(replacement)
+      else mapStore.isFogWorkerListenerReady = false
+      replacing = false
+      fogCoordinator.handleWorkerFailure(reason)
+    }
 
-      if (message.type === "PROGRESS") {
-        setFogProcessedCount(message.processedCount)
-        return
-      }
-
-      if (message.type === "DONE") {
-        setFogProcessedCount(message.processedCount)
-        const isRunDone = finishFogJob()
-        if (isRunDone) onProcessingCompleteRef.current?.()
-
-        if (isRunDone && mapStore.activities.length > 0 && mapStore.fogData) {
-          saveFogCache({
-            activityIds: mapStore.activities
-              .map((activity) => activity.id)
-              .sort(),
-            fogMode: mapStore.fogMode,
-            fogData: mapStore.fogData,
-          })
+    const watchdog = createFogWorkerWatchdog({
+      onTimeout: (request) => {
+        const active = fogCoordinator.activeRequest
+        if (
+          !active ||
+          active.request.requestId !== request.requestId ||
+          active.request.generation !== request.generation
+        ) {
+          return
         }
+        recordDiagnostic({
+          subsystem: "worker",
+          operationId: request.requestId,
+          libraryRevision: active.request.libraryRevision,
+          stage: "timeout",
+          itemCount: active.request.activities.length,
+          result: "failed",
+          errorCode: "worker-timeout",
+          retryability: "retryable",
+        })
+        const worker = attachedWorker
+        if (worker) failWorker(new Error("Fog worker timed out."), worker)
+      },
+    })
+    const watchdogTimer = window.setInterval(() => {
+      const active = fogCoordinator.activeRequest
+      watchdog.observe(active ? active.request : null, false)
+      watchdog.check()
+    }, 1_000)
 
-        // The callback above reads this flag when deciding whether to fit bounds.
-        mapStore.isRestoreReprocess = false
-        return
+    const setSnapshotOnMap = (snapshot: FogSnapshot, terminal = false) => {
+      if (!isCurrentSnapshot(snapshot)) return false
+      const operationId = `fog-${snapshot.generation}-${snapshot.libraryRevision}`
+      recordDiagnostic({
+        subsystem: "render",
+        operationId,
+        libraryRevision: snapshot.libraryRevision,
+        stage: "snapshot",
+        itemCount: mapStore.activities.length,
+        pointCount: snapshot.diagnostics.outputPoints,
+        result: snapshot.completeness === "complete" ? "success" : "degraded",
+        geometry: {
+          inputPoints: snapshot.diagnostics.inputPoints,
+          outputPoints: snapshot.diagnostics.outputPoints,
+          featureCount: snapshot.diagnostics.featureCount,
+          vertexCount: snapshot.diagnostics.vertexCount,
+        },
+        warningCounts: snapshot.diagnostics.warningCounts,
+        errorCounts: snapshot.diagnostics.errorCounts,
+        infoCounts: snapshot.diagnostics.infoCounts,
+        coverageReducedCounts: snapshot.diagnostics.coverageReducedCounts,
+        normalizedActivityCount: snapshot.diagnostics.normalizedActivityCount,
+        coverageReducedActivityCount:
+          snapshot.diagnostics.coverageReducedActivityCount,
+        repairedActivityCount: snapshot.diagnostics.repairedActivityCount,
+        rejectedActivityCount: snapshot.diagnostics.rejectedActivityCount,
+        geometryFallbackCount: snapshot.diagnostics.geometryFallbackCount,
+      })
+      recordFogSnapshot(snapshot, terminal)
+      mapStore.fogSnapshot = {
+        generation: snapshot.generation,
+        libraryRevision: snapshot.libraryRevision,
+        coverageRevision: snapshot.coverageRevision,
+        mode: snapshot.mode,
+        algorithmVersion: snapshot.algorithmVersion,
+        partitionSchemeVersion: snapshot.partitionSchemeVersion,
       }
+      mapStore.fogData = snapshot.geometry
 
-      // FOG_UPDATE state remains authoritative while setStyle has no sources.
-      mapStore.fogData = message.fogData
-      setFogProcessedCount(message.processedCount)
+      const map = mapStore.map
+      if (!map || !mapStore.sourcesReady) return true
+      applyFogDataToMap(map, snapshot.geometry, snapshot.coverageRevision)
 
-      if (!map || !mapStore.sourcesReady) return
-
-      const fogSource = map.getSource(MAP_SOURCE_IDS.fog) as
-        | maplibregl.GeoJSONSource
-        | undefined
-      fogSource?.setData(message.fogData)
-
-      const activitiesKey = mapStore.activities
-        .map((activity) => activity.id)
-        .join("\0")
+      const activitiesKey =
+        `${mapStore.libraryRevision}:` +
+        mapStore.activities.map((activity) => activity.id).join("\0")
       if (
         activitiesKey !== cachedActivitiesKey.current ||
         !cachedActivitiesGeoJSON.current
@@ -96,16 +190,146 @@ export function useFogWorkerBridge(onProcessingComplete?: ProcessingComplete): {
         const activitiesSource = map.getSource(MAP_SOURCE_IDS.activities) as
           | maplibregl.GeoJSONSource
           | undefined
-        activitiesSource?.setData(cachedActivitiesGeoJSON.current)
+        if (activitiesSource) {
+          incrementPerformanceCounter("mapSourceSetDataCalls")
+          activitiesSource.setData(cachedActivitiesGeoJSON.current)
+        }
       }
+      return true
     }
 
-    mapStore.isFogWorkerListenerReady = true
-    worker.onmessage = handleMessage
+    const handleMessage = (event: MessageEvent<FogReply>) => {
+      const message = event.data
+      if (!message || message.protocolVersion !== FOG_PROTOCOL_VERSION) return
+
+      const result = fogCoordinator.handleReply(message)
+      if (!result.accepted) return
+      const activeRequest = fogCoordinator.activeRequest?.request
+      watchdog.observe(
+        activeRequest
+          ? {
+              requestId: activeRequest.requestId,
+              generation: activeRequest.generation,
+              ...(message.type === "PROGRESS" ? { stage: message.stage } : {}),
+            }
+          : null
+      )
+
+      // Replies from an abandoned generation cannot mutate the map, progress,
+      // cache, or completion state.
+      if (message.generation !== mapStore.runId) return
+
+      if (message.type === "ERROR") {
+        console.warn(
+          `[worker] fog ${message.fatal ? "failed" : "degraded"}: ${message.message}`
+        )
+        if (message.fatal) {
+          const worker = attachedWorker
+          if (worker) failWorker(new Error(message.message), worker)
+        }
+        return
+      }
+
+      if (message.type === "PROGRESS") {
+        return
+      }
+
+      if (message.type === "UPDATE") {
+        if (result.snapshot) setSnapshotOnMap(result.snapshot)
+        return
+      }
+
+      if (message.type === "CANCELLED") {
+        return
+      }
+
+      if (result.snapshot) setSnapshotOnMap(result.snapshot, true)
+      if (
+        !result.terminal ||
+        fogCoordinator.activeRequest !== null ||
+        fogCoordinator.queuedSnapshot !== null
+      ) {
+        return
+      }
+
+      const snapshot = result.snapshot
+      if (
+        snapshot &&
+        isCacheableSnapshot(snapshot) &&
+        mapStore.activities.length > 0 &&
+        mapStore.fogData &&
+        isCurrentSnapshot(snapshot)
+      ) {
+        const cacheOperationId = `fog-cache-${snapshot.generation}-${snapshot.libraryRevision}`
+        void saveFogCache({
+          activityIds: mapStore.activities
+            .map((activity) => activity.id)
+            .sort(),
+          coverageRevision: snapshot.coverageRevision,
+          fogMode: snapshot.mode,
+          algorithmVersion: snapshot.algorithmVersion,
+          partitionSchemeVersion: snapshot.partitionSchemeVersion,
+          completeness: "complete",
+          fogData: snapshot.geometry,
+        })
+          .then(() => {
+            recordDiagnostic({
+              subsystem: "storage",
+              operationId: cacheOperationId,
+              libraryRevision: snapshot.libraryRevision,
+              stage: "fog-cache-write",
+              itemCount: mapStore.activities.length,
+              pointCount: snapshot.diagnostics.outputPoints,
+              result: "success",
+              geometry: {
+                featureCount: snapshot.diagnostics.featureCount,
+                vertexCount: snapshot.diagnostics.vertexCount,
+              },
+            })
+          })
+          .catch(() => {
+            recordDiagnostic({
+              subsystem: "storage",
+              operationId: cacheOperationId,
+              libraryRevision: snapshot.libraryRevision,
+              stage: "fog-cache-write",
+              itemCount: mapStore.activities.length,
+              pointCount: snapshot.diagnostics.outputPoints,
+              result: "failed",
+              errorCode: "fog-cache-write-failed",
+              retryability: "retryable",
+            })
+          })
+      }
+
+      onProcessingCompleteRef.current?.()
+    }
+
+    function handleError(event: ErrorEvent, worker: Worker) {
+      console.warn("[worker] fog worker failed", event.error ?? event.message)
+      failWorker(event.error ?? event.message, worker)
+    }
+    function handleMessageError(worker: Worker) {
+      failWorker(new Error("Fog worker message could not be decoded."), worker)
+    }
+
+    attachWorker(initialWorker)
 
     return () => {
+      disposed = true
+      window.clearInterval(watchdogTimer)
+      watchdog.observe(null)
       mapStore.isFogWorkerListenerReady = false
-      if (worker.onmessage === handleMessage) worker.onmessage = null
+      const worker = attachedWorker
+      if (worker) {
+        worker.onmessage = null
+        worker.onerror = null
+        worker.onmessageerror = null
+        if (mapStore.worker === worker) {
+          worker.terminate()
+          mapStore.worker = null
+        }
+      }
     }
   }, [])
 

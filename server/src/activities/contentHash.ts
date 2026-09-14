@@ -10,23 +10,26 @@
  * The canonical form must stay byte-identical to `app/lib/activityHash.ts`.
  */
 
-import { HASH_COORD_PRECISION } from "~shared/constants"
-import type { ActivityCoords, ActivityFormat } from "~shared/activities"
+import type {
+  ActivityCoords,
+  ActivityFormat,
+  ActivityPaths,
+} from "~shared/activities"
+import {
+  canonicalActivityIdentityString,
+  isContentHash,
+  type ActivityIdentityInput,
+} from "~shared/activityIdentity"
 
 export interface HashInput {
   format: ActivityFormat
   startedAtMs: number | null
-  coordinates: ActivityCoords
+  coordinates?: ActivityCoords
+  paths?: ActivityPaths
 }
 
 export function canonicalHashString(activity: HashInput): string {
-  const points = activity.coordinates
-    .map(
-      ([lng, lat]) =>
-        `${lng.toFixed(HASH_COORD_PRECISION)},${lat.toFixed(HASH_COORD_PRECISION)}`
-    )
-    .join(";")
-  return `${activity.format}|${activity.startedAtMs ?? ""}|${activity.coordinates.length}|${points}`
+  return canonicalActivityIdentityString(activity)
 }
 
 export async function computeContentHash(activity: HashInput): Promise<string> {
@@ -39,8 +42,36 @@ export async function computeContentHash(activity: HashInput): Promise<string> {
     .join("")
 }
 
-export const CONTENT_HASH_RE = /^[a-f0-9]{64}$/
-
-export function isContentHash(value: string): boolean {
-  return CONTENT_HASH_RE.test(value)
+/** Both v1 and v2 hashes are accepted while legacy payloads are migrated. */
+export async function computeContentHashCandidates(
+  activity: HashInput
+): Promise<string[]> {
+  const inputs: ActivityIdentityInput[] = [activity]
+  if (activity.paths?.length === 1) {
+    inputs.push({
+      format: activity.format,
+      startedAtMs: activity.startedAtMs,
+      coordinates: activity.paths[0],
+    })
+  }
+  return Promise.all(
+    inputs.map(async (input) => {
+      const digest = await crypto.subtle.digest(
+        "SHA-256",
+        new TextEncoder().encode(canonicalActivityIdentityString(input))
+      )
+      return Array.from(new Uint8Array(digest))
+        .map((byte) => byte.toString(16).padStart(2, "0"))
+        .join("")
+    })
+  )
 }
+
+export async function contentHashMatches(
+  activity: HashInput,
+  expected: string
+): Promise<boolean> {
+  return (await computeContentHashCandidates(activity)).includes(expected)
+}
+
+export { isContentHash }
