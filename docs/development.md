@@ -23,13 +23,32 @@ cd e2e && bun run test:performance
 ```
 
 The performance configuration covers six activity-library datasets (metadata
-and geometry fixtures at 100, 500, and 2,000 activities), 22 sampled map
-interaction scenarios, and desktop dialog pointer-move coalescing.
-Deterministic work-count, DOM-bound, and long-task assertions are the gates;
-raw frame gaps are diagnostic because the Chromium renderer and SwiftShader
-performance vary between hosts. Regression runs retain their JSON metrics and
-Playwright traces in the E2E test-results directory rather than committing
-machine-specific baselines.
+and geometry fixtures at 100, 500, and 2,000 activities), sampled map
+interaction scenarios, and desktop dialog pointer-move coalescing, for 22
+benchmark tests in total. It is intentionally isolated from the functional
+suite, runs with one worker and non-parallel execution, and should not be split
+across workers merely to reduce wall-clock time. Deterministic work-count,
+DOM-bound, long-task, and pointer-coalescing assertions are the gates; raw
+Chromium/SwiftShader frame gaps are diagnostic because renderer performance
+varies between hosts.
+
+The default E2E command is the functional suite only:
+
+```bash
+cd e2e && bun run test
+```
+
+It lists 70 tests and excludes `activities-performance.spec.ts` and
+`map-interaction-performance.spec.ts`, which are owned by
+`bun run test:performance` (22 tests). Run both responsibilities in sequence
+with the explicit aggregate command:
+
+```bash
+cd e2e && bun run test:all
+```
+
+Regression runs retain their JSON metrics and Playwright traces in the E2E
+test-results directory rather than committing machine-specific baselines.
 
 Run `bun run typecheck` after every application change. The repository has Prettier drift, so format only the files you changed with `bunx prettier --write <paths>` rather than `bun run format`.
 

@@ -9,7 +9,9 @@ same UI used in development.
 cd e2e
 bun install
 bunx playwright install chromium   # once
-bun run test                       # headless
+bun run test                       # 70 functional tests, headless
+bun run test:performance          # 22 production-build benchmarks
+bun run test:all                  # functional suite, then benchmarks
 bun run test:ui                    # Playwright UI mode (pick tests, watch, time-travel)
 bun run test:headed                # watch it happen
 ```
@@ -24,7 +26,7 @@ profiles, and sync:
 | Spec                                  | Covers                                                                                                              |
 | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
 | `activities-bulk-settings.spec.ts`    | selecting, confirming, persisting, and syncing bulk activity-type and visibility edits                              |
-| `activities-performance.spec.ts`      | summary-only loading, sorting, pagination, bounded DOM size, metadata writes, and summary-store recovery            |
+| `activities-performance.spec.ts`      | production benchmark: summary-only loading, sorting, pagination, bounded DOM size, metadata writes, and summary-store recovery |
 | `activity-metadata.spec.ts`           | optimistic activity metadata edits, rollback, cross-tab propagation, and avoiding unnecessary geometry work         |
 | `activity-progress.spec.ts`           | unified parser/save/fog progress, accessible bars, persistence, terminal states, and mode-toggle generations        |
 | `activity-sync.spec.ts`               | uploads, second-device downloads, content-hash dedupe, metadata sync, scheduling, and manifest paging               |
@@ -33,8 +35,8 @@ profiles, and sync:
 | `fog-visual.spec.ts`                  | positive-mask rendering without triangle seams and stable corridor edges during animated zoom                       |
 | `fog-worker.spec.ts`                  | real-worker revision identity, cache acceptance, partial rebuilds, append blocking, and watchdog recovery           |
 | `map-dialog-dismissal.spec.ts`        | dialog dismissal with fog on/off and protection from delayed public saved-point responses                           |
-| `map-interaction-performance.spec.ts` | bounded map work for large libraries, overlay combinations, desktop/mobile gestures, and pointer-move coalescing    |
-| `map-overlay-blur.spec.ts`            | draggable-dialog blur and compact-control map fallbacks                                                             |
+| `map-interaction-performance.spec.ts` | production benchmark: bounded map work for large libraries, overlay combinations, desktop/mobile gestures, and pointer-move coalescing |
+| `map-overlay-blur.spec.ts`            | draggable-dialog blur and persistent compact-control overlay blur during map movement                              |
 | `paths.spec.ts`                       | keeping disconnected activity paths separate in map and share rendering                                             |
 | `public-profile.spec.ts`              | bounded profile previews, paginated public activities, owner actions, and visibility changes                        |
 | `rate-limit.spec.ts`                  | bounded 429 retries and visible countdowns for server-directed and self-paced upload holds                          |
@@ -42,6 +44,15 @@ profiles, and sync:
 | `serverless.spec.ts`                  | no-API builds, offline imports, local metadata, fog restore/style changes, and keeping the map mounted across pages |
 | `suspension.spec.ts`                  | suspension and explicit/reload resume after clear-all or local-only deletion                                        |
 | `sync-cancellation.spec.ts`           | sign-out/account-switch cancellation and account isolation for activity effects and saved-point sync state          |
+
+The default `bun run test` command selects the 70 functional tests and excludes
+both `*-performance.spec.ts` files. The dedicated `bun run test:performance`
+command selects all 22 benchmark tests against the production build. Those
+benchmarks intentionally run serially with one worker so software-rendered map
+measurements and large-library metrics remain comparable; raw Chromium/SwiftShader
+frame gaps are diagnostic rather than pass/fail gates. Use `bun run test:all` for
+the complete local gate, which runs the functional suite before the isolated
+benchmarks.
 
 ## How the rig fits together
 
