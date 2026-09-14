@@ -264,10 +264,9 @@ export async function parseFitFileWithResults(
   )
   const detectorDurationMs = performance.now() - detectorStartedAt
   const sourcePaths = [{ sourcePathIndex: 0, points: rawPoints }]
-  const report =
-    anomaly.status === "clean"
-      ? undefined
-      : buildGpsAnomalyReport({
+  const rejectionReport =
+    anomaly.status === "ambiguous" || anomaly.status === "rejected"
+      ? buildGpsAnomalyReport({
           result: anomaly,
           format: "fit",
           activityType,
@@ -275,7 +274,8 @@ export async function parseFitFileWithResults(
           afterStats: null,
           detectorDurationMs,
         })
-  if (anomaly.status === "ambiguous" || anomaly.status === "rejected") {
+      : undefined
+  if (rejectionReport) {
     const rejection: ParsedImportRejection = {
       id: createUuid(),
       activityIndex: 0,
@@ -283,7 +283,7 @@ export async function parseFitFileWithResults(
         anomaly.status === "ambiguous"
           ? "ambiguous-gps-discontinuity"
           : "no-renderable-path",
-      ...(report ? { gpsAnomalyReport: report } : {}),
+      gpsAnomalyReport: rejectionReport,
     }
     return { activities: [], rejections: [rejection] }
   }
@@ -302,16 +302,17 @@ export async function parseFitFileWithResults(
   const startedAtMs = firstDatedPoint?.timestampMs ?? null
   const stats = computeActivityStatsForPaths(retainedPaths)
   const afterStats = { ...stats, uniqueDistanceKm: stats.distanceKm }
-  const completedReport = report
-    ? buildGpsAnomalyReport({
-        result: anomaly,
-        format: "fit",
-        activityType,
-        sourcePaths,
-        afterStats,
-        detectorDurationMs,
-      })
-    : undefined
+  const completedReport =
+    anomaly.status === "cleaned"
+      ? buildGpsAnomalyReport({
+          result: anomaly,
+          format: "fit",
+          activityType,
+          sourcePaths,
+          afterStats,
+          detectorDurationMs,
+        })
+      : undefined
   const laps = buildLapsFromFit(retainedPaths, data.laps ?? [])
   return {
     activities: [

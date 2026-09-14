@@ -14,13 +14,20 @@ import {
   TRUSTED_PREFIX_MIN_PLAUSIBLE_EDGES,
   maxPlausibleSpeed,
 } from "~/constants/activityAnomalies"
+import {
+  MOVING_TIME_MIN_SPEED_KMH,
+  MOVING_TIME_STOPPED_GAP_MS,
+} from "~/constants/fog"
 import type {
   AnomalySourcePath,
   GpsAnomalyExample,
   GpsAnomalyResult,
 } from "~/lib/activities/gpsAnomalies"
-import { computeActivityStatsForPaths } from "~/lib/stats"
-import type { GpsAnomalyReport } from "~/lib/parsers/types"
+import { haversineKm } from "~/lib/stats"
+import type {
+  GpsAnomalyReport,
+  GpsAnomalyStatsSummary,
+} from "~/lib/parsers/types"
 
 export interface GpsAnomalyReportInput {
   result: GpsAnomalyResult
@@ -31,33 +38,106 @@ export interface GpsAnomalyReportInput {
   detectorDurationMs: number
 }
 
-function usableStatsPaths(
+function isUsablePoint(point: RawPoint): boolean {
+  return (
+    Number.isFinite(point.lng) &&
+    Number.isFinite(point.lat) &&
+    point.lng >= -180 &&
+    point.lng <= 180 &&
+    point.lat >= -90 &&
+    point.lat <= 90
+  )
+}
+
+/**
+ * Compute only the scalar values needed for the pre-clean console report.
+ * Unlike persisted activity statistics, this deliberately does not build an
+ * elevation profile or run elevation smoothing.
+ */
+export function computeGpsAnomalyStatsSummary(
   sourcePaths: readonly AnomalySourcePath[]
-): RawPoint[][] {
-  const paths: RawPoint[][] = []
+): GpsAnomalyStatsSummary {
+  let distanceKm = 0
+  let movingTimeMs = 0
+  let hasTimestamps = false
+  let hasRenderablePath = false
+  let firstTimestampMs: number | null = null
+  let lastTimestampMs: number | null = null
+
   for (const source of sourcePaths) {
-    let current: RawPoint[] = []
-    const flush = () => {
-      if (current.length >= 2) paths.push(current)
-      current = []
+    let previous: RawPoint | undefined
+    let pointCount = 0
+    let pathDistanceKm = 0
+    let pathMovingTimeMs = 0
+    let pathHasTimestamps = false
+    let pathFirstTimestampMs: number | null = null
+    let pathLastTimestampMs: number | null = null
+
+    const finishPath = () => {
+      if (pointCount >= 2) {
+        distanceKm += pathDistanceKm
+        if (pathHasTimestamps) {
+          hasTimestamps = true
+          movingTimeMs += pathMovingTimeMs
+        }
+        if (!hasRenderablePath) {
+          firstTimestampMs = pathFirstTimestampMs
+          hasRenderablePath = true
+        }
+        lastTimestampMs = pathLastTimestampMs
+      }
+      previous = undefined
+      pointCount = 0
+      pathDistanceKm = 0
+      pathMovingTimeMs = 0
+      pathHasTimestamps = false
+      pathFirstTimestampMs = null
+      pathLastTimestampMs = null
     }
+
     for (const point of source.points) {
-      if (
-        !Number.isFinite(point.lng) ||
-        !Number.isFinite(point.lat) ||
-        point.lng < -180 ||
-        point.lng > 180 ||
-        point.lat < -90 ||
-        point.lat > 90
-      ) {
-        flush()
+      if (!isUsablePoint(point)) {
+        finishPath()
         continue
       }
-      current.push(point)
+
+      if (pointCount === 0) {
+        pathFirstTimestampMs =
+          point.timestampMs != null ? point.timestampMs : null
+      } else if (previous) {
+        const segmentDistanceKm = haversineKm(
+          previous.lng,
+          previous.lat,
+          point.lng,
+          point.lat
+        )
+        pathDistanceKm += segmentDistanceKm
+        if (previous.timestampMs != null && point.timestampMs != null) {
+          pathHasTimestamps = true
+          const deltaMs = point.timestampMs - previous.timestampMs
+          if (deltaMs > 0 && deltaMs <= MOVING_TIME_STOPPED_GAP_MS) {
+            const segmentSpeedKmh = segmentDistanceKm / (deltaMs / 3_600_000)
+            if (segmentSpeedKmh >= MOVING_TIME_MIN_SPEED_KMH) {
+              pathMovingTimeMs += deltaMs
+            }
+          }
+        }
+      }
+      pathLastTimestampMs = point.timestampMs != null ? point.timestampMs : null
+      pointCount += 1
+      previous = point
     }
-    flush()
+    finishPath()
   }
-  return paths
+
+  return {
+    distanceKm,
+    durationMs:
+      hasRenderablePath && firstTimestampMs != null && lastTimestampMs != null
+        ? lastTimestampMs - firstTimestampMs
+        : null,
+    movingTimeMs: hasTimestamps ? movingTimeMs : null,
+  }
 }
 
 function timestampPointCount(
@@ -100,9 +180,6 @@ export function buildGpsAnomalyReport(
   input: GpsAnomalyReportInput
 ): GpsAnomalyReport {
   const { result } = input
-  const before = computeActivityStatsForPaths(
-    usableStatsPaths(input.sourcePaths)
-  )
   return {
     status: result.status,
     counts: result.counts,
@@ -114,23 +191,23 @@ export function buildGpsAnomalyReport(
     timestampPointCount: timestampPointCount(input.sourcePaths),
     nonPositiveTimestampCount: nonPositiveTimestampCount(input.sourcePaths),
     emittedPathCount: result.paths.length,
-    beforeStats: {
-      ...before,
-      uniqueDistanceKm: before.distanceKm,
-    },
+    beforeStats: computeGpsAnomalyStatsSummary(input.sourcePaths),
     afterStats: input.afterStats,
     detectorDurationMs: input.detectorDurationMs,
   }
 }
 
-function statsSummary(stats: ActivityStats | null) {
+function statsSummary(
+  stats: Pick<
+    ActivityStats,
+    "distanceKm" | "durationMs" | "movingTimeMs"
+  > | null
+) {
   if (!stats) return null
   return {
     distanceKm: stats.distanceKm,
     durationMs: stats.durationMs,
     movingTimeMs: stats.movingTimeMs,
-    elevationGainM: stats.elevationGainM,
-    elevationLossM: stats.elevationLossM,
   }
 }
 

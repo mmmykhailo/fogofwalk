@@ -66,10 +66,9 @@ function buildParsedActivity(
   const detectorStartedAt = performance.now()
   const anomaly = detectGpsAnomalies(sourcePaths, { activityType })
   const detectorDurationMs = performance.now() - detectorStartedAt
-  const report =
-    anomaly.status === "clean"
-      ? undefined
-      : buildGpsAnomalyReport({
+  const rejectionReport =
+    anomaly.status === "ambiguous" || anomaly.status === "rejected"
+      ? buildGpsAnomalyReport({
           result: anomaly,
           format: "gpx",
           activityType,
@@ -77,7 +76,8 @@ function buildParsedActivity(
           afterStats: null,
           detectorDurationMs,
         })
-  if (anomaly.status === "ambiguous" || anomaly.status === "rejected") {
+      : undefined
+  if (rejectionReport) {
     return {
       rejection: {
         id,
@@ -85,7 +85,7 @@ function buildParsedActivity(
           anomaly.status === "ambiguous"
             ? "ambiguous-gps-discontinuity"
             : "no-renderable-path",
-        ...(report ? { gpsAnomalyReport: report } : {}),
+        gpsAnomalyReport: rejectionReport,
       },
     }
   }
@@ -98,7 +98,7 @@ function buildParsedActivity(
       rejection: {
         id,
         reason: "no-renderable-path",
-        ...(report ? { gpsAnomalyReport: report } : {}),
+        ...(rejectionReport ? { gpsAnomalyReport: rejectionReport } : {}),
       },
     }
   }
@@ -117,16 +117,17 @@ function buildParsedActivity(
   const coordinates = canonicalPaths.flatMap((path) => path) as ActivityCoords
   const stats = computeActivityStatsForPaths(anomaly.paths)
   const afterStats = { ...stats, uniqueDistanceKm: stats.distanceKm }
-  const completedReport = report
-    ? buildGpsAnomalyReport({
-        result: anomaly,
-        format: "gpx",
-        activityType,
-        sourcePaths,
-        afterStats,
-        detectorDurationMs,
-      })
-    : undefined
+  const completedReport =
+    anomaly.status === "cleaned"
+      ? buildGpsAnomalyReport({
+          result: anomaly,
+          format: "gpx",
+          activityType,
+          sourcePaths,
+          afterStats,
+          detectorDurationMs,
+        })
+      : undefined
   const canonicalTimestamps = hasTimestamp
     ? (timestamps as ActivityPathTimestamps[])
     : undefined

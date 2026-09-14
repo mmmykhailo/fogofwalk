@@ -8,7 +8,11 @@ import {
   type AnomalySourcePath,
   type GpsAnomalyResult,
 } from "./gpsAnomalies"
-import { buildGpsAnomalyReport, logGpsAnomalyReport } from "./gpsAnomalyDebug"
+import {
+  buildGpsAnomalyReport,
+  computeGpsAnomalyStatsSummary,
+  logGpsAnomalyReport,
+} from "./gpsAnomalyDebug"
 
 interface ConsoleCapture {
   groups: unknown[][]
@@ -152,8 +156,53 @@ describe("GPS anomaly diagnostics", () => {
     expect(report.beforeStats.distanceKm).toBeGreaterThan(
       report.afterStats!.distanceKm
     )
+    expect(Object.keys(report.beforeStats).sort()).toEqual([
+      "distanceKm",
+      "durationMs",
+      "movingTimeMs",
+    ])
+    const statistics = capture.debug.find(
+      ([label]) => label === "statistics"
+    )?.[1] as
+      | {
+          before?: unknown
+          after?: unknown
+        }
+      | undefined
+    expect(statistics?.before).toEqual({
+      distanceKm: report.beforeStats.distanceKm,
+      durationMs: report.beforeStats.durationMs,
+      movingTimeMs: report.beforeStats.movingTimeMs,
+    })
+    expect(statistics?.after).toEqual({
+      distanceKm: report.afterStats!.distanceKm,
+      durationMs: report.afterStats!.durationMs,
+      movingTimeMs: report.afterStats!.movingTimeMs,
+    })
     expect(report.work.boundedLookaheadCount).toBeGreaterThan(0)
     expect(maxPlausibleSpeed("cycling")).toBe(50)
+  })
+
+  test("matches persisted scalar statistics without allocating a profile", () => {
+    const sourcePaths = [
+      source(
+        [0, 0.0001, 10, 0.0002, 0.0003].map((lng, index) =>
+          point(index, lng, index * 1_000)
+        )
+      ),
+    ]
+    const summary = computeGpsAnomalyStatsSummary(sourcePaths)
+    const fullStats = computeActivityStatsForPaths(
+      sourcePaths.map(({ points }) => points)
+    )
+
+    expect(summary).toEqual({
+      distanceKm: fullStats.distanceKm,
+      durationMs: fullStats.durationMs,
+      movingTimeMs: fullStats.movingTimeMs,
+    })
+    expect(summary).not.toHaveProperty("elevationProfile")
+    expect(summary).not.toHaveProperty("elevationGainM")
   })
 
   test("reports ambiguous and rejected statuses with one outer group", () => {
@@ -174,16 +223,23 @@ describe("GPS anomaly diagnostics", () => {
       })(),
     ] as const) {
       const capture = captureConsole()
+      const report = reportFor(result, sourcePaths)
       logGpsAnomalyReport({
         fileName: `${status}.gpx`,
         activityIndex: 0,
-        report: reportFor(result, sourcePaths),
+        report,
       })
       expect(capture.groups[0]?.[0]).toBe(
         `[gps-anomaly] ${status}.gpx / activity 1: ${status}`
       )
       expect(capture.groupEnds).toBe(capture.groups.length)
       expect(capture.debug.map(([label]) => label)).toContain("performance")
+      expect(report.afterStats).toBeNull()
+      expect(Object.keys(report.beforeStats).sort()).toEqual([
+        "distanceKm",
+        "durationMs",
+        "movingTimeMs",
+      ])
     }
   })
 

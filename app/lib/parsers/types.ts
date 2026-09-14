@@ -17,9 +17,16 @@ export interface GpsAnomalyReport extends Omit<GpsAnomalyResult, "paths"> {
   timestampPointCount: number
   nonPositiveTimestampCount: number
   emittedPathCount: number
-  beforeStats: ActivityStats
+  beforeStats: GpsAnomalyStatsSummary
   afterStats: ActivityStats | null
   detectorDurationMs: number
+}
+
+/** Scalar pre-clean values used by the temporary anomaly console report. */
+export interface GpsAnomalyStatsSummary {
+  distanceKm: number
+  durationMs: number | null
+  movingTimeMs: number | null
 }
 
 export interface ParsedImportActivity extends ParsedActivity {

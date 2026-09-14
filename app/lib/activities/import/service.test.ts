@@ -123,7 +123,11 @@ const anomalyReport: GpsAnomalyReport = {
   timestampPointCount: 9,
   nonPositiveTimestampCount: 0,
   emittedPathCount: 2,
-  beforeStats: activity("before").stats,
+  beforeStats: {
+    distanceKm: activity("before").stats.distanceKm,
+    durationMs: activity("before").stats.durationMs,
+    movingTimeMs: activity("before").stats.movingTimeMs,
+  },
   afterStats: activity("after").stats,
   detectorDurationMs: 1,
 }

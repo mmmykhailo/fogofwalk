@@ -4,6 +4,8 @@ import {
   type AnomalyPoint,
   type AnomalySourcePath,
 } from "../app/lib/activities/gpsAnomalies"
+import { buildGpsAnomalyReport } from "../app/lib/activities/gpsAnomalyDebug"
+import { computeActivityStatsForPaths } from "../app/lib/stats"
 
 const TIERS = [1_000, 10_000, 100_000, 250_000]
 const WARMUP_RUNS = 2
@@ -22,6 +24,8 @@ interface BenchmarkSample {
   pointCount: number
   medianMs: number
   p95Ms: number
+  parseAndReportMedianMs: number
+  parseAndReportP95Ms: number
   status: ReturnType<typeof detectGpsAnomalies>["status"]
   inputPoints: number
   retainedPoints: number
@@ -29,6 +33,12 @@ interface BenchmarkSample {
   distanceCalculations: number
   pointsVisited: number
   boundedLookaheadCount: number
+}
+
+interface BenchmarkRun {
+  result: ReturnType<typeof detectGpsAnomalies>
+  detectorDurationMs: number
+  parseAndReportDurationMs: number
 }
 
 function point(
@@ -44,7 +54,10 @@ function point(
   }
 }
 
-function timestampedPath(pointCount: number, spikePeriod: number): AnomalyPoint[] {
+function timestampedPath(
+  pointCount: number,
+  spikePeriod: number
+): AnomalyPoint[] {
   const points: AnomalyPoint[] = []
   let longitude = 0
   for (let index = 0; index < pointCount; index += 1) {
@@ -133,29 +146,75 @@ function percentile(values: number[], percentileValue: number): number {
   return sorted[Math.max(0, index)]!
 }
 
+function parseAndReport(sourcePaths: AnomalySourcePath[]): BenchmarkRun {
+  const parseStartedAt = performance.now()
+  const detectorStartedAt = performance.now()
+  const result = detectGpsAnomalies(sourcePaths, { activityType: "cycling" })
+  const detectorDurationMs = performance.now() - detectorStartedAt
+
+  if (result.status === "ambiguous" || result.status === "rejected") {
+    buildGpsAnomalyReport({
+      result,
+      format: "gpx",
+      activityType: "cycling",
+      sourcePaths,
+      afterStats: null,
+      detectorDurationMs,
+    })
+  } else {
+    const stats = computeActivityStatsForPaths(result.paths)
+    const afterStats = { ...stats, uniqueDistanceKm: stats.distanceKm }
+    if (result.status === "cleaned") {
+      buildGpsAnomalyReport({
+        result,
+        format: "gpx",
+        activityType: "cycling",
+        sourcePaths,
+        afterStats,
+        detectorDurationMs,
+      })
+    }
+  }
+
+  return {
+    result,
+    detectorDurationMs,
+    parseAndReportDurationMs: performance.now() - parseStartedAt,
+  }
+}
+
 function measure(scenario: ScenarioName, pointCount: number): BenchmarkSample {
   const sourcePaths = makeSource(scenario, pointCount)
-  const timings: number[] = []
-  let result: ReturnType<typeof detectGpsAnomalies> | undefined
-  for (let run = 0; run < WARMUP_RUNS + MEASURED_RUNS; run += 1) {
-    const startedAt = performance.now()
-    result = detectGpsAnomalies(sourcePaths, { activityType: "cycling" })
-    const elapsed = performance.now() - startedAt
-    if (run >= WARMUP_RUNS) timings.push(elapsed)
+  const detectorTimings: number[] = []
+  const parseAndReportTimings: number[] = []
+  let lastRun: BenchmarkRun | undefined
+  for (
+    let iteration = 0;
+    iteration < WARMUP_RUNS + MEASURED_RUNS;
+    iteration += 1
+  ) {
+    const measured = parseAndReport(sourcePaths)
+    if (iteration >= WARMUP_RUNS) {
+      detectorTimings.push(measured.detectorDurationMs)
+      parseAndReportTimings.push(measured.parseAndReportDurationMs)
+    }
+    lastRun = measured
   }
-  if (!result) throw new Error("benchmark did not produce a result")
+  if (!lastRun) throw new Error("benchmark did not produce a result")
   return {
     scenario,
     pointCount,
-    medianMs: median(timings),
-    p95Ms: percentile(timings, 0.95),
-    status: result.status,
-    inputPoints: result.counts.inputPoints,
-    retainedPoints: result.counts.retainedPoints,
-    removedPoints: result.counts.removedPoints,
-    distanceCalculations: result.work.distanceCalculations,
-    pointsVisited: result.work.pointsVisited,
-    boundedLookaheadCount: result.work.boundedLookaheadCount,
+    medianMs: median(detectorTimings),
+    p95Ms: percentile(detectorTimings, 0.95),
+    parseAndReportMedianMs: median(parseAndReportTimings),
+    parseAndReportP95Ms: percentile(parseAndReportTimings, 0.95),
+    status: lastRun.result.status,
+    inputPoints: lastRun.result.counts.inputPoints,
+    retainedPoints: lastRun.result.counts.retainedPoints,
+    removedPoints: lastRun.result.counts.removedPoints,
+    distanceCalculations: lastRun.result.work.distanceCalculations,
+    pointsVisited: lastRun.result.work.pointsVisited,
+    boundedLookaheadCount: lastRun.result.work.boundedLookaheadCount,
   }
 }
 
