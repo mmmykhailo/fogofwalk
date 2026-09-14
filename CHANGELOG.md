@@ -2,6 +2,17 @@
 
 All notable changes to Fog of Walk are documented here.
 
+## [0.7.0] - 2026-09-14
+
+### Changed
+
+- refactor fog and activities processing (major performance improvements, #37)
+- activities bulk settings (#36)
+- update help page with up-to-date info
+- stop resetting fog mode while clearing map
+- limit weekly chart to 180 days on profile page
+- open account popup after the drawer is fully closed
+
 ## [0.6.0] - 2026-09-02
 
 ### Changed
