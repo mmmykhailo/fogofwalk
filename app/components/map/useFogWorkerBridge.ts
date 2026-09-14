@@ -9,7 +9,6 @@ import {
   mapStore,
   recordFogSnapshot,
   replaceFogWorker,
-  setFogProcessedCount,
 } from "~/lib/mapStore"
 import { saveFogCache } from "~/lib/storage"
 import { recordDiagnostic } from "~/lib/diagnostics"
@@ -172,7 +171,6 @@ export function useFogWorkerBridge(onProcessingComplete?: ProcessingComplete): {
         partitionSchemeVersion: snapshot.partitionSchemeVersion,
       }
       mapStore.fogData = snapshot.geometry
-      setFogProcessedCount(snapshot.diagnostics.processed)
 
       const map = mapStore.map
       if (!map || !mapStore.sourcesReady) return true
@@ -233,7 +231,6 @@ export function useFogWorkerBridge(onProcessingComplete?: ProcessingComplete): {
       }
 
       if (message.type === "PROGRESS") {
-        setFogProcessedCount(message.processed)
         return
       }
 

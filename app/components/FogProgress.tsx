@@ -1,28 +1,11 @@
-import { useSyncExternalStore } from "react"
-import {
-  getFogProcessedCount,
-  getFogStatus,
-  subscribeFogProgress,
-  subscribeFogStatus,
-  useFogStatus,
-} from "~/lib/mapStore"
+import { useFogStatus } from "~/lib/mapStore"
 import { ArrowClockwiseIcon, WarningIcon } from "@phosphor-icons/react"
 import { Button } from "~/components/ui/button"
 
-function useFogProcessedCount(): number {
-  return useSyncExternalStore(
-    subscribeFogProgress,
-    getFogProcessedCount,
-    getFogProcessedCount
-  )
-}
-
-export function FogProgressIndicator({
-  activityCount,
-}: {
-  activityCount: number
-}) {
-  const processedCount = useFogProcessedCount()
+export function FogProgressIndicator() {
+  const status = useFogStatus()
+  const processedCount = status.processed
+  const activityCount = status.total
 
   return (
     <div className="flex h-8 items-center gap-2 border border-border bg-background/80 px-2.5 backdrop-blur-md">
@@ -41,24 +24,19 @@ export function FogProgressIndicator({
   )
 }
 
-export function FogProgressText({ activityCount }: { activityCount: number }) {
-  const processedCount = useFogProcessedCount()
+export function FogProgressText() {
   const status = useFogStatus()
   return (
     <>
       {status.phase === "recovering"
         ? "Rebuilding fog…"
-        : `Processing ${processedCount} of ${activityCount}…`}
+        : `Processing ${status.processed} of ${status.total}…`}
     </>
   )
 }
 
 export function FogStatusNotice({ onRetry }: { onRetry: () => void }) {
-  const status = useSyncExternalStore(
-    subscribeFogStatus,
-    getFogStatus,
-    getFogStatus
-  )
+  const status = useFogStatus()
   if (status.phase !== "failed" && status.phase !== "degraded") return null
 
   const isFailed = status.phase === "failed"

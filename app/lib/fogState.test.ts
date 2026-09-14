@@ -1,16 +1,13 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import {
   fogCoordinator,
-  getFogProcessedCount,
   getFogStatus,
   mapStore,
   postToFogWorker,
   queueAddedActivitiesForFog,
   recordFogSnapshot,
   rebuildFogProjection,
-  setFogProcessedCount,
   startFogRun,
-  subscribeFogProgress,
   worldFogGeoJSON,
 } from "./mapStore"
 import { isFogCacheValid, type FogCache } from "./storage"
@@ -32,7 +29,6 @@ const originalLibraryRevision = mapStore.libraryRevision
 const originalCoverageRevision = mapStore.coverageRevision
 const originalUniqueDistanceProjectionRevision =
   mapStore.uniqueDistanceProjectionRevision
-const originalProcessedCount = mapStore.processedCount
 
 afterEach(() => {
   // The production map store owns one coordinator for the lifetime of the
@@ -51,7 +47,6 @@ afterEach(() => {
   mapStore.coverageRevision = originalCoverageRevision
   mapStore.uniqueDistanceProjectionRevision =
     originalUniqueDistanceProjectionRevision
-  mapStore.processedCount = originalProcessedCount
 })
 
 function expectFogRequest(
@@ -112,8 +107,9 @@ describe("fog worker run state", () => {
       libraryRevision: mapStore.libraryRevision,
       coverageRevision: mapStore.coverageRevision,
       mode: "corridor",
-      algorithmVersion: FOG_ALGORITHM_VERSION,
-      partitionSchemeVersion: FOG_PARTITION_SCHEME_VERSION,
+      algorithmVersion: FOG_ALGORITHM_VERSION as typeof FOG_ALGORITHM_VERSION,
+      partitionSchemeVersion:
+        FOG_PARTITION_SCHEME_VERSION as typeof FOG_PARTITION_SCHEME_VERSION,
       completeness: "complete",
       geometry: worldFogGeoJSON(),
       diagnostics: {
@@ -175,21 +171,6 @@ describe("fog worker run state", () => {
       phase: "degraded",
       coverageReducedActivityCount: 1,
     })
-  })
-
-  test("notifies progress subscribers only when the count changes", () => {
-    mapStore.processedCount = 3
-    let notifications = 0
-    const unsubscribe = subscribeFogProgress(() => notifications++)
-
-    setFogProcessedCount(3)
-    setFogProcessedCount(8)
-    setFogProcessedCount(8)
-    unsubscribe()
-    setFogProcessedCount(13)
-
-    expect(notifications).toBe(1)
-    expect(getFogProcessedCount()).toBe(13)
   })
 
   test("coalesces overlapping batches in the coordinator", () => {
@@ -262,6 +243,95 @@ describe("fog worker run state", () => {
     ).toBe(false)
     expect(fogCoordinator.activeRequest).toBeNull()
     expect(fogCoordinator.queuedSnapshot).toBeNull()
+  })
+
+  test("starts a fill rebuild with a fresh zeroed status after a completed run", () => {
+    const messages: unknown[] = []
+    const first = activity("first")
+    const second = activity("second")
+    mapStore.worker = {
+      postMessage(message: unknown) {
+        messages.push(message)
+      },
+    } as unknown as Worker
+    mapStore.activities = [first, second]
+    mapStore.runId = 20
+    mapStore.libraryRevision = 8
+    mapStore.coverageRevision = 3
+    mapStore.fogMode = "corridor"
+
+    postToFogWorker({
+      type: "PROCESS_ACTIVITIES",
+      activities: mapStore.activities,
+      mode: "corridor",
+      kind: "rebuild",
+      libraryRevision: 8,
+      coverageRevision: 3,
+    })
+    const initialRequest = messages[0] as {
+      requestId: string
+      generation: number
+    }
+    const completedSnapshot = {
+      generation: initialRequest.generation,
+      libraryRevision: 8,
+      coverageRevision: 3,
+      mode: "corridor" as const,
+      algorithmVersion: FOG_ALGORITHM_VERSION as typeof FOG_ALGORITHM_VERSION,
+      partitionSchemeVersion:
+        FOG_PARTITION_SCHEME_VERSION as typeof FOG_PARTITION_SCHEME_VERSION,
+      completeness: "complete" as const,
+      geometry: worldFogGeoJSON(),
+      diagnostics: {
+        processed: 2,
+        total: 2,
+        inputPoints: 4,
+        outputPoints: 0,
+        featureCount: 0,
+        vertexCount: 0,
+        warnings: [],
+        errors: [],
+        degraded: false,
+      },
+    }
+    fogCoordinator.handleReply({
+      type: "DONE",
+      protocolVersion: FOG_PROTOCOL_VERSION,
+      requestId: initialRequest.requestId,
+      generation: initialRequest.generation,
+      snapshot: completedSnapshot,
+    })
+    recordFogSnapshot(completedSnapshot)
+    expect(getFogStatus()).toMatchObject({
+      phase: "idle",
+      processed: 2,
+      total: 2,
+      mode: "corridor",
+    })
+
+    const previousGeneration = mapStore.runId
+    expect(rebuildFogProjection("fill")).toBe(true)
+
+    expect(getFogStatus()).toMatchObject({
+      phase: "processing",
+      generation: previousGeneration + 1,
+      mode: "fill",
+      processed: 0,
+      total: 2,
+    })
+    expect(messages[1]).toMatchObject({
+      kind: "cancel",
+      generation: previousGeneration + 1,
+    })
+    expect(messages[2]).toMatchObject({
+      kind: "rebuild",
+      generation: previousGeneration + 1,
+      mode: "fill",
+      activities: [
+        { id: first.id, name: first.name, coordinates: first.coordinates },
+        { id: second.id, name: second.name, coordinates: second.coordinates },
+      ],
+    })
   })
 
   test("exposes an unavailable-worker failure and a retryable rebuild", () => {

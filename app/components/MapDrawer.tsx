@@ -173,11 +173,7 @@ export function MapDrawer({
                 </ItemMedia>
                 <ItemContent>
                   <ItemTitle>
-                    {isProcessing ? (
-                      <FogProgressText activityCount={activityCount} />
-                    ) : (
-                      "Add files"
-                    )}
+                    {isProcessing ? <FogProgressText /> : "Add files"}
                   </ItemTitle>
                 </ItemContent>
               </Item>
@@ -498,7 +494,7 @@ export function MapDrawer({
                 className="py-1 text-center text-xs text-muted-foreground"
               >
                 {isProcessing ? (
-                  <FogProgressText activityCount={activityCount} />
+                  <FogProgressText />
                 ) : (
                   [
                     activityCount > 0 &&

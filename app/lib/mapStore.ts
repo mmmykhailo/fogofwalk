@@ -114,7 +114,6 @@ interface MapStore {
   activities: ParsedActivity[]
   activitySummaries: ActivitySummary[]
   activityHydration: ActivityHydration
-  processedCount: number
   sourcesReady: boolean
   /** Current fog mode — kept in sync with React state so MapView can read it without a prop. */
   fogMode: FogMode
@@ -193,7 +192,6 @@ export const mapStore: MapStore = {
   activities: [],
   activitySummaries: [],
   activityHydration: "unloaded",
-  processedCount: 0,
   sourcesReady: false,
   fogMode: "corridor",
   initialCenter: _savedPosition?.center ?? null,
@@ -450,7 +448,6 @@ export function useActivityMetadataRevision(): number {
   )
 }
 
-const fogProgressListeners = new Set<() => void>()
 const fogStatusListeners = new Set<() => void>()
 
 let fogStatus: FogProjectionStatus = {
@@ -605,7 +602,6 @@ export const fogCoordinator = createFogCoordinator(
       })
     },
     onProgress: (progress, context) => {
-      setFogProcessedCount(progress.processed)
       recordDiagnostic({
         subsystem: "fog",
         operationId: context.request.requestId,
@@ -954,7 +950,6 @@ function applyFogLibraryChange(
     return
   }
 
-  setFogProcessedCount(0)
   if (change.updated.length > 0 || change.removed.length > 0) {
     // A removal or revisioned update invalidates the worker accumulator. The
     // coordinator owns the reset/rebuild identity; this projection only
@@ -995,23 +990,6 @@ export function setActivityProjection(snapshot: LibrarySnapshot): void {
   applyLibrarySnapshot(snapshot)
 }
 
-/** Subscribe narrowly to worker progress without rerendering the home route. */
-export function subscribeFogProgress(listener: () => void): () => void {
-  fogProgressListeners.add(listener)
-  return () => fogProgressListeners.delete(listener)
-}
-
-export function getFogProcessedCount(): number {
-  return mapStore.processedCount
-}
-
-/** Update worker progress and notify only the UI that displays it. */
-export function setFogProcessedCount(processedCount: number): void {
-  if (mapStore.processedCount === processedCount) return
-  mapStore.processedCount = processedCount
-  for (const listener of fogProgressListeners) listener()
-}
-
 export function subscribeFogStatus(listener: () => void): () => void {
   fogStatusListeners.add(listener)
   return () => fogStatusListeners.delete(listener)
@@ -1032,7 +1010,6 @@ export function recordFogSnapshot(
   ) {
     return
   }
-  setFogProcessedCount(snapshot.diagnostics.processed)
   const diagnostics = snapshot.diagnostics
   const coverageReducedActivityCount =
     diagnostics.coverageReducedActivityCount ??
@@ -1238,7 +1215,6 @@ export function rebuildFogProjection(
 /** Abandon the current fog run and clear its render projection. */
 export function clearFogProjection(): void {
   mapStore.fogData = null
-  setFogProcessedCount(0)
   const generation = startFogRun()
   if (!postToFogWorker({ type: "RESET" })) {
     updateFogStatus({

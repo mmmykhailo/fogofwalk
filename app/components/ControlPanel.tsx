@@ -102,9 +102,7 @@ export function ControlPanel({
       <div className="absolute top-28 right-auto left-1.5 z-10 flex w-[calc(100vw-0.75rem)] items-start justify-end gap-2 sm:right-3 sm:left-auto sm:w-auto">
         <div className="flex min-w-0 flex-1 flex-col items-end gap-2">
           <ImportProgressIndicator />
-          {isProcessing && (
-            <FogProgressIndicator activityCount={activityCount} />
-          )}
+          {isProcessing && <FogProgressIndicator />}
         </div>
         <Button
           variant="outline"
