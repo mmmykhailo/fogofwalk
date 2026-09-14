@@ -57,6 +57,8 @@ export default defineConfig({
     {
       name: "fog-visual",
       testMatch: /fog-visual\.spec\.ts/,
+      // These tests synchronously read SwiftShader pixels on every render.
+      workers: 1,
       use: { ...devices["Desktop Chrome"], baseURL: WEB_URL_SERVERLESS },
     },
     {
