@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "test": "playwright test",
+    "test:all": "bun run test && bun run test:performance",
     "test:performance": "playwright test --config=performance.config.ts",
     "test:ui": "playwright test --ui",
     "test:headed": "playwright test --headed",

@@ -46,7 +46,8 @@ export default defineConfig({
   projects: [
     {
       name: "synced",
-      testIgnore: /(?:serverless|fog-visual|fog-worker|paths)\.spec\.ts/,
+      testIgnore:
+        /(?:serverless|fog-visual|fog-worker|paths|activities-performance|map-interaction-performance)\.spec\.ts/,
       use: { ...devices["Desktop Chrome"], baseURL: WEB_URL },
     },
     {
