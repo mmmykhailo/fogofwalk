@@ -163,6 +163,7 @@ export type FogProjectionPhase =
 
 export interface FogProjectionStatus {
   phase: FogProjectionPhase
+  requestId: string | null
   generation: number
   libraryRevision: number
   coverageRevision: number
@@ -452,6 +453,7 @@ const fogStatusListeners = new Set<() => void>()
 
 let fogStatus: FogProjectionStatus = {
   phase: "idle",
+  requestId: null,
   generation: mapStore.runId,
   libraryRevision: mapStore.libraryRevision,
   coverageRevision: mapStore.coverageRevision,
@@ -496,6 +498,7 @@ function updateFogStatus(
       : { ...fogStatus, ...update }
   if (
     next.phase === fogStatus.phase &&
+    next.requestId === fogStatus.requestId &&
     next.generation === fogStatus.generation &&
     next.libraryRevision === fogStatus.libraryRevision &&
     next.coverageRevision === fogStatus.coverageRevision &&
