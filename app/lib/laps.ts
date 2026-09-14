@@ -67,13 +67,22 @@ export function buildLapActivity(
       }
     }
   } else {
-    const end = lap.endIndex + 1
-    const coordinates = parentPaths[0]?.slice(lap.startIndex, end) ?? []
-    if (coordinates.length > 0) paths.push(coordinates)
-    if (parentTimestamps) {
-      pathTimestamps.push(
-        (parentTimestamps[0] ?? []).slice(lap.startIndex, end)
-      )
+    const parentPath = parentPaths[0]
+    if (
+      parentPath &&
+      Number.isSafeInteger(lap.startIndex) &&
+      Number.isSafeInteger(lap.endIndex) &&
+      lap.startIndex >= 0 &&
+      lap.endIndex >= lap.startIndex &&
+      lap.endIndex < parentPath.length
+    ) {
+      const end = lap.endIndex + 1
+      paths.push(parentPath.slice(lap.startIndex, end))
+      if (parentTimestamps) {
+        pathTimestamps.push(
+          (parentTimestamps[0] ?? []).slice(lap.startIndex, end)
+        )
+      }
     }
   }
 

@@ -145,14 +145,14 @@ export function buildLapsFromFit(
       if (previous) range.startIndex = previous.endIndex
     }
 
-    const slices = ranges.map((range) =>
+    const renderableRanges = ranges.filter(
+      (range) => range.endIndex - range.startIndex >= 1
+    )
+    const slices = renderableRanges.map((range) =>
       rawPaths[range.pathIndex]!.slice(range.startIndex, range.endIndex + 1)
     )
     const pointCount = slices.reduce((total, slice) => total + slice.length, 0)
-    if (
-      pointCount < 2 ||
-      !ranges.some((range) => range.endIndex - range.startIndex >= 1)
-    ) {
+    if (pointCount < 2 || renderableRanges.length === 0) {
       continue
     }
     const stats = computeActivityStatsForPaths(slices, LAP_PROFILE_POINTS)
@@ -181,12 +181,12 @@ export function buildLapsFromFit(
     const startTs = firstSlice.find(
       (point) => point.timestampMs != null && isFinite(point.timestampMs)
     )?.timestampMs
-    const firstRange = ranges[0]!
+    const firstRange = renderableRanges[0]!
     laps.push({
       number: boundaries[k].number,
       startIndex: firstRange.startIndex,
       endIndex: firstRange.endIndex,
-      pathRanges: ranges,
+      pathRanges: renderableRanges,
       startedAtMs: startTs != null && isFinite(startTs) ? startTs : null,
       trigger: boundaries[k].trigger,
       stats: {
