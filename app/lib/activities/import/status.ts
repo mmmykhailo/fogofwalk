@@ -5,7 +5,7 @@ import type {
   ImportStage,
 } from "./service"
 
-export const IMPORT_STAGE_ORDER = [
+const IMPORT_STAGE_ORDER = [
   "queued",
   "reading",
   "parsing",
@@ -29,25 +29,24 @@ export type ImportOperationPhase =
   | "failed"
   | "cancelled"
 
-export type DisplayImportStage = Exclude<ImportStage, "complete">
-
 export interface ImportStatus {
   phase: ImportOperationPhase
   operationId: string | null
   completedFiles: number
   totalFiles: number
   fileStages: Record<number, ImportStage>
-  reachedStages: Partial<Record<DisplayImportStage, true>>
+  isSaveStageVisible: boolean
+  savedFileIndexes: Readonly<Record<number, true>>
   isVisible: boolean
   result: ImportBatchResult | null
   error: string | null
 }
 
-export interface ImportStageProgress {
-  stage: DisplayImportStage
-  settledFiles: number
+export interface ImportProgressSnapshot {
+  completedFiles: number
+  savedFiles: number
   totalFiles: number
-  percentage: number
+  isSaveStageVisible: boolean
 }
 
 const listeners = new Set<() => void>()
@@ -58,7 +57,8 @@ let status: ImportStatus = {
   completedFiles: 0,
   totalFiles: 0,
   fileStages: {},
-  reachedStages: {},
+  isSaveStageVisible: false,
+  savedFileIndexes: Object.freeze({}),
   isVisible: false,
   result: null,
   error: null,
@@ -85,42 +85,32 @@ export function useImportStatus(): ImportStatus {
   )
 }
 
-export function getImportStageProgress(
+export function getImportProgressSnapshot(
   currentStatus: ImportStatus
-): ImportStageProgress[] {
-  if (!currentStatus.isVisible || currentStatus.totalFiles <= 0) return []
+): ImportProgressSnapshot | null {
+  if (!currentStatus.isVisible || currentStatus.totalFiles <= 0) return null
 
-  return IMPORT_STAGE_ORDER.flatMap((stage) => {
-    if (stage === "complete" || !currentStatus.reachedStages[stage]) {
-      return []
+  const totalFiles = currentStatus.totalFiles
+  const completedFiles = Math.min(
+    totalFiles,
+    Math.max(0, currentStatus.completedFiles)
+  )
+  const savedFiles = Object.keys(currentStatus.savedFileIndexes).filter(
+    (fileIndex) => {
+      const index = Number(fileIndex)
+      return Number.isInteger(index) && index >= 0 && index < totalFiles
     }
+  ).length
 
-    const settledFiles = Object.values(currentStatus.fileStages).filter(
-      (currentStage) => stageRank(currentStage) > stageRank(stage)
-    ).length
-    const boundedSettledFiles = Math.min(
-      currentStatus.totalFiles,
-      Math.max(0, settledFiles)
-    )
-    const percentage = Math.round(
-      Math.min(1, Math.max(0, boundedSettledFiles / currentStatus.totalFiles)) *
-        100
-    )
-
-    return [
-      {
-        stage,
-        settledFiles: boundedSettledFiles,
-        totalFiles: currentStatus.totalFiles,
-        percentage,
-      },
-    ]
-  })
+  return {
+    completedFiles,
+    savedFiles: Math.min(totalFiles, Math.max(0, savedFiles)),
+    totalFiles,
+    isSaveStageVisible: currentStatus.isSaveStageVisible,
+  }
 }
 
 export function beginImport(operationId: string, totalFiles: number): void {
-  const reachedStages: Partial<Record<DisplayImportStage, true>> =
-    totalFiles > 0 ? { queued: true } : {}
   status = {
     phase: "running",
     operationId,
@@ -129,7 +119,8 @@ export function beginImport(operationId: string, totalFiles: number): void {
     fileStages: Object.fromEntries(
       Array.from({ length: totalFiles }, (_, index) => [index, "queued"])
     ) as Record<number, ImportStage>,
-    reachedStages,
+    isSaveStageVisible: false,
+    savedFileIndexes: Object.freeze({}),
     isVisible: totalFiles > 0,
     result: null,
     error: null,
@@ -143,10 +134,12 @@ export function reportImportProgress(event: ImportProgressEvent): void {
   if (previousStage && stageRank(event.stage) < stageRank(previousStage)) {
     return
   }
-  const reachedStages =
-    event.stage === "complete" || status.reachedStages[event.stage]
-      ? status.reachedStages
-      : { ...status.reachedStages, [event.stage]: true }
+  const isSaveStageVisible =
+    status.isSaveStageVisible || event.stage === "committing"
+  const savedFileIndexes =
+    event.stage === "committed"
+      ? Object.freeze({ ...status.savedFileIndexes, [event.fileIndex]: true })
+      : status.savedFileIndexes
   status = {
     ...status,
     phase: "running",
@@ -155,7 +148,8 @@ export function reportImportProgress(event: ImportProgressEvent): void {
       ...status.fileStages,
       [event.fileIndex]: event.stage,
     },
-    reachedStages,
+    isSaveStageVisible,
+    savedFileIndexes,
     isVisible: true,
   }
   notify()
@@ -175,6 +169,17 @@ function terminalPhase(result: ImportBatchResult): ImportOperationPhase {
 
 export function completeImport(result: ImportBatchResult): void {
   if (status.operationId !== result.operationId) return
+  const savedFileIndexes = Object.freeze(
+    result.files.reduce<Record<number, true>>(
+      (indexes, file) => {
+        if (file.status === "committed" || file.status === "duplicate") {
+          indexes[file.index] = true
+        }
+        return indexes
+      },
+      { ...status.savedFileIndexes }
+    )
+  )
   status = {
     ...status,
     phase: terminalPhase(result),
@@ -182,6 +187,9 @@ export function completeImport(result: ImportBatchResult): void {
     fileStages: Object.fromEntries(
       result.files.map((file) => [file.index, file.stage])
     ),
+    isSaveStageVisible:
+      status.isSaveStageVisible || Object.keys(savedFileIndexes).length > 0,
+    savedFileIndexes,
     result,
     error: null,
   }
@@ -200,6 +208,7 @@ export function failImport(operationId: string, error: unknown): void {
   status = {
     ...status,
     phase: "failed",
+    completedFiles: Math.max(status.completedFiles, status.totalFiles),
     fileStages,
     error: error instanceof Error ? error.message : String(error),
   }
@@ -220,29 +229,4 @@ export function dismissImportStatus(operationId: string): void {
     isVisible: false,
   }
   notify()
-}
-
-export function describeImportStage(stage: ImportStage | null): string {
-  switch (stage) {
-    case "queued":
-      return "Queued"
-    case "reading":
-      return "Reading files"
-    case "parsing":
-      return "Parsing activities"
-    case "validating":
-      return "Validating routes"
-    case "ready":
-      return "Waiting to save"
-    case "committing":
-      return "Saving activities"
-    case "committed":
-      return "Activities saved"
-    case "deriving":
-      return "Starting map projections"
-    case "complete":
-      return "Import complete"
-    default:
-      return "Preparing import"
-  }
 }

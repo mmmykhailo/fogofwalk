@@ -3,14 +3,16 @@ import {
   beginImport,
   completeImport,
   dismissImportStatus,
-  describeImportStage,
   failImport,
-  getImportStageProgress,
+  getImportProgressSnapshot,
   getImportStatus,
-  IMPORT_STAGE_ORDER,
   reportImportProgress,
 } from "./status"
-import type { ImportBatchResult, ImportStage } from "./service"
+import type {
+  ImportBatchResult,
+  ImportStage,
+  ImportTerminalStatus,
+} from "./service"
 
 function progress(
   operationId: string,
@@ -18,7 +20,7 @@ function progress(
   stage: ImportStage,
   completedFiles: number,
   totalFiles: number
-) {
+): void {
   reportImportProgress({
     operationId,
     fileIndex,
@@ -30,7 +32,7 @@ function progress(
 
 function result(
   operationId: string,
-  statuses: Array<"committed" | "duplicate" | "rejected" | "failed">,
+  statuses: ImportTerminalStatus[],
   cancelled = false
 ): ImportBatchResult {
   return {
@@ -48,15 +50,16 @@ function result(
           : [],
       warnings: [],
     })),
-    activities: statuses.map((status, index) => ({
-      id: `activity-${index}`,
-      status,
-    })),
+    activities: statuses.flatMap((status, index) =>
+      status === "duplicate" || status === "committed"
+        ? [{ id: `activity-${index}`, status }]
+        : []
+    ),
   }
 }
 
 describe("import status", () => {
-  test("initializes queued progress and hides empty imports", () => {
+  test("starts parsing progress at zero and hides empty imports", () => {
     beginImport("initial", 3)
 
     expect(getImportStatus()).toMatchObject({
@@ -65,12 +68,16 @@ describe("import status", () => {
       completedFiles: 0,
       totalFiles: 3,
       fileStages: { 0: "queued", 1: "queued", 2: "queued" },
-      reachedStages: { queued: true },
+      isSaveStageVisible: false,
+      savedFileIndexes: {},
       isVisible: true,
     })
-    expect(getImportStageProgress(getImportStatus())).toEqual([
-      { stage: "queued", settledFiles: 0, totalFiles: 3, percentage: 0 },
-    ])
+    expect(getImportProgressSnapshot(getImportStatus())).toEqual({
+      completedFiles: 0,
+      savedFiles: 0,
+      totalFiles: 3,
+      isSaveStageVisible: false,
+    })
 
     beginImport("empty", 0)
 
@@ -79,202 +86,170 @@ describe("import status", () => {
       operationId: "empty",
       totalFiles: 0,
       fileStages: {},
-      reachedStages: {},
+      isSaveStageVisible: false,
+      savedFileIndexes: {},
       isVisible: false,
     })
-    expect(getImportStageProgress(getImportStatus())).toEqual([])
+    expect(getImportProgressSnapshot(getImportStatus())).toBeNull()
   })
 
-  test("keeps reached rows and counts settled files cumulatively", () => {
-    beginImport("persistent", 3)
-    progress("persistent", 0, "reading", 0, 3)
-    progress("persistent", 0, "parsing", 0, 3)
-    progress("persistent", 0, "validating", 0, 3)
-    progress("persistent", 1, "reading", 0, 3)
-    progress("persistent", 1, "parsing", 0, 3)
-
-    expect(getImportStageProgress(getImportStatus())).toEqual([
-      { stage: "queued", settledFiles: 2, totalFiles: 3, percentage: 67 },
-      { stage: "reading", settledFiles: 2, totalFiles: 3, percentage: 67 },
-      { stage: "parsing", settledFiles: 1, totalFiles: 3, percentage: 33 },
-      { stage: "validating", settledFiles: 0, totalFiles: 3, percentage: 0 },
-    ])
-
-    progress("persistent", 0, "ready", 1, 3)
-
-    expect(getImportStageProgress(getImportStatus())).toEqual([
-      { stage: "queued", settledFiles: 2, totalFiles: 3, percentage: 67 },
-      { stage: "reading", settledFiles: 2, totalFiles: 3, percentage: 67 },
-      { stage: "parsing", settledFiles: 1, totalFiles: 3, percentage: 33 },
-      { stage: "validating", settledFiles: 1, totalFiles: 3, percentage: 33 },
-      { stage: "ready", settledFiles: 0, totalFiles: 3, percentage: 0 },
-    ])
-    expect(getImportStatus().reachedStages).toEqual({
-      queued: true,
-      reading: true,
-      parsing: true,
-      validating: true,
-      ready: true,
-    })
-  })
-
-  test("settles skipped and failed files for later stages", () => {
-    beginImport("skipped", 2)
-    progress("skipped", 0, "parsing", 0, 2)
-    progress("skipped", 0, "complete", 1, 2)
-    progress("skipped", 1, "committing", 1, 2)
-
-    expect(getImportStageProgress(getImportStatus())).toEqual([
-      { stage: "queued", settledFiles: 2, totalFiles: 2, percentage: 100 },
-      { stage: "parsing", settledFiles: 2, totalFiles: 2, percentage: 100 },
-      {
-        stage: "committing",
-        settledFiles: 1,
-        totalFiles: 2,
-        percentage: 50,
-      },
-    ])
-
-    progress("skipped", 1, "committed", 1, 2)
-    expect(getImportStageProgress(getImportStatus())).toContainEqual({
-      stage: "committing",
-      settledFiles: 2,
-      totalFiles: 2,
-      percentage: 100,
-    })
-
-    beginImport("cancelled-before-read", 1)
-    progress("cancelled-before-read", 0, "complete", 0, 1)
-    expect(getImportStageProgress(getImportStatus())).toEqual([
-      { stage: "queued", settledFiles: 1, totalFiles: 1, percentage: 100 },
-    ])
-  })
-
-  test("orders rows by lifecycle rather than event order", () => {
-    beginImport("ordered", IMPORT_STAGE_ORDER.length - 1)
-    const displayStages = IMPORT_STAGE_ORDER.filter(
-      (stage): stage is Exclude<ImportStage, "complete"> => stage !== "complete"
-    )
-
-    for (const [index, stage] of displayStages.entries()) {
-      progress(
-        "ordered",
-        displayStages.length - index - 1,
-        stage,
-        0,
-        displayStages.length
-      )
-    }
-
-    expect(
-      getImportStageProgress(getImportStatus()).map(({ stage }) => stage)
-    ).toEqual(displayStages)
-    expect(IMPORT_STAGE_ORDER.indexOf("ready")).toBe(
-      IMPORT_STAGE_ORDER.indexOf("validating") + 1
-    )
-    expect(IMPORT_STAGE_ORDER.indexOf("ready")).toBe(
-      IMPORT_STAGE_ORDER.indexOf("committing") - 1
-    )
-    expect(describeImportStage("ready")).toBe("Waiting to save")
-  })
-
-  test("ignores backward events without changing the status snapshot", () => {
-    beginImport("monotonic", 2)
-    progress("monotonic", 0, "validating", 0, 2)
-    progress("monotonic", 1, "parsing", 0, 2)
-    const snapshot = getImportStatus()
-    const progressSnapshot = getImportStageProgress(snapshot)
-
-    progress("monotonic", 0, "parsing", 0, 2)
-
-    expect(getImportStatus()).toBe(snapshot)
-    expect(getImportStageProgress(getImportStatus())).toEqual(progressSnapshot)
-  })
-
-  test("retains the maximum prepared count and immutable denominator", () => {
-    beginImport("operation-a", 2)
-    progress("operation-a", 0, "parsing", 1, 2)
-    progress("operation-a", 1, "parsing", 0, 2)
-    progress("operation-a", 0, "complete", 0, 99)
-    expect(getImportStatus().completedFiles).toBe(1)
-    expect(getImportStatus().totalFiles).toBe(2)
-    expect(getImportStageProgress(getImportStatus())).toEqual([
-      { stage: "queued", settledFiles: 2, totalFiles: 2, percentage: 100 },
-      { stage: "parsing", settledFiles: 1, totalFiles: 2, percentage: 50 },
-    ])
-
-    progress("operation-a", 1, "parsing", 99, 99)
-    expect(getImportStatus().completedFiles).toBe(99)
-    expect(
-      getImportStageProgress(getImportStatus()).every(
-        (row) => row.totalFiles === 2
-      )
-    ).toBe(true)
-  })
-
-  test("ignores stale operations and does not duplicate same-stage history", () => {
-    beginImport("operation-a", 2)
-    progress("operation-a", 0, "parsing", 0, 2)
-    const reachedStages = getImportStatus().reachedStages
-    progress("operation-a", 0, "parsing", 1, 2)
-    expect(getImportStatus().completedFiles).toBe(1)
-    expect(getImportStatus().reachedStages).toBe(reachedStages)
-
-    beginImport("operation-b", 1)
-    progress("operation-a", 0, "committing", 2, 2)
-
-    expect(getImportStatus()).toMatchObject({
-      operationId: "operation-b",
-      phase: "running",
+  test("counts local preparation as parsing progress across concurrent files", () => {
+    beginImport("concurrent", 3)
+    progress("concurrent", 0, "parsing", 0, 3)
+    progress("concurrent", 1, "parsing", 0, 3)
+    expect(getImportProgressSnapshot(getImportStatus())).toMatchObject({
       completedFiles: 0,
-      totalFiles: 1,
-      fileStages: { 0: "queued" },
-      reachedStages: { queued: true },
-      isVisible: true,
+      savedFiles: 0,
+      totalFiles: 3,
+    })
+
+    progress("concurrent", 1, "ready", 1, 3)
+    expect(getImportProgressSnapshot(getImportStatus())).toMatchObject({
+      completedFiles: 1,
+      savedFiles: 0,
+    })
+
+    progress("concurrent", 0, "complete", 2, 3)
+    expect(getImportProgressSnapshot(getImportStatus())).toMatchObject({
+      completedFiles: 2,
+      savedFiles: 0,
     })
   })
 
-  test("preserves reached rows and classifies terminal results", () => {
-    beginImport("complete", 1)
-    progress("complete", 0, "parsing", 0, 1)
-    completeImport(result("complete", ["duplicate"]))
-    expect(getImportStatus()).toMatchObject({
-      phase: "complete",
-      isVisible: true,
-      fileStages: { 0: "complete" },
+  test("shows the save milestone at committing and records each committed file once", () => {
+    beginImport("save", 3)
+    progress("save", 0, "ready", 1, 3)
+    expect(getImportProgressSnapshot(getImportStatus())).toMatchObject({
+      completedFiles: 1,
+      savedFiles: 0,
+      isSaveStageVisible: false,
     })
-    expect(getImportStageProgress(getImportStatus())).toEqual([
-      { stage: "queued", settledFiles: 1, totalFiles: 1, percentage: 100 },
-      { stage: "parsing", settledFiles: 1, totalFiles: 1, percentage: 100 },
-    ])
 
-    beginImport("partial", 2)
-    completeImport(result("partial", ["committed", "failed"]))
-    expect(getImportStatus().phase).toBe("partial")
+    progress("save", 0, "committing", 1, 3)
+    expect(getImportProgressSnapshot(getImportStatus())).toMatchObject({
+      savedFiles: 0,
+      isSaveStageVisible: true,
+    })
 
-    beginImport("failed", 1)
-    completeImport(result("failed", ["rejected"]))
-    expect(getImportStatus().phase).toBe("failed")
+    progress("save", 0, "committed", 1, 3)
+    const savedSnapshot = getImportStatus()
+    expect(getImportProgressSnapshot(savedSnapshot)).toMatchObject({
+      savedFiles: 1,
+    })
 
-    beginImport("cancelled", 1)
-    completeImport(result("cancelled", ["rejected"], true))
-    expect(getImportStatus().phase).toBe("cancelled")
+    progress("save", 0, "committed", 1, 3)
+    expect(getImportStatus().savedFileIndexes).not.toBe(
+      savedSnapshot.savedFileIndexes
+    )
+    expect(getImportProgressSnapshot(getImportStatus())).toMatchObject({
+      savedFiles: 1,
+    })
 
+    progress("save", 0, "deriving", 1, 3)
+    progress("save", 0, "complete", 1, 3)
+    expect(getImportProgressSnapshot(getImportStatus())).toMatchObject({
+      savedFiles: 1,
+      isSaveStageVisible: true,
+    })
+  })
+
+  test("rejected and failed files settle parsing without inventing saving", () => {
+    beginImport("rejected", 2)
+    progress("rejected", 0, "complete", 1, 2)
+    progress("rejected", 1, "complete", 2, 2)
+
+    expect(getImportProgressSnapshot(getImportStatus())).toEqual({
+      completedFiles: 2,
+      savedFiles: 0,
+      totalFiles: 2,
+      isSaveStageVisible: false,
+    })
+
+    completeImport(result("rejected", ["rejected", "failed"]))
+    expect(getImportProgressSnapshot(getImportStatus())).toMatchObject({
+      completedFiles: 2,
+      savedFiles: 0,
+      isSaveStageVisible: false,
+    })
+  })
+
+  test("reconciles committed and duplicate terminal outcomes", () => {
+    beginImport("terminal", 3)
+    completeImport(result("terminal", ["committed", "duplicate", "failed"]))
+
+    expect(getImportStatus()).toMatchObject({
+      phase: "partial",
+      isVisible: true,
+      isSaveStageVisible: true,
+      savedFileIndexes: { 0: true, 1: true },
+    })
+    expect(getImportProgressSnapshot(getImportStatus())).toEqual({
+      completedFiles: 3,
+      savedFiles: 2,
+      totalFiles: 3,
+      isSaveStageVisible: true,
+    })
+
+    beginImport("all-rejected", 2)
+    completeImport(result("all-rejected", ["rejected", "failed"]))
+    expect(getImportProgressSnapshot(getImportStatus())).toEqual({
+      completedFiles: 2,
+      savedFiles: 0,
+      totalFiles: 2,
+      isSaveStageVisible: false,
+    })
+  })
+
+  test("preserves an attempted save row after a runtime failure", () => {
     beginImport("runtime-failure", 2)
-    progress("runtime-failure", 0, "parsing", 0, 2)
+    progress("runtime-failure", 0, "committing", 1, 2)
     failImport("runtime-failure", new Error("test cleanup"))
+
     expect(getImportStatus()).toMatchObject({
       phase: "failed",
       fileStages: { 0: "complete", 1: "complete" },
-      isVisible: true,
+      isSaveStageVisible: true,
     })
-    expect(getImportStageProgress(getImportStatus())).toEqual([
-      { stage: "queued", settledFiles: 2, totalFiles: 2, percentage: 100 },
-      { stage: "parsing", settledFiles: 2, totalFiles: 2, percentage: 100 },
-    ])
+    expect(getImportProgressSnapshot(getImportStatus())).toMatchObject({
+      completedFiles: 2,
+      savedFiles: 0,
+      isSaveStageVisible: true,
+    })
   })
 
-  test("dismisses only the matching visible terminal operation", () => {
+  test("clamps progress to the immutable selected-file denominator", () => {
+    beginImport("bounded", 2)
+    progress("bounded", 0, "parsing", 1, 2)
+    progress("bounded", 0, "complete", 99, 99)
+
+    expect(getImportStatus().totalFiles).toBe(2)
+    expect(getImportProgressSnapshot(getImportStatus())).toMatchObject({
+      completedFiles: 2,
+      totalFiles: 2,
+    })
+  })
+
+  test("ignores stale operations and backward events", () => {
+    beginImport("monotonic", 2)
+    progress("monotonic", 0, "validating", 0, 2)
+    const snapshot = getImportStatus()
+    progress("monotonic", 0, "parsing", 1, 2)
+    expect(getImportStatus()).toBe(snapshot)
+
+    beginImport("replacement", 1)
+    progress("monotonic", 0, "committing", 2, 2)
+    expect(getImportStatus()).toMatchObject({
+      operationId: "replacement",
+      completedFiles: 0,
+      totalFiles: 1,
+      fileStages: { 0: "queued" },
+      isSaveStageVisible: false,
+      savedFileIndexes: {},
+      isVisible: true,
+    })
+  })
+
+  test("classifies terminal results and dismisses only the matching operation", () => {
     beginImport("running", 1)
     const runningSnapshot = getImportStatus()
     dismissImportStatus("running")
@@ -309,7 +284,7 @@ describe("import status", () => {
       operationId: "new",
       phase: "running",
       isVisible: true,
-      reachedStages: { queued: true },
+      isSaveStageVisible: false,
     })
   })
 })
