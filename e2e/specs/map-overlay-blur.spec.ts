@@ -44,7 +44,7 @@ async function findUnobstructedMapPoint(
   })
 }
 
-test("preserves dialog blur while compact controls use the map fallback", async ({
+test("preserves overlay blur while the map is moving", async ({
   app,
 }) => {
   await app.page.setViewportSize({ width: 1280, height: 900 })
@@ -91,7 +91,7 @@ test("preserves dialog blur while compact controls use the map fallback", async 
     expect(hasNonZeroBlur(movingActivityFilter)).toBe(true)
 
     const movingControlsFilter = await readBackdropFilter(controlsSurface)
-    expect(movingControlsFilter).toBe("none")
+    expect(hasNonZeroBlur(movingControlsFilter)).toBe(true)
   } finally {
     await app.page.mouse.up()
   }
