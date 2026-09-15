@@ -46,7 +46,7 @@ type ParsedActivityOverrides = Omit<
   stats?: Partial<ActivityStats>
   coordinates?: [number, number][]
   paths?: ActivityPaths
-  pointTimestamps?: Array<number | null>
+  pointTimestamps?: number[]
   pathTimestamps?: Array<Array<number | null>>
 }
 
@@ -85,18 +85,13 @@ export function makeParsedActivity(
         )
       : overrides.pathTimestamps.map((timestamps) => [...timestamps])
 
-  return {
+  const activity: ParsedActivity = {
     id: "activity-fixture-1",
     name: "Riverside loop",
     startedAtMs: FIXTURE_ACTIVITY_START_MS,
-    coordinates,
-    paths,
-    pointTimestamps,
-    pathTimestamps,
     format: "gpx",
     activityType: "walking",
     startSunPhase: "daylight",
-    stats: { ...DEFAULT_STATS, ...overrides.stats },
     contentHash: "fixture-content-hash-1",
     isPublic: false,
     ...overrides,
@@ -105,10 +100,9 @@ export function makeParsedActivity(
     pointTimestamps,
     pathTimestamps,
     stats: { ...DEFAULT_STATS, ...overrides.stats },
-    ...(overrides.laps
-      ? { laps: overrides.laps.map((lap) => cloneLap(lap)) }
-      : {}),
   }
+  if (overrides.laps) activity.laps = overrides.laps.map((lap) => cloneLap(lap))
+  return activity
 }
 
 function cloneLap(lap: ActivityLap): ActivityLap {
@@ -132,7 +126,7 @@ export function makeActivitySummary(
   overrides: ActivitySummaryOverrides = {}
 ): ActivitySummary {
   const id = overrides.id ?? "activity-summary-1"
-  return {
+  const summary: ActivitySummary = {
     id,
     name: "Riverside loop",
     startedAtMs: FIXTURE_ACTIVITY_START_MS,
@@ -140,13 +134,6 @@ export function makeActivitySummary(
     startSunPhase: "daylight",
     contentHash: `fixture-content-hash-${id}`,
     isPublic: false,
-    stats: {
-      distanceKm: 7.4,
-      durationMs: 2_664_000,
-      elevationGainM: 124,
-      avgMovingSpeedKmh: 10.96,
-      ...overrides.stats,
-    },
     ...overrides,
     stats: {
       distanceKm: 7.4,
@@ -156,6 +143,7 @@ export function makeActivitySummary(
       ...overrides.stats,
     },
   }
+  return summary
 }
 
 export function makePublicActivity(
