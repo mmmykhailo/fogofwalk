@@ -20,6 +20,7 @@ function TooltipContent({
   return (
     <PopoverContent
       data-slot="tooltip-content"
+      role="tooltip"
       side="top"
       className={cn(
         "w-fit max-w-xs bg-foreground px-3 py-1.5 text-xs text-background ring-0",

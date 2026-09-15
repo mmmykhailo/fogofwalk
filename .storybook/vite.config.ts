@@ -21,6 +21,7 @@ export default defineConfig({
     include: [
       "@base-ui/react/checkbox",
       "@base-ui/react/dialog",
+      "@base-ui/react/menu",
       "@base-ui/react/merge-props",
       "@base-ui/react/popover",
       "@base-ui/react/select",
