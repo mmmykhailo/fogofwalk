@@ -473,7 +473,7 @@ export function MapDrawer({
                   render={<button type="button" disabled={isProcessing} />}
                   onClick={() => {
                     close()
-                    setTimeout(() => setIsClearAllOpen(true), 300)
+                    setTimeout(() => setIsClearAllOpen(true), 500)
                   }}
                   className="text-destructive active:brightness-95 disabled:opacity-40"
                 >

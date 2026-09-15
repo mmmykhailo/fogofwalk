@@ -40,6 +40,10 @@ Open `http://localhost:5173`, import some activity files, and watch the fog clea
 
 ```bash
 bun run dev        # dev server
+bun run storybook  # Storybook component catalogue
+bun run storybook:build  # static Storybook build
+bun run test:storybook  # Storybook interaction and a11y tests in Chromium
+bunx playwright install chromium  # install the local Storybook test browser
 bun run build      # production build
 bun run typecheck  # type-check (react-router typegen + tsc)
 bun run format     # prettier over ts/tsx
@@ -48,6 +52,15 @@ bun run release:patch  # prepare a patch release and changelog entry
 bun run release        # prepare a minor release and changelog entry
 bun run release:major  # prepare a major release and changelog entry
 ```
+
+Storybook previews components without the application routes, service worker,
+live API, map tiles, or browser persistence. `bun run test:storybook` runs the
+stories in headless Chromium; install it with `bunx playwright install chromium`
+if the browser is missing. Dialogs, drawers, selects, menus, popovers, and
+tooltips render through portals, so their interaction tests query
+`document.body`. If a story fails after changing dependencies, rerun the
+Storybook build and check `.storybook/vite.config.ts` for a package that needs
+to be added to `optimizeDeps.include`.
 
 ## Deploy
 

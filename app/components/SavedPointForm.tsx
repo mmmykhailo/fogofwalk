@@ -22,18 +22,20 @@ import { createUuid } from "~/lib/uuid"
 export function SavedPointForm({
   point,
   coordinate,
+  initialId,
   onCancel,
   onSave,
   onDelete,
 }: {
   point: SavedPoint | null
   coordinate: [number, number] | null
+  initialId?: string
   onCancel: () => void
   onSave: (point: SavedPoint) => void
   onDelete?: (id: string) => void
 }) {
   const fetcher = useFetcher<typeof clientAction>()
-  const [id] = useState(() => point?.id ?? createUuid())
+  const [id] = useState(() => point?.id ?? initialId ?? createUuid())
   const [color, setColor] = useState<SavedPointColor>(point?.color ?? "blue")
   const [isPublic, setIsPublic] = useState(point?.isPublic ?? false)
   const errors =

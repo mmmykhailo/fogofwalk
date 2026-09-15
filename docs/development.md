@@ -11,6 +11,32 @@ bun run build
 bun run test
 ```
 
+### Storybook
+
+Storybook is the isolated component catalogue. It uses the same Tailwind
+styles and application providers where needed, but does not run route
+generation, the PWA plugin, service-worker registration, live API calls, map
+tiles, workers, or IndexedDB persistence.
+
+```bash
+bun run storybook
+bun run storybook:build
+bun run test:storybook
+bunx playwright install chromium
+```
+
+`bun run test:storybook` uses Vitest Browser Mode with headless Chromium and
+checks every story for render failures, interaction assertions, and configured
+accessibility violations. Install the browser once on a new machine; CI uses
+`bunx playwright install --with-deps chromium` for Linux system dependencies.
+If the browser is installed but a test fails to launch, rerun the install and
+then run `bun run test:storybook` again. Portal-based controls (dialogs,
+drawers, selects, menus, popovers, and tooltips) render under
+`document.body`, so tests should query that container rather than only the
+story canvas. When a dependency change causes an unexpected Vite reload,
+add the imported package to `.storybook/vite.config.ts` under
+`optimizeDeps.include`.
+
 ### Interaction performance verification
 
 The interaction benchmark runs against the production build and is the source

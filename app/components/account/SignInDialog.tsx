@@ -10,8 +10,7 @@ import {
   DialogTitle,
 } from "~/components/ui/dialog"
 import { friendlyMessage } from "~/lib/server/apiClient"
-import { fetchProviders } from "~/lib/server/authStore"
-import { signInUrl } from "~/lib/server/config"
+import { beginSignIn, fetchProviders } from "~/lib/server/authStore"
 import { useServerHealth } from "~/lib/server/serverHealth"
 import { ServerUnavailableNotice } from "./ServerUnavailableNotice"
 
@@ -96,8 +95,7 @@ export function SignInDialog({ open, onOpenChange }: SignInDialogProps) {
                   onSubmit={(event) => {
                     event.preventDefault()
                     const name = fakeName.trim()
-                    if (name)
-                      window.location.href = signInUrl(provider.id, name)
+                    if (name) beginSignIn(provider.id, name)
                   }}
                 >
                   <label
@@ -128,9 +126,7 @@ export function SignInDialog({ open, onOpenChange }: SignInDialogProps) {
               <Button
                 key={provider.id}
                 className="w-full"
-                onClick={() => {
-                  window.location.href = signInUrl(provider.id)
-                }}
+                onClick={() => beginSignIn(provider.id)}
               >
                 <Icon weight="bold" className="mr-2" />
                 Continue with {provider.label}

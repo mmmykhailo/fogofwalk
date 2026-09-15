@@ -27,7 +27,7 @@ import {
   setAuthToken,
   setUnauthorizedHandler,
 } from "./apiClient"
-import { isServerEnabled } from "./config"
+import { isServerEnabled, signInUrl } from "./config"
 
 export type AuthState =
   /** `VITE_API_URL` unset — this build has no server at all. */
@@ -178,6 +178,11 @@ export async function fetchProviders(): Promise<AuthProvidersResponse> {
   return apiGet<AuthProvidersResponse>("/api/auth/providers", {
     anonymous: true,
   })
+}
+
+/** Start the provider's full-page OAuth flow from a browser surface. */
+export function beginSignIn(providerId: string, fakeName?: string): void {
+  window.location.href = signInUrl(providerId, fakeName)
 }
 
 export async function signOut(): Promise<void> {

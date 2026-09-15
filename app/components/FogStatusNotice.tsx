@@ -1,9 +1,20 @@
 import { ArrowClockwiseIcon, WarningIcon } from "@phosphor-icons/react"
 import { Button } from "~/components/ui/button"
 import { useFogStatus } from "~/lib/mapStore"
+import type { FogProjectionStatus } from "~/lib/mapStore"
 
 export function FogStatusNotice({ onRetry }: { onRetry: () => void }) {
   const status = useFogStatus()
+  return <FogStatusNoticeView status={status} onRetry={onRetry} />
+}
+
+export function FogStatusNoticeView({
+  status,
+  onRetry,
+}: {
+  status: FogProjectionStatus
+  onRetry: () => void
+}) {
   if (status.phase !== "failed" && status.phase !== "degraded") return null
 
   const isFailed = status.phase === "failed"

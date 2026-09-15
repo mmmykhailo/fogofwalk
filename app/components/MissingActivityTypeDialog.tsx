@@ -39,6 +39,7 @@ export function MissingActivityTypeDialog({
             Not now
           </DialogClose>
           <Button
+            nativeButton={false}
             render={
               <TransitionLink
                 to="/activities"

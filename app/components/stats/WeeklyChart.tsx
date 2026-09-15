@@ -36,7 +36,13 @@ export function WeeklyChart({ weekly }: WeeklyChartProps) {
       <CardContent className="pb-4">
         <div className="overflow-x-auto">
           <div style={{ minWidth: chartMinWidth }}>
-            <ChartContainer config={chartConfig} className="h-44 w-full">
+            <ChartContainer
+              config={chartConfig}
+              className="h-44 w-full"
+              // ResponsiveContainer needs a concrete height in isolated
+              // previews as well as in the application layout.
+              style={{ height: "11rem" }}
+            >
               <BarChart
                 data={weekly}
                 margin={{ top: 4, right: 8, bottom: 0, left: 0 }}
