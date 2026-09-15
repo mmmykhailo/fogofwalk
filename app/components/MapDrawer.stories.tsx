@@ -33,7 +33,7 @@ type DrawerProps = ComponentProps<typeof MapDrawer>
 export const EmptyServerless: Story = {
   render: () => {
     setServerless()
-    return <MapDrawer {...makeDrawerProps()} />
+    return <MapDrawerStoryHarness drawerProps={makeDrawerProps()} />
   },
 }
 
@@ -41,8 +41,8 @@ export const PopulatedWithPhotosAndSavedPoints: Story = {
   render: () => {
     setServerless()
     return (
-      <MapDrawer
-        {...makeDrawerProps({
+      <MapDrawerStoryHarness
+        drawerProps={makeDrawerProps({
           activityCount: 8,
           photoCount: 14,
           savedPointCount: 5,
@@ -60,8 +60,8 @@ export const Processing: Story = {
     setServerless()
     mocked(useFogStatus).mockReturnValue(fogStatus("processing"))
     return (
-      <MapDrawer
-        {...makeDrawerProps({
+      <MapDrawerStoryHarness
+        drawerProps={makeDrawerProps({
           activityCount: 8,
           photoCount: 2,
           isProcessing: true,
@@ -75,9 +75,16 @@ export const Processing: Story = {
 export const LocationDenied: Story = {
   render: () => {
     setServerless()
-    return <MapDrawer {...makeDrawerProps({ locationPermissionDenied: true })} />
+    return (
+      <MapDrawerStoryHarness
+        drawerProps={makeDrawerProps({ locationPermissionDenied: true })}
+      />
+    )
   },
   play: async ({ canvas }) => {
+    await userEvent.click(
+      await canvas.findByRole("button", { name: "Open drawer" })
+    )
     await userEvent.click(
       await within(document.body).findByRole("switch", {
         name: "Show my location",
@@ -87,27 +94,33 @@ export const LocationDenied: Story = {
       await within(document.body).findByText("Location permission denied")
     ).toBeVisible()
     await expect(onShowMyLocationChange).not.toHaveBeenCalled()
+    await userEvent.keyboard("{Escape}")
+    await waitFor(() =>
+      expect(
+        within(document.body).queryByRole("dialog")
+      ).not.toBeInTheDocument()
+    )
   },
 }
 
 export const SignedOutServerBuild: Story = {
   render: () => {
     setSignedOut()
-    return <MapDrawer {...makeDrawerProps()} />
+    return <MapDrawerStoryHarness drawerProps={makeDrawerProps()} />
   },
 }
 
 export const SignedInApproved: Story = {
   render: () => {
     setApproved()
-    return <MapDrawer {...makeDrawerProps()} />
+    return <MapDrawerStoryHarness drawerProps={makeDrawerProps()} />
   },
 }
 
 export const SignedInAdmin: Story = {
   render: () => {
     setApproved(true)
-    return <MapDrawer {...makeDrawerProps()} />
+    return <MapDrawerStoryHarness drawerProps={makeDrawerProps()} />
   },
 }
 
@@ -115,7 +128,7 @@ export const PhoneBottomDrawer: Story = {
   parameters: { viewport: { defaultViewport: "phone" } },
   render: () => {
     setServerless()
-    return <MapDrawer {...makeDrawerProps()} />
+    return <MapDrawerStoryHarness drawerProps={makeDrawerProps()} />
   },
 }
 
@@ -123,7 +136,7 @@ export const DesktopRightDrawer: Story = {
   parameters: { viewport: { defaultViewport: "desktop" } },
   render: () => {
     setServerless()
-    return <MapDrawer {...makeDrawerProps()} />
+    return <MapDrawerStoryHarness drawerProps={makeDrawerProps()} />
   },
 }
 
@@ -146,7 +159,12 @@ export const TogglesActionsAndNestedClear: Story = {
   },
   play: async () => {
     const drawer = within(document.body)
-    fireEvent.click(await drawer.findByRole("switch", { name: "Show activities" }))
+    await userEvent.click(
+      await drawer.findByRole("button", { name: "Open drawer" })
+    )
+    fireEvent.click(
+      await drawer.findByRole("switch", { name: "Show activities" })
+    )
     fireEvent.click(await drawer.findByRole("switch", { name: "Show fog" }))
     fireEvent.click(await drawer.findByRole("switch", { name: "Fill loops" }))
     fireEvent.click(await drawer.findByRole("switch", { name: "Show photos" }))
@@ -158,19 +176,30 @@ export const TogglesActionsAndNestedClear: Story = {
     )
     fireEvent.click(await drawer.findByRole("button", { name: "Terrain" }))
     const switchEvent = expect.objectContaining({ reason: "none" })
-    await expect(onShowActivitiesChange).toHaveBeenCalledWith(false, switchEvent)
+    await expect(onShowActivitiesChange).toHaveBeenCalledWith(
+      false,
+      switchEvent
+    )
     await expect(onShowFogChange).toHaveBeenCalledWith(false, switchEvent)
     await expect(onFogModeChange).toHaveBeenCalledWith("fill")
     await expect(onMapModeChange).toHaveBeenCalledWith("relief")
     await expect(onShowPhotosChange).toHaveBeenCalledWith(false, switchEvent)
-    await expect(onShowSavedPointsChange).toHaveBeenCalledWith(false, switchEvent)
+    await expect(onShowSavedPointsChange).toHaveBeenCalledWith(
+      false,
+      switchEvent
+    )
     await expect(onShowMyLocationChange).toHaveBeenCalledWith(false)
 
     fireEvent.click(await drawer.findByRole("button", { name: "Add photos" }))
     await waitFor(() => expect(onAddPhotos).toHaveBeenCalledTimes(1), {
       timeout: 2_000,
     })
-    await userEvent.click(await drawer.findByRole("button", { name: "Clear all" }))
+    await userEvent.click(
+      await drawer.findByRole("button", { name: "Open drawer" })
+    )
+    await userEvent.click(
+      await drawer.findByRole("button", { name: "Clear all" })
+    )
     const clearDialog = await within(document.body).findByRole("dialog", {
       name: "Clear all data?",
     })
@@ -178,6 +207,11 @@ export const TogglesActionsAndNestedClear: Story = {
       within(clearDialog).getByRole("button", { name: "Clear all" })
     )
     await waitFor(() => expect(onClearAll).toHaveBeenCalledTimes(1))
+    await waitFor(() =>
+      expect(
+        within(document.body).queryByRole("dialog")
+      ).not.toBeInTheDocument()
+    )
   },
 }
 
@@ -188,6 +222,9 @@ export const Navigation: Story = {
   },
   play: async ({ canvas }) => {
     await userEvent.click(
+      await canvas.findByRole("button", { name: "Open drawer" })
+    )
+    await userEvent.click(
       await within(document.body).findByRole("link", { name: "My activities" })
     )
     await waitFor(() =>
@@ -195,11 +232,26 @@ export const Navigation: Story = {
         "/activities"
       )
     )
+    await waitFor(() =>
+      expect(
+        within(document.body).queryByRole("dialog")
+      ).not.toBeInTheDocument()
+    )
   },
 }
 
+function MapDrawerStoryHarness({ drawerProps }: { drawerProps: DrawerProps }) {
+  const [isOpen, setIsOpen] = useState(false)
+  return (
+    <>
+      {!isOpen && <Button onClick={() => setIsOpen(true)}>Open drawer</Button>}
+      <MapDrawer {...drawerProps} isOpen={isOpen} onOpenChange={setIsOpen} />
+    </>
+  )
+}
+
 function DrawerInteractionHarness() {
-  const [isOpen, setIsOpen] = useState(true)
+  const [isOpen, setIsOpen] = useState(false)
 
   return (
     <>
@@ -219,7 +271,6 @@ function DrawerInteractionHarness() {
           onAddFiles,
           onAddPhotos: () => {
             onAddPhotos()
-            setIsOpen(true)
           },
           onClearAll,
           onShowPhotosChange,
@@ -235,7 +286,9 @@ function NavigationHarness() {
   const location = useLocation()
   return (
     <>
-      <MapDrawer {...makeDrawerProps({ onOpenChange: () => {} })} />
+      <MapDrawerStoryHarness
+        drawerProps={makeDrawerProps({ onOpenChange: () => {} })}
+      />
       <output data-testid="map-drawer-location" className="sr-only">
         {location.pathname}
       </output>
@@ -245,7 +298,7 @@ function NavigationHarness() {
 
 function makeDrawerProps(overrides: Partial<DrawerProps> = {}): DrawerProps {
   return {
-    isOpen: true,
+    isOpen: false,
     onOpenChange: () => {},
     activityCount: 0,
     photoCount: 0,
