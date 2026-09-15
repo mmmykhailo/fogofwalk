@@ -23,6 +23,7 @@ import type { SavedPoint } from "~shared/saved-points"
 interface DraggableSavedPointEditDialogProps {
   point: SavedPoint | null
   coordinate: [number, number] | null
+  initialId?: string
   onClose: () => void
   onSave: (point: SavedPoint) => void
   onDelete?: (id: string) => void
@@ -32,6 +33,7 @@ interface DraggableSavedPointEditDialogProps {
 export function DraggableSavedPointEditDialog({
   point,
   coordinate,
+  initialId,
   onClose,
   onSave,
   onDelete,
@@ -61,6 +63,7 @@ export function DraggableSavedPointEditDialog({
       key={formKey}
       point={point}
       coordinate={coordinate}
+      initialId={initialId}
       onCancel={handleDismiss}
       onSave={onSave}
       onDelete={onDelete}

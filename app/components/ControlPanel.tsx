@@ -86,6 +86,7 @@ export function ControlPanel({
         type="file"
         multiple
         accept=".gpx,.fit"
+        aria-label="Activity files"
         className="hidden"
         onChange={handleFileChange}
       />
@@ -94,6 +95,7 @@ export function ControlPanel({
         type="file"
         multiple
         accept="image/*"
+        aria-label="Photo files"
         className="hidden"
         onChange={handlePhotoFileChange}
       />

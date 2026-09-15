@@ -14,7 +14,6 @@ export function makePhoto(overrides: Partial<PhotoEntry> = {}): PhotoEntry {
 
   return {
     id: "photo-fixture-1",
-    file,
     takenAtMs: FIXTURE_PHOTO_TIME_MS,
     lng: 14.4268,
     lat: 50.0801,
@@ -31,7 +30,6 @@ export function makePhotoGroup(
   ]
   return {
     id: "photo-group-fixture-1",
-    photos,
     lng: photos[0]?.lng ?? 14.4268,
     lat: photos[0]?.lat ?? 50.0801,
     ...overrides,

@@ -12,6 +12,7 @@ interface AppLinkProps {
   variant?: keyof typeof variants
   className?: string
   title?: string
+  "aria-label"?: string
   children: React.ReactNode
 }
 
@@ -20,6 +21,7 @@ export function AppLink({
   variant = "subtle",
   className,
   title,
+  "aria-label": ariaLabel,
   children,
 }: AppLinkProps) {
   return (
@@ -27,6 +29,7 @@ export function AppLink({
       to={to}
       className={cn(variants[variant], className)}
       title={title}
+      aria-label={ariaLabel}
     >
       {variant === "nav" && <ArrowLeftIcon size={16} />}
       {children}
