@@ -6,7 +6,7 @@
   "scripts": {
     "build": "react-router build && mv build/client/* build && rm -rf build/client && cp build/index.html build/404.html",
     "dev": "react-router dev",
-    "storybook": "storybook dev -p 6006",
+    "storybook": "storybook dev -p 6006 --ci",
     "storybook:build": "storybook build",
     "test:storybook": "vitest run --project=storybook",
     "test:storybook:watch": "vitest --project=storybook",
