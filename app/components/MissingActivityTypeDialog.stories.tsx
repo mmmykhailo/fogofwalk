@@ -47,6 +47,9 @@ export const ContinueToActivityLibrary: Story = {
   render: () => <MissingTypeHarness activityCount={2} />,
   play: async ({ canvas }) => {
     await userEvent.click(
+      await canvas.findByRole("button", { name: "Show missing types" })
+    )
+    await userEvent.click(
       await within(document.body).findByText("Choose types")
     )
     await waitFor(() =>
@@ -59,7 +62,7 @@ export const ContinueToActivityLibrary: Story = {
 
 function MissingTypeHarness({
   activityCount,
-  initiallyOpen = true,
+  initiallyOpen = false,
 }: {
   activityCount: number
   initiallyOpen?: boolean

@@ -1,3 +1,4 @@
+import { useState, type ComponentProps } from "react"
 import type { Meta, StoryObj } from "@storybook/react-vite"
 import {
   expect,
@@ -15,6 +16,7 @@ import {
 } from "../../../.storybook/fixtures/activities"
 import { useCopyToClipboard } from "~/lib/useCopyToClipboard"
 
+import { Button } from "~/components/ui/button"
 import { DraggableActivityDialog } from "./DraggableActivityDialog"
 
 const meta = {
@@ -26,6 +28,7 @@ const meta = {
 
 export default meta
 type Story = StoryObj<typeof meta>
+type ActivityDialogProps = ComponentProps<typeof DraggableActivityDialog>
 
 const baseActivity = makeParsedActivity({
   id: "dialog-activity",
@@ -50,7 +53,7 @@ export const DesktopSingleActivity: Story = {
   render: () => {
     mocked(useCopyToClipboard).mockReturnValue([false, onCopy])
     return (
-      <DraggableActivityDialog
+      <ActivityDialogLauncher
         activities={[baseActivity]}
         onClose={onClose}
         onShare={onShare}
@@ -65,7 +68,7 @@ export const DesktopMultiSelect: Story = {
   render: () => {
     mocked(useCopyToClipboard).mockReturnValue([false, onCopy])
     return (
-      <DraggableActivityDialog
+      <ActivityDialogLauncher
         activities={[baseActivity, secondActivity]}
         onClose={onClose}
         onRemoveActivity={onRemoveActivity}
@@ -109,7 +112,7 @@ export const PhoneDrawerWithFitLap: Story = {
       ],
     })
     return (
-      <DraggableActivityDialog
+      <ActivityDialogLauncher
         activities={[activity]}
         activeLap={activity.laps?.[1] ?? null}
         onLapSelect={onLapSelect}
@@ -127,7 +130,12 @@ export const DesktopActionsAndDrag: Story = {
   parameters: { viewport: { defaultViewport: "desktop" } },
   render: () => <DesktopInteractionHarness />,
   play: async ({ canvas, canvasElement }) => {
-    await userEvent.click(await canvas.findByRole("button", { name: "Copy activity name" }))
+    await userEvent.click(
+      await canvas.findByRole("button", { name: "Open activity details" })
+    )
+    await userEvent.click(
+      await canvas.findByRole("button", { name: "Copy activity name" })
+    )
     await expect(onCopy).toHaveBeenCalledWith("Riverside loop")
     await userEvent.click(await canvas.findByRole("button", { name: "Share" }))
     await expect(onShare).toHaveBeenCalledTimes(1)
@@ -156,10 +164,14 @@ export const DesktopActionsAndDrag: Story = {
       clientY: 160,
     })
     await waitFor(() =>
-      expect((draggable as HTMLElement).style.transform).toContain("translate3d")
+      expect((draggable as HTMLElement).style.transform).toContain(
+        "translate3d"
+      )
     )
 
-    await userEvent.click(await canvas.findByRole("button", { name: "Delete activity" }))
+    await userEvent.click(
+      await canvas.findByRole("button", { name: "Delete activity" })
+    )
     await userEvent.click(
       await within(document.body).findByRole("button", { name: "Delete" })
     )
@@ -170,11 +182,31 @@ export const DesktopActionsAndDrag: Story = {
 function DesktopInteractionHarness() {
   mocked(useCopyToClipboard).mockReturnValue([false, onCopy])
   return (
-    <DraggableActivityDialog
+    <ActivityDialogLauncher
       activities={[baseActivity]}
       onClose={onClose}
       onShare={onShare}
       onDelete={onDelete}
     />
+  )
+}
+
+function ActivityDialogLauncher({ onClose, ...props }: ActivityDialogProps) {
+  const [open, setOpen] = useState(false)
+  return (
+    <>
+      {!open && (
+        <Button onClick={() => setOpen(true)}>Open activity details</Button>
+      )}
+      {open && (
+        <DraggableActivityDialog
+          {...props}
+          onClose={() => {
+            onClose()
+            setOpen(false)
+          }}
+        />
+      )}
+    </>
   )
 }

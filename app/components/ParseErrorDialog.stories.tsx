@@ -63,6 +63,9 @@ export const RetryAndDiscard: Story = {
   render: () => <ParseErrorHarness failedFiles={["shared.gpx"]} canRetry />,
   play: async ({ canvas }) => {
     await userEvent.click(
+      await canvas.findByRole("button", { name: "Show import errors" })
+    )
+    await userEvent.click(
       await within(document.body).findByRole("button", { name: "Try again" })
     )
     await waitFor(() =>
@@ -80,7 +83,7 @@ function ParseErrorHarness({
   failureDetails?: ImportFailureSummary[]
   canRetry?: boolean
 }) {
-  const [open, setOpen] = useState(true)
+  const [open, setOpen] = useState(false)
   const onRetry = fn()
   const onDiscard = fn()
   return (

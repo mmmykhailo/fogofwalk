@@ -8,7 +8,7 @@ const meta = {
   title: "Activities/ConfirmBulkActivityUpdateDialog",
   component: ConfirmBulkActivityUpdateDialog,
   args: {
-    open: true,
+    open: false,
     activityCount: 1,
     proposal: { setting: "visibility", value: true },
     isSubmitting: false,
@@ -79,6 +79,9 @@ export const CancelAndConfirmExactOnce: Story = {
   render: () => <BulkDialogHarness onConfirm={onConfirm} />,
   play: async ({ canvas }) => {
     await userEvent.click(
+      await canvas.findByRole("button", { name: "Open bulk update" })
+    )
+    await userEvent.click(
       await within(document.body).findByRole("button", { name: "Cancel" })
     )
     await waitFor(() =>
@@ -86,7 +89,9 @@ export const CancelAndConfirmExactOnce: Story = {
         within(document.body).queryByRole("dialog")
       ).not.toBeInTheDocument()
     )
-    await userEvent.click(await canvas.findByRole("button", { name: "Open bulk update" }))
+    await userEvent.click(
+      await canvas.findByRole("button", { name: "Open bulk update" })
+    )
     await userEvent.click(
       await within(document.body).findByRole("button", { name: "Confirm" })
     )
@@ -95,7 +100,7 @@ export const CancelAndConfirmExactOnce: Story = {
 }
 
 function BulkDialogHarness({ onConfirm }: { onConfirm: () => void }) {
-  const [open, setOpen] = useState(true)
+  const [open, setOpen] = useState(false)
   return (
     <>
       <button type="button" onClick={() => setOpen(true)}>

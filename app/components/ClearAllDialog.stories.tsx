@@ -55,6 +55,9 @@ export const ConfirmExactlyOnceAndCancel: Story = {
   render: () => <ClearAllHarness activityCount={3} photoCount={1} />,
   play: async ({ canvas }) => {
     await userEvent.click(
+      await canvas.findByRole("button", { name: "Open clear dialog" })
+    )
+    await userEvent.click(
       await within(document.body).findByRole("button", { name: "Cancel" })
     )
     await waitFor(() =>
@@ -79,7 +82,7 @@ function ClearAllHarness({
   activityCount: number
   photoCount: number
 }) {
-  const [open, setOpen] = useState(true)
+  const [open, setOpen] = useState(false)
   const [confirmations, setConfirmations] = useState(0)
   const onConfirm = fn()
   return (

@@ -36,7 +36,6 @@ export const RightDesktop: Story = {
 export const HeaderBodyFooter: Story = {
   render: () => (
     <DrawerExample
-      initiallyOpen
       title="Map controls"
       description="Adjust the map without leaving the current activity."
       footer
@@ -47,7 +46,6 @@ export const HeaderBodyFooter: Story = {
 export const ScrollableBody: Story = {
   render: () => (
     <DrawerExample
-      initiallyOpen
       title="Activity library"
       body={Array.from(
         { length: 14 },

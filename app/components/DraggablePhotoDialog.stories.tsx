@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useState, type ComponentProps } from "react"
 import type { Meta, StoryObj } from "@storybook/react-vite"
 import { expect, fn, userEvent, waitFor } from "storybook/test"
 
@@ -7,7 +7,8 @@ import { makePhoto, makePhotoGroup } from "../../.storybook/fixtures/photos"
 import { Button } from "./ui/button"
 import { DraggablePhotoDialog } from "./DraggablePhotoDialog"
 
-const photoUrl = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='640' height='480'%3E%3Crect width='640' height='480' fill='%230f766e'/%3E%3C/svg%3E"
+const photoUrl =
+  "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='640' height='480'%3E%3Crect width='640' height='480' fill='%230f766e'/%3E%3C/svg%3E"
 
 const meta = {
   title: "Photos/DraggablePhotoDialog",
@@ -24,14 +25,11 @@ const meta = {
 
 export default meta
 type Story = StoryObj<typeof meta>
+type PhotoDialogProps = ComponentProps<typeof DraggablePhotoDialog>
 
 export const DesktopLandscape: Story = {
   parameters: { viewport: { defaultViewport: "desktop" } },
-  args: {
-    group: makePhotoGroup({
-      photos: [makePhoto({ objectUrl: photoUrl })],
-    }),
-  },
+  render: (args) => <PhotoDialogHarness {...args} />,
 }
 
 export const PhonePortrait: Story = {
@@ -48,12 +46,16 @@ export const PhonePortrait: Story = {
       ],
     }),
   },
+  render: (args) => <PhotoDialogHarness {...args} />,
 }
 
 export const MultiplePhotosAndBoundaries: Story = {
   parameters: { viewport: { defaultViewport: "desktop" } },
   render: () => <PhotoNavigationHarness />,
   play: async ({ canvas }) => {
+    await userEvent.click(
+      await canvas.findByRole("button", { name: "Open photo" })
+    )
     await expect(canvas.getByText("1 / 3")).toBeVisible()
     const previous = canvas.getByRole("button", { name: "Previous photo" })
     await expect(previous).toBeDisabled()
@@ -61,7 +63,9 @@ export const MultiplePhotosAndBoundaries: Story = {
     await expect(canvas.getByText("2 / 3")).toBeVisible()
     await userEvent.click(canvas.getByRole("button", { name: "Next photo" }))
     await expect(canvas.getByText("3 / 3")).toBeVisible()
-    await expect(canvas.getByRole("button", { name: "Next photo" })).toBeDisabled()
+    await expect(
+      canvas.getByRole("button", { name: "Next photo" })
+    ).toBeDisabled()
     await userEvent.click(canvas.getByRole("button", { name: "Close" }))
     await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1))
   },
@@ -70,24 +74,54 @@ export const MultiplePhotosAndBoundaries: Story = {
 const onClose = fn()
 
 function PhotoNavigationHarness() {
-  const [closed, setClosed] = useState(false)
+  const [open, setOpen] = useState(false)
   const photos = [
     makePhoto({ id: "photo-one", objectUrl: photoUrl }),
-    makePhoto({ id: "photo-two", objectUrl: photoUrl, takenAtMs: makePhoto().takenAtMs + 1_000 }),
-    makePhoto({ id: "photo-three", objectUrl: photoUrl, takenAtMs: makePhoto().takenAtMs + 2_000 }),
+    makePhoto({
+      id: "photo-two",
+      objectUrl: photoUrl,
+      takenAtMs: makePhoto().takenAtMs + 1_000,
+    }),
+    makePhoto({
+      id: "photo-three",
+      objectUrl: photoUrl,
+      takenAtMs: makePhoto().takenAtMs + 2_000,
+    }),
   ]
   return (
     <>
-      {closed ? (
-        <Button onClick={() => setClosed(false)}>Open photo</Button>
-      ) : (
+      {!open && <Button onClick={() => setOpen(true)}>Open photo</Button>}
+      {open && (
         <DraggablePhotoDialog
           group={makePhotoGroup({ id: "photo-navigation", photos })}
           onClose={() => {
             onClose()
-            setClosed(true)
+            setOpen(false)
           }}
           ensurePhotoObjectUrl={() => photoUrl}
+        />
+      )}
+    </>
+  )
+}
+
+function PhotoDialogHarness({
+  group,
+  onClose,
+  ensurePhotoObjectUrl,
+}: PhotoDialogProps) {
+  const [open, setOpen] = useState(false)
+  return (
+    <>
+      {!open && <Button onClick={() => setOpen(true)}>Open photo</Button>}
+      {open && (
+        <DraggablePhotoDialog
+          group={group}
+          onClose={() => {
+            onClose()
+            setOpen(false)
+          }}
+          ensurePhotoObjectUrl={ensurePhotoObjectUrl}
         />
       )}
     </>

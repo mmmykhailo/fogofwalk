@@ -19,7 +19,7 @@ import { SignInDialog } from "./SignInDialog"
 const meta = {
   title: "Account/SignInDialog",
   component: SignInDialog,
-  args: { open: true, onOpenChange: fn() },
+  args: { open: false, onOpenChange: fn() },
   parameters: { layout: "padded" },
 } satisfies Meta<typeof SignInDialog>
 
@@ -35,9 +35,12 @@ export const ProviderLoading: Story = {
   render: () => {
     setHealth("online")
     mocked(fetchProviders).mockImplementation(() => new Promise(() => {}))
-    return <SignInDialog open onOpenChange={() => {}} />
+    return <SignInDialogHarness />
   },
   play: async ({ canvas }) => {
+    await userEvent.click(
+      await canvas.findByRole("button", { name: "Open sign-in dialog" })
+    )
     await expect(within(document.body).getByText("Sign in")).toBeVisible()
   },
 }
@@ -46,9 +49,12 @@ export const GitHubProvider: Story = {
   render: () => {
     setHealth("online")
     setProviders([githubProvider])
-    return <SignInDialog open onOpenChange={() => {}} />
+    return <SignInDialogHarness />
   },
   play: async ({ canvas }) => {
+    await userEvent.click(
+      await canvas.findByRole("button", { name: "Open sign-in dialog" })
+    )
     onBeginSignIn.mockClear()
     mockBeginSignIn()
     await userEvent.click(
@@ -68,9 +74,12 @@ export const MultipleProvidersIncludingFake: Story = {
       fakeProvider,
       { id: "google", label: "Google" },
     ])
-    return <SignInDialog open onOpenChange={() => {}} />
+    return <SignInDialogHarness />
   },
   play: async ({ canvas }) => {
+    await userEvent.click(
+      await canvas.findByRole("button", { name: "Open sign-in dialog" })
+    )
     onBeginSignIn.mockClear()
     mockBeginSignIn()
     const input = await within(document.body).findByRole("textbox", {
@@ -93,9 +102,12 @@ export const NoProvidersConfigured: Story = {
   render: () => {
     setHealth("online")
     setProviders([])
-    return <SignInDialog open onOpenChange={() => {}} />
+    return <SignInDialogHarness />
   },
   play: async ({ canvas }) => {
+    await userEvent.click(
+      await canvas.findByRole("button", { name: "Open sign-in dialog" })
+    )
     await expect(
       await within(document.body).findByText(
         "The server has no sign-in providers configured yet."
@@ -108,9 +120,12 @@ export const ServerUnavailable: Story = {
   render: () => {
     setHealth("offline")
     mocked(fetchProviders).mockImplementation(() => new Promise(() => {}))
-    return <SignInDialog open onOpenChange={() => {}} />
+    return <SignInDialogHarness />
   },
   play: async ({ canvas }) => {
+    await userEvent.click(
+      await canvas.findByRole("button", { name: "Open sign-in dialog" })
+    )
     await expect(
       await within(document.body).findByText("Server unavailable")
     ).toBeVisible()
@@ -126,9 +141,12 @@ export const ProviderFetchFailure: Story = {
     mocked(fetchProviders).mockRejectedValue(
       new Error("Provider lookup failed")
     )
-    return <SignInDialog open onOpenChange={() => {}} />
+    return <SignInDialogHarness />
   },
   play: async ({ canvas }) => {
+    await userEvent.click(
+      await canvas.findByRole("button", { name: "Open sign-in dialog" })
+    )
     await expect(
       await within(document.body).findByText("Provider lookup failed")
     ).toBeVisible()
@@ -142,9 +160,12 @@ export const RetryAfterServerFailure: Story = {
       .mockImplementationOnce(() => new Promise(() => {}))
       .mockResolvedValueOnce({ providers: [githubProvider] })
     mocked(pingServer).mockResolvedValue(true)
-    return <SignInDialog open onOpenChange={() => {}} />
+    return <SignInDialogHarness />
   },
   play: async ({ canvas }) => {
+    await userEvent.click(
+      await canvas.findByRole("button", { name: "Open sign-in dialog" })
+    )
     await userEvent.click(
       await within(document.body).findByRole("button", { name: "Try again" })
     )

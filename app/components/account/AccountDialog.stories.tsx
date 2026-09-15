@@ -1,3 +1,4 @@
+import { useState } from "react"
 import { useFetcher } from "react-router"
 import type { Meta, StoryObj } from "@storybook/react-vite"
 import type { AccessRequest } from "~shared/api"
@@ -22,7 +23,7 @@ const meta = {
   component: AccountDialog,
   args: {
     accessRequestFetcher: undefined as never,
-    open: true,
+    open: false,
     onOpenChange,
   },
   parameters: { layout: "padded" },
@@ -58,6 +59,9 @@ export const PendingAccessRequest: Story = {
   play: async () => {
     const body = within(document.body)
     await userEvent.click(
+      await body.findByRole("button", { name: "Open account dialog" })
+    )
+    await userEvent.click(
       await body.findByRole("button", { name: "Request access" })
     )
     await expect(await body.findByText("Access request pending")).toBeVisible()
@@ -71,6 +75,9 @@ export const ApprovedSyncAction: Story = {
   },
   play: async () => {
     const body = within(document.body)
+    await userEvent.click(
+      await body.findByRole("button", { name: "Open account dialog" })
+    )
     await userEvent.click(await body.findByTestId("sync-now"))
     await expect(body.getByTestId("sync-now")).toBeVisible()
   },
@@ -83,6 +90,9 @@ export const OfflineCachedIdentity: Story = {
   },
   play: async () => {
     const body = within(document.body)
+    await userEvent.click(
+      await body.findByRole("button", { name: "Open account dialog" })
+    )
     await expect(await body.findByText("Server unavailable")).toBeVisible()
     await expect(body.getByText("Signed in with github")).toBeVisible()
     await expect(body.queryByTestId("sync-now")).not.toBeInTheDocument()
@@ -100,6 +110,9 @@ export const DiagnosticsAndDataExport: Story = {
   },
   play: async () => {
     const body = within(document.body)
+    await userEvent.click(
+      await body.findByRole("button", { name: "Open account dialog" })
+    )
     await userEvent.click(
       await body.findByRole("button", { name: "Export my data" })
     )
@@ -123,6 +136,9 @@ export const DestructiveActionsStayBehindConfirmation: Story = {
   play: async () => {
     const body = within(document.body)
     await userEvent.click(
+      await body.findByRole("button", { name: "Open account dialog" })
+    )
+    await userEvent.click(
       await body.findByRole("button", { name: "Remove all" })
     )
     await expect(
@@ -137,13 +153,22 @@ export const DestructiveActionsStayBehindConfirmation: Story = {
 }
 
 function AccountDialogHarness() {
+  const [open, setOpen] = useState(false)
   const accessRequestFetcher = useFetcher<AccessRequestData>()
   return (
-    <AccountDialog
-      accessRequestFetcher={accessRequestFetcher}
-      open
-      onOpenChange={onOpenChange}
-    />
+    <>
+      <button type="button" onClick={() => setOpen(true)}>
+        Open account dialog
+      </button>
+      <AccountDialog
+        accessRequestFetcher={accessRequestFetcher}
+        open={open}
+        onOpenChange={(nextOpen) => {
+          onOpenChange(nextOpen)
+          setOpen(nextOpen)
+        }}
+      />
+    </>
   )
 }
 

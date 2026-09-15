@@ -28,7 +28,7 @@ export const TriggerClosed: Story = {
 }
 
 export const ControlledOpen: Story = {
-  render: () => <DialogExample initiallyOpen />,
+  render: () => <DialogExample />,
 }
 
 export const DescriptionAndFooter: Story = {

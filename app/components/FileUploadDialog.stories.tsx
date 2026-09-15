@@ -64,6 +64,9 @@ export const FileSelection: Story = {
   args: { onAddFiles: fn(), onLoadSampleData: fn() },
   render: (args) => <UploadHarness {...args} />,
   play: async ({ canvas, args }) => {
+    await userEvent.click(
+      await canvas.findByRole("button", { name: "Open upload dialog" })
+    )
     const input = await within(document.body).findByLabelText("Activity files")
     const transfer = new DataTransfer()
     transfer.items.add(
@@ -86,6 +89,9 @@ export const SampleImport: Story = {
   args: { onAddFiles: fn(), onLoadSampleData: fn() },
   render: (args) => <UploadHarness {...args} />,
   play: async ({ canvas, args }) => {
+    await userEvent.click(
+      await canvas.findByRole("button", { name: "Open upload dialog" })
+    )
     await userEvent.click(
       await within(document.body).findByRole("button", { name: "Try sample" })
     )
@@ -120,7 +126,7 @@ function UploadHarness(
     initiallyOpen?: boolean
   }
 ) {
-  const [open, setOpen] = useState(props.initiallyOpen ?? true)
+  const [open, setOpen] = useState(props.initiallyOpen ?? false)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const previousOpenRef = useRef(open)
 

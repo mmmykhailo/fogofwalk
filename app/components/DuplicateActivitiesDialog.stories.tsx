@@ -26,6 +26,9 @@ export const AcknowledgeAndClose: Story = {
   render: () => <DuplicateHarness duplicateCount={2} />,
   play: async ({ canvas }) => {
     await userEvent.click(
+      await canvas.findByRole("button", { name: "Show duplicates" })
+    )
+    await userEvent.click(
       await within(document.body).findByRole("button", { name: "Close" })
     )
     await waitFor(() =>
@@ -35,7 +38,7 @@ export const AcknowledgeAndClose: Story = {
 }
 
 function DuplicateHarness({ duplicateCount }: { duplicateCount: number }) {
-  const [open, setOpen] = useState(true)
+  const [open, setOpen] = useState(false)
   return (
     <>
       <Button onClick={() => setOpen(true)}>Show duplicates</Button>

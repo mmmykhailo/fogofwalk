@@ -27,6 +27,9 @@ export const HelpLinkAndClose: Story = {
   render: () => <PhotoErrorHarness />,
   play: async ({ canvas }) => {
     await userEvent.click(
+      await canvas.findByRole("button", { name: "Show photo errors" })
+    )
+    await userEvent.click(
       await within(document.body).findByRole("link", { name: "help page" })
     )
     await waitFor(() =>
@@ -42,7 +45,7 @@ export const HelpLinkAndClose: Story = {
 }
 
 function PhotoErrorHarness() {
-  const [open, setOpen] = useState(true)
+  const [open, setOpen] = useState(false)
   const location = useLocation()
   return (
     <>
