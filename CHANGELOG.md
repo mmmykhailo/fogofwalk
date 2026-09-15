@@ -2,6 +2,12 @@
 
 All notable changes to Fog of Walk are documented here.
 
+## [0.8.0] - 2026-09-15
+
+### Changed
+
+- anomalies remover (#38)
+
 ## [0.7.0] - 2026-09-14
 
 ### Changed
