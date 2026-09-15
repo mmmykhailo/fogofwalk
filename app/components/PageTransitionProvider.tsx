@@ -31,8 +31,10 @@ const PageTransitionContext = createContext<PageTransitionContextValue | null>(
  */
 export function PageTransitionProvider({
   children,
+  enableViewTransitions = true,
 }: {
   children: React.ReactNode
+  enableViewTransitions?: boolean
 }) {
   const location = useLocation()
   const routerNavigate = useNavigate()
@@ -50,12 +52,15 @@ export function PageTransitionProvider({
       const pending = {
         locationKey: location.key,
         navigateTimer: window.setTimeout(() => {
-          routerNavigate(to, { ...options, viewTransition: true })
+          routerNavigate(to, {
+            ...options,
+            viewTransition: enableViewTransitions,
+          })
         }, DARKEN_DURATION_MS),
       }
       pendingRef.current = pending
     },
-    [location.key, routerNavigate]
+    [enableViewTransitions, location.key, routerNavigate]
   )
 
   useEffect(() => {

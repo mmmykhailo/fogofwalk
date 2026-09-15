@@ -8,6 +8,7 @@ import {
   isActivityProgressSessionComplete,
   mergeActivityProgressSession,
 } from "~/lib/activities/progress"
+import type { ActivityProgressRow } from "~/lib/activities/progress"
 import {
   dismissImportStatus,
   useImportStatus,
@@ -99,6 +100,14 @@ export function ActivityProgress() {
   }, [fogStatus.phase, importStatus.phase, session, updateKey])
 
   const rows = getActivityProgressRows(session)
+  return <ActivityProgressPanel rows={rows} />
+}
+
+export function ActivityProgressPanel({
+  rows,
+}: {
+  rows: readonly ActivityProgressRow[]
+}) {
   if (rows.length === 0) return null
 
   return (

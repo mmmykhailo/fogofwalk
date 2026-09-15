@@ -1,6 +1,6 @@
 import { useState } from "react"
 import type { Meta, StoryObj } from "@storybook/react-vite"
-import { expect, fn, userEvent, within } from "storybook/test"
+import { expect, fn, userEvent, waitFor, within } from "storybook/test"
 
 import {
   Select,
@@ -106,9 +106,11 @@ export const KeyboardSelection: Story = {
     await userEvent.keyboard("{Escape}")
     await expect(trigger).toHaveFocus()
     await expect(onValueChange).toHaveBeenCalled()
-    await expect(
-      within(document.body).queryByRole("listbox")
-    ).not.toBeInTheDocument()
+    await waitFor(() =>
+      expect(
+        within(document.body).queryByRole("listbox")
+      ).not.toBeInTheDocument()
+    )
   },
 }
 

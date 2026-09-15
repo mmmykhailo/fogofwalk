@@ -63,6 +63,7 @@ export function FileUploadDialog({
             type="file"
             multiple
             accept=".gpx,.fit"
+            aria-label="Activity files"
             className="hidden"
             onChange={handleFileChange}
           />

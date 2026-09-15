@@ -11,6 +11,12 @@ const projectRoot = path.resolve(storybookDir, "..")
 export default defineConfig({
   root: projectRoot,
   plugins: [tailwindcss(), tsconfigPaths({ root: projectRoot })],
+  resolve: {
+    alias: {
+      "~": path.join(projectRoot, "app"),
+      "~shared": path.join(projectRoot, "shared"),
+    },
+  },
   optimizeDeps: {
     include: [
       "@base-ui/react/checkbox",

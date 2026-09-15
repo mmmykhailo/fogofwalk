@@ -74,7 +74,7 @@ export const ControlledTyping: Story = {
     return <ControlledInput onChange={onChange} />
   },
   play: async ({ canvas }) => {
-    const input = canvas.getByRole("textbox", { name: "Activity name" })
+    const input = await canvas.findByRole("textbox", { name: "Activity name" })
     await userEvent.clear(input)
     await userEvent.type(input, "Riverside walk")
     await expect(input).toHaveValue("Riverside walk")

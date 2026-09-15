@@ -41,7 +41,7 @@ export const TitledAndAligned: Story = {
 export const KeyboardAndDismissal: Story = {
   render: () => <PopoverExample />,
   play: async ({ canvas }) => {
-    const trigger = canvas.getByRole("button", { name: "Show details" })
+    const trigger = await canvas.findByRole("button", { name: "Show details" })
     await userEvent.click(trigger)
     await expect(within(document.body).getByRole("dialog")).toBeVisible()
     await userEvent.keyboard("{Escape}")

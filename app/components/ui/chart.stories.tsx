@@ -138,7 +138,9 @@ export const TooltipDataIsAccessible: Story = {
     </ChartContainer>
   ),
   play: async ({ canvas, canvasElement }) => {
-    const chart = canvas.getByRole("img", { name: "Activity distance chart" })
+    const chart = await canvas.findByRole("img", {
+      name: "Activity distance chart",
+    })
     await expect(chart).toBeVisible()
     let datum: Element | null = null
     await waitFor(() => {

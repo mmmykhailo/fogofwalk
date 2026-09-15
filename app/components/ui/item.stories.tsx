@@ -23,7 +23,10 @@ import { Button } from "./button"
 const meta = {
   title: "UI/Item",
   component: Item,
-  parameters: { layout: "padded" },
+  parameters: {
+    layout: "padded",
+    router: { withTransition: false },
+  },
 } satisfies Meta<typeof Item>
 
 export default meta
@@ -151,9 +154,11 @@ export const InteractiveWithIndependentAction: Story = {
     </Item>
   ),
   play: async ({ canvas }) => {
-    await userEvent.click(canvas.getByRole("button", { name: "Select" }))
     await userEvent.click(
-      canvas.getByRole("button", { name: "Activity options" })
+      await canvas.findByRole("button", { name: "Select" })
+    )
+    await userEvent.click(
+      await canvas.findByRole("button", { name: "Activity options" })
     )
     await expect(onItemClick).toHaveBeenCalledTimes(1)
     await expect(onActionClick).toHaveBeenCalledTimes(1)

@@ -33,6 +33,7 @@ export interface StoryRouterParameters {
   actionSpy?: StoryRouterSpy
   resources?: StoryRouterResource[]
   withTransition?: boolean
+  enableViewTransitions?: boolean
 }
 
 function createLoader(data: unknown) {
@@ -61,7 +62,9 @@ function createRoutes(
     parameters.withTransition === false ? (
       <Story />
     ) : (
-      <PageTransitionProvider>
+      <PageTransitionProvider
+        enableViewTransitions={parameters.enableViewTransitions ?? false}
+      >
         <Story />
       </PageTransitionProvider>
     )
