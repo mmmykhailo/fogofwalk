@@ -1,6 +1,6 @@
 import { useState } from "react"
 import type { Meta, StoryObj } from "@storybook/react-vite"
-import { expect, fn, userEvent, within } from "storybook/test"
+import { expect, fn, userEvent, waitFor, within } from "storybook/test"
 
 import { ActivityTypeSelect } from "./ActivityTypeSelect"
 import type { ActivityType } from "~/types/activities"
@@ -22,16 +22,23 @@ export const Unset: Story = {
 export const EachActivityType: Story = {
   render: () => (
     <div className="flex flex-wrap gap-2">
-      {(["walking", "running", "cycling", "kayaking", "swimming", "other"] as const).map(
-        (activityType) => (
-          <ActivityTypeSelect
-            key={activityType}
-            activityType={activityType}
-            onChange={() => {}}
-            ariaLabel={`${activityType} activity type`}
-          />
-        )
-      )}
+      {(
+        [
+          "walking",
+          "running",
+          "cycling",
+          "kayaking",
+          "swimming",
+          "other",
+        ] as const
+      ).map((activityType) => (
+        <ActivityTypeSelect
+          key={activityType}
+          activityType={activityType}
+          onChange={() => {}}
+          ariaLabel={`${activityType} activity type`}
+        />
+      ))}
     </div>
   ),
 }
@@ -67,6 +74,11 @@ export const SelectsAndReportsType: Story = {
     )
     await expect(onChange).toHaveBeenCalledWith("kayaking")
     await expect(trigger).toHaveTextContent("Kayaking")
+    await waitFor(() =>
+      expect(
+        within(document.body).queryByRole("listbox")
+      ).not.toBeInTheDocument()
+    )
   },
 }
 

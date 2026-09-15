@@ -76,6 +76,12 @@ export const HoverAndFocus: Story = {
       expect(within(document.body).getByText("Helpful context")).toBeVisible()
     })
     await userEvent.keyboard("{Escape}")
+    await userEvent.tab()
+    await waitFor(() =>
+      expect(
+        within(document.body).queryByRole("tooltip")
+      ).not.toBeInTheDocument()
+    )
   },
 }
 

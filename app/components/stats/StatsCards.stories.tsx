@@ -132,12 +132,13 @@ export const WeeklyTooltip: Story = {
       expect(surface).toBeTruthy()
     })
     if (!surface) throw new Error("Expected a rendered weekly chart surface")
-    let bar: Element | null = null
     await waitFor(() => {
-      bar = canvasElement.querySelector(".recharts-rectangle")
-      expect(bar).toBeTruthy()
+      expect(canvasElement.querySelector(".recharts-rectangle")).toBeTruthy()
     })
-    if (!bar) throw new Error("Expected a rendered weekly chart bar")
+    const bar = canvasElement.querySelector(".recharts-rectangle")
+    if (!(bar instanceof Element)) {
+      throw new Error("Expected a rendered weekly chart bar")
+    }
     const bounds = bar.getBoundingClientRect()
     await fireEvent.mouseMove(surface, {
       clientX: bounds.left + bounds.width / 2,

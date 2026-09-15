@@ -100,7 +100,9 @@ export const KeyboardSelection: Story = {
   play: async ({ canvas }) => {
     const trigger = canvas.getByRole("combobox", { name: "Activity type" })
     await userEvent.click(trigger)
-    await userEvent.keyboard("{ArrowDown}{Enter}")
+    await within(document.body).findByRole("option", { name: "Walking" })
+    await userEvent.keyboard("{ArrowDown}")
+    await userEvent.keyboard("{Enter}")
     await expect(trigger).toHaveTextContent(/walking/i)
     await userEvent.click(trigger)
     await userEvent.keyboard("{Escape}")
