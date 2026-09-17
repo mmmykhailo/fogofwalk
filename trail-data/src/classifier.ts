@@ -78,6 +78,13 @@ export interface TrailVisualFeature {
   sort: number
 }
 
+export interface TrailTilePropertiesV1 {
+  kind: TrailKind
+  color: string
+  offset: number
+  sort: number
+}
+
 export interface VisualSelection {
   features: TrailVisualFeature[]
   droppedKeys: number
