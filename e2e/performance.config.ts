@@ -31,7 +31,8 @@ export default defineConfig({
     timeout: 120_000,
     env: {
       VITE_API_URL: "",
-      VITE_TRAILS_FEATURE_ENABLED: "true",
+      VITE_TRAIL_ARCHIVE_URL:
+        "http://127.0.0.1:4173/map-data/trails/v1/trails-v1.pmtiles",
       VITE_E2E: "1",
     },
   },

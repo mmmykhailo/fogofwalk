@@ -7,7 +7,7 @@ declare global {
     getZoom(): number
     setZoom(zoom: number): void
     getLayer(id: string): unknown
-    getStyle(): { layers?: unknown[] }
+    getStyle(): { layers?: unknown[]; sources?: Record<string, unknown> }
     queryRenderedFeatures(
       geometry?: [number, number] | [[number, number], [number, number]],
       options?: { layers?: readonly string[] }
@@ -23,6 +23,7 @@ declare global {
     once(event: string, handler: () => void): void
     off(event: string, handler?: () => void): void
     getSource(id: string): unknown
+    getPaintProperty(layerId: string, property: string): unknown
     getCenter(): { lng: number; lat: number }
     isStyleLoaded(): boolean
   }

@@ -69,8 +69,10 @@ async function stubMapTiles(context: BrowserContext) {
   for (const host of [
     "https://server.arcgisonline.com/**",
     "https://s3.amazonaws.com/**",
-    "https://hiking.waymarkedtrails.org/**",
-    "https://cycling.waymarkedtrails.org/**",
+    "https://**.waymarkedtrails.org/**",
+    "https://overpass-api.de/**",
+    "https://api.openstreetmap.org/**",
+    "https://tile.openstreetmap.org/**",
   ]) {
     await context.route(host, (route) => route.abort())
   }

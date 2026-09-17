@@ -8,6 +8,9 @@ import {
   WEB_URL_SERVERLESS,
 } from "./fixtures/ports"
 
+const TRAIL_ARCHIVE_URL =
+  "http://127.0.0.1:4173/map-data/trails/v1/trails-v1.pmtiles"
+
 export default defineConfig({
   testDir: "./specs",
   globalSetup: "./global-setup.ts",
@@ -91,7 +94,7 @@ export default defineConfig({
         CHOKIDAR_USEPOLLING: "true",
         E2E: "1",
         VITE_API_URL: API_URL,
-        VITE_TRAILS_FEATURE_ENABLED: "true",
+        VITE_TRAIL_ARCHIVE_URL: TRAIL_ARCHIVE_URL,
         VITE_E2E: "1",
       },
     },
@@ -106,7 +109,7 @@ export default defineConfig({
         CHOKIDAR_USEPOLLING: "true",
         E2E: "1",
         VITE_API_URL: "",
-        VITE_TRAILS_FEATURE_ENABLED: "true",
+        VITE_TRAIL_ARCHIVE_URL: TRAIL_ARCHIVE_URL,
         VITE_E2E: "1",
       },
     },
