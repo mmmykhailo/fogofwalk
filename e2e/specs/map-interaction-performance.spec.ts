@@ -31,7 +31,7 @@ interface TrailPerformanceFixture {
 
 async function stubMapTiles(
   page: Page,
-  trailMode: TrailPerformanceMode = "trails-on"
+  trailMode?: TrailPerformanceMode
 ): Promise<TrailPerformanceFixture> {
   await page.route("https://tiles.openfreemap.org/**", (route) => {
     if (route.request().url().includes("/styles/")) {
@@ -48,11 +48,11 @@ async function stubMapTiles(
   )
   await page.route("https://s3.amazonaws.com/**", (route) => route.abort())
 
-  const archive = await installTrailArchive(page)
+  const archive = trailMode ? await installTrailArchive(page) : null
   return {
-    mode: trailMode,
+    mode: trailMode ?? "trails-off",
     get requests() {
-      return archive.requests.map((request) => request.url)
+      return archive?.requests.map((request) => request.url) ?? []
     },
   }
 }
