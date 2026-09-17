@@ -404,7 +404,16 @@ async function buildArchive(options: BuildOptions): Promise<BuildResult> {
       }
     })
 
-    const metadata = buildMetadata(options.coverage.bounds, options.snapshot)
+    const archiveBounds = bounds ?? boundsFromCoverage(options.coverage.bounds)
+    const metadata = buildMetadata(
+      [
+        archiveBounds.minLon,
+        archiveBounds.minLat,
+        archiveBounds.maxLon,
+        archiveBounds.maxLat,
+      ],
+      options.snapshot
+    )
     const writeResult = await runPass(
       report,
       "mvt-packing",
@@ -413,7 +422,7 @@ async function buildArchive(options: BuildOptions): Promise<BuildResult> {
         const result = await writePmtilesArchive({
           output: archivePath,
           metadata,
-          bounds: bounds ?? boundsFromCoverage(options.coverage.bounds),
+          bounds: archiveBounds,
           leafSize: options.leafSize,
           forceLeafDirectories: options.forceLeafDirectories,
           signal: controller.signal,
@@ -439,6 +448,8 @@ async function buildArchive(options: BuildOptions): Promise<BuildResult> {
         return result
       }
     )
+    report.counts.duplicateSourceObjects = store.counters.duplicateSourceObjects
+    report.counts.sourceConflicts = store.counters.sourceConflicts
     report.counts.tiles = verification.tileCount
     report.counts.decodedVerificationFeatures = verification.featureCount
     report.sampleRuntime(await directoryBytes(scratch))
@@ -532,6 +543,7 @@ async function runPass<T>(
 ): Promise<T> {
   const startedAt = Date.now()
   const metrics = { rowsRead: 0, rowsRetained: 0, failures: 0 }
+  const sampler = setInterval(() => report.sampleRuntime(), 100)
   try {
     const result = await callback(metrics)
     report.recordPass(
@@ -554,6 +566,8 @@ async function runPass<T>(
       await directoryBytes(scratch)
     )
     throw error
+  } finally {
+    clearInterval(sampler)
   }
 }
 

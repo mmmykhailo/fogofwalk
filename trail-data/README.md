@@ -55,7 +55,8 @@ published checksum; the builder independently records SHA-256:
       "publishedChecksum": {
         "algorithm": "md5",
         "value": "<published value>"
-      }
+      },
+      "sha256": "<locally calculated sha256>"
     }
   ]
 }

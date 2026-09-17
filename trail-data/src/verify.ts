@@ -105,6 +105,7 @@ export async function verifyArchive(
       unknown
     >
     validateMetadata(metadata)
+    validateMetadataBounds(metadata, header)
 
     const rootBytes = new Uint8Array(
       gunzipSync(
@@ -233,6 +234,26 @@ export function validateMetadata(metadata: Record<string, unknown>): void {
   }
 }
 
+function validateMetadataBounds(
+  metadata: Record<string, unknown>,
+  header: Header
+): void {
+  const value = metadata.bounds
+  if (
+    !Array.isArray(value) ||
+    value.length !== 4 ||
+    value.some((item) => typeof item !== "number" || !Number.isFinite(item))
+  ) {
+    throw new Error("archive metadata must declare four finite bounds")
+  }
+  const expected = [header.minLon, header.minLat, header.maxLon, header.maxLat]
+  if (
+    value.some((item, index) => Math.abs(item - (expected[index] ?? 0)) > 1e-7)
+  ) {
+    throw new Error("archive metadata bounds do not match the PMTiles header")
+  }
+}
+
 function validateDirectoryEntries(
   entries: DirectoryEntry[],
   header: Header,
@@ -310,6 +331,20 @@ async function validateExpectedFeatures(
   const expected = JSON.parse(await Bun.file(path).text()) as {
     features?: Array<Record<string, unknown>>
   }
+  const expectedKeys = new Set(
+    (expected.features ?? []).map((feature) =>
+      JSON.stringify({
+        way: feature.way,
+        kind: feature.kind,
+        color: feature.color,
+        offset: feature.offset,
+        sort: feature.sort,
+      })
+    )
+  )
+  if (expectedKeys.size !== (expected.features ?? []).length) {
+    throw new Error("expected fixture contains duplicate semantic features")
+  }
   const observed = new Set<string>()
   for (const entry of entries) {
     const bytes = new Uint8Array(
@@ -323,9 +358,18 @@ async function validateExpectedFeatures(
     const layer = new VectorTile(new Pbf(bytes)).layers[SOURCE_LAYER]
     if (!layer) continue
     for (let index = 0; index < layer.length; index++) {
-      const properties = layer.feature(index).properties
+      const decoded = layer.feature(index)
+      if (
+        typeof decoded.id !== "number" ||
+        !Number.isSafeInteger(decoded.id) ||
+        decoded.id < 0
+      ) {
+        throw new Error("fixture trail features must have stable numeric IDs")
+      }
+      const properties = decoded.properties
       observed.add(
         JSON.stringify({
+          way: Math.floor(decoded.id / 16),
           kind: properties.kind,
           color: properties.color,
           offset: properties.offset,
@@ -334,15 +378,13 @@ async function validateExpectedFeatures(
       )
     }
   }
-  for (const feature of expected.features ?? []) {
-    const key = JSON.stringify({
-      kind: feature.kind,
-      color: feature.color,
-      offset: feature.offset,
-      sort: feature.sort,
-    })
-    if (!observed.has(key))
+  if (observed.size !== expectedKeys.size) {
+    throw new Error("archive fixture semantic feature count does not match")
+  }
+  for (const key of expectedKeys) {
+    if (!observed.has(key)) {
       throw new Error(`missing expected fixture feature ${key}`)
+    }
   }
 }
 
@@ -358,9 +400,18 @@ class LocalFileSource implements Source {
   }
 
   async getBytes(offset: number, length: number): Promise<RangeResponse> {
+    if (
+      !Number.isSafeInteger(offset) ||
+      !Number.isSafeInteger(length) ||
+      offset < 0 ||
+      length < 0 ||
+      offset > this.size
+    ) {
+      throw new Error(`archive range is outside the file: ${offset}+${length}`)
+    }
+    const available = Math.min(length, this.size - offset)
     return {
-      data: (await this.read(offset, Math.min(length, this.size - offset)))
-        .buffer as ArrayBuffer,
+      data: (await this.read(offset, available)).buffer as ArrayBuffer,
     }
   }
 

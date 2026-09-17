@@ -37,6 +37,7 @@ const metadata = {
   attribution: "© OpenStreetMap contributors",
   license: "ODbL-1.0",
   dataLicense: "ODbL-1.0",
+  bounds: [14, 50, 14.1, 50.1],
   vector_layers: [
     {
       id: "trails",
