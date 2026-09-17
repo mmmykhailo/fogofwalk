@@ -42,22 +42,36 @@ Regular code, documentation, and workflow commits do not deploy on their own.
 
 ## Trail archive compatibility and rollback
 
-Trail data is a separately built but client-versioned public artifact. Before
-referencing a new archive from a client release:
+Trail data is a separately built but client-versioned public artifact. It is
+generated locally by the Bun/TypeScript release tool; neither deploy workflow
+downloads OSM data nor rebuilds an archive. Before referencing a new archive
+from a client release:
 
-1. Run the fixture/unit build and archive decoder checks, then run the full
-   dated PBF build on the dedicated trail-builder runner.
-2. Confirm the report records schema version 1, z12-only bounds, the dated OSM
-   source and published checksum, the generated SHA-256, attribution/licence,
-   tile-size metrics, and the overlap-cap release gate.
-3. Upload under an immutable content-addressed filename. Never overwrite an
-   existing archive or publish a mutable `latest` alias.
-4. Compare the remote size and checksum with the local artifact, then perform
-   an external `HEAD` and several `Range` probes. A missing `206` response or
+1. Run `bun run build:trail-fixture`, `bun run verify:trail-fixture`, and the
+   trail TypeScript tests.
+2. Build from a reviewed manifest of local, dated, checksummed PBF inputs:
+
+   ```sh
+   bun trail-data/build.ts build \
+     --manifest=/data/manifests/trails.json \
+     --output=/data/trails/trails-build.pmtiles \
+     --report=/data/trails/trails-build.report.json \
+     --scratch-dir=/data/scratch/fogofwalk-trails
+   ```
+
+3. Review the report for schema version 1, explicit coverage, source
+   checksums, generated SHA-256, attribution/licence, tile-size metrics,
+   duplicate/conflict counts, geometry loss, and the overlap-cap gate. Run
+   `bun trail-data/build.ts manifest` to produce the checksum, source manifest,
+   and ODbL `DATA-LICENSE.txt` sidecars.
+4. Name the archive with its snapshot date and first 12 SHA-256 characters.
+   Upload the archive and sidecars under a temporary static name, compare
+   remote size/checksums, atomically move them to immutable names, and perform
+   external `HEAD` plus several `Range` probes. A missing `206` response or
    incorrect `Content-Range` leaves the active client unchanged.
-5. Set `VITE_TRAIL_ARCHIVE_URL` to the exact archive URL and deploy the client.
-   The deployment workflow repeats the URL, `HEAD`, and first-127-byte range
-   preflight before building.
+5. Set `VITE_TRAIL_ARCHIVE_URL` to the exact immutable archive URL and deploy
+   the client. The deployment workflow repeats the URL, `HEAD`, and first-127-
+   byte range preflight before building.
 
 Retain the current archive and at least the previous two archives. Delete an
 old archive only when no retained client release references it and it is at

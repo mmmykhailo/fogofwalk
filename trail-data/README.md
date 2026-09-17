@@ -1,48 +1,124 @@
 # Fog of Walk trail archive builder
 
-This standalone Java 21 profile turns a dated OpenStreetMap `.osm.pbf` snapshot
-into the schema-v1 `trails-*.pmtiles` archive consumed by the client. It is not
-an npm dependency and is never bundled into the SPA.
+`trail-data/build.ts` is the only trail build entry point. It is a standalone
+Bun/TypeScript release tool: the browser and the deployed Bun server never
+parse OSM data or generate trail tiles.
 
-The Planetiler and Gradle versions are pinned in `versions.properties` and
-`gradle/wrapper/gradle-wrapper.properties`. The wrapper downloads only that
-exact Gradle distribution when it is not already cached. Production inputs must
-be dated snapshots with a published SHA-256 value; `planet-latest.osm.pbf` is
-rejected.
+The builder reads explicit local, dated `.osm.pbf` files, verifies their
+published checksum and locally calculated SHA-256, then uses a temporary
+SQLite index and a z12 tile spool to produce a deterministic schema-v1 PMTiles
+archive. The implementation uses only TypeScript/JavaScript and Bun's built-in
+SQLite. Its audited data-path packages are `pbf`, `@maplibre/geojson-vt`,
+`@maplibre/vt-pbf`, `@mapbox/vector-tile`, and `pmtiles`; none launches an
+external process, container, database server, or other generator.
 
-Run the offline fixture first:
+## Offline fixture
+
+The checked-in PBF fixture is generated once from the synthetic XML fixture.
+Routine CI uses the local PBF and does not download live OSM or Geofabrik data.
 
 ```sh
-trail-data/scripts/build-fixture.sh
+bun run build:trail-fixture
+bun run verify:trail-fixture
+bun test ./trail-data/test/*.test.ts
 ```
 
-Run a regional or planet build with explicit inputs:
+`fixture` also accepts `--write-pbf`, `--output`, `--report`,
+`--scratch-dir`, `--keep-scratch`, `--leaf-size`, and
+`--force-leaf-directories`. It compares the emitted semantic features and
+dropped-overlap count with `fixtures/expected-z12.json` and rewrites the
+deterministic local archive.
+
+## Local regional or planet build
+
+Download a dated public OSM PBF before invoking the builder. Approved source
+URLs are dated files from the official OSM planet PBF index or public
+Geofabrik extracts. The final manifest records the resolved URL; mutable
+`latest` names, credentials, query strings, and unapproved hosts are rejected.
+
+Create a manifest with absolute input paths, coverage, snapshot, and the
+checksum published by the distributor. MD5 is valid when that is the only
+published checksum; the builder independently records SHA-256:
+
+```json
+{
+  "schemaVersion": 1,
+  "coverage": {
+    "kind": "regional",
+    "bounds": [12.0, 48.5, 19.0, 51.1]
+  },
+  "snapshot": "2026-09-07T00:00:00Z",
+  "inputs": [
+    {
+      "path": "/data/pbf/czechia-260907.osm.pbf",
+      "sourceUrl": "https://download.geofabrik.de/europe/czech-republic-260907.osm.pbf",
+      "publishedChecksum": {
+        "algorithm": "md5",
+        "value": "<published value>"
+      }
+    }
+  ]
+}
+```
+
+Run the build from a release machine with scratch space separate from the
+archive output when possible:
 
 ```sh
-trail-data/scripts/build-region.sh \
-  --osm-path=/data/pbf/czechia-260907.osm.pbf \
-  --osm-source-url=https://download.geofabrik.de/europe/czech-republic-260907.osm.pbf \
-  --osm-source-checksum=sha256:<published-sha256> \
+bun trail-data/build.ts build \
+  --manifest=/data/manifests/czechia.json \
   --output=/data/trails/trails-2026-09-07.pmtiles \
-  --report=/data/trails/trails-build-report.json \
-  --osm-snapshot=2026-09-07T00:00:00Z
+  --report=/data/trails/trails-2026-09-07.report.json \
+  --scratch-dir=/data/scratch/fogofwalk-trails
 ```
 
-`build-planet.sh` has the same interface and is named separately for the
-production runbook. Both scripts run the unit suite, refuse an existing output,
-verify the completed archive, and write sidecars next to the report: a
-content SHA-256 file, publication manifest, and `DATA-LICENSE.txt` ODbL data
-licence notice. The notice links to the
-[Open Database License 1.0](https://opendatacommons.org/licenses/odbl/1-0/)
-and the [OpenStreetMap copyright page](https://www.openstreetmap.org/copyright).
-Publication also fails when more than 0.1% of emitted ways hit the four-lane
-overlap cap.
-`verify-archive.sh` checks PMTiles v3,
-z12-only MVT data, the `trails` layer, the four-property schema, palette/rank
-ranges, tile size, attribution, and an optional SHA-256 value. Linux builds
-also record peak builder memory and sampled scratch-disk high-water usage in
-the report; tile count, compressed-size percentiles, and densest tiles are
-filled by the archive verifier.
+The preflight estimates at least twice the declared input size (and never less
+than 64 MiB), then requires 25% additional free space. The report records
+pass timings, peak RSS, scratch high-water usage, relation/geometry counts,
+tile sizes, archive bounds, and provenance. A successful build refuses to
+overwrite an existing archive and atomically renames the verified temporary
+archive into place. `--keep-scratch` preserves the SQLite/spool directory for
+inspection. SIGINT/SIGTERM leave a directory named
+`.fogofwalk-trails-incomplete-*`; a partial archive is never renamed to the
+requested output.
 
-The fixture is intentionally XML and is used by the Java tests and the small
-deterministic PMTiles fixture generator. CI does not download live OSM data.
+Production coverage is a measured choice. Run country, continent, and (if
+appropriate) planet gates on the documented local machine and record the
+results. If planet scale does not fit the measured time, memory, or scratch
+budget, publish an explicitly regional manifest and bounds; do not add a
+runtime query or another tile generator.
+
+## Verification and publication
+
+Verify the archive independently through the PMTiles reader and MVT decoder:
+
+```sh
+bun trail-data/build.ts verify \
+  --archive=/data/trails/trails-2026-09-07.pmtiles \
+  --checksum=<sha256> \
+  --report=/data/trails/trails-2026-09-07.report.json
+```
+
+For a release, write the sidecars after reviewing the report:
+
+```sh
+bun trail-data/build.ts manifest \
+  --archive=/data/trails/trails-2026-09-07.pmtiles \
+  --report=/data/trails/trails-2026-09-07.report.json \
+  --output-dir=/data/trails
+```
+
+This creates the archive checksum, a source/build manifest, and
+`*.DATA-LICENSE.txt` containing the ODbL 1.0 and OpenStreetMap attribution
+links. Name published archives with the snapshot date and first 12 SHA-256
+characters, upload the archive and every sidecar to a temporary static name,
+compare remote size/checksum, atomically move to the immutable name, and probe
+`HEAD` plus multiple byte ranges from outside the host. Keep the current
+archive and at least two predecessors for rollback. Publication is manual and
+static; deploy-client only preflights the already-published URL.
+
+The archive contract remains stable: PMTiles v3, gzip MVT, one z12 `trails`
+layer, line features only, and exactly `kind`, `color`, `offset`, and `sort`
+properties. The static host serves immutable bytes with public CORS and range
+support. It does not parse, filter, proxy, refresh, authenticate, or
+personalize trail data.

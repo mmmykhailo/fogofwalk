@@ -135,15 +135,16 @@ directory, metadata, and tile bytes with ordinary HTTP `Range` requests;
 MapLibre overzooms the z12 data above zoom 12 and no trail source is materialized
 below that zoom.
 
-The archive is generated outside the SPA by the pinned Planetiler profile in
-`trail-data/`. That profile reads a dated OpenStreetMap PBF, preprocesses
-accepted hiking, foot, bicycle, and superroute relations, joins their
-membership to line ways, and emits only the four properties used by the style:
-`kind`, `color`, `offset`, and `sort`. Relation IDs, raw tags, route names, and
-geometry-processing diagnostics stay in the build report rather than in the
-browser archive. The checked-in fixture is the ordinary CI input; production
-builds record the source URL, snapshot, published checksum, archive SHA-256,
-schema version, tile-size metrics, attribution, and ODbL notice.
+The archive is generated outside the SPA by the local Bun/TypeScript builder in
+`trail-data/build.ts`. It reads an explicit dated OpenStreetMap PBF, streams
+accepted hiking, foot, bicycle, and superroute relations through a temporary
+SQLite index, joins their membership to line ways, and emits only the four
+properties used by the style: `kind`, `color`, `offset`, and `sort`. Relation
+IDs, raw tags, route names, and geometry-processing diagnostics stay in the
+build report rather than in the browser archive. The checked-in fixture is the
+ordinary offline CI input; production builds record the source URL, snapshot,
+published checksum, archive SHA-256, schema version, tile-size metrics,
+coverage, attribution, and ODbL notice.
 
 The browser does not download OSM data, query a route API, parse provider JSON,
 reproject coordinates, or encode vector tiles. The optional Fog of Walk sync
