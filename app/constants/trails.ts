@@ -9,6 +9,8 @@ export const TRAILS_VISIBLE_DEFAULT = true
 export const TRAIL_PROTOCOL_NAME = "fow-trails"
 export const TRAIL_SOURCE_LAYER = "trails"
 export const TRAIL_DATA_ZOOM = 12
+export const TRAIL_MVT_VERSION = 2
+export const TRAIL_MVT_EXTENT = 4096
 export const TRAIL_MIN_RENDER_ZOOM = 12
 export const TRAIL_MAX_RENDER_ZOOM = 24
 

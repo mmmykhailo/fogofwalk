@@ -1,7 +1,11 @@
 import { describe, expect, test } from "bun:test"
 import { VectorTile } from "@mapbox/vector-tile"
 import Pbf from "pbf"
-import { TRAIL_SOURCE_LAYER } from "~/constants/trails"
+import {
+  TRAIL_MVT_EXTENT,
+  TRAIL_MVT_VERSION,
+  TRAIL_SOURCE_LAYER,
+} from "~/constants/trails"
 import { encodeTrailTile, createEmptyTrailTile } from "~/lib/map/trails/encode"
 import { normalizeTrailTile } from "~/lib/map/trails/normalize"
 import type { TrailTileCoordinate } from "~/lib/map/trails/types"
@@ -25,6 +29,8 @@ describe("trail tile encoding", () => {
 
     expect(layer).toBeDefined()
     expect(layer?.name).toBe(TRAIL_SOURCE_LAYER)
+    expect(layer?.version).toBe(TRAIL_MVT_VERSION)
+    expect(layer?.extent).toBe(TRAIL_MVT_EXTENT)
     expect(layer?.length).toBe(4)
 
     const features = Array.from({ length: layer?.length ?? 0 }, (_, index) =>

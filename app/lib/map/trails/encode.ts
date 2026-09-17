@@ -1,7 +1,12 @@
 import type { FeatureCollection, LineString, MultiLineString } from "geojson"
 import { geoJSONToTile, type GeoJSONVTTile } from "@maplibre/geojson-vt"
 import { fromGeojsonVt } from "@maplibre/vt-pbf"
-import { TRAIL_DATA_ZOOM, TRAIL_SOURCE_LAYER } from "~/constants/trails"
+import {
+  TRAIL_DATA_ZOOM,
+  TRAIL_MVT_EXTENT,
+  TRAIL_MVT_VERSION,
+  TRAIL_SOURCE_LAYER,
+} from "~/constants/trails"
 import type {
   NormalizedTrailTile,
   RenderTrailProperties,
@@ -27,11 +32,15 @@ function ownedArrayBuffer(bytes: Uint8Array): ArrayBuffer {
 function emptyGeojsonVtTile(): GeoJSONVTTile {
   return geoJSONToTile(EMPTY_COLLECTION, TRAIL_DATA_ZOOM, 0, 0, {
     maxZoom: TRAIL_DATA_ZOOM,
+    extent: TRAIL_MVT_EXTENT,
   })
 }
 
 const EMPTY_TRAIL_TILE_BYTES = fromGeojsonVt({
   [TRAIL_SOURCE_LAYER]: emptyGeojsonVtTile() as unknown as VtPbfTile,
+}, {
+  extent: TRAIL_MVT_EXTENT,
+  version: TRAIL_MVT_VERSION,
 })
 
 export function encodeTrailTile(
@@ -43,11 +52,14 @@ export function encodeTrailTile(
     coordinate.z,
     coordinate.x,
     coordinate.y,
-    { maxZoom: coordinate.z }
+    { extent: TRAIL_MVT_EXTENT, maxZoom: coordinate.z }
   )
   return ownedArrayBuffer(
     fromGeojsonVt({
       [TRAIL_SOURCE_LAYER]: tile as unknown as VtPbfTile,
+    }, {
+      extent: TRAIL_MVT_EXTENT,
+      version: TRAIL_MVT_VERSION,
     })
   )
 }
