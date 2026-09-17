@@ -82,6 +82,7 @@ await writeFile(
     "",
     "This archive contains data derived from OpenStreetMap and is distributed",
     "under the Open Database License 1.0 (ODbL-1.0).",
+    "ODbL 1.0: https://opendatacommons.org/licenses/odbl/1-0/",
     "Attribution: © OpenStreetMap contributors",
     "https://www.openstreetmap.org/copyright",
     "",

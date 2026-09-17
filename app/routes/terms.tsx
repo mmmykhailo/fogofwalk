@@ -155,8 +155,17 @@ export default function TermsPage() {
             OpenStreetMap
           </a>
           snapshot. OpenStreetMap data is subject to its applicable attribution
-          and Open Database License obligations. We are not responsible for the
-          availability, accuracy, privacy practices, security, or terms of
+          and{" "}
+          <a
+            href="https://opendatacommons.org/licenses/odbl/1-0/"
+            target="_blank"
+            rel="noreferrer"
+            className="text-primary underline underline-offset-4 hover:text-primary/80"
+          >
+            Open Database License (ODbL 1.0)
+          </a>{" "}
+          obligations. We are not responsible for the availability, accuracy,
+          privacy practices, security, or terms of
           third-party services. Your use of those services is subject to their
           respective terms and policies.
         </p>

@@ -32,7 +32,9 @@ trail-data/scripts/build-region.sh \
 production runbook. Both scripts run the unit suite, refuse an existing output,
 verify the completed archive, and write sidecars next to the report: a
 content SHA-256 file, publication manifest, and `DATA-LICENSE.txt` ODbL data
-licence notice.
+licence notice. The notice links to the
+[Open Database License 1.0](https://opendatacommons.org/licenses/odbl/1-0/)
+and the [OpenStreetMap copyright page](https://www.openstreetmap.org/copyright).
 `verify-archive.sh` checks PMTiles v3,
 z12-only MVT data, the `trails` layer, the four-property schema, palette/rank
 ranges, tile size, attribution, and an optional SHA-256 value. Linux builds
