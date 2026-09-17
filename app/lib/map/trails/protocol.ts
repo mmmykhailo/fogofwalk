@@ -103,6 +103,17 @@ function createMapAbortError(): Error {
   return error
 }
 
+function encodeNormalizedTrailTile(
+  normalized: Parameters<typeof encodeTrailTile>[0],
+  tile: TrailTileCoordinate
+): ArrayBuffer {
+  try {
+    return encodeTrailTile(normalized, tile)
+  } catch {
+    throw new TrailTileError("encode_failed", normalized.stats)
+  }
+}
+
 export function parseTrailProtocolUrl(url: string): TrailTileCoordinate | null {
   const escapedProtocol = TRAIL_PROTOCOL_NAME.replace(
     /[.*+?^${}()|[\]\\]/g,
@@ -182,7 +193,8 @@ export async function loadTrailTile(
     const parsed = parseJson(body)
     const normalized = normalizeTrailTile(parsed, tile.theme)
     if (timeoutFired) throw new TrailTileError("timeout")
-    return { data: encodeTrailTile(normalized, tile) }
+    if (mapAbortController.signal.aborted) throw createMapAbortError()
+    return { data: encodeNormalizedTrailTile(normalized, tile) }
   } catch (error) {
     if (mapAbortController.signal.aborted) throw error
     const code = timeoutFired ? "timeout" : trailErrorCode(error)

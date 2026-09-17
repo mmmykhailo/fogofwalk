@@ -11,6 +11,7 @@ import {
 } from "~/constants/trails"
 import { clearDiagnostics, getDiagnostics } from "~/lib/diagnostics"
 import hikingKct from "~/lib/map/trails/fixtures/hiking-kct.json"
+import * as trailEncoder from "~/lib/map/trails/encode"
 import {
   loadTrailTile,
   parseTrailProtocolUrl,
@@ -215,6 +216,27 @@ describe("trail protocol loading", () => {
       errorCode: "limit_exceeded",
       geometry: { vertexCount: TRAIL_MAX_COORDINATES_PER_FEATURE + 1 },
     })
+  })
+
+  test("turns encoder failures into an empty tile", async () => {
+    const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>
+    fetchMock.mockResolvedValue(response(JSON.stringify(hikingKct)))
+    const encodeSpy = vi
+      .spyOn(trailEncoder, "encodeTrailTile")
+      .mockImplementation(() => {
+        throw new Error("synthetic encoder failure")
+      })
+
+    try {
+      const result = await loadTrailTile(trailRequest(), new AbortController())
+      expect(emptyTileFeatureCount(result.data)).toBe(0)
+      expect(getDiagnostics()[0]).toMatchObject({
+        errorCode: "encode_failed",
+        retryability: "unknown",
+      })
+    } finally {
+      encodeSpy.mockRestore()
+    }
   })
 
   test("deduplicates diagnostics by operation and error code", async () => {
