@@ -243,6 +243,7 @@ function decodeNode(
     id: 0,
     latRaw: 0,
     lonRaw: 0,
+    version: 1,
   }
   const pbf = new Pbf(bytes)
   pbf.readFields((tag, target, reader) => {
@@ -257,7 +258,7 @@ function decodeNode(
         readPackedVarint(reader, target.values)
         break
       case 4:
-        reader.skip((tag << 3) | reader.type)
+        target.version = decodeInfo(reader.readBytes())
         break
       case 8:
         target.latRaw = reader.readSVarint()
@@ -271,7 +272,7 @@ function decodeNode(
   }, target)
   return {
     id: safeInteger(target.id, "node id"),
-    version: 1,
+    version: target.version,
     lat: coordinate(
       targetValue(target.latRaw, "node latitude"),
       coordinateOptions.latOffset,
@@ -301,6 +302,7 @@ function decodeDenseNodes(
     latDeltas: [] as number[],
     lonDeltas: [] as number[],
     keysValues: [] as number[],
+    versions: [] as number[],
   }
   const pbf = new Pbf(bytes)
   pbf.readFields((tag, target, reader) => {
@@ -309,7 +311,7 @@ function decodeDenseNodes(
         readPackedSVarint(reader, target.ids)
         break
       case 5:
-        reader.skip((tag << 3) | reader.type)
+        target.versions = decodeDenseInfo(reader.readBytes())
         break
       case 8:
         readPackedSVarint(reader, target.latDeltas)
@@ -336,6 +338,12 @@ function decodeDenseNodes(
   let latRaw = 0
   let lonRaw = 0
   let keysValueIndex = 0
+  if (
+    target.versions.length !== 0 &&
+    target.versions.length !== target.ids.length
+  ) {
+    throw new Error("dense node version array has a different length")
+  }
   for (let index = 0; index < target.ids.length; index++) {
     id = safeInteger(id + target.ids[index], "dense node id")
     latRaw = safeInteger(latRaw + target.latDeltas[index], "dense latitude")
@@ -352,7 +360,7 @@ function decodeDenseNodes(
     }
     output.push({
       id,
-      version: 1,
+      version: target.versions[index] ?? 1,
       lat: coordinate(
         latRaw,
         coordinateOptions.latOffset,
@@ -377,6 +385,7 @@ function decodeWay(bytes: Uint8Array, strings: string[]): OsmWay {
     keys: [] as number[],
     values: [] as number[],
     refDeltas: [] as number[],
+    version: 1,
   }
   const pbf = new Pbf(bytes)
   pbf.readFields((tag, target, reader) => {
@@ -391,7 +400,7 @@ function decodeWay(bytes: Uint8Array, strings: string[]): OsmWay {
         readPackedVarint(reader, target.values)
         break
       case 4:
-        reader.skip((tag << 3) | reader.type)
+        target.version = decodeInfo(reader.readBytes())
         break
       case 8:
         readPackedSVarint(reader, target.refDeltas)
@@ -407,7 +416,7 @@ function decodeWay(bytes: Uint8Array, strings: string[]): OsmWay {
   })
   return {
     id: safeInteger(target.id, "way id"),
-    version: 1,
+    version: target.version,
     nodeRefs,
     tags: decodeTags(target.keys, target.values, strings),
   }
@@ -421,6 +430,7 @@ function decodeRelation(bytes: Uint8Array, strings: string[]): OsmRelation {
     roles: [] as number[],
     memberDeltas: [] as number[],
     types: [] as number[],
+    version: 1,
   }
   const pbf = new Pbf(bytes)
   pbf.readFields((tag, target, reader) => {
@@ -435,7 +445,7 @@ function decodeRelation(bytes: Uint8Array, strings: string[]): OsmRelation {
         readPackedVarint(reader, target.values)
         break
       case 4:
-        reader.skip((tag << 3) | reader.type)
+        target.version = decodeInfo(reader.readBytes())
         break
       case 8:
         readPackedVarint(reader, target.roles)
@@ -470,7 +480,7 @@ function decodeRelation(bytes: Uint8Array, strings: string[]): OsmRelation {
   })
   return {
     id: safeInteger(target.id, "relation id"),
-    version: 1,
+    version: target.version,
     tags: decodeTags(target.keys, target.values, strings),
     members,
   }
@@ -498,6 +508,29 @@ function decodeMemberType(value: number): OsmMemberType {
   if (value === 1) return "way"
   if (value === 2) return "relation"
   throw new Error(`invalid OSM relation member type: ${value}`)
+}
+
+function decodeInfo(bytes: Uint8Array): number {
+  const target = { version: 1 }
+  const pbf = new Pbf(bytes)
+  pbf.readFields((tag, target, reader) => {
+    if (tag === 1) target.version = reader.readVarint(true)
+    else reader.skip((tag << 3) | reader.type)
+  }, target)
+  return safeInteger(target.version, "OSM version")
+}
+
+function decodeDenseInfo(bytes: Uint8Array): number[] {
+  const versions: number[] = []
+  const pbf = new Pbf(bytes)
+  pbf.readFields(
+    (tag, target, reader) => {
+      if (tag === 1) readPackedVarint(reader, target.versions)
+      else reader.skip((tag << 3) | reader.type)
+    },
+    { versions }
+  )
+  return versions.map((version) => safeInteger(version, "dense OSM version"))
 }
 
 function stringAt(strings: string[], index: number, label: string): string {
