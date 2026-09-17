@@ -7,6 +7,12 @@ import {
   seedPerformanceDatabase,
   waitForMapIdle,
 } from "../fixtures/performance"
+import {
+  makeDenseTrailTile,
+  parseTrailTestPath,
+  TRAIL_TEST_CENTER,
+  TRAIL_TEST_ZOOM,
+} from "../fixtures/trails"
 
 const OFFLINE_STYLE = {
   version: 8,
@@ -17,7 +23,17 @@ const OFFLINE_STYLE = {
   ],
 }
 
-async function stubMapTiles(page: Page) {
+type TrailPerformanceMode = "empty" | "dense"
+
+interface TrailPerformanceFixture {
+  mode: TrailPerformanceMode
+  requests: string[]
+}
+
+async function stubMapTiles(
+  page: Page,
+  trailMode: TrailPerformanceMode = "empty"
+): Promise<TrailPerformanceFixture> {
   await page.route("https://tiles.openfreemap.org/**", (route) => {
     if (route.request().url().includes("/styles/")) {
       return route.fulfill({
@@ -32,6 +48,41 @@ async function stubMapTiles(page: Page) {
     route.abort()
   )
   await page.route("https://s3.amazonaws.com/**", (route) => route.abort())
+
+  const trailFixture: TrailPerformanceFixture = {
+    mode: trailMode,
+    requests: [],
+  }
+  for (const theme of ["hiking", "cycling"] as const) {
+    await page.route(
+      `https://${theme}.waymarkedtrails.org/api/v1/tiles/**`,
+      async (route) => {
+        const url = new URL(route.request().url())
+        const tile = parseTrailTestPath(url.pathname)
+        if (!tile) {
+          await route.abort()
+          return
+        }
+        trailFixture.requests.push(url.toString())
+        const body =
+          trailFixture.mode === "dense"
+            ? makeDenseTrailTile(theme, tile.x, tile.y)
+            : { type: "FeatureCollection", features: [] }
+        const encoded = JSON.stringify(body)
+        await route.fulfill({
+          status: 200,
+          headers: {
+            "Access-Control-Allow-Origin": "*",
+            "Content-Type": "application/json",
+            "Content-Length": String(Buffer.byteLength(encoded)),
+          },
+          body: encoded,
+        })
+      }
+    )
+  }
+
+  return trailFixture
 }
 
 async function waitForMapReady(page: Page): Promise<void> {
@@ -120,6 +171,73 @@ function expectNoMapDataWork(
 
 test.describe("map interaction performance fixture", () => {
   test.describe.configure({ mode: "serial" })
+
+  test("compares empty and dense trail overlay gesture metrics", async ({
+    browser,
+  }, testInfo) => {
+    const reports: unknown[] = []
+    const measurements: {
+      mode: TrailPerformanceMode
+      requests: number
+      metrics: Awaited<ReturnType<typeof sampleMapGesture>>
+    }[] = []
+
+    for (const mode of ["empty", "dense"] as const) {
+      const context = await browser.newContext({
+        baseURL: "http://127.0.0.1:4173",
+        viewport: { width: 1280, height: 900 },
+      })
+      const page = await context.newPage()
+      try {
+        const fixture = await stubMapTiles(page, mode)
+        await seedPerformanceDatabase(
+          page,
+          makePerformanceActivities(1, "compact"),
+          true
+        )
+        await page.goto("/map")
+        await waitForMapReady(page)
+        await page.evaluate(
+          ({ center, zoom }) => {
+            const map = window.__fogofwalkE2eMap
+            if (!map) throw new Error("MapLibre test handle is unavailable")
+            map.jumpTo({ center, zoom })
+          },
+          { center: TRAIL_TEST_CENTER, zoom: TRAIL_TEST_ZOOM }
+        )
+        await expect
+          .poll(() => fixture.requests.length, { timeout: 20_000 })
+          .toBeGreaterThan(0)
+
+        const metrics = await sampleMapGesture(page)
+        measurements.push({ mode, requests: fixture.requests.length, metrics })
+        await reportMetrics(testInfo, reports, `trails-${mode}`, {
+          mode,
+          tileRequests: fixture.requests.length,
+          ...metrics,
+        })
+      } finally {
+        await context.close()
+      }
+    }
+
+    expect(measurements).toHaveLength(2)
+    expect(measurements.every(({ requests }) => requests > 0)).toBe(true)
+    const empty = measurements.find(({ mode }) => mode === "empty")
+    const dense = measurements.find(({ mode }) => mode === "dense")
+    if (!empty || !dense)
+      throw new Error("Trail performance measurements missing")
+    await reportMetrics(testInfo, reports, "trails-empty-vs-dense", {
+      empty: empty.metrics,
+      dense: dense.metrics,
+      comparison: {
+        maxFrameGapDelta:
+          (dense.metrics.maxFrameGap ?? 0) - (empty.metrics.maxFrameGap ?? 0),
+        longTaskCountDelta:
+          dense.metrics.longTasks.length - empty.metrics.longTasks.length,
+      },
+    })
+  })
 
   for (const dataset of [
     { count: 100, kind: "compact" as const },

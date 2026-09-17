@@ -2,6 +2,7 @@ export const TRAIL_TEST_ZOOM = 12
 export const TRAIL_TEST_WORLD_LIMIT_METERS = 20_037_508.342789244
 export const TRAIL_TEST_RADIUS_METERS = 6_378_137
 export const TRAIL_TEST_CENTER: [number, number] = [14.42, 50.08]
+export const TRAIL_TEST_DENSE_FEATURE_COUNT = 256
 
 export type TrailTestTheme = "hiking" | "cycling"
 
@@ -93,4 +94,37 @@ export function makeTrailTile(theme: TrailTestTheme, x: number, y: number) {
       },
     ],
   }
+}
+
+export function makeDenseTrailTile(
+  theme: TrailTestTheme,
+  x: number,
+  y: number,
+  featureCount = TRAIL_TEST_DENSE_FEATURE_COUNT
+) {
+  const world = TRAIL_TEST_WORLD_LIMIT_METERS
+  const tilesAtZoom = 2 ** TRAIL_TEST_ZOOM
+  const span = (2 * world) / tilesAtZoom
+  const minX = -world + x * span
+  const maxY = world - y * span
+  const features = Array.from({ length: featureCount }, (_, index) => {
+    const yFraction = 0.08 + ((index + 0.5) / featureCount) * 0.84
+    const line: [[number, number], [number, number]] = [
+      [minX + span * 0.05, maxY - span * yFraction],
+      [minX + span * 0.95, maxY - span * yFraction],
+    ]
+    return {
+      type: "Feature" as const,
+      id: theme === "hiking" ? 1_000 + index : 2_000 + index,
+      properties: {
+        type: "way" as const,
+        ...(theme === "hiking"
+          ? { shields: [`kct_reg_red-dense-${index}`] }
+          : { shields: [] }),
+      },
+      geometry: { type: "LineString" as const, coordinates: line },
+    }
+  })
+
+  return { type: "FeatureCollection" as const, features }
 }
