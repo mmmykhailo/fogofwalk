@@ -13,6 +13,7 @@ public final class TrailBuildReport {
   private final LongAdder cyclingRelations = new LongAdder();
   private final LongAdder superRelations = new LongAdder();
   private final LongAdder memberWaysSeen = new LongAdder();
+  private final LongAdder emittedWays = new LongAdder();
   private final LongAdder emittedFeatures = new LongAdder();
   private final LongAdder invalidGeometries = new LongAdder();
   private final LongAdder unsupportedColors = new LongAdder();
@@ -29,6 +30,10 @@ public final class TrailBuildReport {
 
   public void memberWaySeen() {
     memberWaysSeen.increment();
+  }
+
+  public void emittedWay() {
+    emittedWays.increment();
   }
 
   public void emittedFeatures(long count) {
@@ -98,6 +103,7 @@ public final class TrailBuildReport {
           "cyclingRelations": %d,
           "superRelations": %d,
           "memberWaysSeen": %d,
+          "emittedWays": %d,
           "emittedFeatures": %d,
           "invalidGeometries": %d,
           "unsupportedColors": %d,
@@ -131,6 +137,7 @@ public final class TrailBuildReport {
       cyclingRelations.sum(),
       superRelations.sum(),
       memberWaysSeen.sum(),
+      emittedWays.sum(),
       emittedFeatures.sum(),
       invalidGeometries.sum(),
       unsupportedColors.sum(),

@@ -29,17 +29,23 @@ if (report.archive?.sha256 && report.archive.sha256 !== sha256) {
 }
 
 const memberWaysSeen = Number(report.counts?.memberWaysSeen ?? 0)
+const emittedWays = Number(
+  report.counts?.emittedWays ?? report.counts?.memberWaysSeen ?? 0
+)
 const overlapCapWays = Number(report.counts?.overlapCapWays ?? 0)
 if (
   !Number.isSafeInteger(memberWaysSeen) ||
+  !Number.isSafeInteger(emittedWays) ||
   !Number.isSafeInteger(overlapCapWays) ||
   memberWaysSeen < 0 ||
+  emittedWays < 0 ||
   overlapCapWays < 0 ||
-  overlapCapWays > memberWaysSeen
+  emittedWays > memberWaysSeen ||
+  overlapCapWays > emittedWays
 ) {
   throw new Error("build report overlap-cap counters are invalid")
 }
-if (memberWaysSeen > 0 && overlapCapWays / memberWaysSeen > 0.001) {
+if (emittedWays > 0 && overlapCapWays / emittedWays > 0.001) {
   throw new Error("overlap cap hit rate exceeds the 0.1% publication gate")
 }
 
