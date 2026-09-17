@@ -154,7 +154,7 @@ export function ensureTrailLayers(map: maplibregl.Map): void {
   }
 
   const beforeId = trailInsertionPoint(map)
-  const layers = [hikingCasingLayer(), hikingLayer(), cyclingLayer()]
+  const layers = [cyclingLayer(), hikingCasingLayer(), hikingLayer()]
   for (const layer of layers) {
     if (!map.getLayer(layer.id)) map.addLayer(layer, beforeId)
   }
