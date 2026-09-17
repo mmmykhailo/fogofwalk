@@ -126,33 +126,41 @@ action returns a terminal result so a failed import stays retryable.
 
 ## Trail overlay data flow
 
-The optional trail overlay is a display-only map resource. When enabled and the
-map reaches zoom 12, the two MapLibre vector sources request fixed z12 internal
-URLs (fow-trails://hiking/{z}/{x}/{y} and
-fow-trails://cycling/{z}/{x}/{y}). The registered protocol validates the
-theme and tile coordinate, fetches the matching JSON tile directly from the
-allowlisted Waymarked Trails host, bounds its response and geometry budgets,
-converts EPSG:3857 coordinates to WGS84, normalizes the small render-property
-set, and encodes one uncompressed MVT source layer. MapLibre overzooms that z12
-data above zoom 12; no trail request is made below that zoom.
+The optional trail overlay is a display-only map resource. When it is enabled
+and the map reaches zoom 12, one MapLibre vector source reads the validated
+`VITE_TRAIL_ARCHIVE_URL` through the globally registered `pmtiles://` protocol.
+The source is a public, immutable PMTiles v3 archive containing one `trails`
+layer of z12 gzip-compressed Mapbox Vector Tiles. PMTiles requests its header,
+directory, metadata, and tile bytes with ordinary HTTP `Range` requests;
+MapLibre overzooms the z12 data above zoom 12 and no trail source is materialized
+below that zoom.
 
-The browser service worker caches only successful GET requests for the exact
-Waymarked Trails z12 JSON tile path in trail-data-tiles-v1, with a maximum of
-300 entries and seven days of retention. The optional Fog of Walk server is not
-in this path: it does not proxy, preprocess, cache, authenticate, or persist
-trail data. Disabling the drawer switch removes the trail layers and sources;
-trail geometry is never placed in React state, the activity library, fog
-revisions, or IndexedDB.
+The archive is generated outside the SPA by the pinned Planetiler profile in
+`trail-data/`. That profile reads a dated OpenStreetMap PBF, preprocesses
+accepted hiking, foot, bicycle, and superroute relations, joins their
+membership to line ways, and emits only the four properties used by the style:
+`kind`, `color`, `offset`, and `sort`. Relation IDs, raw tags, route names, and
+geometry-processing diagnostics stay in the build report rather than in the
+browser archive. The checked-in fixture is the ordinary CI input; production
+builds record the source URL, snapshot, published checksum, archive SHA-256,
+schema version, tile-size metrics, attribution, and ODbL notice.
+
+The browser does not download OSM data, query a route API, parse provider JSON,
+reproject coordinates, or encode vector tiles. The optional Fog of Walk sync
+server does not proxy, preprocess, cache, authenticate, or persist trail data.
+If the URL is unset or invalid, only the trail toggle and resources disappear;
+imports, fog, map state, photos, saved points, and optional sync continue to
+work. Disabling the drawer switch removes the three trail layers and the one
+source, preventing further range requests.
+
+The service worker deliberately excludes the configured archive from the
+generic map CacheFirst route. PMTiles and normal HTTP/CDN caching own the
+archive's byte-range and directory caching; `clearAll()` never touches public
+map caches. A cold offline load may therefore have no trail overlay, and the
+application does not claim full offline trail availability.
 
 Trail sources and layers are recreated during flat/relief style changes and
 WebGL context restoration from the current session-only visibility value. They
 are inserted below fog and imported activities, so visible fog can obscure
 unexplored routes while imported activity lines remain prominent. Trails are
 not registered as interactive targets and are omitted from share maps/cards.
-
-The encoder currently uses @maplibre/geojson-vt 6.1.0 for direct tile
-conversion and @maplibre/vt-pbf 4.3.0 for serialization. The latter's published
-type declarations expose a nested geojson-vt 5 tile type even though the runtime
-tile shape is compatible; the narrow cast is confined to the PBF boundary and
-is covered by decoder tests. Revisit that cast when either package publishes
-aligned types.

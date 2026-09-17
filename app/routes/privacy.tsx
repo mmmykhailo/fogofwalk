@@ -227,26 +227,25 @@ export default function PrivacyPage() {
             GitHub, Google, etc.).
           </li>
           <li>
-            <strong>Maps:</strong> OpenFreeMap, Esri, and{" "}
-            <a
-              href="https://waymarkedtrails.org/"
-              target="_blank"
-              rel="noreferrer"
-              className="text-primary underline underline-offset-4 hover:text-primary/80"
-            >
-              Waymarked Trails
-            </a>{" "}
-            — map tiles and related mapping resources.
+            <strong>Basemap services:</strong> OpenFreeMap and Esri — map tiles
+            and related basemap resources.
+          </li>
+          <li>
+            <strong>Trail archive hosting:</strong> Fog of Walk-controlled
+            static hosting — a public PMTiles archive generated from a dated
+            OpenStreetMap snapshot.
           </li>
         </ul>
         <p className="mt-4 leading-relaxed">
-          Map providers may receive your IP address and the geographic area for
-          which map information is requested. If you enable the trail overlay,
-          your browser requests route tiles directly from Waymarked Trails and
-          may send standard browser request metadata, including the page origin
-          or referrer, together with the requested map tile area. Fog of Walk
-          does not proxy or authenticate those requests. Their processing is
-          governed by their own privacy policies.
+          Basemap providers may receive your IP address and the geographic area
+          for which map information is requested. If you enable the trail
+          overlay and an archive is configured, your browser makes anonymous
+          HTTP range requests to Fog of Walk-controlled static hosting for the
+          relevant bytes of that public archive. Those requests contain normal
+          browser and network metadata, but Fog of Walk does not include your
+          account credentials, activity files, saved points, photos, or user
+          identifiers in the archive URL or range request. If no archive is
+          configured or it is unavailable, the trail overlay remains disabled.
         </p>
         <p className="mt-4 leading-relaxed">
           We may also disclose information where reasonably necessary to comply

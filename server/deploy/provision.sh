@@ -100,6 +100,11 @@ say "layout"
 # releases and server.env into it, the service user only reads through it.
 install -d -m 755 -o "$DEPLOY_USER" -g "$DEPLOY_USER" "$ROOT_DIR"
 install -d -m 755 -o "$DEPLOY_USER" -g "$DEPLOY_USER" "$ROOT_DIR/releases"
+# Public trail archives are deploy-owned so the publication workflow can place
+# immutable files there, while the Bun service account has no write access.
+install -d -m 2750 -o "$DEPLOY_USER" -g caddy "$ROOT_DIR/map-data"
+install -d -m 2750 -o "$DEPLOY_USER" -g caddy "$ROOT_DIR/map-data/trails"
+install -d -m 2750 -o "$DEPLOY_USER" -g caddy "$ROOT_DIR/map-data/trails/v1"
 # DATA_DIR — the SQLite file and the geometry blobs. Lives outside the release
 # directories so it survives every deploy and every rollback.
 install -d -m 750 -o "$APP_USER" -g "$APP_USER" "$ROOT_DIR/data"

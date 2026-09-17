@@ -1,0 +1,237 @@
+name: Build trail data
+
+on:
+  workflow_dispatch:
+    inputs:
+      full_build:
+        description: "Run the dated PBF build on the dedicated trail-builder runner"
+        required: false
+        type: boolean
+        default: false
+      publish:
+        description: "Publish the verified archive after the trail-archive-publication approval gate"
+        required: false
+        type: boolean
+        default: false
+  schedule:
+    - cron: "17 3 1 * *"
+
+permissions:
+  contents: read
+
+jobs:
+  fixture:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build and verify deterministic fixture
+        run: |
+          bun run check:trail-runtime-sources
+          bun run build:trail-fixture
+          bun run verify:trail-fixture
+
+      - name: Upload fixture archive and manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: trail-fixture-${{ github.sha }}
+          path: |
+            e2e/fixtures/trails-v1.pmtiles
+            trail-data/fixtures/expected-z12.json
+          if-no-files-found: error
+          retention-days: 14
+
+  full-build:
+    if: github.event_name == 'schedule' || inputs.full_build == true || inputs.publish == true
+    runs-on: [self-hosted, trail-builder]
+    env:
+      TRAIL_OSM_PATH: ${{ vars.TRAIL_OSM_PATH }}
+      TRAIL_OSM_SOURCE_URL: ${{ vars.TRAIL_OSM_SOURCE_URL }}
+      TRAIL_OSM_SOURCE_CHECKSUM: ${{ vars.TRAIL_OSM_SOURCE_CHECKSUM }}
+      TRAIL_OSM_SNAPSHOT: ${{ vars.TRAIL_OSM_SNAPSHOT }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
+
+      - name: Check dated input configuration
+        run: |
+          set -euo pipefail
+          for name in TRAIL_OSM_PATH TRAIL_OSM_SOURCE_URL TRAIL_OSM_SOURCE_CHECKSUM TRAIL_OSM_SNAPSHOT; do
+            if [ -z "${!name:-}" ]; then
+              echo "Missing repository variable: $name" >&2
+              exit 1
+            fi
+          done
+          case "$TRAIL_OSM_PATH" in
+            /*.osm.pbf) ;;
+            *) echo "TRAIL_OSM_PATH must be an absolute .osm.pbf path." >&2; exit 1 ;;
+          esac
+          if [ "$(basename "$TRAIL_OSM_PATH")" = "planet-latest.osm.pbf" ]; then
+            echo "Mutable planet-latest.osm.pbf is not an eligible production input." >&2
+            exit 1
+          fi
+          [ -f "$TRAIL_OSM_PATH" ] || {
+            echo "TRAIL_OSM_PATH is not present on the trail-builder runner." >&2
+            exit 1
+          }
+          case "$TRAIL_OSM_SOURCE_URL" in
+            http://*|https://*) ;;
+            *) echo "TRAIL_OSM_SOURCE_URL must be an HTTP(S) URL." >&2; exit 1 ;;
+          esac
+          case "$TRAIL_OSM_SOURCE_URL" in
+            *\?*|*\#*|*@*)
+              echo "TRAIL_OSM_SOURCE_URL must not contain a query, fragment, or credentials." >&2
+              exit 1
+              ;;
+          esac
+          case "$TRAIL_OSM_SOURCE_CHECKSUM" in
+            sha256:[0-9a-fA-F][0-9a-fA-F]*) ;;
+            *) echo "TRAIL_OSM_SOURCE_CHECKSUM must use the published sha256:<64-hex> form." >&2; exit 1 ;;
+          esac
+
+      - name: Build and verify dated archive
+        env:
+          OUTPUT_DIR: ${{ runner.temp }}/fogofwalk-trails
+        run: |
+          set -euo pipefail
+          mkdir -p "$OUTPUT_DIR"
+          trail-data/scripts/build-planet.sh \
+            "--osm-path=$TRAIL_OSM_PATH" \
+            "--osm-source-url=$TRAIL_OSM_SOURCE_URL" \
+            "--osm-source-checksum=$TRAIL_OSM_SOURCE_CHECKSUM" \
+            "--output=$OUTPUT_DIR/trails-build.pmtiles" \
+            "--report=$OUTPUT_DIR/trails-build-report.json" \
+            "--osm-snapshot=$TRAIL_OSM_SNAPSHOT"
+          sha256sum "$OUTPUT_DIR/trails-build.pmtiles" > "$OUTPUT_DIR/trails-build.pmtiles.sha256"
+
+      - name: Upload dated build for review or publication
+        uses: actions/upload-artifact@v4
+        with:
+          name: trail-archive-${{ github.run_id }}
+          path: ${{ runner.temp }}/fogofwalk-trails
+          if-no-files-found: error
+          retention-days: 30
+
+  publish:
+    if: github.event_name == 'workflow_dispatch' && inputs.publish == true
+    needs: full-build
+    runs-on: [self-hosted, trail-builder]
+    environment:
+      name: trail-archive-publication
+    env:
+      VPS_HOST: ${{ vars.VPS_HOST }}
+      VPS_USER: ${{ vars.VPS_USER }}
+      TRAIL_PUBLIC_ORIGIN: ${{ vars.TRAIL_PUBLIC_ORIGIN }}
+      TRAIL_ARCHIVE_DATE: ${{ vars.TRAIL_ARCHIVE_DATE }}
+      VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+      VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
+
+      - name: Download verified build
+        uses: actions/download-artifact@v4
+        with:
+          name: trail-archive-${{ github.run_id }}
+          path: trail-archive
+
+      - name: Verify and name immutable archive
+        id: archive
+        run: |
+          set -euo pipefail
+          archive="trail-archive/trails-build.pmtiles"
+          report="trail-archive/trails-build-report.json"
+          [ -f "$archive" ] && [ -f "$report" ]
+          bun trail-data/scripts/verify-archive.mjs --archive="$archive" --report="$report"
+          sha256="$(sha256sum "$archive" | awk '{print $1}')"
+          bytes="$(wc -c < "$archive" | tr -d '[:space:]')"
+          case "$TRAIL_ARCHIVE_DATE" in
+            ????-??-??) ;;
+            *) echo "TRAIL_ARCHIVE_DATE must be YYYY-MM-DD." >&2; exit 1 ;;
+          esac
+          archive_name="trails-${TRAIL_ARCHIVE_DATE}-${sha256:0:12}.pmtiles"
+          jq --arg file "$archive_name" --arg sha256 "$sha256" --arg bytes "$bytes" \
+            '.archive.file = $file | .archive.sha256 = $sha256 | .archive.bytes = ($bytes | tonumber)' \
+            "$report" > "$report.tmp"
+          mv "$report.tmp" "$report"
+          mv "$archive" "trail-archive/$archive_name"
+          echo "name=$archive_name" >> "$GITHUB_OUTPUT"
+          echo "sha256=$sha256" >> "$GITHUB_OUTPUT"
+          echo "origin=$TRAIL_PUBLIC_ORIGIN" >> "$GITHUB_OUTPUT"
+          echo "Published archive origin: $TRAIL_PUBLIC_ORIGIN"
+          echo "Published archive filename: $archive_name"
+
+      - name: Configure SSH
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/id_deploy
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/id_deploy ~/.ssh/known_hosts
+          cat > ~/.ssh/config <<'EOF'
+          Host vps
+            HostName PLACEHOLDER_HOST
+            User PLACEHOLDER_USER
+            IdentityFile ~/.ssh/id_deploy
+            IdentitiesOnly yes
+            StrictHostKeyChecking yes
+            BatchMode yes
+          EOF
+          sed -i "s/PLACEHOLDER_HOST/$VPS_HOST/; s/PLACEHOLDER_USER/$VPS_USER/" ~/.ssh/config
+          chmod 600 ~/.ssh/config
+
+      - name: Publish without overwriting an immutable file
+        env:
+          ARCHIVE_NAME: ${{ steps.archive.outputs.name }}
+        run: |
+          set -euo pipefail
+          case "$ARCHIVE_NAME" in
+            trails-????-??-??-[0-9a-f]*.pmtiles) ;;
+            *) echo "Unexpected archive filename." >&2; exit 1 ;;
+          esac
+          remote="/srv/fogofwalk/map-data/trails/v1/$ARCHIVE_NAME"
+          ssh vps "test ! -e '$remote'"
+          scp -p "trail-archive/$ARCHIVE_NAME" "vps:$remote.tmp.$GITHUB_RUN_ID"
+          ssh vps "set -eu; test ! -e '$remote'; sha256sum '$remote.tmp.$GITHUB_RUN_ID'; mv '$remote.tmp.$GITHUB_RUN_ID' '$remote'"
+          scp -p trail-archive/trails-build-report.json "vps:$remote.report.tmp.$GITHUB_RUN_ID"
+          ssh vps "set -eu; mv '$remote.report.tmp.$GITHUB_RUN_ID' '$remote.report.json'"
+
+      - name: Probe public archive ranges
+        env:
+          ARCHIVE_NAME: ${{ steps.archive.outputs.name }}
+        run: |
+          set -euo pipefail
+          url="$TRAIL_PUBLIC_ORIGIN/map-data/trails/v1/$ARCHIVE_NAME"
+          headers="$(mktemp)"
+          body="$(mktemp)"
+          trap 'rm -f "$headers" "$body"' EXIT
+          curl --fail --silent --show-error --head --dump-header "$headers" --output /dev/null "$url"
+          grep -Eiq '^Accept-Ranges:[[:space:]]*bytes[[:space:]]*$' "$headers"
+          curl --fail --silent --show-error -H 'Range: bytes=0-126' \
+            --dump-header "$headers" --output "$body" "$url"
+          grep -Eiq '^HTTP/[0-9.]+[[:space:]]+206[[:space:]]' "$headers"
+          grep -Eiq '^Content-Range:[[:space:]]*bytes[[:space:]]+0-126/[0-9]+[[:space:]]*$' "$headers"
+          [ "$(wc -c < "$body" | tr -d '[:space:]')" = "127" ]
