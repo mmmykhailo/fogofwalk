@@ -4,6 +4,7 @@ import {
   assembleWayFeatures,
   boundsForCoordinates,
   projectWebMercator,
+  tileCandidatesForCoordinates,
   tileRangeForCoordinates,
 } from "../src/geometry"
 
@@ -61,4 +62,17 @@ test("projects coordinates and calculates bounded z12 tile ranges", () => {
       [14.1, 50.1],
     ])
   ).toEqual({ minLon: 14, minLat: 50, maxLon: 14.1, maxLat: 50.1 })
+})
+
+test("enumerates path tiles without expanding a long diagonal bounding box", () => {
+  const candidates = tileCandidatesForCoordinates(
+    [
+      [-179, -80],
+      [179, 80],
+    ],
+    12
+  )
+  expect(candidates.length).toBeGreaterThan(4_000)
+  expect(candidates.length).toBeLessThan(100_000)
+  expect(candidates).toEqual([...candidates].sort((a, b) => a - b))
 })

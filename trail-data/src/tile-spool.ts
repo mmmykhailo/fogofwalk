@@ -1,7 +1,9 @@
 import { Database } from "bun:sqlite"
-import { zxyToTileId } from "pmtiles"
 
-import { tileRangeForCoordinates, type TrailLineFeature } from "./geometry"
+import {
+  tileCandidatesForCoordinates,
+  type TrailLineFeature,
+} from "./geometry"
 
 interface SpoolRow {
   feature: string
@@ -22,21 +24,21 @@ export class TileSpool {
   }
 
   addFeature(feature: TrailLineFeature, zoom: number): number {
-    const range = tileRangeForCoordinates(feature.geometry.coordinates, zoom)
     const statement = this.db.prepare(
       "INSERT OR IGNORE INTO tile_spool(tile_id, unique_key, feature) VALUES (?, ?, ?)"
     )
     let inserted = 0
     try {
-      for (let x = range.minX; x <= range.maxX; x++) {
-        for (let y = range.minY; y <= range.maxY; y++) {
-          const result = statement.run(
-            zxyToTileId(zoom, x, y),
-            visualFeatureKey(feature),
-            JSON.stringify(feature)
-          )
-          inserted += result.changes
-        }
+      for (const tileId of tileCandidatesForCoordinates(
+        feature.geometry.coordinates,
+        zoom
+      )) {
+        const result = statement.run(
+          tileId,
+          visualFeatureKey(feature),
+          JSON.stringify(feature)
+        )
+        inserted += result.changes
       }
     } finally {
       statement.finalize()
