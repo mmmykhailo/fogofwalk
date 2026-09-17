@@ -1,32 +1,18 @@
 /// <reference lib="webworker" />
 import { precacheAndRoute, cleanupOutdatedCaches } from "workbox-precaching"
 import { registerRoute } from "workbox-routing"
-import {
-  CacheFirst,
-  NetworkOnly,
-  StaleWhileRevalidate,
-} from "workbox-strategies"
+import { CacheFirst, StaleWhileRevalidate } from "workbox-strategies"
 import { ExpirationPlugin } from "workbox-expiration"
-import { TRAIL_ARCHIVE_URL } from "./lib/map/trails/config"
+import { isMapStyleRequest, isMapTileRequest } from "./lib/map/swRouting"
 
 declare let self: ServiceWorkerGlobalScope & typeof globalThis
 
 cleanupOutdatedCaches()
 precacheAndRoute(self.__WB_MANIFEST)
 
-// PMTiles owns its range and directory caching. Never put a partial archive
-// response into the generic map cache as if it were the complete file.
-registerRoute(
-  ({ url }) => TRAIL_ARCHIVE_URL !== null && url.href === TRAIL_ARCHIVE_URL,
-  new NetworkOnly()
-)
-
 // Map tiles: long-lived CacheFirst (e.g. OpenFreeMap vector tiles)
 registerRoute(
-  ({ url }) =>
-    url.pathname.includes("/tiles/") ||
-    (url.pathname.endsWith(".pmtiles") &&
-      (TRAIL_ARCHIVE_URL === null || url.href !== TRAIL_ARCHIVE_URL)),
+  isMapTileRequest,
   new CacheFirst({
     cacheName: "map-tiles",
     plugins: [
@@ -40,7 +26,7 @@ registerRoute(
 
 // Map style JSON: StaleWhileRevalidate so updates are picked up next load
 registerRoute(
-  ({ url }) => url.pathname.endsWith(".json"),
+  isMapStyleRequest,
   new StaleWhileRevalidate({ cacheName: "map-styles" })
 )
 
