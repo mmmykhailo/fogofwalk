@@ -54,7 +54,7 @@ async function stubMapTiles(
     get requests() {
       return trailMode
         ? tiles.requests
-        .filter((request) => request.kind === "tile")
+            .filter((request) => request.kind === "tile")
             .map((request) => request.url)
         : []
     },

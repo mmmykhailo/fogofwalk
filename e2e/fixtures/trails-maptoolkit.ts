@@ -3,8 +3,7 @@ import { GeoJSONVT } from "@maplibre/geojson-vt"
 import { fromGeojsonVt } from "@maplibre/vt-pbf"
 import type { Page, Request } from "@playwright/test"
 
-export const MAPTOOLKIT_TILEJSON_URL =
-  "https://tiles.maptoolkit.org/mtk.json"
+export const MAPTOOLKIT_TILEJSON_URL = "https://tiles.maptoolkit.org/mtk.json"
 export const MAPTOOLKIT_TILE_URL_PATTERN =
   "https://tiles.maptoolkit.org/e2e/mtk/{z}/{x}/{y}.mvt"
 export const TRAIL_TEST_ZOOM = 12

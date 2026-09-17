@@ -8,10 +8,14 @@ function request(url: string): { url: URL } {
 describe("service worker map resource routing", () => {
   test("keeps existing basemap tile caching", () => {
     expect(
-      isMapTileRequest(request("https://tiles.openfreemap.org/14/8590/5729.mvt"))
+      isMapTileRequest(
+        request("https://tiles.openfreemap.org/14/8590/5729.mvt")
+      )
     ).toBe(true)
     expect(
-      isMapTileRequest(request("https://server.example.test/tiles/14/8590/5729"))
+      isMapTileRequest(
+        request("https://server.example.test/tiles/14/8590/5729")
+      )
     ).toBe(true)
   })
 
@@ -27,11 +31,11 @@ describe("service worker map resource routing", () => {
   })
 
   test("keeps unrelated JSON style-route behavior", () => {
-    expect(isMapStyleRequest(request("https://example.test/styles/dark.json"))).toBe(
-      true
-    )
-    expect(isMapStyleRequest(request("https://example.test/api/activities"))).toBe(
-      false
-    )
+    expect(
+      isMapStyleRequest(request("https://example.test/styles/dark.json"))
+    ).toBe(true)
+    expect(
+      isMapStyleRequest(request("https://example.test/api/activities"))
+    ).toBe(false)
   })
 })

@@ -37,10 +37,7 @@ createServer((request, response) => {
     "Content-Type",
     contentTypes[extname(filePath)] ?? "application/octet-stream"
   )
-  response.setHeader(
-    "Content-Length",
-    String(fileSize)
-  )
+  response.setHeader("Content-Length", String(fileSize))
   if (request.method === "HEAD") {
     response.end()
     return

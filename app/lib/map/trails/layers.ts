@@ -141,9 +141,7 @@ export function trailInsertionPoint(map: maplibregl.Map): string | undefined {
   return undefined
 }
 
-export function ensureTrailLayers(
-  map: maplibregl.Map
-): void {
+export function ensureTrailLayers(map: maplibregl.Map): void {
   if (!logoControls.has(map)) {
     const logoControl = new MaptoolkitLogoControl()
     map.addControl(logoControl)

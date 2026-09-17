@@ -239,10 +239,10 @@ export default function PrivacyPage() {
           the map. Maptoolkit can receive normal network metadata such as your
           IP address, browser headers, and requested tile coordinates. Fog of
           Walk does not attach account credentials or activity content to those
-          requests and does not send your photos or saved points. These
-          requests are not anonymous because the provider can see normal
-          network metadata. Disabling the trail overlay removes its map source
-          and stops new trail requests.
+          requests and does not send your photos or saved points. These requests
+          are not anonymous because the provider can see normal network
+          metadata. Disabling the trail overlay removes its map source and stops
+          new trail requests.
         </p>
         <p className="mt-4 leading-relaxed">
           We may also disclose information where reasonably necessary to comply
