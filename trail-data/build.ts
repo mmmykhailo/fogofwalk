@@ -54,7 +54,7 @@ const TRAIL_METADATA_FIELDS = {
   sort: "Number",
 }
 
-interface BuildOptions {
+export interface BuildOptions {
   inputs: string[]
   manifest: VerifiedSourceManifest | null
   output: string
@@ -65,6 +65,7 @@ interface BuildOptions {
   scratchDir?: string
   keepScratch: boolean
   allowOutputOverwrite: boolean
+  collectSemanticFeatures: boolean
   leafSize?: number
   forceLeafDirectories?: boolean
 }
@@ -142,6 +143,7 @@ async function runFixture(
     scratchDir: parsed.options.get("scratch-dir"),
     keepScratch: parsed.flags.has("keep-scratch"),
     allowOutputOverwrite: true,
+    collectSemanticFeatures: true,
     leafSize: optionalInteger(parsed, "leaf-size", 4096),
     forceLeafDirectories: parsed.flags.has("force-leaf-directories"),
   })
@@ -193,6 +195,7 @@ async function runBuildCommand(
     scratchDir: parsed.options.get("scratch-dir"),
     keepScratch: parsed.flags.has("keep-scratch"),
     allowOutputOverwrite: false,
+    collectSemanticFeatures: false,
     leafSize: optionalInteger(parsed, "leaf-size", 4096),
     forceLeafDirectories: parsed.flags.has("force-leaf-directories"),
   })
@@ -267,7 +270,9 @@ async function runManifestCommand(
   console.log(JSON.stringify(artifacts))
 }
 
-async function buildArchive(options: BuildOptions): Promise<BuildResult> {
+export async function buildArchive(
+  options: BuildOptions
+): Promise<BuildResult> {
   validateOutputPath(options.output)
   if (!options.allowOutputOverwrite && (await pathExists(options.output))) {
     throw new Error(`refusing to overwrite existing archive: ${options.output}`)
@@ -384,7 +389,9 @@ async function buildArchive(options: BuildOptions): Promise<BuildResult> {
         if (assembled.droppedKeys > 0) report.counts.overlapCapWays++
         metrics.rowsRetained += assembled.features.length
         for (const feature of assembled.features) {
-          semanticFeatures.push({ way: feature.wayId, ...feature.properties })
+          if (options.collectSemanticFeatures) {
+            semanticFeatures.push({ way: feature.wayId, ...feature.properties })
+          }
           bounds = mergeBounds(
             bounds,
             boundsForCoordinates(feature.geometry.coordinates)

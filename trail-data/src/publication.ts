@@ -3,6 +3,8 @@ import { basename, dirname, join } from "node:path"
 
 import { fileDigest } from "./source-manifest"
 
+const MAX_COMPRESSED_TILE_BYTES = 1_048_576
+
 export interface PublicationArtifacts {
   archive: string
   report: string
@@ -29,13 +31,35 @@ export async function writePublicationArtifacts(options: {
   >
   const sha256 = await fileDigest(archive, "sha256")
   const archiveName = basename(archive)
+  if (report.schemaVersion !== 1) {
+    throw new Error("build report schemaVersion must be 1")
+  }
+  if (report.snapshot === "fixture") {
+    throw new Error("fixture trail provenance cannot be published")
+  }
+  if (!Array.isArray(report.inputs) || report.inputs.length === 0) {
+    throw new Error("production trail publication requires source inputs")
+  }
   if (report.archive?.sha256 && report.archive.sha256 !== sha256) {
     throw new Error("build report archive checksum does not match the archive")
   }
 
   const memberWaysSeen = safeCount(report.counts?.memberWaysSeen)
   const emittedWays = safeCount(report.counts?.emittedWays)
+  const emittedFeatures = safeCount(report.counts?.emittedFeatures)
+  const tiles = safeCount(report.counts?.tiles)
   const overlapCapWays = safeCount(report.counts?.overlapCapWays)
+  const maxCompressedTileBytes = safeCount(
+    report.metrics?.maxCompressedTileBytes
+  )
+  if (emittedWays === 0 || emittedFeatures === 0 || tiles === 0) {
+    throw new Error(
+      "production trail publication requires emitted ways, features, and tiles"
+    )
+  }
+  if (maxCompressedTileBytes > MAX_COMPRESSED_TILE_BYTES) {
+    throw new Error("compressed trail tile exceeds the 1 MiB publication gate")
+  }
   if (
     emittedWays > memberWaysSeen ||
     overlapCapWays > emittedWays ||

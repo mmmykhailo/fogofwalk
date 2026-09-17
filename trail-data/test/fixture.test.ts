@@ -2,8 +2,12 @@ import { expect, test } from "bun:test"
 import { mkdir, readFile, rm } from "node:fs/promises"
 import { resolve } from "node:path"
 
-import { main } from "../build"
-import { fileDigest } from "../src/source-manifest"
+import { buildArchive, main } from "../build"
+import {
+  fileDigest,
+  loadSourceManifest,
+  verifySourceManifest,
+} from "../src/source-manifest"
 
 test("builds a local PBF manifest and de-duplicates overlapping inputs", async () => {
   const directory = `/tmp/fogofwalk-trail-integration-${crypto.randomUUID()}`
@@ -62,12 +66,16 @@ test("builds a local PBF manifest and de-duplicates overlapping inputs", async (
       language: "typescript",
     })
     expect(report.coverage).toEqual(coverage)
+    expect(report.snapshot).toBe("2026-09-07T00:00:00Z")
+    expect(report.inputs).toHaveLength(1)
     expect(report.counts).toMatchObject({
       emittedWays: 10,
       emittedFeatures: 15,
       duplicateSourceObjects: 0,
       sourceConflicts: 0,
     })
+    expect(typeof report.counts.tiles).toBe("number")
+    expect(report.counts.tiles).toBeGreaterThan(0)
     expect(report.metrics.passMetrics.map((pass: any) => pass.name)).toEqual([
       "relation-scan",
       "relation-resolution",
@@ -131,6 +139,23 @@ test("builds a local PBF manifest and de-duplicates overlapping inputs", async (
     expect(overlapReport.counts.duplicateSourceObjects).toBeGreaterThan(0)
     expect(overlapReport.counts.sourceConflicts).toBe(0)
     expect(await fileDigest(overlapArchive, "sha256")).toBe(archiveSha256)
+
+    const verifiedManifest = await verifySourceManifest(
+      await loadSourceManifest(manifest)
+    )
+    const productionResult = await buildArchive({
+      inputs: verifiedManifest.inputs.map((input) => input.path),
+      manifest: verifiedManifest,
+      output: `${directory}/production-without-parity.pmtiles`,
+      reportPath: null,
+      coverage: verifiedManifest.coverage,
+      snapshot: verifiedManifest.snapshot,
+      scratchDir: `${directory}/production-without-parity-scratch`,
+      keepScratch: false,
+      allowOutputOverwrite: false,
+      collectSemanticFeatures: false,
+    })
+    expect(productionResult.semanticFeatures).toEqual([])
   } finally {
     await rm(directory, { recursive: true, force: true })
   }
