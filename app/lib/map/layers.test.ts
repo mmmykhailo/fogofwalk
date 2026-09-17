@@ -7,8 +7,13 @@ import {
   TRAIL_CYCLING_COLOR,
   TRAIL_CYCLING_DASH_ARRAY,
   TRAIL_CYCLING_NETWORKS,
+  TRAIL_CYCLING_OPACITY,
+  TRAIL_CYCLING_WIDTH_STOPS,
+  TRAIL_HIKING_CASING_COLOR,
+  TRAIL_HIKING_CASING_OPACITY,
   TRAIL_HIKING_CASING_WIDTH_DELTA,
   TRAIL_HIKING_COLOR,
+  TRAIL_HIKING_OPACITY,
   TRAIL_HIKING_WIDTH_STOPS,
   TRAIL_LAYER_IDS,
   TRAIL_MAX_RENDER_ZOOM,
@@ -30,10 +35,14 @@ function createFakeMap() {
   const layerRemoveCalls: string[] = []
   const sourceRemoveCalls: string[] = []
   const controls = new Set<unknown>()
+  const events: string[] = []
 
   const map = {
     getSource: (id: string) => sources.get(id),
-    addSource: (id: string, source: unknown) => sources.set(id, source),
+    addSource: (id: string, source: unknown) => {
+      sources.set(id, source)
+      events.push(`source:add:${id}`)
+    },
     getLayer: (id: string) => layers.get(id),
     addLayer: (layer: { id: string }, beforeId?: string) => {
       layers.set(layer.id, layer)
@@ -41,6 +50,7 @@ function createFakeMap() {
       if (index >= 0) layerOrder.splice(index, 0, layer.id)
       else layerOrder.push(layer.id)
       layerAddCalls.push([layer.id, beforeId])
+      events.push(`layer:add:${layer.id}`)
       return map
     },
     moveLayer: (id: string, beforeId?: string) => {
@@ -55,17 +65,21 @@ function createFakeMap() {
       const index = layerOrder.indexOf(id)
       if (index >= 0) layerOrder.splice(index, 1)
       layerRemoveCalls.push(id)
+      events.push(`layer:remove:${id}`)
     },
     removeSource: (id: string) => {
       sources.delete(id)
       sourceRemoveCalls.push(id)
+      events.push(`source:remove:${id}`)
     },
     addControl: (control: unknown) => {
       controls.add(control)
+      events.push("control:add")
       return map
     },
     removeControl: (control: unknown) => {
       controls.delete(control)
+      events.push("control:remove")
       return map
     },
     setTerrain: () => map,
@@ -88,6 +102,7 @@ function createFakeMap() {
     layerRemoveCalls,
     sourceRemoveCalls,
     controls,
+    events,
   }
 }
 
@@ -184,8 +199,45 @@ describe("saved-point map layers", () => {
       paint: Record<string, unknown>
     }
     const hiking = fake.layers.get(TRAIL_LAYER_IDS.hiking) as {
+      source: string
+      "source-layer": string
+      minzoom: number
+      maxzoom: number
+      filter: unknown
       paint: Record<string, unknown>
     }
+    const hikingWidth = [
+      "interpolate",
+      ["linear"],
+      ["zoom"],
+      ...TRAIL_HIKING_WIDTH_STOPS,
+    ]
+    const cyclingWidth = [
+      "interpolate",
+      ["linear"],
+      ["zoom"],
+      ...TRAIL_CYCLING_WIDTH_STOPS,
+    ]
+    expect(hiking).toMatchObject({
+      source: TRAIL_SOURCE_ID,
+      "source-layer": TRAIL_SOURCE_LAYER,
+      minzoom: TRAIL_MIN_RENDER_ZOOM,
+      maxzoom: TRAIL_MAX_RENDER_ZOOM,
+      filter: [
+        "in",
+        ["get", "walking_network"],
+        ["literal", TRAIL_WALKING_NETWORKS],
+      ],
+      paint: {
+        "line-color": TRAIL_HIKING_COLOR,
+        "line-opacity": TRAIL_HIKING_OPACITY,
+        "line-width": hikingWidth,
+      },
+    })
+    expect(casing.paint).toMatchObject({
+      "line-color": TRAIL_HIKING_CASING_COLOR,
+      "line-opacity": TRAIL_HIKING_CASING_OPACITY,
+    })
     const cycling = fake.layers.get(TRAIL_LAYER_IDS.cycling) as {
       source: string
       "source-layer": string
@@ -221,6 +273,8 @@ describe("saved-point map layers", () => {
       maxzoom: TRAIL_MAX_RENDER_ZOOM,
       paint: {
         "line-color": TRAIL_CYCLING_COLOR,
+        "line-opacity": TRAIL_CYCLING_OPACITY,
+        "line-width": cyclingWidth,
         "line-dasharray": ["literal", TRAIL_CYCLING_DASH_ARRAY],
       },
       filter: [
@@ -245,6 +299,7 @@ describe("saved-point map layers", () => {
     expect(fake.layers).toHaveLength(layerCount)
     expect(fake.layerAddCalls).toHaveLength(addCount)
 
+    const eventCount = fake.events.length
     removeTrailLayers(fake.map as never)
     expect(fake.layerRemoveCalls).toEqual([
       TRAIL_LAYER_IDS.cycling,
@@ -253,6 +308,25 @@ describe("saved-point map layers", () => {
     ])
     expect(fake.sourceRemoveCalls).toEqual([...ORDERED_TRAIL_SOURCE_IDS])
     expect(fake.sources.has(TRAIL_SOURCE_ID)).toBe(false)
+    expect(fake.controls).toHaveLength(0)
+    expect(fake.events.slice(eventCount)).toEqual([
+      `layer:remove:${TRAIL_LAYER_IDS.cycling}`,
+      `layer:remove:${TRAIL_LAYER_IDS.hiking}`,
+      `layer:remove:${TRAIL_LAYER_IDS.hikingCasing}`,
+      `source:remove:${TRAIL_SOURCE_ID}`,
+      "control:remove",
+    ])
+  })
+
+  test("does not create trail resources when trails are disabled", () => {
+    const fake = createFakeMap()
+
+    setupMapLayers(fake.map as never, "flat", { showTrails: false })
+
+    expect(fake.sources.has(TRAIL_SOURCE_ID)).toBe(false)
+    expect(
+      Object.values(TRAIL_LAYER_IDS).some((id) => fake.layers.has(id))
+    ).toBe(false)
     expect(fake.controls).toHaveLength(0)
   })
 
