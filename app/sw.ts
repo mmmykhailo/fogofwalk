@@ -10,7 +10,7 @@ import {
   TRAIL_CACHE_NAME,
   TRAIL_PROVIDER_HOSTNAMES,
   TRAIL_PROVIDER_TILE_PATH_PREFIX,
-} from "~/constants/trails"
+} from "./constants/trails"
 
 declare let self: ServiceWorkerGlobalScope & typeof globalThis
 
