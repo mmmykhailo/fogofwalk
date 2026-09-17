@@ -183,9 +183,12 @@ describe("saved-point map layers", () => {
       layout: { "line-sort-key": ["get", "sort"] },
     })
     expect(casing.paint["line-width"]).toEqual([
-      "+",
-      ["interpolate", ["linear"], ["zoom"], ...TRAIL_HIKING_WIDTH_STOPS],
-      TRAIL_HIKING_CASING_WIDTH_DELTA,
+      "interpolate",
+      ["linear"],
+      ["zoom"],
+      ...TRAIL_HIKING_WIDTH_STOPS.flatMap((value, index) =>
+        index % 2 === 0 ? [value] : [value + TRAIL_HIKING_CASING_WIDTH_DELTA]
+      ),
     ])
     expect(hiking.paint["line-color"]).toEqual(["get", "color"])
     expect(cycling).toMatchObject({

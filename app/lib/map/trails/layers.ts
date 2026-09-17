@@ -36,8 +36,14 @@ function expression(value: unknown): ExpressionSpecification {
   return value as ExpressionSpecification
 }
 
-function widthExpression(stops: readonly number[]): ExpressionSpecification {
-  return expression(["interpolate", ["linear"], ["zoom"], ...stops])
+function widthExpression(
+  stops: readonly number[],
+  additiveWidth = 0
+): ExpressionSpecification {
+  const adjustedStops = stops.map((value, index) =>
+    index % 2 === 0 ? value : value + additiveWidth
+  )
+  return expression(["interpolate", ["linear"], ["zoom"], ...adjustedStops])
 }
 
 function propertyExpression(name: string): ExpressionSpecification {
@@ -78,11 +84,10 @@ function hikingCasingLayer(): AddLayerObject {
       "line-color": TRAIL_HIKING_CASING_COLOR,
       "line-opacity": TRAIL_HIKING_CASING_OPACITY,
       "line-offset": propertyExpression("offset"),
-      "line-width": expression([
-        "+",
-        widthExpression(TRAIL_HIKING_WIDTH_STOPS),
-        TRAIL_HIKING_CASING_WIDTH_DELTA,
-      ]),
+      "line-width": widthExpression(
+        TRAIL_HIKING_WIDTH_STOPS,
+        TRAIL_HIKING_CASING_WIDTH_DELTA
+      ),
     },
   }
 }
