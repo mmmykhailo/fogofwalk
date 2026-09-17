@@ -109,6 +109,7 @@ test("writes and independently verifies a small archive with leaf directories", 
     verified.header.centerLat,
     verified.header.centerZoom,
   ]).toEqual([14.05, 50.05, 12])
+  expect(await Bun.file(`${archive}.incomplete`).exists()).toBe(false)
 })
 
 test("does not create the requested archive when tile writing is interrupted", async () => {
@@ -124,12 +125,13 @@ test("does not create the requested archive when tile writing is interrupted", a
       bounds: { minLon: 14, minLat: 50, maxLon: 14.1, maxLat: 50.1 },
       signal: controller.signal,
       tiles: (async function* () {
-        controller.abort()
         yield { tileId: 1, bytes: gzipSync(tile), featureCount: 1 }
+        controller.abort()
       })(),
     })
   }).toThrow("cancelled")
   expect(await Bun.file(archive).exists()).toBe(false)
+  await rm(`${archive}.incomplete`, { force: true })
   await rm(`${archive}.tile-data.incomplete`, { force: true })
   await rm(`${archive}.leaf-data.incomplete`, { force: true })
 })

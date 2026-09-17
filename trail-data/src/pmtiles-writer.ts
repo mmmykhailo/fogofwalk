@@ -171,16 +171,25 @@ export async function writePmtilesArchive(
     center,
   })
 
-  const outputHandle = await open(options.output, "w")
+  const temporaryOutput = options.output.endsWith(".incomplete")
+    ? options.output
+    : `${options.output}.incomplete`
+  throwIfAborted(options.signal)
+  const outputHandle = await open(temporaryOutput, "w")
   try {
     await writeFileBytes(outputHandle, header)
     await writeFileBytes(outputHandle, root)
     await writeFileBytes(outputHandle, metadata)
-    if (useLeaves) await copyFileBytes(leafDataPath, outputHandle)
-    await copyFileBytes(tileDataPath, outputHandle)
+    if (useLeaves)
+      await copyFileBytes(leafDataPath, outputHandle, options.signal)
+    await copyFileBytes(tileDataPath, outputHandle, options.signal)
     await outputHandle.sync()
   } finally {
     await outputHandle.close()
+  }
+  throwIfAborted(options.signal)
+  if (temporaryOutput !== options.output) {
+    await rename(temporaryOutput, options.output)
   }
   const outputBytes = (await stat(options.output)).size
   return {
@@ -352,11 +361,13 @@ function validateBounds(bounds: GeometryBounds): void {
 
 async function copyFileBytes(
   path: string,
-  destination: Awaited<ReturnType<typeof open>>
+  destination: Awaited<ReturnType<typeof open>>,
+  signal?: AbortSignal
 ): Promise<void> {
   for await (const chunk of createReadStream(path, {
     highWaterMark: 1024 * 1024,
   })) {
+    throwIfAborted(signal)
     await writeFileBytes(destination, chunk)
   }
 }
