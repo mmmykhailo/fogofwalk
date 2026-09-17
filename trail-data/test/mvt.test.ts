@@ -9,7 +9,6 @@ import {
   tileRangeForCoordinates,
 } from "../src/geometry"
 import { encodeMvtTile } from "../src/mvt"
-import { zxyToTileId } from "pmtiles"
 
 test("clips a line crossing a z12 boundary into both adjacent tiles", () => {
   const zoom = 12
