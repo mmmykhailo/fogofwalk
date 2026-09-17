@@ -6,12 +6,14 @@ import {
   setActivitiesVisible,
   setFogVisible,
   setLapHighlightData,
+  setTrailsEnabled,
 } from "~/lib/map/commands"
 import { mapStore } from "~/lib/mapStore"
 import type { ActivityPaths } from "~/types/activities"
 
 interface MapPresentationOptions {
   showActivities: boolean
+  showTrails: boolean
   showFog: boolean
   selectedActivityIds: string[]
   highlightPaths: ActivityPaths | null
@@ -31,6 +33,12 @@ export function useMapPresentation(options: MapPresentationOptions): void {
       setActivitiesVisible(mapStore.map, options.showActivities)
     }
   }, [options.showActivities])
+
+  useEffect(() => {
+    if (mapStore.map && mapStore.sourcesReady) {
+      setTrailsEnabled(mapStore.map, options.showTrails)
+    }
+  }, [options.showTrails])
 
   useEffect(() => {
     const map = mapStore.map

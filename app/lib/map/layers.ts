@@ -1,4 +1,5 @@
 import type maplibregl from "maplibre-gl"
+import { TRAILS_FEATURE_ENABLED } from "~/constants/trails"
 import {
   ACTIVITY_COLOR,
   ACTIVITY_HIT_WIDTH,
@@ -10,6 +11,7 @@ import { mapStore, worldFogGeoJSON } from "~/lib/mapStore"
 import { activitiesFeatureCollection } from "~/lib/map/geojson"
 import { createFogMaskLayer } from "~/lib/map/fogMaskLayer"
 import { ensureSavedPointMarkerImages } from "~/lib/map/savedPointMarkerImages"
+import { ensureTrailLayers, removeTrailLayers } from "~/lib/map/trails/layers"
 import type { MapMode } from "~/types/activities"
 
 export const MAP_SOURCE_IDS = {
@@ -33,7 +35,15 @@ export const SAVED_POINT_LAYER_IDS = [
   MAP_LAYER_IDS.savedPointHit,
 ] as const
 
-export function setupMapLayers(map: maplibregl.Map, mode: MapMode): void {
+export interface MapLayerSetupOptions {
+  showTrails: boolean
+}
+
+export function setupMapLayers(
+  map: maplibregl.Map,
+  mode: MapMode,
+  options: MapLayerSetupOptions
+): void {
   if (mode === "relief") {
     if (!map.getSource("terrain-source")) {
       map.addSource("terrain-source", {
@@ -47,6 +57,12 @@ export function setupMapLayers(map: maplibregl.Map, mode: MapMode): void {
       })
     }
     map.setTerrain({ source: "terrain-source", exaggeration: 2.5 })
+  }
+
+  if (TRAILS_FEATURE_ENABLED && options.showTrails) {
+    ensureTrailLayers(map)
+  } else {
+    removeTrailLayers(map)
   }
 
   if (mode !== "relief" && !map.getLayer(MAP_LAYER_IDS.fog)) {

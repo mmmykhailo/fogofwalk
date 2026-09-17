@@ -16,6 +16,7 @@ interface MapViewProps {
   onMapReady?: () => void
   onProcessingComplete?: () => void
   showActivities: boolean
+  showTrails: boolean
   showFog: boolean
   selectedActivityIds: string[]
   onActivitySelect: (id: string | null) => void
@@ -48,6 +49,7 @@ export function MapView({
   onMapReady,
   onProcessingComplete,
   showActivities,
+  showTrails,
   showFog,
   selectedActivityIds,
   onActivitySelect,
@@ -79,6 +81,7 @@ export function MapView({
     useMapLifecycle({
       mapMode,
       showActivities,
+      showTrails,
       showFog,
       selectedActivityIds,
       highlightPaths,
@@ -98,6 +101,7 @@ export function MapView({
   useMyLocationMarker(showMyLocation, myLocation)
   useMapPresentation({
     showActivities,
+    showTrails,
     showFog,
     selectedActivityIds,
     highlightPaths,

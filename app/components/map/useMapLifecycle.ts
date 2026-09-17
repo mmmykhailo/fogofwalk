@@ -56,6 +56,7 @@ export function useMapLifecycle(
 
   const currentPresentation = (): MapPresentationState => ({
     showActivities: optionsRef.current.showActivities,
+    showTrails: optionsRef.current.showTrails,
     showFog: optionsRef.current.showFog,
     selectedActivityIds: optionsRef.current.selectedActivityIds,
     highlightPaths: optionsRef.current.highlightPaths,
@@ -91,7 +92,9 @@ export function useMapLifecycle(
 
     const rehydrateAfterContextRestore = () => {
       if (disposed) return
-      setupMapLayers(map, optionsRef.current.mapMode)
+      setupMapLayers(map, optionsRef.current.mapMode, {
+        showTrails: currentPresentation().showTrails,
+      })
       mapStore.sourcesReady = true
       const activitiesSource = map.getSource(MAP_SOURCE_IDS.activities) as
         | maplibregl.GeoJSONSource
@@ -169,7 +172,9 @@ export function useMapLifecycle(
 
     map.once("load", () => {
       map.resize()
-      setupMapLayers(map, initialMode)
+      setupMapLayers(map, initialMode, {
+        showTrails: currentPresentation().showTrails,
+      })
       mapStore.sourcesReady = true
       rehydrateMapPresentation(map, currentPresentation())
       applyFogDataToMap(map)
@@ -220,7 +225,9 @@ export function useMapLifecycle(
       map.off("style.load", onStyleLoad)
       pendingStyleLoadRef.current = null
 
-      setupMapLayers(map, options.mapMode)
+      setupMapLayers(map, options.mapMode, {
+        showTrails: currentPresentation().showTrails,
+      })
       mapStore.sourcesReady = true
       optionsRef.current.invalidateActivitiesCache()
       rehydrateMapPresentation(map, currentPresentation())
