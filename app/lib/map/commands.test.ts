@@ -7,7 +7,11 @@ import {
   setLapHighlightData,
   setTrailsEnabled,
 } from "~/lib/map/commands"
-import { TRAIL_LAYER_IDS, TRAIL_SOURCE_ID } from "~/constants/trails"
+import {
+  REVERSE_TRAIL_LAYER_IDS,
+  TRAIL_LAYER_IDS,
+  TRAIL_SOURCE_ID,
+} from "~/constants/trails"
 import { mapStore, worldFogGeoJSON } from "~/lib/mapStore"
 
 describe("map rendering commands", () => {
@@ -31,11 +35,7 @@ describe("map rendering commands", () => {
 
     setTrailsEnabled(map as never, false)
 
-    expect(removedLayers).toEqual([
-      TRAIL_LAYER_IDS.cycling,
-      TRAIL_LAYER_IDS.hiking,
-      TRAIL_LAYER_IDS.hikingCasing,
-    ])
+    expect(removedLayers).toEqual([...REVERSE_TRAIL_LAYER_IDS])
     expect(removedSources).toEqual([TRAIL_SOURCE_ID])
     expect(layers).toHaveLength(0)
     expect(sources).toHaveLength(0)

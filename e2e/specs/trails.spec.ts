@@ -11,9 +11,9 @@ import {
 
 const TRAIL_SOURCE_ID = "trails-source"
 const TRAIL_LAYER_IDS = [
+  "trails-cycling-layer",
   "trails-hiking-casing-layer",
   "trails-hiking-layer",
-  "trails-cycling-layer",
 ] as const
 
 async function setCamera(
@@ -390,7 +390,7 @@ test.describe("Maptoolkit trail overlay", () => {
         ["get", "cycling_network"],
         ["literal", ["icn", "ncn", "rcn", "lcn"]],
       ],
-      color: "#f472b6",
+      color: "#4cb056",
     })
     expect(JSON.stringify(styles[0]?.dash)).toContain("[3,2]")
     expect(JSON.stringify(styles[1]?.dash)).toContain("[2,2]")

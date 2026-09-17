@@ -52,7 +52,7 @@ export function MapControlsSection() {
         Trails begin at zoom {TRAIL_MIN_RENDER_ZOOM}. The overlay shows hosted
         hiking and cycling route networks from Maptoolkit, derived from
         OpenStreetMap. Hiking is dashed blue with a light casing, and cycling is
-        dashed light pink. Your browser contacts Maptoolkit directly for the
+        dashed light green. Your browser contacts Maptoolkit directly for the
         visible map area; Fog of Walk does not send activities, account data,
         photos, or saved points in those requests. The overlay is a display aid
         only: route coverage, geometry, access, and conditions may be incomplete

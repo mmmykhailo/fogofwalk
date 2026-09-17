@@ -31,11 +31,19 @@ describe("trail tile diagnostics", () => {
 
   test("records one coordinate-free diagnostic per error class", () => {
     const failures = [
-      ["network", new Error("Failed to fetch https://secret.example/12/1/2")],
-      ["http", { status: 503, url: "https://secret.example/12/1/2" }],
-      ["cors", new Error("CORS blocked at 14.42,50.08")],
-      ["decode", new Error("Vector tile decode failed for z/x/y")],
-      ["unknown", new Error("unexpected failure with coordinates")],
+      [
+        "network",
+        new Error("Failed to fetch https://secret.example/12/1/2"),
+        "retryable",
+      ],
+      [
+        "http",
+        { status: 503, url: "https://secret.example/12/1/2" },
+        "retryable",
+      ],
+      ["cors", new Error("CORS blocked at 14.42,50.08"), "retryable"],
+      ["decode", new Error("Vector tile decode failed for z/x/y"), "permanent"],
+      ["unknown", new Error("unexpected failure with coordinates"), "unknown"],
     ] as const
 
     for (const [, failure] of failures) recordTrailTileError(failure)
@@ -43,13 +51,14 @@ describe("trail tile diagnostics", () => {
 
     expect(getDiagnostics()).toHaveLength(failures.length)
     expect(getDiagnostics()).toEqual(
-      failures.map(([errorClass]) =>
+      failures.map(([errorClass, , retryability]) =>
         expect.objectContaining({
           subsystem: "render",
           operationId: "trail:tiles",
           stage: "trail_tiles",
           result: "degraded",
           errorCode: `trail_tiles_${errorClass}`,
+          retryability,
         })
       )
     )
@@ -57,5 +66,25 @@ describe("trail tile diagnostics", () => {
     expect(serialized).not.toContain("secret.example")
     expect(serialized).not.toContain("14.42")
     expect(serialized).not.toContain("z/x/y")
+  })
+
+  test("keeps transient HTTP failures retryable and client failures permanent", () => {
+    for (const status of [408, 429, 500, 503]) {
+      resetTrailTileDiagnostics()
+      clearDiagnostics()
+      recordTrailTileError({ status })
+      expect(getDiagnostics()[0]).toMatchObject({
+        errorCode: "trail_tiles_http",
+        retryability: "retryable",
+      })
+    }
+
+    resetTrailTileDiagnostics()
+    clearDiagnostics()
+    recordTrailTileError({ status: 404 })
+    expect(getDiagnostics()[0]).toMatchObject({
+      errorCode: "trail_tiles_http",
+      retryability: "permanent",
+    })
   })
 })

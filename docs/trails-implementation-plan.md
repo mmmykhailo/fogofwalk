@@ -17,7 +17,7 @@ optional sync server has no trail role, and Maptoolkit responses are excluded
 from application-managed service-worker caches.
 
 Hiking foreground lines are blue (#3b82f6) with dash array [3, 2] and keep
-their solid light casing. Cycling lines are lighter pink (#f472b6) with dash
+their solid light casing. Cycling lines are light green (#4cb056) with dash
 array [2, 2] and no casing. Provider, network, HTTP, CORS, decode, and
 unknown map failures are isolated to this optional overlay, so local data,
 fog, basemaps, and sync remain usable.

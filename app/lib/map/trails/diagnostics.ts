@@ -4,7 +4,10 @@ import {
   TRAIL_DIAGNOSTIC_STAGE,
   TRAIL_SOURCE_ID,
 } from "~/constants/trails"
-import { recordDiagnostic } from "~/lib/diagnostics"
+import {
+  recordDiagnostic,
+  type DiagnosticRetryability,
+} from "~/lib/diagnostics"
 
 export type TrailTileErrorClass =
   | "network"
@@ -100,19 +103,22 @@ function errorDetails(value: unknown): {
     status?: unknown
     statusCode?: unknown
   }
-  if (candidate.error && candidate.error !== value) {
-    return errorDetails(candidate.error)
-  }
   const status =
     typeof candidate.status === "number"
       ? candidate.status
       : typeof candidate.statusCode === "number"
         ? candidate.statusCode
         : null
+  const nested =
+    candidate.error && candidate.error !== value
+      ? errorDetails(candidate.error)
+      : null
   return {
     message:
-      typeof candidate.message === "string" ? candidate.message : String(value),
-    status,
+      typeof candidate.message === "string"
+        ? candidate.message
+        : (nested?.message ?? String(value)),
+    status: status ?? nested?.status ?? null,
   }
 }
 
@@ -142,6 +148,26 @@ export function classifyTrailTileError(value: unknown): TrailTileErrorClass {
   return "unknown"
 }
 
+function trailTileRetryability(
+  value: unknown,
+  errorClass: TrailTileErrorClass
+): DiagnosticRetryability {
+  if (errorClass === "http") {
+    const { status } = errorDetails(value)
+    if (
+      status === 408 ||
+      status === 429 ||
+      (status !== null && status >= 500 && status < 600)
+    ) {
+      return "retryable"
+    }
+    return "permanent"
+  }
+  if (errorClass === "decode") return "permanent"
+  if (errorClass === "unknown") return "unknown"
+  return "retryable"
+}
+
 /** Records at most one coordinate-free diagnostic for each tile error class. */
 export function recordTrailTileError(value: unknown): TrailTileErrorClass {
   const errorClass = classifyTrailTileError(value)
@@ -154,12 +180,7 @@ export function recordTrailTileError(value: unknown): TrailTileErrorClass {
     stage: TRAIL_DIAGNOSTIC_STAGE,
     result: "degraded",
     errorCode: `trail_tiles_${errorClass}`,
-    retryability:
-      errorClass === "http" || errorClass === "decode"
-        ? "permanent"
-        : errorClass === "unknown"
-          ? "unknown"
-          : "retryable",
+    retryability: trailTileRetryability(value, errorClass),
   })
   return errorClass
 }

@@ -15,9 +15,9 @@ export const TRAIL_LAYER_IDS = {
   cycling: "trails-cycling-layer",
 } as const
 export const ORDERED_TRAIL_LAYER_IDS = [
+  TRAIL_LAYER_IDS.cycling,
   TRAIL_LAYER_IDS.hikingCasing,
   TRAIL_LAYER_IDS.hiking,
-  TRAIL_LAYER_IDS.cycling,
 ] as const
 export const REVERSE_TRAIL_LAYER_IDS = [...ORDERED_TRAIL_LAYER_IDS].reverse()
 export const ORDERED_TRAIL_SOURCE_IDS = [TRAIL_SOURCE_ID] as const

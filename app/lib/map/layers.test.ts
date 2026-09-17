@@ -4,6 +4,7 @@ import { ensureTrailLayers, removeTrailLayers } from "~/lib/map/trails/layers"
 import {
   ORDERED_TRAIL_LAYER_IDS,
   ORDERED_TRAIL_SOURCE_IDS,
+  REVERSE_TRAIL_LAYER_IDS,
   TRAIL_CYCLING_COLOR,
   TRAIL_CYCLING_DASH_ARRAY,
   TRAIL_CYCLING_NETWORKS,
@@ -179,9 +180,9 @@ describe("saved-point map layers", () => {
       MAP_LAYER_IDS.activities,
     ])
     expect(fake.layerAddCalls.slice(-3)).toEqual([
+      [TRAIL_LAYER_IDS.cycling, MAP_LAYER_IDS.fog],
       [TRAIL_LAYER_IDS.hikingCasing, MAP_LAYER_IDS.fog],
       [TRAIL_LAYER_IDS.hiking, MAP_LAYER_IDS.fog],
-      [TRAIL_LAYER_IDS.cycling, MAP_LAYER_IDS.fog],
     ])
     expect(fake.sources.get(TRAIL_SOURCE_ID)).toEqual({
       type: "vector",
@@ -304,18 +305,12 @@ describe("saved-point map layers", () => {
 
     const eventCount = fake.events.length
     removeTrailLayers(fake.map as never)
-    expect(fake.layerRemoveCalls).toEqual([
-      TRAIL_LAYER_IDS.cycling,
-      TRAIL_LAYER_IDS.hiking,
-      TRAIL_LAYER_IDS.hikingCasing,
-    ])
+    expect(fake.layerRemoveCalls).toEqual([...REVERSE_TRAIL_LAYER_IDS])
     expect(fake.sourceRemoveCalls).toEqual([...ORDERED_TRAIL_SOURCE_IDS])
     expect(fake.sources.has(TRAIL_SOURCE_ID)).toBe(false)
     expect(fake.controls).toHaveLength(0)
     expect(fake.events.slice(eventCount)).toEqual([
-      `layer:remove:${TRAIL_LAYER_IDS.cycling}`,
-      `layer:remove:${TRAIL_LAYER_IDS.hiking}`,
-      `layer:remove:${TRAIL_LAYER_IDS.hikingCasing}`,
+      ...REVERSE_TRAIL_LAYER_IDS.map((id) => `layer:remove:${id}`),
       `source:remove:${TRAIL_SOURCE_ID}`,
       "control:remove",
     ])

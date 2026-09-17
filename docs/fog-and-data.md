@@ -147,8 +147,8 @@ rendering threshold of zoom 7, while the hosted vector source has a maximum
 zoom of 15. The existing OpenFreeMap or Esri basemap remains unchanged.
 
 The hiking foreground is blue (#3b82f6) with dash array [3, 2] over the
-existing solid light casing. The cycling foreground is lighter pink
-(#f472b6) with dash array [2, 2] and no casing.
+existing solid light casing. The cycling foreground is light green (#4cb056)
+with dash array [2, 2] and no casing.
 
 Maptoolkit's TileJSON supplies the copyright attribution. The map keeps
 MapLibre's attribution control expanded at every viewport size, and one
