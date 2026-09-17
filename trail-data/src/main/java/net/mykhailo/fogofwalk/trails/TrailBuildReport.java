@@ -17,6 +17,7 @@ public final class TrailBuildReport {
   private final LongAdder invalidGeometries = new LongAdder();
   private final LongAdder unsupportedColors = new LongAdder();
   private final LongAdder overlapKeysDropped = new LongAdder();
+  private final LongAdder overlapCapWays = new LongAdder();
 
   public void acceptedRelation(TrailRelationInfo relation) {
     acceptedRelations.increment();
@@ -40,6 +41,10 @@ public final class TrailBuildReport {
 
   public void overlapKeysDropped(long count) {
     overlapKeysDropped.add(count);
+  }
+
+  public void overlapCapWay() {
+    overlapCapWays.increment();
   }
 
   public void write(
@@ -96,7 +101,8 @@ public final class TrailBuildReport {
           "emittedFeatures": %d,
           "invalidGeometries": %d,
           "unsupportedColors": %d,
-          "overlapKeysDropped": %d
+          "overlapKeysDropped": %d,
+          "overlapCapWays": %d
         },
         "metrics": {
           "wallTimeMs": %d,
@@ -129,6 +135,7 @@ public final class TrailBuildReport {
       invalidGeometries.sum(),
       unsupportedColors.sum(),
       overlapKeysDropped.sum(),
+      overlapCapWays.sum(),
       wallTimeMs
     );
   }

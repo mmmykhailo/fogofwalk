@@ -35,6 +35,8 @@ content SHA-256 file, publication manifest, and `DATA-LICENSE.txt` ODbL data
 licence notice. The notice links to the
 [Open Database License 1.0](https://opendatacommons.org/licenses/odbl/1-0/)
 and the [OpenStreetMap copyright page](https://www.openstreetmap.org/copyright).
+Publication also fails when more than 0.1% of member ways hit the four-lane
+overlap cap.
 `verify-archive.sh` checks PMTiles v3,
 z12-only MVT data, the `trails` layer, the four-property schema, palette/rank
 ranges, tile size, attribution, and an optional SHA-256 value. Linux builds

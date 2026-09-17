@@ -28,6 +28,21 @@ if (report.archive?.sha256 && report.archive.sha256 !== sha256) {
   throw new Error("build report archive checksum does not match the archive")
 }
 
+const memberWaysSeen = Number(report.counts?.memberWaysSeen ?? 0)
+const overlapCapWays = Number(report.counts?.overlapCapWays ?? 0)
+if (
+  !Number.isSafeInteger(memberWaysSeen) ||
+  !Number.isSafeInteger(overlapCapWays) ||
+  memberWaysSeen < 0 ||
+  overlapCapWays < 0 ||
+  overlapCapWays > memberWaysSeen
+) {
+  throw new Error("build report overlap-cap counters are invalid")
+}
+if (memberWaysSeen > 0 && overlapCapWays / memberWaysSeen > 0.001) {
+  throw new Error("overlap cap hit rate exceeds the 0.1% publication gate")
+}
+
 report.attribution = "© OpenStreetMap contributors"
 report.dataLicense = "ODbL-1.0"
 report.metrics ??= {}

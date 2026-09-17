@@ -80,6 +80,7 @@ public final class TrailProfile implements Profile {
     TrailClassifier.VisualSelection selection =
       TrailClassifier.selectVisualFeatures(memberships);
     report.overlapKeysDropped(selection.droppedKeys());
+    if (selection.droppedKeys() > 0) report.overlapCapWay();
     if (selection.features().isEmpty()) return;
 
     // Resolve the geometry once so malformed ways are counted and skipped while
