@@ -83,11 +83,14 @@ async function sourceProperties(page: Page) {
 }
 
 async function renderedTrailFeatureCount(page: Page): Promise<number> {
-  return page.evaluate((layerIds) => {
-    const map = window.__fogofwalkE2eMap
-    if (!map) throw new Error("MapLibre test handle is unavailable")
-    return map.queryRenderedFeatures(undefined, { layers: layerIds }).length
-  }, [...TRAIL_LAYER_IDS])
+  return page.evaluate(
+    (layerIds) => {
+      const map = window.__fogofwalkE2eMap
+      if (!map) throw new Error("MapLibre test handle is unavailable")
+      return map.queryRenderedFeatures(undefined, { layers: layerIds }).length
+    },
+    [...TRAIL_LAYER_IDS]
+  )
 }
 
 async function styleLayerIds(page: Page): Promise<string[]> {
@@ -152,14 +155,17 @@ test.describe("Maptoolkit trail overlay", () => {
 
     await expect
       .poll(
-        () => fixture.requests.filter((request) => request.kind === "tile").length
+        () =>
+          fixture.requests.filter((request) => request.kind === "tile").length
       )
       .toBeGreaterThan(0)
-    await expect.poll(() => resourceState(app.page)).toEqual({
-      layers: [true, true, true],
-      source: true,
-      logoCount: 1,
-    })
+    await expect
+      .poll(() => resourceState(app.page))
+      .toEqual({
+        layers: [true, true, true],
+        source: true,
+        logoCount: 1,
+      })
     await assertTrailFeatures(app.page)
     await assertTrailOrder(app.page, true)
 
@@ -182,8 +188,9 @@ test.describe("Maptoolkit trail overlay", () => {
 
     const logo = app.page.locator(".maptoolkit-logo-control img")
     await expect(logo).toBeVisible()
-    expect(await logo.evaluate((image) => image.getBoundingClientRect().height))
-      .toBeGreaterThanOrEqual(24)
+    expect(
+      await logo.evaluate((image) => image.getBoundingClientRect().height)
+    ).toBe(24)
     await expect(app.page.locator(".maplibregl-ctrl-attrib")).toContainText(
       "Maptoolkit"
     )
@@ -192,8 +199,7 @@ test.describe("Maptoolkit trail overlay", () => {
     )
     expect(
       fixture.requests.every(
-        ({ authorization, cookie }) =>
-          authorization === null && cookie === null
+        ({ authorization, cookie }) => authorization === null && cookie === null
       )
     ).toBe(true)
   })
@@ -205,11 +211,13 @@ test.describe("Maptoolkit trail overlay", () => {
     await installSavedMapPosition(app.page, 5)
     await app.goto()
 
-    await expect.poll(() => resourceState(app.page)).toEqual({
-      layers: [true, true, true],
-      source: true,
-      logoCount: 1,
-    })
+    await expect
+      .poll(() => resourceState(app.page))
+      .toEqual({
+        layers: [true, true, true],
+        source: true,
+        logoCount: 1,
+      })
     expect(
       fixture.requests.filter((request) => request.kind === "tile")
     ).toHaveLength(0)
@@ -217,7 +225,8 @@ test.describe("Maptoolkit trail overlay", () => {
     await setCamera(app.page, TRAIL_TEST_CENTER, 7)
     await expect
       .poll(
-        () => fixture.requests.filter((request) => request.kind === "tile").length
+        () =>
+          fixture.requests.filter((request) => request.kind === "tile").length
       )
       .toBeGreaterThan(0)
   })
@@ -236,11 +245,13 @@ test.describe("Maptoolkit trail overlay", () => {
     await app.openDrawer()
     await app.drawer.getByRole("switch", { name: "Show trails" }).click()
     await app.closeDrawer()
-    await expect.poll(() => resourceState(app.page)).toEqual({
-      layers: [false, false, false],
-      source: false,
-      logoCount: 0,
-    })
+    await expect
+      .poll(() => resourceState(app.page))
+      .toEqual({
+        layers: [false, false, false],
+        source: false,
+        logoCount: 0,
+      })
     const requestCount = fixture.requests.length
     await setCamera(app.page, [14.5, 50.08], TRAIL_TEST_ZOOM)
     expect(fixture.requests).toHaveLength(requestCount)
@@ -248,11 +259,13 @@ test.describe("Maptoolkit trail overlay", () => {
     await app.openDrawer()
     await app.drawer.getByRole("switch", { name: "Show trails" }).click()
     await app.closeDrawer()
-    await expect.poll(() => resourceState(app.page)).toEqual({
-      layers: [true, true, true],
-      source: true,
-      logoCount: 1,
-    })
+    await expect
+      .poll(() => resourceState(app.page))
+      .toEqual({
+        layers: [true, true, true],
+        source: true,
+        logoCount: 1,
+      })
     expect(
       await app.page.evaluate(
         () => window.__fogofwalkE2eMap === window.__fogofwalkE2eOriginalMap
@@ -273,11 +286,13 @@ test.describe("Maptoolkit trail overlay", () => {
     await app.drawer.getByTitle("Terrain").click()
     await app.closeDrawer()
     await waitForMapIdle(app.page)
-    await expect.poll(() => resourceState(app.page)).toEqual({
-      layers: [true, true, true],
-      source: true,
-      logoCount: 1,
-    })
+    await expect
+      .poll(() => resourceState(app.page))
+      .toEqual({
+        layers: [true, true, true],
+        source: true,
+        logoCount: 1,
+      })
     await assertTrailFeatures(app.page)
     await assertTrailOrder(app.page, false)
 
@@ -346,7 +361,9 @@ test.describe("Maptoolkit trail overlay", () => {
       const map = window.__fogofwalkE2eMap
       if (!map) throw new Error("MapLibre test handle is unavailable")
       return ["trails-hiking-layer", "trails-cycling-layer"].map((id) => {
-        const layer = map.getStyle().layers?.find((candidate) => candidate.id === id)
+        const layer = map
+          .getStyle()
+          .layers?.find((candidate) => candidate.id === id)
         return {
           id,
           sourceLayer:
