@@ -234,7 +234,7 @@ export function validateMetadata(metadata: Record<string, unknown>): void {
   }
 }
 
-function validateMetadataBounds(
+export function validateMetadataBounds(
   metadata: Record<string, unknown>,
   header: Header
 ): void {

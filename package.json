@@ -15,6 +15,7 @@
     "test": "bun test",
     "test:activity-pipeline-gate": "bun scripts/test-activity-pipeline-gate.ts",
     "check:trail-runtime-sources": "bun scripts/check-trail-runtime-sources.ts",
+    "check:published-trail": "bun scripts/preflight-trail-archive.ts",
     "bench:activity-anomalies": "bun scripts/bench-activity-anomalies.ts",
     "bench:fog": "bun scripts/bench-fog-representations.ts",
     "test:fog-tiles": "bun scripts/test-fog-tiles.ts",
