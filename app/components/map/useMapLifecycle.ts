@@ -108,7 +108,11 @@ export function useMapLifecycle(
         )
       }
       optionsRef.current.invalidateActivitiesCache()
-      rehydrateMapPresentation(map, currentPresentation())
+      rehydrateMapPresentation(
+        map,
+        currentPresentation(),
+        "webgl-context-restoration"
+      )
       applyFogDataToMap(map)
       isInitialStyleLoadedRef.current = true
       optionsRef.current.rebuildPhotoMarkers()
@@ -187,7 +191,7 @@ export function useMapLifecycle(
         showTrails: currentPresentation().showTrails,
       })
       mapStore.sourcesReady = true
-      rehydrateMapPresentation(map, currentPresentation())
+      rehydrateMapPresentation(map, currentPresentation(), "initial-load")
       applyFogDataToMap(map)
       isInitialStyleLoadedRef.current = true
       optionsRef.current.rebuildPhotoMarkers()
@@ -242,7 +246,7 @@ export function useMapLifecycle(
       })
       mapStore.sourcesReady = true
       optionsRef.current.invalidateActivitiesCache()
-      rehydrateMapPresentation(map, currentPresentation())
+      rehydrateMapPresentation(map, currentPresentation(), "style-reload")
       applyFogDataToMap(map)
       map.easeTo({
         pitch: options.mapMode === "relief" ? 45 : 0,

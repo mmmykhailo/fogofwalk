@@ -3,6 +3,7 @@ import { test, expect } from "../fixtures/app"
 import { waitForMapIdle } from "../fixtures/performance"
 import {
   installTrailArchive,
+  observeTrailArchive,
   TRAIL_ARCHIVE_URL,
   TRAIL_TEST_CENTER,
   TRAIL_TEST_ZOOM,
@@ -42,6 +43,21 @@ async function setCamera(
   await waitForMapIdle(page)
 }
 
+async function installSavedMapPosition(
+  page: Page,
+  zoom: number
+): Promise<void> {
+  await page.addInitScript(
+    ({ center, nextZoom }) => {
+      localStorage.setItem(
+        "fogofwalk:mapPosition",
+        JSON.stringify({ center, zoom: nextZoom })
+      )
+    },
+    { center: TRAIL_TEST_CENTER, nextZoom: zoom }
+  )
+}
+
 async function resourceState(page: Page) {
   return page.evaluate(
     ({ layerIds, sourceId }) => {
@@ -69,6 +85,40 @@ async function sourceProperties(page: Page) {
         return properties ?? {}
       })
   }, TRAIL_SOURCE_ID)
+}
+
+async function renderedTrailFeatureCount(page: Page): Promise<number> {
+  return page.evaluate(
+    (layerIds) => {
+      const map = window.__fogofwalkE2eMap
+      if (!map) throw new Error("MapLibre test handle is unavailable")
+      return map
+        .queryRenderedFeatures(undefined, { layers: layerIds })
+        .filter((feature) => {
+          const geometry = (
+            feature as { geometry?: { type?: unknown } | undefined }
+          ).geometry
+          const type = geometry?.type
+          return type === "LineString" || type === "MultiLineString"
+        }).length
+    },
+    [...TRAIL_LAYER_IDS]
+  )
+}
+
+async function assertRenderedTrailFeatures(page: Page): Promise<void> {
+  await expect
+    .poll(() => renderedTrailFeatureCount(page), { timeout: 20_000 })
+    .toBeGreaterThan(0)
+}
+
+async function trailReconciliationEvents(page: Page): Promise<unknown[]> {
+  return page.evaluate(() => {
+    const typedWindow = window as Window & {
+      __fogofwalkE2eTrailEvents?: unknown[]
+    }
+    return typedWindow.__fogofwalkE2eTrailEvents ?? []
+  })
 }
 
 async function styleLayerIds(page: Page): Promise<string[]> {
@@ -205,6 +255,101 @@ function trackForbiddenTrailTraffic(page: Page): string[] {
 }
 
 test.describe("trail overlay", () => {
+  test.afterEach(async ({ app }, testInfo) => {
+    if (testInfo.status === testInfo.expectedStatus) return
+    const events = await trailReconciliationEvents(app.page).catch(
+      () => [] as unknown[]
+    )
+    console.log(`trail reconciliation events: ${JSON.stringify(events)}`)
+  })
+
+  test("renders trails on the first eligible load without toggling", async ({
+    app,
+  }) => {
+    const fixture = await installTrailArchive(app.page)
+    await installSavedMapPosition(app.page, TRAIL_TEST_ZOOM)
+    await app.goto()
+
+    await app.openDrawer()
+    await expect(
+      app.drawer.getByRole("switch", { name: "Show trails" })
+    ).toBeChecked()
+    await app.closeDrawer()
+
+    await expect
+      .poll(() => fixture.requests.length, { timeout: 20_000 })
+      .toBeGreaterThan(0)
+    await expect
+      .poll(() => resourceState(app.page))
+      .toEqual({ layers: [true, true, true], sources: [true] })
+    await assertTrailSource(app.page)
+    await assertTrailFeatures(app.page)
+    await assertRenderedTrailFeatures(app.page)
+
+    const events = await trailReconciliationEvents(app.page)
+    expect(
+      events.some((event) => {
+        if (!event || typeof event !== "object") return false
+        const candidate = event as {
+          trigger?: unknown
+          sourceAfter?: unknown
+          layersAfter?: unknown
+        }
+        return (
+          candidate.trigger === "initial-load" &&
+          candidate.sourceAfter === true &&
+          Array.isArray(candidate.layersAfter) &&
+          candidate.layersAfter.every((layer) => layer === true)
+        )
+      })
+    ).toBe(true)
+  })
+
+  test("crosses the trail threshold without toggling", async ({ app }) => {
+    const fixture = await installTrailArchive(app.page)
+    await installSavedMapPosition(app.page, 11.99)
+    await app.goto()
+
+    expect(fixture.requests).toHaveLength(0)
+    await expect
+      .poll(() => resourceState(app.page))
+      .toEqual({ layers: [false, false, false], sources: [false] })
+
+    await setCamera(app.page, TRAIL_TEST_CENTER, TRAIL_TEST_ZOOM)
+    await expect
+      .poll(() => fixture.requests.length, { timeout: 20_000 })
+      .toBeGreaterThan(0)
+    await expect
+      .poll(() => resourceState(app.page))
+      .toEqual({ layers: [true, true, true], sources: [true] })
+    await assertTrailFeatures(app.page)
+    await assertRenderedTrailFeatures(app.page)
+  })
+
+  test("renders trails on a warm reload without toggling", async ({ app }) => {
+    const archive =
+      process.env.E2E_TRAILS_PRODUCTION === "1"
+        ? observeTrailArchive(app.page)
+        : await installTrailArchive(app.page)
+    await installSavedMapPosition(app.page, TRAIL_TEST_ZOOM)
+    await app.goto()
+
+    await expect
+      .poll(() => archive.requests.length, { timeout: 20_000 })
+      .toBeGreaterThan(0)
+    await expect
+      .poll(() => resourceState(app.page))
+      .toEqual({ layers: [true, true, true], sources: [true] })
+    await assertRenderedTrailFeatures(app.page)
+
+    await app.reload()
+    await expect
+      .poll(() => resourceState(app.page))
+      .toEqual({ layers: [true, true, true], sources: [true] })
+    await assertTrailFeatures(app.page)
+    await assertRenderedTrailFeatures(app.page)
+  })
+
   test("uses one local PMTiles source, ranges, and toggle suppression", async ({
     app,
   }) => {

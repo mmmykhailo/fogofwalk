@@ -173,3 +173,19 @@ export async function installTrailArchive(page: Page) {
 
   return { archive, requests, state }
 }
+
+/** Observe a real static archive route without replacing its responses. */
+export function observeTrailArchive(page: Page) {
+  const requests: TrailArchiveRequest[] = []
+
+  page.on("response", (response) => {
+    if (response.url() !== TRAIL_ARCHIVE_URL) return
+    requests.push(requestRecord(response.request(), response.status()))
+  })
+  page.on("requestfailed", (request) => {
+    if (request.url() !== TRAIL_ARCHIVE_URL) return
+    requests.push(requestRecord(request, 0))
+  })
+
+  return { requests }
+}

@@ -21,6 +21,11 @@ import {
   SAVED_POINT_LAYER_IDS,
 } from "~/lib/map/layers"
 import { ensureTrailLayers, removeTrailLayers } from "~/lib/map/trails/layers"
+import {
+  recordTrailReconciliation,
+  trailResourcePresence,
+  type TrailReconciliationTrigger,
+} from "~/lib/map/trails/diagnostics"
 import type { FogMaskLayer } from "~/lib/map/fogMaskLayer"
 import type { ActivityCoords, ActivityPaths } from "~/types/activities"
 import type { SavedPoint } from "~shared/saved-points"
@@ -66,15 +71,28 @@ export function setFogVisible(map: maplibregl.Map, isVisible: boolean): void {
 export function setTrailsEnabled(
   map: maplibregl.Map,
   isEnabled: boolean,
-  archiveUrl = TRAIL_ARCHIVE_URL
+  archiveUrl = TRAIL_ARCHIVE_URL,
+  trigger?: TrailReconciliationTrigger
 ): void {
   const getZoom = (map as unknown as { getZoom?: () => number }).getZoom
   const zoom = typeof getZoom === "function" ? getZoom.call(map) : Infinity
+  const before = trigger ? trailResourcePresence(map) : null
   if (!archiveUrl || !isEnabled || zoom < TRAIL_MIN_RENDER_ZOOM) {
     removeTrailLayers(map)
-    return
+  } else {
+    ensureTrailLayers(map, archiveUrl)
   }
-  ensureTrailLayers(map, archiveUrl)
+  if (trigger && before) {
+    recordTrailReconciliation({
+      trigger,
+      showTrails: isEnabled,
+      sourcesReady: mapStore.sourcesReady,
+      zoom,
+      archiveUrlConfigured: Boolean(archiveUrl),
+      before,
+      after: trailResourcePresence(map),
+    })
+  }
 }
 
 /** Apply the latest accepted fog snapshot only after map sources are ready. */
@@ -197,9 +215,10 @@ export function setLapHighlightData(
 /** Restores everything setStyle removes before sourcesReady becomes true. */
 export function rehydrateMapPresentation(
   map: maplibregl.Map,
-  state: MapPresentationState
+  state: MapPresentationState,
+  trailTrigger?: TrailReconciliationTrigger
 ): void {
-  setTrailsEnabled(map, state.showTrails)
+  setTrailsEnabled(map, state.showTrails, undefined, trailTrigger)
   setSavedPointsPresentation(map, state.savedPoints, state.showSavedPoints)
   setActivitiesVisible(map, state.showActivities)
   setLapHighlightData(map, state.highlightPaths)

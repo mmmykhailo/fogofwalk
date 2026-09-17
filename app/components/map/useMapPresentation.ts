@@ -30,6 +30,7 @@ export function useMapPresentation(options: MapPresentationOptions): void {
   const highlightPathsRef = useRef(options.highlightPaths)
   highlightPathsRef.current = options.highlightPaths
   const showTrailsRef = useRef(options.showTrails)
+  const previousShowTrailsRef = useRef(options.showTrails)
   showTrailsRef.current = options.showTrails
 
   useEffect(() => {
@@ -42,21 +43,30 @@ export function useMapPresentation(options: MapPresentationOptions): void {
     const map = options.map
     if (!map) return
 
-    const applyTrails = () => {
+    const applyTrails = (trigger?: "zoomend") => {
       if (!mapStore.sourcesReady) return
-      setTrailsEnabled(map, showTrailsRef.current)
+      setTrailsEnabled(map, showTrailsRef.current, undefined, trigger)
     }
 
-    map.on("zoomend", applyTrails)
+    const handleZoomEnd = () => applyTrails("zoomend")
+    map.on("zoomend", handleZoomEnd)
     applyTrails()
     return () => {
-      map.off("zoomend", applyTrails)
+      map.off("zoomend", handleZoomEnd)
     }
   }, [options.map])
 
   useEffect(() => {
     if (options.map && mapStore.sourcesReady) {
-      setTrailsEnabled(options.map, options.showTrails)
+      const wasChanged = previousShowTrailsRef.current !== options.showTrails
+      previousShowTrailsRef.current = options.showTrails
+      showTrailsRef.current = options.showTrails
+      setTrailsEnabled(
+        options.map,
+        options.showTrails,
+        undefined,
+        wasChanged ? "switch-change" : undefined
+      )
     }
   }, [options.map, options.showTrails])
 
