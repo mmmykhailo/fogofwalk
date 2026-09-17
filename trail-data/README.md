@@ -16,6 +16,10 @@ external process, container, database server, or other generator.
 
 The checked-in PBF fixture is generated once from the synthetic XML fixture.
 Routine CI uses the local PBF and does not download live OSM or Geofabrik data.
+The resulting `fixture` archive is an offline test artifact only: it must stay
+under `e2e/fixtures/` and must never be copied into `public/` or a production
+static host. The runtime-source guard rejects any `.pmtiles` file under
+`public/`.
 
 ```sh
 bun run build:trail-fixture
@@ -104,7 +108,7 @@ For a release, write the sidecars after reviewing the report:
 
 ```sh
 bun trail-data/build.ts manifest \
-  --archive=/data/trails/trails-2026-09-07.pmtiles \
+  --archive=/data/trails/trails-2026-09-07-<sha12>.pmtiles \
   --report=/data/trails/trails-2026-09-07.report.json \
   --output-dir=/data/trails
 ```
@@ -116,7 +120,17 @@ characters, upload the archive and every sidecar to a temporary static name,
 compare remote size/checksum, atomically move to the immutable name, and probe
 `HEAD` plus multiple byte ranges from outside the host. Keep the current
 archive and at least two predecessors for rollback. Publication is manual and
-static; deploy-client only preflights the already-published URL.
+static; deploy-client only preflights the already-published URL. Run the same
+release gate locally after publication:
+
+```sh
+bun run check:published-trail \
+  --url=https://<host>/map-data/trails/v1/trails-2026-09-07-<sha12>.pmtiles
+```
+
+The preflight rejects fixture provenance, mutable input names, non-content-
+addressed filenames, missing sidecars, non-206 ranges, missing public CORS,
+and non-immutable caching. A blank URL is an explicitly disabled overlay.
 
 The archive contract remains stable: PMTiles v3, gzip MVT, one z12 `trails`
 layer, line features only, and exactly `kind`, `color`, `offset`, and `sort`

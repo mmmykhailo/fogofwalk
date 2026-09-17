@@ -64,14 +64,23 @@ from a client release:
    duplicate/conflict counts, geometry loss, and the overlap-cap gate. Run
    `bun trail-data/build.ts manifest` to produce the checksum, source manifest,
    and ODbL `DATA-LICENSE.txt` sidecars.
-4. Name the archive with its snapshot date and first 12 SHA-256 characters.
-   Upload the archive and sidecars under a temporary static name, compare
-   remote size/checksums, atomically move them to immutable names, and perform
+4. Name the archive `trails-YYYY-MM-DD-<12 lowercase hex>.pmtiles`. Upload
+   the archive and all sidecars under a temporary static name, compare remote
+   size/checksums, atomically move them to immutable names, and perform
    external `HEAD` plus several `Range` probes. A missing `206` response or
    incorrect `Content-Range` leaves the active client unchanged.
-5. Set `VITE_TRAIL_ARCHIVE_URL` to the exact immutable archive URL and deploy
-   the client. The deployment workflow repeats the URL, `HEAD`, and first-127-
-   byte range preflight before building.
+5. Run the tested release gate against the final URL:
+
+   ```sh
+   bun run check:published-trail \
+     --url=https://<host>/map-data/trails/v1/trails-<YYYY-MM-DD>-<sha12>.pmtiles
+   ```
+
+   It verifies the manifest, checksum, ODbL sidecar, source provenance,
+   PMTiles header/metadata, coverage bounds, public CORS, immutable caching,
+   and the initial 127-byte range. Only then set `VITE_TRAIL_ARCHIVE_URL` to
+   that exact immutable URL and deploy the client; the deployment workflow
+   repeats the same gate before building.
 
 Retain the current archive and at least the previous two archives. Delete an
 old archive only when no retained client release references it and it is at

@@ -165,3 +165,13 @@ WebGL context restoration from the current session-only visibility value. They
 are inserted below fog and imported activities, so visible fog can obscure
 unexplored routes while imported activity lines remain prominent. Trails are
 not registered as interactive targets and are omitted from share maps/cards.
+
+Activation verification covers a saved eligible zoom (12), a first crossing
+from 11.99 to 12, and a warm reload of the built client served with byte-range
+support. Each case requests and renders the fixture archive before any drawer
+switch interaction; below zoom 12 no trail source or archive request is
+materialized. The same suite covers disable/re-enable, style changes, WebGL
+restoration, and archive-failure isolation. The reported toggle-only sequence
+was not reproduced in these clean-session checks, so no lifecycle rewrite is
+claimed. E2E builds expose only a bounded, coordinate-free reconciliation
+buffer on assertion failure; production builds emit no such telemetry.
