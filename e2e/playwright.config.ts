@@ -47,7 +47,7 @@ export default defineConfig({
     {
       name: "synced",
       testIgnore:
-        /(?:serverless|fog-visual|fog-worker|paths|gps-anomalies|activities-performance|map-interaction-performance)\.spec\.ts/,
+        /(?:serverless|trails|fog-visual|fog-worker|paths|gps-anomalies|activities-performance|map-interaction-performance)\.spec\.ts/,
       use: { ...devices["Desktop Chrome"], baseURL: WEB_URL },
     },
     {
@@ -72,6 +72,11 @@ export default defineConfig({
       testMatch: /(?:paths|gps-anomalies)\.spec\.ts/,
       use: { ...devices["Desktop Chrome"], baseURL: WEB_URL_SERVERLESS },
     },
+    {
+      name: "trails",
+      testMatch: /trails\.spec\.ts/,
+      use: { ...devices["Desktop Chrome"], baseURL: WEB_URL_SERVERLESS },
+    },
   ],
 
   webServer: [
@@ -86,6 +91,7 @@ export default defineConfig({
         CHOKIDAR_USEPOLLING: "true",
         E2E: "1",
         VITE_API_URL: API_URL,
+        VITE_TRAILS_FEATURE_ENABLED: "true",
         VITE_E2E: "1",
       },
     },
@@ -100,6 +106,7 @@ export default defineConfig({
         CHOKIDAR_USEPOLLING: "true",
         E2E: "1",
         VITE_API_URL: "",
+        VITE_TRAILS_FEATURE_ENABLED: "true",
         VITE_E2E: "1",
       },
     },

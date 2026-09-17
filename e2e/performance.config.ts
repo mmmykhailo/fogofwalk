@@ -31,6 +31,7 @@ export default defineConfig({
     timeout: 120_000,
     env: {
       VITE_API_URL: "",
+      VITE_TRAILS_FEATURE_ENABLED: "true",
       VITE_E2E: "1",
     },
   },

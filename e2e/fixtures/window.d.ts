@@ -5,11 +5,14 @@ declare global {
     project(coordinate: [number, number]): { x: number; y: number }
     getCanvas(): HTMLCanvasElement
     getZoom(): number
+    setZoom(zoom: number): void
     getLayer(id: string): unknown
+    getStyle(): { layers?: unknown[] }
     queryRenderedFeatures(
       point: [number, number],
       options: { layers: readonly string[] }
     ): unknown[]
+    querySourceFeatures(sourceId: string, options?: unknown): unknown[]
     jumpTo(options: { center: [number, number]; zoom: number }): void
     easeTo(options: {
       zoom: number
@@ -21,6 +24,7 @@ declare global {
     off(event: string, handler?: () => void): void
     getSource(id: string): unknown
     getCenter(): { lng: number; lat: number }
+    isStyleLoaded(): boolean
   }
 
   interface Window {

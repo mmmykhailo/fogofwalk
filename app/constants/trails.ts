@@ -1,6 +1,9 @@
-// Keep this disabled until the Waymarked Trails permission and performance
-// gates have been reviewed for the production origin.
-export const TRAILS_FEATURE_ENABLED = false
+// Keep production disabled until the Waymarked Trails permission and
+// performance gates have been reviewed for the production origin. The local
+// E2E build may opt in with VITE_TRAILS_FEATURE_ENABLED while public hosts are
+// still blocked or fulfilled by synthetic fixtures.
+export const TRAILS_FEATURE_ENABLED =
+  import.meta.env.VITE_TRAILS_FEATURE_ENABLED === "true"
 export const TRAILS_VISIBLE_DEFAULT = true
 
 export const TRAIL_PROTOCOL_NAME = "fow-trails"
