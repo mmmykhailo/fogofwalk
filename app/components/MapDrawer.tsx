@@ -40,10 +40,8 @@ import { FogProgressText } from "~/components/FogProgressText"
 import { useAuth } from "~/lib/server/authStore"
 import type { clientLoader as accessRequestLoader } from "~/routes/account.access-request"
 import type { FogMode, MapMode } from "~/types/activities"
-import { TRAIL_ARCHIVE_URL } from "~/lib/map/trails/config"
 
 interface MapDrawerProps {
-  trailArchiveUrl?: string | null
   isOpen: boolean
   onOpenChange: (open: boolean) => void
   activityCount: number
@@ -74,7 +72,6 @@ interface MapDrawerProps {
 }
 
 export function MapDrawer({
-  trailArchiveUrl = TRAIL_ARCHIVE_URL,
   isOpen,
   onOpenChange,
   activityCount,
@@ -225,20 +222,18 @@ export function MapDrawer({
                   aria-label="Show activities"
                 />
               </div>
-              {trailArchiveUrl !== null && (
-                <div className="flex items-center px-3 py-2.5">
-                  <SignpostIcon
-                    weight="duotone"
-                    className="mr-3 size-5 shrink-0 text-muted-foreground"
-                  />
-                  <span className="flex-1 text-sm">Show trails</span>
-                  <Switch
-                    checked={showTrails}
-                    onCheckedChange={onShowTrailsChange}
-                    aria-label="Show trails"
-                  />
-                </div>
-              )}
+              <div className="flex items-center px-3 py-2.5">
+                <SignpostIcon
+                  weight="duotone"
+                  className="mr-3 size-5 shrink-0 text-muted-foreground"
+                />
+                <span className="flex-1 text-sm">Show trails</span>
+                <Switch
+                  checked={showTrails}
+                  onCheckedChange={onShowTrailsChange}
+                  aria-label="Show trails"
+                />
+              </div>
               <div className="flex items-center px-3 py-2.5">
                 <CloudIcon
                   weight="duotone"

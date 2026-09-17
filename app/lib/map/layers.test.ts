@@ -6,14 +6,17 @@ import {
   ORDERED_TRAIL_SOURCE_IDS,
   TRAIL_CYCLING_COLOR,
   TRAIL_CYCLING_DASH_ARRAY,
-  TRAIL_DATA_ZOOM,
+  TRAIL_CYCLING_NETWORKS,
   TRAIL_HIKING_CASING_WIDTH_DELTA,
+  TRAIL_HIKING_COLOR,
   TRAIL_HIKING_WIDTH_STOPS,
   TRAIL_LAYER_IDS,
   TRAIL_MAX_RENDER_ZOOM,
   TRAIL_MIN_RENDER_ZOOM,
   TRAIL_SOURCE_ID,
   TRAIL_SOURCE_LAYER,
+  TRAIL_TILEJSON_URL,
+  TRAIL_WALKING_NETWORKS,
 } from "~/constants/trails"
 import { SAVED_POINT_COLORS } from "~shared/saved-points"
 
@@ -26,6 +29,7 @@ function createFakeMap() {
   const layerAddCalls: [string, string | undefined][] = []
   const layerRemoveCalls: string[] = []
   const sourceRemoveCalls: string[] = []
+  const controls = new Set<unknown>()
 
   const map = {
     getSource: (id: string) => sources.get(id),
@@ -39,6 +43,13 @@ function createFakeMap() {
       layerAddCalls.push([layer.id, beforeId])
       return map
     },
+    moveLayer: (id: string, beforeId?: string) => {
+      const index = layerOrder.indexOf(id)
+      if (index >= 0) layerOrder.splice(index, 1)
+      const beforeIndex = beforeId ? layerOrder.indexOf(beforeId) : -1
+      if (beforeIndex >= 0) layerOrder.splice(beforeIndex, 0, id)
+      else layerOrder.push(id)
+    },
     removeLayer: (id: string) => {
       layers.delete(id)
       const index = layerOrder.indexOf(id)
@@ -48,6 +59,14 @@ function createFakeMap() {
     removeSource: (id: string) => {
       sources.delete(id)
       sourceRemoveCalls.push(id)
+    },
+    addControl: (control: unknown) => {
+      controls.add(control)
+      return map
+    },
+    removeControl: (control: unknown) => {
+      controls.delete(control)
+      return map
     },
     setTerrain: () => map,
     hasImage: (id: string) => images.has(id),
@@ -68,6 +87,7 @@ function createFakeMap() {
     layerAddCalls,
     layerRemoveCalls,
     sourceRemoveCalls,
+    controls,
   }
 }
 
@@ -130,28 +150,12 @@ describe("saved-point map layers", () => {
     expect(fake.addedImages).toHaveLength(imageAdditionCount)
   })
 
-  test("honors an explicit unavailable archive", () => {
-    const fake = createFakeMap()
-    fake.map.addLayer({ id: MAP_LAYER_IDS.fog })
-
-    setupMapLayers(fake.map as never, "flat", {
-      showTrails: true,
-      trailArchiveUrl: null,
-    })
-
-    expect(fake.sources.has(TRAIL_SOURCE_ID)).toBe(false)
-    expect(fake.layers.has(TRAIL_LAYER_IDS.hiking)).toBe(false)
-  })
-
-  test("adds trail sources and layers in order with configured styles", () => {
+  test("adds the hosted trail source, attribution, and layers in order", () => {
     const fake = createFakeMap()
     fake.map.addLayer({ id: MAP_LAYER_IDS.fog })
     fake.map.addLayer({ id: MAP_LAYER_IDS.activities })
 
-    ensureTrailLayers(
-      fake.map as never,
-      "https://trails.example.test/map-data/trails/v1/trails-fixture.pmtiles"
-    )
+    ensureTrailLayers(fake.map as never)
 
     expect(fake.layerOrder).toEqual([
       ...ORDERED_TRAIL_LAYER_IDS,
@@ -165,12 +169,10 @@ describe("saved-point map layers", () => {
     ])
     expect(fake.sources.get(TRAIL_SOURCE_ID)).toEqual({
       type: "vector",
-      url: "pmtiles://https://trails.example.test/map-data/trails/v1/trails-fixture.pmtiles",
-      minzoom: TRAIL_DATA_ZOOM,
-      maxzoom: TRAIL_DATA_ZOOM,
-      attribution:
-        '<a href="https://www.openstreetmap.org/copyright" target="_blank">© OpenStreetMap contributors</a>',
+      url: TRAIL_TILEJSON_URL,
+      maxzoom: 15,
     })
+    expect(fake.controls).toHaveLength(1)
 
     const casing = fake.layers.get(TRAIL_LAYER_IDS.hikingCasing) as {
       minzoom: number
@@ -197,7 +199,11 @@ describe("saved-point map layers", () => {
       "source-layer": TRAIL_SOURCE_LAYER,
       minzoom: TRAIL_MIN_RENDER_ZOOM,
       maxzoom: TRAIL_MAX_RENDER_ZOOM,
-      layout: { "line-sort-key": ["get", "sort"] },
+      filter: [
+        "in",
+        ["get", "walking_network"],
+        ["literal", TRAIL_WALKING_NETWORKS],
+      ],
     })
     expect(casing.paint["line-width"]).toEqual([
       "interpolate",
@@ -207,7 +213,7 @@ describe("saved-point map layers", () => {
         index % 2 === 0 ? [value] : [value + TRAIL_HIKING_CASING_WIDTH_DELTA]
       ),
     ])
-    expect(hiking.paint["line-color"]).toEqual(["get", "color"])
+    expect(hiking.paint["line-color"]).toBe(TRAIL_HIKING_COLOR)
     expect(cycling).toMatchObject({
       source: TRAIL_SOURCE_ID,
       "source-layer": TRAIL_SOURCE_LAYER,
@@ -217,25 +223,23 @@ describe("saved-point map layers", () => {
         "line-color": TRAIL_CYCLING_COLOR,
         "line-dasharray": ["literal", TRAIL_CYCLING_DASH_ARRAY],
       },
+      filter: [
+        "in",
+        ["get", "cycling_network"],
+        ["literal", TRAIL_CYCLING_NETWORKS],
+      ],
     })
-    expect(cycling.layout["line-sort-key"]).toEqual(["get", "sort"])
     expect(fake.layers.has("trails-cycling-casing-layer")).toBe(false)
   })
 
   test("repeated trail setup is idempotent and removes layers before sources", () => {
     const fake = createFakeMap()
 
-    ensureTrailLayers(
-      fake.map as never,
-      "https://trails.example.test/map-data/trails/v1/trails-fixture.pmtiles"
-    )
+    ensureTrailLayers(fake.map as never)
     const sourceCount = fake.sources.size
     const layerCount = fake.layers.size
     const addCount = fake.layerAddCalls.length
-    ensureTrailLayers(
-      fake.map as never,
-      "https://trails.example.test/map-data/trails/v1/trails-fixture.pmtiles"
-    )
+    ensureTrailLayers(fake.map as never)
 
     expect(fake.sources).toHaveLength(sourceCount)
     expect(fake.layers).toHaveLength(layerCount)
@@ -249,5 +253,20 @@ describe("saved-point map layers", () => {
     ])
     expect(fake.sourceRemoveCalls).toEqual([...ORDERED_TRAIL_SOURCE_IDS])
     expect(fake.sources.has(TRAIL_SOURCE_ID)).toBe(false)
+    expect(fake.controls).toHaveLength(0)
+  })
+
+  test("restores flat fog before existing activities and removes it in relief", () => {
+    const fake = createFakeMap()
+    fake.map.addLayer({ id: MAP_LAYER_IDS.activities })
+    fake.map.addLayer({ id: MAP_LAYER_IDS.fog })
+
+    setupMapLayers(fake.map as never, "flat", { showTrails: false })
+    expect(fake.layerOrder.indexOf(MAP_LAYER_IDS.fog)).toBeLessThan(
+      fake.layerOrder.indexOf(MAP_LAYER_IDS.activities)
+    )
+
+    setupMapLayers(fake.map as never, "relief", { showTrails: false })
+    expect(fake.layers.has(MAP_LAYER_IDS.fog)).toBe(false)
   })
 })

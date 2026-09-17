@@ -14,7 +14,8 @@ import { styleForMapMode } from "~/lib/map/styles"
 import { incrementPerformanceCounter } from "~/lib/performance"
 import type { MapMode } from "~/types/activities"
 import { TRAIL_SOURCE_ID } from "~/constants/trails"
-import { recordTrailArchiveError } from "~/lib/map/trails/diagnostics"
+import { removeTrailLayers } from "~/lib/map/trails/layers"
+import { recordTrailTileError } from "~/lib/map/trails/diagnostics"
 
 declare global {
   interface Window {
@@ -154,7 +155,7 @@ export function useMapLifecycle(
         event && typeof event === "object" && "sourceId" in event
           ? (event as { sourceId?: unknown }).sourceId
           : undefined
-      if (sourceId === TRAIL_SOURCE_ID) recordTrailArchiveError(event)
+      if (sourceId === TRAIL_SOURCE_ID) recordTrailTileError(event)
     }
     map.on("error", handleMapError as never)
 
@@ -210,6 +211,7 @@ export function useMapLifecycle(
       map.off("moveend", handleMoveEnd)
       map.off("remove", handleMapRemove)
       delete mapSurface.dataset.mapMoving
+      removeTrailLayers(map)
       mapStore.sourcesReady = false
       mapStore.renderSourceRevision = null
       mapStore.map = null

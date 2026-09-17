@@ -6,17 +6,15 @@ import {
 } from "~/constants/trails"
 import { recordDiagnostic } from "~/lib/diagnostics"
 
-export type TrailArchiveErrorClass =
+export type TrailTileErrorClass =
   | "network"
   | "http"
   | "cors"
-  | "range"
   | "decode"
   | "unknown"
 
 export type TrailReconciliationTrigger =
   | "initial-load"
-  | "zoomend"
   | "switch-change"
   | "style-reload"
   | "webgl-context-restoration"
@@ -30,8 +28,6 @@ export interface TrailReconciliationEvent {
   trigger: TrailReconciliationTrigger
   showTrails: boolean
   sourcesReady: boolean
-  zoom: number
-  archiveUrlConfigured: boolean
   sourceBefore: boolean
   layersBefore: boolean[]
   sourceAfter: boolean
@@ -65,8 +61,6 @@ export function recordTrailReconciliation(options: {
   trigger: TrailReconciliationTrigger
   showTrails: boolean
   sourcesReady: boolean
-  zoom: number
-  archiveUrlConfigured: boolean
   before: TrailResourcePresence
   after: TrailResourcePresence
 }): void {
@@ -81,8 +75,6 @@ export function recordTrailReconciliation(options: {
     trigger: options.trigger,
     showTrails: options.showTrails,
     sourcesReady: options.sourcesReady,
-    zoom: options.zoom,
-    archiveUrlConfigured: options.archiveUrlConfigured,
     sourceBefore: options.before.source,
     layersBefore: [...options.before.layers],
     sourceAfter: options.after.source,
@@ -93,7 +85,7 @@ export function recordTrailReconciliation(options: {
   window.__fogofwalkE2eTrailEvents = events
 }
 
-const reportedErrorClasses = new Set<TrailArchiveErrorClass>()
+const reportedErrorClasses = new Set<TrailTileErrorClass>()
 
 function errorDetails(value: unknown): {
   message: string
@@ -124,9 +116,7 @@ function errorDetails(value: unknown): {
   }
 }
 
-export function classifyTrailArchiveError(
-  value: unknown
-): TrailArchiveErrorClass {
+export function classifyTrailTileError(value: unknown): TrailTileErrorClass {
   const { message, status } = errorDetails(value)
   const normalized = message.toLowerCase()
 
@@ -135,14 +125,6 @@ export function classifyTrailArchiveError(
     return "cors"
   }
   if (
-    normalized.includes("range") ||
-    normalized.includes("content-range") ||
-    normalized.includes("206")
-  ) {
-    return "range"
-  }
-  if (
-    normalized.includes("pmtiles") ||
     normalized.includes("decode") ||
     normalized.includes("protobuf") ||
     normalized.includes("vector tile")
@@ -160,20 +142,18 @@ export function classifyTrailArchiveError(
   return "unknown"
 }
 
-/** Records at most one coordinate-free diagnostic for each archive error class. */
-export function recordTrailArchiveError(
-  value: unknown
-): TrailArchiveErrorClass {
-  const errorClass = classifyTrailArchiveError(value)
+/** Records at most one coordinate-free diagnostic for each tile error class. */
+export function recordTrailTileError(value: unknown): TrailTileErrorClass {
+  const errorClass = classifyTrailTileError(value)
   if (reportedErrorClasses.has(errorClass)) return errorClass
   reportedErrorClasses.add(errorClass)
 
   recordDiagnostic({
     subsystem: "render",
-    operationId: TRAIL_DIAGNOSTIC_OPERATION_IDS.archive,
+    operationId: TRAIL_DIAGNOSTIC_OPERATION_IDS.tiles,
     stage: TRAIL_DIAGNOSTIC_STAGE,
     result: "degraded",
-    errorCode: `trail_archive_${errorClass}`,
+    errorCode: `trail_tiles_${errorClass}`,
     retryability:
       errorClass === "http" || errorClass === "decode"
         ? "permanent"
@@ -185,6 +165,6 @@ export function recordTrailArchiveError(
 }
 
 /** Test-only reset for the session-level bounded diagnostic gate. */
-export function resetTrailArchiveDiagnostics(): void {
+export function resetTrailTileDiagnostics(): void {
   reportedErrorClasses.clear()
 }

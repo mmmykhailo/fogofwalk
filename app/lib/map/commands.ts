@@ -1,6 +1,4 @@
 import type maplibregl from "maplibre-gl"
-import { TRAIL_ARCHIVE_URL } from "~/lib/map/trails/config"
-import { TRAIL_MIN_RENDER_ZOOM } from "~/constants/trails"
 import {
   ACTIVITY_COLOR,
   ACTIVITY_COLOR_DIM,
@@ -71,24 +69,19 @@ export function setFogVisible(map: maplibregl.Map, isVisible: boolean): void {
 export function setTrailsEnabled(
   map: maplibregl.Map,
   isEnabled: boolean,
-  archiveUrl = TRAIL_ARCHIVE_URL,
   trigger?: TrailReconciliationTrigger
 ): void {
-  const getZoom = (map as unknown as { getZoom?: () => number }).getZoom
-  const zoom = typeof getZoom === "function" ? getZoom.call(map) : Infinity
   const before = trigger ? trailResourcePresence(map) : null
-  if (!archiveUrl || !isEnabled || zoom < TRAIL_MIN_RENDER_ZOOM) {
+  if (!isEnabled) {
     removeTrailLayers(map)
   } else {
-    ensureTrailLayers(map, archiveUrl)
+    ensureTrailLayers(map)
   }
   if (trigger && before) {
     recordTrailReconciliation({
       trigger,
       showTrails: isEnabled,
       sourcesReady: mapStore.sourcesReady,
-      zoom,
-      archiveUrlConfigured: Boolean(archiveUrl),
       before,
       after: trailResourcePresence(map),
     })
@@ -218,7 +211,7 @@ export function rehydrateMapPresentation(
   state: MapPresentationState,
   trailTrigger?: TrailReconciliationTrigger
 ): void {
-  setTrailsEnabled(map, state.showTrails, undefined, trailTrigger)
+  setTrailsEnabled(map, state.showTrails, trailTrigger)
   setSavedPointsPresentation(map, state.savedPoints, state.showSavedPoints)
   setActivitiesVisible(map, state.showActivities)
   setLapHighlightData(map, state.highlightPaths)

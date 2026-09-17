@@ -8,10 +8,10 @@ import {
   waitForMapIdle,
 } from "../fixtures/performance"
 import {
-  installTrailArchive,
+  installTrailTiles,
   TRAIL_TEST_CENTER,
   TRAIL_TEST_ZOOM,
-} from "../fixtures/trails-pmtiles"
+} from "../fixtures/trails-maptoolkit"
 
 const OFFLINE_STYLE = {
   version: 8,
@@ -48,11 +48,15 @@ async function stubMapTiles(
   )
   await page.route("https://s3.amazonaws.com/**", (route) => route.abort())
 
-  const archive = trailMode ? await installTrailArchive(page) : null
+  const tiles = await installTrailTiles(page)
   return {
     mode: trailMode ?? "trails-off",
     get requests() {
-      return archive?.requests.map((request) => request.url) ?? []
+      return trailMode
+        ? tiles.requests
+        .filter((request) => request.kind === "tile")
+            .map((request) => request.url)
+        : []
     },
   }
 }

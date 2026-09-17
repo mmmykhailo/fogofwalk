@@ -5,18 +5,20 @@ import type {
   VectorSourceSpecification,
 } from "maplibre-gl"
 import type maplibregl from "maplibre-gl"
+import { MaptoolkitLogoControl } from "@maptoolkit/maplibre-gl-logo"
 import {
   ORDERED_TRAIL_LAYER_IDS,
   ORDERED_TRAIL_SOURCE_IDS,
   REVERSE_TRAIL_LAYER_IDS,
   TRAIL_CYCLING_COLOR,
   TRAIL_CYCLING_DASH_ARRAY,
+  TRAIL_CYCLING_NETWORKS,
   TRAIL_CYCLING_OPACITY,
   TRAIL_CYCLING_WIDTH_STOPS,
-  TRAIL_DATA_ZOOM,
   TRAIL_HIKING_CASING_COLOR,
   TRAIL_HIKING_CASING_OPACITY,
   TRAIL_HIKING_CASING_WIDTH_DELTA,
+  TRAIL_HIKING_COLOR,
   TRAIL_HIKING_OPACITY,
   TRAIL_HIKING_WIDTH_STOPS,
   TRAIL_LAYER_IDS,
@@ -24,12 +26,14 @@ import {
   TRAIL_LINE_JOIN,
   TRAIL_MAX_RENDER_ZOOM,
   TRAIL_MIN_RENDER_ZOOM,
-  TRAIL_ATTRIBUTION,
   TRAIL_SOURCE_ID,
   TRAIL_SOURCE_LAYER,
-  TRAIL_THEMES,
+  TRAIL_TILEJSON_URL,
+  TRAIL_WALKING_NETWORKS,
 } from "~/constants/trails"
 import { MAP_LAYER_IDS } from "~/lib/map/layers"
+
+const logoControls = new WeakMap<maplibregl.Map, MaptoolkitLogoControl>()
 
 function expression(value: unknown): ExpressionSpecification {
   return value as ExpressionSpecification
@@ -45,21 +49,22 @@ function widthExpression(
   return expression(["interpolate", ["linear"], ["zoom"], ...adjustedStops])
 }
 
-function propertyExpression(name: string): ExpressionSpecification {
-  return expression(["get", name])
+function networkFilter(
+  property: "walking_network" | "cycling_network",
+  networks: readonly string[]
+): FilterSpecification {
+  return expression([
+    "in",
+    ["get", property],
+    ["literal", networks],
+  ]) as FilterSpecification
 }
 
-function kindFilter(kind: (typeof TRAIL_THEMES)[number]): FilterSpecification {
-  return expression(["==", ["get", "kind"], kind]) as FilterSpecification
-}
-
-function sourceSpecification(archiveUrl: string): VectorSourceSpecification {
+function sourceSpecification(): VectorSourceSpecification {
   return {
     type: "vector",
-    url: `pmtiles://${archiveUrl}`,
-    minzoom: TRAIL_DATA_ZOOM,
-    maxzoom: TRAIL_DATA_ZOOM,
-    attribution: TRAIL_ATTRIBUTION,
+    url: TRAIL_TILEJSON_URL,
+    maxzoom: 15,
   }
 }
 
@@ -71,16 +76,14 @@ function hikingCasingLayer(): AddLayerObject {
     "source-layer": TRAIL_SOURCE_LAYER,
     minzoom: TRAIL_MIN_RENDER_ZOOM,
     maxzoom: TRAIL_MAX_RENDER_ZOOM,
-    filter: kindFilter(TRAIL_THEMES[0]),
+    filter: networkFilter("walking_network", TRAIL_WALKING_NETWORKS),
     layout: {
       "line-cap": TRAIL_LINE_CAP,
       "line-join": TRAIL_LINE_JOIN,
-      "line-sort-key": expression(["get", "sort"]),
     },
     paint: {
       "line-color": TRAIL_HIKING_CASING_COLOR,
       "line-opacity": TRAIL_HIKING_CASING_OPACITY,
-      "line-offset": propertyExpression("offset"),
       "line-width": widthExpression(
         TRAIL_HIKING_WIDTH_STOPS,
         TRAIL_HIKING_CASING_WIDTH_DELTA
@@ -97,16 +100,14 @@ function hikingLayer(): AddLayerObject {
     "source-layer": TRAIL_SOURCE_LAYER,
     minzoom: TRAIL_MIN_RENDER_ZOOM,
     maxzoom: TRAIL_MAX_RENDER_ZOOM,
-    filter: kindFilter(TRAIL_THEMES[0]),
+    filter: networkFilter("walking_network", TRAIL_WALKING_NETWORKS),
     layout: {
       "line-cap": TRAIL_LINE_CAP,
       "line-join": TRAIL_LINE_JOIN,
-      "line-sort-key": expression(["get", "sort"]),
     },
     paint: {
-      "line-color": propertyExpression("color"),
+      "line-color": TRAIL_HIKING_COLOR,
       "line-opacity": TRAIL_HIKING_OPACITY,
-      "line-offset": propertyExpression("offset"),
       "line-width": widthExpression(TRAIL_HIKING_WIDTH_STOPS),
     },
   }
@@ -120,11 +121,10 @@ function cyclingLayer(): AddLayerObject {
     "source-layer": TRAIL_SOURCE_LAYER,
     minzoom: TRAIL_MIN_RENDER_ZOOM,
     maxzoom: TRAIL_MAX_RENDER_ZOOM,
-    filter: kindFilter(TRAIL_THEMES[1]),
+    filter: networkFilter("cycling_network", TRAIL_CYCLING_NETWORKS),
     layout: {
       "line-cap": TRAIL_LINE_CAP,
       "line-join": TRAIL_LINE_JOIN,
-      "line-sort-key": expression(["get", "sort"]),
     },
     paint: {
       "line-color": TRAIL_CYCLING_COLOR,
@@ -142,12 +142,15 @@ export function trailInsertionPoint(map: maplibregl.Map): string | undefined {
 }
 
 export function ensureTrailLayers(
-  map: maplibregl.Map,
-  archiveUrl: string | null
+  map: maplibregl.Map
 ): void {
-  if (!archiveUrl) return
+  if (!logoControls.has(map)) {
+    const logoControl = new MaptoolkitLogoControl()
+    map.addControl(logoControl)
+    logoControls.set(map, logoControl)
+  }
   if (!map.getSource(TRAIL_SOURCE_ID)) {
-    map.addSource(TRAIL_SOURCE_ID, sourceSpecification(archiveUrl))
+    map.addSource(TRAIL_SOURCE_ID, sourceSpecification())
   }
 
   const beforeId = trailInsertionPoint(map)
@@ -163,6 +166,11 @@ export function removeTrailLayers(map: maplibregl.Map): void {
   }
   for (const sourceId of ORDERED_TRAIL_SOURCE_IDS) {
     if (map.getSource(sourceId)) map.removeSource(sourceId)
+  }
+  const logoControl = logoControls.get(map)
+  if (logoControl) {
+    map.removeControl(logoControl)
+    logoControls.delete(map)
   }
 }
 

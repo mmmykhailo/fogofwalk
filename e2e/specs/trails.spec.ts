@@ -2,13 +2,12 @@ import type { Page } from "@playwright/test"
 import { test, expect } from "../fixtures/app"
 import { waitForMapIdle } from "../fixtures/performance"
 import {
-  installTrailArchive,
-  observeTrailArchive,
-  TRAIL_ARCHIVE_URL,
+  installTrailTiles,
+  MAPTOOLKIT_TILEJSON_URL,
   TRAIL_TEST_CENTER,
   TRAIL_TEST_ZOOM,
-  type TrailArchiveMode,
-} from "../fixtures/trails-pmtiles"
+  type TrailTileMode,
+} from "../fixtures/trails-maptoolkit"
 
 const TRAIL_SOURCE_ID = "trails-source"
 const TRAIL_LAYER_IDS = [
@@ -65,7 +64,8 @@ async function resourceState(page: Page) {
       if (!map) throw new Error("MapLibre test handle is unavailable")
       return {
         layers: layerIds.map((id) => Boolean(map.getLayer(id))),
-        sources: [Boolean(map.getSource(sourceId))],
+        source: Boolean(map.getSource(sourceId)),
+        logoCount: document.querySelectorAll(".maptoolkit-logo-control").length,
       }
     },
     { layerIds: TRAIL_LAYER_IDS, sourceId: TRAIL_SOURCE_ID }
@@ -77,133 +77,34 @@ async function sourceProperties(page: Page) {
     const map = window.__fogofwalkE2eMap
     if (!map) throw new Error("MapLibre test handle is unavailable")
     return map
-      .querySourceFeatures(sourceId, { sourceLayer: "trails" })
-      .map((feature) => {
-        const properties = (
-          feature as { properties?: Record<string, unknown> | null }
-        ).properties
-        return properties ?? {}
-      })
+      .querySourceFeatures(sourceId, { sourceLayer: "road" })
+      .map((feature) => feature.properties ?? {})
   }, TRAIL_SOURCE_ID)
 }
 
 async function renderedTrailFeatureCount(page: Page): Promise<number> {
-  return page.evaluate(
-    (layerIds) => {
-      const map = window.__fogofwalkE2eMap
-      if (!map) throw new Error("MapLibre test handle is unavailable")
-      return map
-        .queryRenderedFeatures(undefined, { layers: layerIds })
-        .filter((feature) => {
-          const geometry = (
-            feature as { geometry?: { type?: unknown } | undefined }
-          ).geometry
-          const type = geometry?.type
-          return type === "LineString" || type === "MultiLineString"
-        }).length
-    },
-    [...TRAIL_LAYER_IDS]
-  )
-}
-
-async function assertRenderedTrailFeatures(page: Page): Promise<void> {
-  await expect
-    .poll(() => renderedTrailFeatureCount(page), { timeout: 20_000 })
-    .toBeGreaterThan(0)
-}
-
-async function trailReconciliationEvents(page: Page): Promise<unknown[]> {
-  return page.evaluate(() => {
-    const typedWindow = window as Window & {
-      __fogofwalkE2eTrailEvents?: unknown[]
-    }
-    return typedWindow.__fogofwalkE2eTrailEvents ?? []
-  })
+  return page.evaluate((layerIds) => {
+    const map = window.__fogofwalkE2eMap
+    if (!map) throw new Error("MapLibre test handle is unavailable")
+    return map.queryRenderedFeatures(undefined, { layers: layerIds }).length
+  }, [...TRAIL_LAYER_IDS])
 }
 
 async function styleLayerIds(page: Page): Promise<string[]> {
   return page.evaluate(() => {
     const map = window.__fogofwalkE2eMap
     if (!map) throw new Error("MapLibre test handle is unavailable")
-    return (map.getStyle().layers ?? [])
-      .map((layer) => (layer as { id?: unknown }).id)
-      .filter((id): id is string => typeof id === "string")
+    return map.getLayersOrder()
   })
-}
-
-async function rememberMap(page: Page): Promise<void> {
-  await page.evaluate(() => {
-    const map = window.__fogofwalkE2eMap
-    if (!map) throw new Error("MapLibre test handle is unavailable")
-    window.__fogofwalkE2eOriginalMap = map
-  })
-}
-
-async function hasSameMapObject(page: Page): Promise<boolean> {
-  return page.evaluate(
-    () => window.__fogofwalkE2eMap === window.__fogofwalkE2eOriginalMap
-  )
-}
-
-async function assertTrailFeatures(page: Page): Promise<void> {
-  await expect
-    .poll(async () => {
-      const properties = await sourceProperties(page)
-      const expectedKeys = ["color", "kind", "offset", "sort"]
-      return {
-        hiking: properties.some(
-          (item) =>
-            item.kind === "hiking" &&
-            item.color === "#d9272e" &&
-            typeof item.offset === "number" &&
-            typeof item.sort === "number"
-        ),
-        cycling: properties.some(
-          (item) =>
-            item.kind === "cycling" &&
-            item.color === "#ec4899" &&
-            item.offset === 0 &&
-            typeof item.sort === "number"
-        ),
-        schema: properties.every(
-          (item) =>
-            JSON.stringify(Object.keys(item).sort()) ===
-            JSON.stringify(expectedKeys)
-        ),
-      }
-    })
-    .toEqual({ hiking: true, cycling: true, schema: true })
-}
-
-async function assertTrailSource(page: Page): Promise<void> {
-  const source = await page.evaluate((sourceId) => {
-    const map = window.__fogofwalkE2eMap
-    if (!map) throw new Error("MapLibre test handle is unavailable")
-    const sources = map.getStyle().sources ?? {}
-    const styleSource = sources[sourceId] as
-      | { type?: unknown; url?: unknown; attribution?: unknown }
-      | undefined
-    return {
-      sourceIds: Object.keys(sources).filter((id) => id.startsWith("trails-")),
-      type: styleSource?.type,
-      url: styleSource?.url,
-      attribution: styleSource?.attribution,
-    }
-  }, TRAIL_SOURCE_ID)
-
-  expect(source.sourceIds).toEqual([TRAIL_SOURCE_ID])
-  expect(source.type).toBe("vector")
-  expect(source.url).toBe(`pmtiles://${TRAIL_ARCHIVE_URL}`)
-  expect(source.attribution).toContain("OpenStreetMap contributors")
 }
 
 function layerIndex(ids: string[], id: string): number {
   const index = ids.indexOf(id)
-  if (index < 0) throw new Error("Missing expected layer: " + id)
+  if (index < 0) throw new Error(`Missing expected layer: ${id}`)
   return index
 }
 
-async function assertFlatTrailOrder(page: Page): Promise<void> {
+async function assertTrailOrder(page: Page, expectFog: boolean): Promise<void> {
   const ids = await styleLayerIds(page)
   expect(layerIndex(ids, TRAIL_LAYER_IDS[0])).toBeLessThan(
     layerIndex(ids, TRAIL_LAYER_IDS[1])
@@ -211,7 +112,7 @@ async function assertFlatTrailOrder(page: Page): Promise<void> {
   expect(layerIndex(ids, TRAIL_LAYER_IDS[1])).toBeLessThan(
     layerIndex(ids, TRAIL_LAYER_IDS[2])
   )
-  if (ids.includes("fog-layer")) {
+  if (expectFog) {
     expect(layerIndex(ids, TRAIL_LAYER_IDS[2])).toBeLessThan(
       layerIndex(ids, "fog-layer")
     )
@@ -219,56 +120,48 @@ async function assertFlatTrailOrder(page: Page): Promise<void> {
       layerIndex(ids, "activities-layer")
     )
   } else {
+    expect(ids).not.toContain("fog-layer")
     expect(layerIndex(ids, TRAIL_LAYER_IDS[2])).toBeLessThan(
       layerIndex(ids, "activities-layer")
     )
   }
 }
 
-async function assertReliefTrailOrder(page: Page): Promise<void> {
-  const ids = await styleLayerIds(page)
-  expect(layerIndex(ids, TRAIL_LAYER_IDS[0])).toBeLessThan(
-    layerIndex(ids, TRAIL_LAYER_IDS[1])
-  )
-  expect(layerIndex(ids, TRAIL_LAYER_IDS[1])).toBeLessThan(
-    layerIndex(ids, TRAIL_LAYER_IDS[2])
-  )
-  expect(layerIndex(ids, TRAIL_LAYER_IDS[2])).toBeLessThan(
-    layerIndex(ids, "activities-layer")
-  )
-  expect(ids).not.toContain("fog-layer")
+async function assertTrailFeatures(page: Page): Promise<void> {
+  await expect
+    .poll(async () => {
+      const properties = await sourceProperties(page)
+      return {
+        hiking: properties.some((item) => item.walking_network === "nwn"),
+        cycling: properties.some((item) => item.cycling_network === "lcn"),
+      }
+    })
+    .toEqual({ hiking: true, cycling: true })
+  await expect
+    .poll(() => renderedTrailFeatureCount(page), { timeout: 20_000 })
+    .toBeGreaterThan(0)
 }
 
-function trackForbiddenTrailTraffic(page: Page): string[] {
-  const urls: string[] = []
-  page.on("request", (request) => {
-    const url = request.url()
-    if (
-      /(?:waymarkedtrails\.org|overpass-api\.de|api\.openstreetmap\.org|tile\.openstreetmap\.org)/i.test(
-        url
+test.describe("Maptoolkit trail overlay", () => {
+  test("renders real route-network fields on first load with required attribution", async ({
+    app,
+  }) => {
+    const fixture = await installTrailTiles(app.page)
+    await installSavedMapPosition(app.page, TRAIL_TEST_ZOOM)
+    await app.goto()
+
+    await expect
+      .poll(
+        () => fixture.requests.filter((request) => request.kind === "tile").length
       )
-    ) {
-      urls.push(url)
-    }
-  })
-  return urls
-}
-
-test.describe("trail overlay", () => {
-  test.afterEach(async ({ app }, testInfo) => {
-    if (testInfo.status === testInfo.expectedStatus) return
-    const events = await trailReconciliationEvents(app.page).catch(
-      () => [] as unknown[]
-    )
-    console.log(`trail reconciliation events: ${JSON.stringify(events)}`)
-  })
-
-  test("renders trails on the first eligible load without toggling", async ({
-    app,
-  }) => {
-    const fixture = await installTrailArchive(app.page)
-    await installSavedMapPosition(app.page, TRAIL_TEST_ZOOM)
-    await app.goto()
+      .toBeGreaterThan(0)
+    await expect.poll(() => resourceState(app.page)).toEqual({
+      layers: [true, true, true],
+      source: true,
+      logoCount: 1,
+    })
+    await assertTrailFeatures(app.page)
+    await assertTrailOrder(app.page, true)
 
     await app.openDrawer()
     await expect(
@@ -276,218 +169,129 @@ test.describe("trail overlay", () => {
     ).toBeChecked()
     await app.closeDrawer()
 
-    await expect
-      .poll(() => fixture.requests.length, { timeout: 20_000 })
-      .toBeGreaterThan(0)
-    await expect
-      .poll(() => resourceState(app.page))
-      .toEqual({ layers: [true, true, true], sources: [true] })
-    await assertTrailSource(app.page)
-    await assertTrailFeatures(app.page)
-    await assertRenderedTrailFeatures(app.page)
-
-    const events = await trailReconciliationEvents(app.page)
-    expect(
-      events.some((event) => {
-        if (!event || typeof event !== "object") return false
-        const candidate = event as {
-          trigger?: unknown
-          sourceAfter?: unknown
-          layersAfter?: unknown
-        }
-        return (
-          candidate.trigger === "initial-load" &&
-          candidate.sourceAfter === true &&
-          Array.isArray(candidate.layersAfter) &&
-          candidate.layersAfter.every((layer) => layer === true)
-        )
-      })
-    ).toBe(true)
-  })
-
-  test("crosses the trail threshold without toggling", async ({ app }) => {
-    const fixture = await installTrailArchive(app.page)
-    await installSavedMapPosition(app.page, 11.99)
-    await app.goto()
-
-    expect(fixture.requests).toHaveLength(0)
-    await expect
-      .poll(() => resourceState(app.page))
-      .toEqual({ layers: [false, false, false], sources: [false] })
-
-    await setCamera(app.page, TRAIL_TEST_CENTER, TRAIL_TEST_ZOOM)
-    await expect
-      .poll(() => fixture.requests.length, { timeout: 20_000 })
-      .toBeGreaterThan(0)
-    await expect
-      .poll(() => resourceState(app.page))
-      .toEqual({ layers: [true, true, true], sources: [true] })
-    await assertTrailFeatures(app.page)
-    await assertRenderedTrailFeatures(app.page)
-  })
-
-  test("renders trails on a warm reload without toggling", async ({ app }) => {
-    const archive =
-      process.env.E2E_TRAILS_PRODUCTION === "1"
-        ? observeTrailArchive(app.page)
-        : await installTrailArchive(app.page)
-    await installSavedMapPosition(app.page, TRAIL_TEST_ZOOM)
-    await app.goto()
-
-    await expect
-      .poll(() => archive.requests.length, { timeout: 20_000 })
-      .toBeGreaterThan(0)
-    await expect
-      .poll(() => resourceState(app.page))
-      .toEqual({ layers: [true, true, true], sources: [true] })
-    await assertRenderedTrailFeatures(app.page)
-
-    await app.reload()
-    await expect
-      .poll(() => resourceState(app.page))
-      .toEqual({ layers: [true, true, true], sources: [true] })
-    await assertTrailFeatures(app.page)
-    await assertRenderedTrailFeatures(app.page)
-  })
-
-  test("uses one local PMTiles source, ranges, and toggle suppression", async ({
-    app,
-  }) => {
-    const forbiddenRequests = trackForbiddenTrailTraffic(app.page)
-    const fixture = await installTrailArchive(app.page)
-    await app.goto()
-    await rememberMap(app.page)
-
-    await app.openDrawer()
-    await expect(
-      app.drawer.getByRole("switch", { name: "Show trails" })
-    ).toBeChecked()
-    await app.closeDrawer()
-
-    await setCamera(app.page, TRAIL_TEST_CENTER, 11)
-    expect(fixture.requests).toHaveLength(0)
-    expect(await resourceState(app.page)).toEqual({
-      layers: [false, false, false],
-      sources: [false],
+    const source = await app.page.evaluate((sourceId) => {
+      const map = window.__fogofwalkE2eMap
+      if (!map) throw new Error("MapLibre test handle is unavailable")
+      return map.getStyle().sources?.[sourceId]
+    }, TRAIL_SOURCE_ID)
+    expect(source).toMatchObject({
+      type: "vector",
+      url: MAPTOOLKIT_TILEJSON_URL,
+      maxzoom: 15,
     })
 
-    await setCamera(app.page, TRAIL_TEST_CENTER, TRAIL_TEST_ZOOM)
-    await expect
-      .poll(() => fixture.requests.length, { timeout: 20_000 })
-      .toBeGreaterThan(0)
-    await expect
-      .poll(() => resourceState(app.page))
-      .toEqual({ layers: [true, true, true], sources: [true] })
-    await assertTrailSource(app.page)
-    await assertTrailFeatures(app.page)
-
+    const logo = app.page.locator(".maptoolkit-logo-control img")
+    await expect(logo).toBeVisible()
+    expect(await logo.evaluate((image) => image.getBoundingClientRect().height))
+      .toBeGreaterThanOrEqual(24)
+    await expect(app.page.locator(".maplibregl-ctrl-attrib")).toContainText(
+      "Maptoolkit"
+    )
     expect(
       fixture.requests.every(
-        ({ authorization, cookie, range, status, url }) =>
-          url === TRAIL_ARCHIVE_URL &&
-          status === 206 &&
-          range !== null &&
-          /^bytes=\d+-\d*$/.test(range) &&
-          authorization === null &&
-          cookie === null
+        ({ authorization, cookie }) =>
+          authorization === null && cookie === null
       )
     ).toBe(true)
-    expect(forbiddenRequests).toEqual([])
-
-    await setCamera(app.page, TRAIL_TEST_CENTER, 11)
-    await expect
-      .poll(() => resourceState(app.page))
-      .toEqual({ layers: [false, false, false], sources: [false] })
-
-    await setCamera(app.page, TRAIL_TEST_CENTER, TRAIL_TEST_ZOOM)
-    await expect
-      .poll(() => resourceState(app.page))
-      .toEqual({ layers: [true, true, true], sources: [true] })
-
-    await app.openDrawer()
-    await app.drawer.getByRole("switch", { name: "Show trails" }).click()
-    await app.closeDrawer()
-    await expect
-      .poll(() => resourceState(app.page))
-      .toEqual({ layers: [false, false, false], sources: [false] })
-    const requestCountAfterDisable = fixture.requests.length
-    await setCamera(app.page, [14.42, 50.08], TRAIL_TEST_ZOOM)
-    expect(fixture.requests.length).toBe(requestCountAfterDisable)
-    expect(await hasSameMapObject(app.page)).toBe(true)
-
-    await app.openDrawer()
-    await app.drawer.getByRole("switch", { name: "Show trails" }).click()
-    await app.closeDrawer()
-    await expect
-      .poll(() => resourceState(app.page))
-      .toEqual({ layers: [true, true, true], sources: [true] })
-    await assertTrailFeatures(app.page)
-    expect(await hasSameMapObject(app.page)).toBe(true)
   })
 
-  test("keeps trail state and order through flat and relief styles", async ({
+  test("installs once and lets layer minzoom suppress tile requests", async ({
     app,
   }) => {
-    const fixture = await installTrailArchive(app.page)
+    const fixture = await installTrailTiles(app.page)
+    await installSavedMapPosition(app.page, 5)
     await app.goto()
-    await rememberMap(app.page)
-    await setCamera(app.page, TRAIL_TEST_CENTER, TRAIL_TEST_ZOOM)
+
+    await expect.poll(() => resourceState(app.page)).toEqual({
+      layers: [true, true, true],
+      source: true,
+      logoCount: 1,
+    })
+    expect(
+      fixture.requests.filter((request) => request.kind === "tile")
+    ).toHaveLength(0)
+
+    await setCamera(app.page, TRAIL_TEST_CENTER, 7)
     await expect
-      .poll(() => fixture.requests.length, { timeout: 20_000 })
+      .poll(
+        () => fixture.requests.filter((request) => request.kind === "tile").length
+      )
       .toBeGreaterThan(0)
-    await expect
-      .poll(() => resourceState(app.page))
-      .toEqual({ layers: [true, true, true], sources: [true] })
-    await assertFlatTrailOrder(app.page)
+  })
+
+  test("removes and restores the source, layers, and attribution without remounting the map", async ({
+    app,
+  }) => {
+    const fixture = await installTrailTiles(app.page)
+    await installSavedMapPosition(app.page, TRAIL_TEST_ZOOM)
+    await app.goto()
+    await assertTrailFeatures(app.page)
+    await app.page.evaluate(() => {
+      window.__fogofwalkE2eOriginalMap = window.__fogofwalkE2eMap
+    })
+
+    await app.openDrawer()
+    await app.drawer.getByRole("switch", { name: "Show trails" }).click()
+    await app.closeDrawer()
+    await expect.poll(() => resourceState(app.page)).toEqual({
+      layers: [false, false, false],
+      source: false,
+      logoCount: 0,
+    })
+    const requestCount = fixture.requests.length
+    await setCamera(app.page, [14.5, 50.08], TRAIL_TEST_ZOOM)
+    expect(fixture.requests).toHaveLength(requestCount)
+
+    await app.openDrawer()
+    await app.drawer.getByRole("switch", { name: "Show trails" }).click()
+    await app.closeDrawer()
+    await expect.poll(() => resourceState(app.page)).toEqual({
+      layers: [true, true, true],
+      source: true,
+      logoCount: 1,
+    })
+    expect(
+      await app.page.evaluate(
+        () => window.__fogofwalkE2eMap === window.__fogofwalkE2eOriginalMap
+      )
+    ).toBe(true)
+  })
+
+  test("rehydrates the overlay through relief and standard style changes", async ({
+    app,
+  }) => {
+    await installTrailTiles(app.page)
+    await installSavedMapPosition(app.page, TRAIL_TEST_ZOOM)
+    await app.goto()
+    await assertTrailFeatures(app.page)
+    await assertTrailOrder(app.page, true)
 
     await app.openDrawer()
     await app.drawer.getByTitle("Terrain").click()
     await app.closeDrawer()
     await waitForMapIdle(app.page)
-    await expect
-      .poll(() => resourceState(app.page))
-      .toEqual({ layers: [true, true, true], sources: [true] })
-    await assertReliefTrailOrder(app.page)
-    expect(await hasSameMapObject(app.page)).toBe(true)
-
-    await app.openDrawer()
-    await app.drawer.getByRole("switch", { name: "Show trails" }).click()
-    await app.closeDrawer()
-    await expect
-      .poll(() => resourceState(app.page))
-      .toEqual({ layers: [false, false, false], sources: [false] })
+    await expect.poll(() => resourceState(app.page)).toEqual({
+      layers: [true, true, true],
+      source: true,
+      logoCount: 1,
+    })
+    await assertTrailFeatures(app.page)
+    await assertTrailOrder(app.page, false)
 
     await app.openDrawer()
     await app.drawer.getByTitle("Standard").click()
     await app.closeDrawer()
     await waitForMapIdle(app.page)
-    await expect
-      .poll(() => resourceState(app.page))
-      .toEqual({ layers: [false, false, false], sources: [false] })
-
-    await app.openDrawer()
-    await app.drawer.getByRole("switch", { name: "Show trails" }).click()
-    await app.closeDrawer()
-    await expect
-      .poll(() => resourceState(app.page))
-      .toEqual({ layers: [true, true, true], sources: [true] })
-    await assertFlatTrailOrder(app.page)
-    expect(await hasSameMapObject(app.page)).toBe(true)
+    await assertTrailFeatures(app.page)
+    await assertTrailOrder(app.page, true)
   })
 
-  test("rehydrates trail resources after WebGL context restoration", async ({
+  test("rehydrates the overlay after WebGL context restoration", async ({
     app,
   }) => {
-    const fixture = await installTrailArchive(app.page)
+    await installTrailTiles(app.page)
+    await installSavedMapPosition(app.page, TRAIL_TEST_ZOOM)
     await app.goto()
-    await rememberMap(app.page)
-    await setCamera(app.page, TRAIL_TEST_CENTER, TRAIL_TEST_ZOOM)
-    await expect
-      .poll(() => fixture.requests.length, { timeout: 20_000 })
-      .toBeGreaterThan(0)
-    await expect
-      .poll(() => resourceState(app.page))
-      .toEqual({ layers: [true, true, true], sources: [true] })
     await assertTrailFeatures(app.page)
 
     const restored = await app.page.evaluate(() => {
@@ -519,91 +323,78 @@ test.describe("trail overlay", () => {
       })
     })
     expect(restored).toBe(true)
+
     await expect
       .poll(() => resourceState(app.page), { timeout: 20_000 })
-      .toEqual({ layers: [true, true, true], sources: [true] })
+      .toEqual({ layers: [true, true, true], source: true, logoCount: 1 })
     await assertTrailFeatures(app.page)
-    expect(await hasSameMapObject(app.page)).toBe(true)
+    await assertTrailOrder(app.page, true)
   })
 
-  test("uses a fixed pink dashed cycling style", async ({ app }) => {
-    await installTrailArchive(app.page)
+  test("uses Maptoolkit route-network fields for hiking and cycling filters", async ({
+    app,
+  }) => {
+    await installTrailTiles(app.page)
+    await installSavedMapPosition(app.page, TRAIL_TEST_ZOOM)
     await app.goto()
-    await setCamera(app.page, TRAIL_TEST_CENTER, TRAIL_TEST_ZOOM)
-    await expect
-      .poll(() => resourceState(app.page))
-      .toEqual({ layers: [true, true, true], sources: [true] })
     await assertTrailFeatures(app.page)
 
-    const cyclingStyle = await app.page.evaluate(() => {
+    const styles = await app.page.evaluate(() => {
       const map = window.__fogofwalkE2eMap
       if (!map) throw new Error("MapLibre test handle is unavailable")
-      const layer = map.getLayer("trails-cycling-layer") as
-        | { source?: unknown; "source-layer"?: unknown }
-        | undefined
-      if (!layer) throw new Error("Cycling trail layer is unavailable")
-      const styleLayer = map
-        .getStyle()
-        .layers?.find(
-          (item) => (item as { id?: unknown }).id === "trails-cycling-layer"
-        ) as { "source-layer"?: unknown } | undefined
-      return {
-        color: map.getPaintProperty("trails-cycling-layer", "line-color"),
-        dash: map.getPaintProperty("trails-cycling-layer", "line-dasharray"),
-        source: layer.source,
-        sourceLayer: styleLayer?.["source-layer"],
-      }
+      return ["trails-hiking-layer", "trails-cycling-layer"].map((id) => {
+        const layer = map.getStyle().layers?.find((candidate) => candidate.id === id)
+        return {
+          id,
+          sourceLayer:
+            layer && "source-layer" in layer ? layer["source-layer"] : null,
+          filter: layer?.filter,
+          color: map.getPaintProperty(id, "line-color"),
+          dash: map.getPaintProperty(id, "line-dasharray"),
+        }
+      })
     })
-    expect(cyclingStyle.color).toBe("#ec4899")
-    expect(JSON.stringify(cyclingStyle.dash)).toContain("[2,2]")
-    expect(cyclingStyle.source).toBe(TRAIL_SOURCE_ID)
-    expect(cyclingStyle.sourceLayer).toBe("trails")
+    expect(styles[0]).toMatchObject({
+      sourceLayer: "road",
+      filter: [
+        "in",
+        ["get", "walking_network"],
+        ["literal", ["iwn", "nwn", "rwn", "lwn"]],
+      ],
+      color: "#d9272e",
+    })
+    expect(styles[1]).toMatchObject({
+      sourceLayer: "road",
+      filter: [
+        "in",
+        ["get", "cycling_network"],
+        ["literal", ["icn", "ncn", "rcn", "lcn"]],
+      ],
+      color: "#ec4899",
+    })
+    expect(JSON.stringify(styles[1]?.dash)).toContain("[2,2]")
   })
 
   for (const mode of [
     "http",
-    "not-found",
-    "range",
-    "truncated",
-    "cors",
-    "invalid-pmtiles",
+    "invalid",
     "offline",
-  ] as const satisfies readonly TrailArchiveMode[]) {
-    test(`keeps the map, imports, and saved points usable after ${mode} archive failure`, async ({
+  ] as const satisfies readonly TrailTileMode[]) {
+    test(`keeps local features usable after ${mode} trail tile failure`, async ({
       app,
     }) => {
-      const forbiddenRequests = trackForbiddenTrailTraffic(app.page)
-      const fixture = await installTrailArchive(app.page)
+      const fixture = await installTrailTiles(app.page)
       fixture.state.mode = mode
+      await installSavedMapPosition(app.page, TRAIL_TEST_ZOOM)
       await app.goto()
-      await setCamera(app.page, TRAIL_TEST_CENTER, TRAIL_TEST_ZOOM)
+
       await expect(app.openDrawerButton).toBeVisible()
       expect(fixture.requests.length).toBeGreaterThan(0)
-      expect(
-        fixture.requests.every(({ url }) => url === TRAIL_ARCHIVE_URL)
-      ).toBe(true)
-      expect(forbiddenRequests).toEqual([])
-
       await app.importActivities(1)
       await app.waitForImportToSettle()
       await app.expectActivityCount(1)
 
-      await app.seedSavedPoint({
-        id: "00000000-0000-4000-8000-000000000321",
-        name: "Trail failure fixture point",
-        description: null,
-        lng: 14.42,
-        lat: 50.08,
-        color: "purple",
-        isPublic: false,
-        createdAt: 1_700_000_000_000,
-        updatedAt: 1_700_000_000_000,
-      })
-      await app.reload()
       await app.openDrawer()
-      await expect(
-        app.drawer.getByRole("switch", { name: "Show saved points" })
-      ).toBeVisible()
       await expect(
         app.drawer.getByRole("switch", { name: "Show trails" })
       ).toBeVisible()

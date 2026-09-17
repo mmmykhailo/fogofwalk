@@ -37,36 +37,12 @@ export const EmptyServerless: Story = {
   },
 }
 
-export const TrailToggleUnavailable: Story = {
-  render: () => {
-    setServerless()
-    return (
-      <MapDrawerStoryHarness
-        drawerProps={makeDrawerProps({ trailArchiveUrl: null })}
-      />
-    )
-  },
-  play: async () => {
-    const drawer = within(document.body)
-    await userEvent.click(
-      await drawer.findByRole("button", { name: "Open drawer" })
-    )
-    await expect(
-      within(document.body).queryByRole("switch", { name: "Show trails" })
-    ).not.toBeInTheDocument()
-  },
-}
-
 export const TrailToggleAvailable: Story = {
   render: () => {
     setServerless()
     return (
       <MapDrawerStoryHarness
-        drawerProps={makeDrawerProps({
-          trailArchiveUrl:
-            "https://cdn.example.test/map-data/trails-v1.pmtiles",
-          onShowTrailsChange,
-        })}
+        drawerProps={makeDrawerProps({ onShowTrailsChange })}
       />
     )
   },
@@ -317,8 +293,6 @@ function DrawerInteractionHarness() {
       {!isOpen && <Button onClick={() => setIsOpen(true)}>Open drawer</Button>}
       <MapDrawer
         {...makeDrawerProps({
-          trailArchiveUrl:
-            "https://cdn.example.test/map-data/trails-v1.pmtiles",
           isOpen,
           onOpenChange: setIsOpen,
           activityCount: 4,
@@ -360,7 +334,6 @@ function NavigationHarness() {
 
 function makeDrawerProps(overrides: Partial<DrawerProps> = {}): DrawerProps {
   return {
-    trailArchiveUrl: null,
     isOpen: false,
     onOpenChange: () => {},
     activityCount: 0,

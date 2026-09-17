@@ -5,7 +5,6 @@
   "scripts": {
     "test": "playwright test",
     "test:all": "bun run test && bun run test:performance",
-    "test:trails:production": "playwright test --config=trails-production.config.ts specs/trails.spec.ts",
     "test:performance": "playwright test --config=performance.config.ts",
     "test:ui": "playwright test --ui",
     "test:headed": "playwright test --headed",

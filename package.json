@@ -33,6 +33,7 @@
     "@base-ui/react": "^1.4.1",
     "@fontsource-variable/jetbrains-mono": "^5.2.8",
     "@maplibre/geojson-vt": "^6.1.0",
+    "@maptoolkit/maplibre-gl-logo": "0.1.0",
     "@phosphor-icons/react": "^2.1.10",
     "@react-router/node": "7.13.1",
     "@react-router/serve": "7.13.1",

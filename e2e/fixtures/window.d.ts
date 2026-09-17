@@ -7,12 +7,23 @@ declare global {
     getZoom(): number
     setZoom(zoom: number): void
     getLayer(id: string): unknown
-    getStyle(): { layers?: unknown[]; sources?: Record<string, unknown> }
+    getLayersOrder(): string[]
+    getStyle(): {
+      layers?: Array<{
+        id: string
+        filter?: unknown
+        "source-layer"?: unknown
+      }>
+      sources?: Record<string, unknown>
+    }
     queryRenderedFeatures(
       geometry?: [number, number] | [[number, number], [number, number]],
       options?: { layers?: readonly string[] }
     ): unknown[]
-    querySourceFeatures(sourceId: string, options?: unknown): unknown[]
+    querySourceFeatures(
+      sourceId: string,
+      options?: unknown
+    ): Array<{ properties?: Record<string, unknown> }>
     jumpTo(options: { center: [number, number]; zoom: number }): void
     easeTo(options: {
       zoom: number

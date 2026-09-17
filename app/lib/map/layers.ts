@@ -1,6 +1,4 @@
 import type maplibregl from "maplibre-gl"
-import { TRAIL_ARCHIVE_URL } from "~/lib/map/trails/config"
-import { TRAIL_MIN_RENDER_ZOOM } from "~/constants/trails"
 import {
   ACTIVITY_COLOR,
   ACTIVITY_HIT_WIDTH,
@@ -38,7 +36,6 @@ export const SAVED_POINT_LAYER_IDS = [
 
 export interface MapLayerSetupOptions {
   showTrails: boolean
-  trailArchiveUrl?: string | null
 }
 
 export function setupMapLayers(
@@ -46,6 +43,10 @@ export function setupMapLayers(
   mode: MapMode,
   options: MapLayerSetupOptions
 ): void {
+  if (mode === "relief" && map.getLayer(MAP_LAYER_IDS.fog)) {
+    map.removeLayer(MAP_LAYER_IDS.fog)
+  }
+
   if (mode === "relief") {
     if (!map.getSource("terrain-source")) {
       map.addSource("terrain-source", {
@@ -61,22 +62,24 @@ export function setupMapLayers(
     map.setTerrain({ source: "terrain-source", exaggeration: 2.5 })
   }
 
-  const trailArchiveUrl =
-    options.trailArchiveUrl === undefined
-      ? TRAIL_ARCHIVE_URL
-      : options.trailArchiveUrl
-  const zoom =
-    typeof (map as unknown as { getZoom?: unknown }).getZoom === "function"
-      ? map.getZoom()
-      : TRAIL_MIN_RENDER_ZOOM
-  if (options.showTrails && trailArchiveUrl && zoom >= TRAIL_MIN_RENDER_ZOOM) {
-    ensureTrailLayers(map, trailArchiveUrl)
+  if (options.showTrails) {
+    ensureTrailLayers(map)
   } else {
     removeTrailLayers(map)
   }
 
-  if (mode !== "relief" && !map.getLayer(MAP_LAYER_IDS.fog)) {
-    map.addLayer(createFogMaskLayer(mapStore.fogData ?? worldFogGeoJSON()))
+  if (mode !== "relief") {
+    if (!map.getLayer(MAP_LAYER_IDS.fog)) {
+      const beforeId = map.getLayer(MAP_LAYER_IDS.activities)
+        ? MAP_LAYER_IDS.activities
+        : undefined
+      map.addLayer(
+        createFogMaskLayer(mapStore.fogData ?? worldFogGeoJSON()),
+        beforeId
+      )
+    } else if (map.getLayer(MAP_LAYER_IDS.activities)) {
+      map.moveLayer(MAP_LAYER_IDS.fog, MAP_LAYER_IDS.activities)
+    }
   }
 
   if (!map.getSource(MAP_SOURCE_IDS.activities)) {
