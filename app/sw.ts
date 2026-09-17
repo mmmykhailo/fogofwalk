@@ -8,6 +8,7 @@ import {
   TRAIL_CACHE_MAX_AGE_SECONDS,
   TRAIL_CACHE_MAX_ENTRIES,
   TRAIL_CACHE_NAME,
+  TRAIL_MAX_RESPONSE_BYTES,
   TRAIL_PROVIDER_HOSTNAMES,
   TRAIL_PROVIDER_TILE_PATH_PREFIX,
 } from "./constants/trails"
@@ -16,6 +17,26 @@ declare let self: ServiceWorkerGlobalScope & typeof globalThis
 
 cleanupOutdatedCaches()
 precacheAndRoute(self.__WB_MANIFEST)
+
+const trailResponseValidationPlugin = {
+  async cacheWillUpdate({ response }: { response: Response }) {
+    if (!response.ok || response.type === "opaque") return null
+
+    const contentType = response.headers
+      .get("content-type")
+      ?.split(";", 1)[0]
+      ?.trim()
+      .toLowerCase()
+    if (contentType !== "application/json") return null
+
+    try {
+      const body = await response.clone().arrayBuffer()
+      return body.byteLength <= TRAIL_MAX_RESPONSE_BYTES ? response : null
+    } catch {
+      return null
+    }
+  },
+}
 
 // Waymarked Trails JSON: cache only the exact provider hosts and zoom-12 tile
 // path before the generic map tile rule below sees the shared `/tiles/` path.
@@ -29,6 +50,7 @@ registerRoute(
     cacheName: TRAIL_CACHE_NAME,
     plugins: [
       new CacheableResponsePlugin({ statuses: [200] }),
+      trailResponseValidationPlugin,
       new ExpirationPlugin({
         maxEntries: TRAIL_CACHE_MAX_ENTRIES,
         maxAgeSeconds: TRAIL_CACHE_MAX_AGE_SECONDS,
