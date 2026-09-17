@@ -1,10 +1,15 @@
 import { expect, test } from "bun:test"
+import { zxyToTileId } from "pmtiles"
 
 import { VectorTile } from "@mapbox/vector-tile"
 import Pbf from "pbf"
 
-import { tileRangeForCoordinates } from "../src/geometry"
+import {
+  tileCandidatesForCoordinates,
+  tileRangeForCoordinates,
+} from "../src/geometry"
 import { encodeMvtTile } from "../src/mvt"
+import { zxyToTileId } from "pmtiles"
 
 test("clips a line crossing a z12 boundary into both adjacent tiles", () => {
   const zoom = 12
@@ -28,6 +33,9 @@ test("clips a line crossing a z12 boundary into both adjacent tiles", () => {
   }
   const range = tileRangeForCoordinates(coordinates, zoom)
   expect(range.maxX - range.minX).toBe(1)
+  const candidates = tileCandidatesForCoordinates(coordinates, zoom)
+  expect(candidates).toContain(zxyToTileId(zoom, range.minX, range.maxY))
+  expect(candidates).toContain(zxyToTileId(zoom, range.maxX, range.minY))
 
   const leftGeometries = [range.minY, range.maxY].flatMap((y) => {
     const tile = encodeMvtTile([feature], zoom, range.minX, y)

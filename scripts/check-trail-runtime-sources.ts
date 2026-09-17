@@ -82,7 +82,10 @@ for (const file of trailDataFiles) {
 
 for (const configuredRoot of [...runtimeRoots, ...extraRoots]) {
   const path = resolve(root, configuredRoot)
-  const isRuntime = configuredRoot === "app" || configuredRoot === "server/src"
+  const isRuntime =
+    configuredRoot === "app" ||
+    configuredRoot === "server/src" ||
+    extraRoots.includes(configuredRoot)
   if (basename(path) === configuredRoot && configuredRoot.includes(".")) {
     files.push(path)
     if (isRuntime) runtimeFiles.add(path)
