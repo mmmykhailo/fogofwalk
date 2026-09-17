@@ -470,6 +470,7 @@ async function buildArchive(options: BuildOptions): Promise<BuildResult> {
       usedLeafDirectories: writeResult.usedLeafDirectories,
     })
     if (options.reportPath) await report.write(options.reportPath, reportObject)
+    throwIfAborted(controller.signal)
     await rename(archivePath, options.output)
     succeeded = true
     return {
@@ -658,6 +659,10 @@ async function directoryBytes(path: string): Promise<number> {
     else if (entry.isFile()) total += (await stat(child)).size
   }
   return total
+}
+
+function throwIfAborted(signal: AbortSignal): void {
+  if (signal.aborted) throw new Error("trail build cancelled")
 }
 
 if (import.meta.main) {

@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test"
+import { rm } from "node:fs/promises"
 import { gzipSync } from "node:zlib"
 
 import { encodeMvtTile } from "../src/mvt"
@@ -97,4 +98,38 @@ test("writes and independently verifies a small archive with leaf directories", 
   expect(verified.tileCount).toBe(5)
   expect(verified.featureCount).toBe(5)
   expect(verified.header.leafDirectoryLength).toBeGreaterThan(0)
+  expect([
+    verified.header.minLon,
+    verified.header.minLat,
+    verified.header.maxLon,
+    verified.header.maxLat,
+  ]).toEqual([14, 50, 14.1, 50.1])
+  expect([
+    verified.header.centerLon,
+    verified.header.centerLat,
+    verified.header.centerZoom,
+  ]).toEqual([14.05, 50.05, 12])
+})
+
+test("does not create the requested archive when tile writing is interrupted", async () => {
+  const archive = `/tmp/fogofwalk-pmtiles-interrupted-${crypto.randomUUID()}.pmtiles`
+  const controller = new AbortController()
+  const range = tileRangeForCoordinates(feature.geometry.coordinates, 12)
+  const tile = encodeMvtTile([feature], 12, range.minX, range.minY)
+  if (!tile) throw new Error("test feature did not intersect its tile")
+  await expect(async () => {
+    await writePmtilesArchive({
+      output: archive,
+      metadata,
+      bounds: { minLon: 14, minLat: 50, maxLon: 14.1, maxLat: 50.1 },
+      signal: controller.signal,
+      tiles: (async function* () {
+        controller.abort()
+        yield { tileId: 1, bytes: gzipSync(tile), featureCount: 1 }
+      })(),
+    })
+  }).toThrow("cancelled")
+  expect(await Bun.file(archive).exists()).toBe(false)
+  await rm(`${archive}.tile-data.incomplete`, { force: true })
+  await rm(`${archive}.leaf-data.incomplete`, { force: true })
 })
