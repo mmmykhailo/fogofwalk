@@ -78,6 +78,21 @@ test("builds a local PBF manifest and de-duplicates overlapping inputs", async (
       "independent-verification",
     ])
 
+    const xmlArchive = `${directory}/from-xml.pmtiles`
+    await main([
+      "fixture",
+      `--xml=${resolve(import.meta.dir, "../fixtures/marked-routes.osm")}`,
+      `--pbf=${directory}/from-xml.osm.pbf`,
+      "--write-pbf",
+      `--output=${xmlArchive}`,
+    ])
+    expect(await fileDigest(xmlArchive, "sha256")).toBe(
+      await fileDigest(
+        resolve(import.meta.dir, "../../e2e/fixtures/trails-v1.pmtiles"),
+        "sha256"
+      )
+    )
+
     const archiveSha256 = await fileDigest(archive, "sha256")
 
     await main([
