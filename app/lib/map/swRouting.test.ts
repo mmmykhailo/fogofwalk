@@ -6,17 +6,19 @@ function request(url: string): { url: URL } {
 }
 
 describe("service worker map resource routing", () => {
-  test("keeps existing basemap tile caching", () => {
+  test("caches production OpenFreeMap tiles but not glyph PBFs", () => {
     expect(
       isMapTileRequest(
-        request("https://tiles.openfreemap.org/14/8590/5729.mvt")
+        request(
+          "https://tiles.openfreemap.org/planet/20260913_164504_pt/14/8590/5729.pbf"
+        )
       )
     ).toBe(true)
     expect(
       isMapTileRequest(
-        request("https://server.example.test/tiles/14/8590/5729")
+        request("https://tiles.openfreemap.org/fonts/Noto%20Sans/0-255.pbf")
       )
-    ).toBe(true)
+    ).toBe(false)
   })
 
   test("does not cache Maptoolkit tile or TileJSON responses", () => {
