@@ -401,6 +401,57 @@ test.describe("trail overlay", () => {
     expect(await hasSameMapObject(app.page)).toBe(true)
   })
 
+  test("rehydrates trail resources after WebGL context restoration", async ({
+    app,
+  }) => {
+    const fixture = await installTrailFixtures(app.page)
+    await app.goto()
+    await rememberMap(app.page)
+    await setCamera(app.page, TRAIL_TEST_CENTER, TRAIL_TEST_ZOOM)
+    await expect
+      .poll(() => fixture.requests.length, { timeout: 20_000 })
+      .toBeGreaterThan(0)
+    await expect
+      .poll(() => resourceState(app.page))
+      .toEqual({ layers: [true, true, true], sources: [true, true] })
+    await assertTrailFeatures(app.page)
+
+    const restored = await app.page.evaluate(() => {
+      const map = window.__fogofwalkE2eMap
+      if (!map) throw new Error("MapLibre test handle is unavailable")
+      const canvas = map.getCanvas()
+      const context = canvas.getContext("webgl2") ?? canvas.getContext("webgl")
+      const extension = context?.getExtension("WEBGL_lose_context")
+      if (!extension) return false
+
+      return new Promise<boolean>((resolve) => {
+        let settled = false
+        const finish = (value: boolean) => {
+          if (settled) return
+          settled = true
+          map.off("webglcontextrestored", onMapRestored)
+          canvas.removeEventListener("webglcontextrestored", onCanvasRestored)
+          resolve(value)
+        }
+        const onMapRestored = () => finish(true)
+        const onCanvasRestored = () => finish(true)
+        map.once("webglcontextrestored", onMapRestored)
+        canvas.addEventListener("webglcontextrestored", onCanvasRestored, {
+          once: true,
+        })
+        extension.loseContext()
+        window.setTimeout(() => extension.restoreContext(), 100)
+        window.setTimeout(() => finish(false), 5_000)
+      })
+    })
+    expect(restored).toBe(true)
+    await expect
+      .poll(() => resourceState(app.page), { timeout: 20_000 })
+      .toEqual({ layers: [true, true, true], sources: [true, true] })
+    await assertTrailFeatures(app.page)
+    expect(await hasSameMapObject(app.page)).toBe(true)
+  })
+
   test("renders a visibly dashed pink cycling route", async ({ app }) => {
     await installTrailFixtures(app.page)
     await app.goto()
