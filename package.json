@@ -19,7 +19,7 @@
     "bench:fog": "bun scripts/bench-fog-representations.ts",
     "test:fog-tiles": "bun scripts/test-fog-tiles.ts",
     "build:trail-fixture": "bun trail-data/scripts/build-fixture.mjs",
-    "verify:trail-fixture": "bun trail-data/scripts/verify-archive.mjs --archive=$PWD/e2e/fixtures/trails-v1.pmtiles",
+    "verify:trail-fixture": "bun trail-data/scripts/verify-archive.mjs --archive=$PWD/e2e/fixtures/trails-v1.pmtiles --expected=$PWD/trail-data/fixtures/expected-z12.json",
     "release": "bun scripts/generate-release.js minor",
     "release:patch": "bun scripts/generate-release.js patch",
     "release:major": "bun scripts/generate-release.js major",

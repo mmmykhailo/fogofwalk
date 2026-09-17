@@ -95,6 +95,7 @@ for (let index = 0; index < entryCount; index++) {
 }
 
 let featureCount = 0
+const observedProperties = []
 for (let index = 0; index < ids.length; index++) {
   if (lengths[index] > 1_048_576)
     throw new Error(`tile ${ids[index]} exceeds 1 MiB compressed`)
@@ -135,7 +136,33 @@ for (let index = 0; index < ids.length; index++) {
       properties.sort > (properties.kind === "hiking" ? 14 : 24)
     )
       throw new Error("invalid trail sort")
+    observedProperties.push({
+      kind: properties.kind,
+      color: properties.color,
+      offset: properties.offset,
+      sort: properties.sort,
+    })
     featureCount++
+  }
+}
+
+if (args.get("expected")) {
+  const expected = JSON.parse(await readFile(args.get("expected"), "utf8"))
+  const observedKeys = new Set(
+    observedProperties.map((properties) => JSON.stringify(properties))
+  )
+  for (const feature of expected.features ?? []) {
+    const properties = {
+      kind: feature.kind,
+      color: feature.color,
+      offset: feature.offset,
+      sort: feature.sort,
+    }
+    if (!observedKeys.has(JSON.stringify(properties))) {
+      throw new Error(
+        `missing expected fixture feature ${JSON.stringify(properties)}`
+      )
+    }
   }
 }
 

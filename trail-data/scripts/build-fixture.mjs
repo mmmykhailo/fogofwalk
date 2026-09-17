@@ -360,6 +360,17 @@ async function build(inputPath, outputPath, expectedPath) {
   const xml = await readFile(inputPath, "utf8")
   const osm = parseOsm(xml)
   const selected = selectFeatures(osm)
+  const expected = JSON.parse(await readFile(expectedPath, "utf8"))
+  const semanticFeatures = selected.features.map(({ wayId, properties }) => ({
+    way: wayId,
+    ...properties,
+  }))
+  if (
+    selected.dropped !== expected.droppedOverlapKeys ||
+    JSON.stringify(semanticFeatures) !== JSON.stringify(expected.features)
+  ) {
+    throw new Error("fixture semantic features do not match expected-z12.json")
+  }
   const geojson = {
     type: "FeatureCollection",
     features: selected.features.map(({ wayId, ...feature }) => feature),
@@ -470,10 +481,6 @@ async function build(inputPath, outputPath, expectedPath) {
   const archive = concat([header, root, metadata, concat(tileChunks)])
   await mkdir(dirname(outputPath), { recursive: true })
   await writeFile(outputPath, archive)
-  await writeFile(
-    expectedPath,
-    await readFile(new URL("../fixtures/expected-z12.json", import.meta.url))
-  )
   console.log(
     `built ${outputPath} (${archive.length} bytes, ${tileRecords.length} tiles, ${selected.features.length} features)`
   )
