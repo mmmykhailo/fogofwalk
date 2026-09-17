@@ -123,3 +123,36 @@ map resources, and implements the GPX/FIT web share target. Its contract spans
 `public/site.webmanifest`, `app/sw.ts`, and `app/routes/home.tsx`; change those
 three together. Shared files remain in `share-target-queue` until the import
 action returns a terminal result so a failed import stays retryable.
+
+## Trail overlay data flow
+
+The optional trail overlay is a display-only map resource. When enabled and the
+map reaches zoom 12, the two MapLibre vector sources request fixed z12 internal
+URLs (fow-trails://hiking/{z}/{x}/{y} and
+fow-trails://cycling/{z}/{x}/{y}). The registered protocol validates the
+theme and tile coordinate, fetches the matching JSON tile directly from the
+allowlisted Waymarked Trails host, bounds its response and geometry budgets,
+converts EPSG:3857 coordinates to WGS84, normalizes the small render-property
+set, and encodes one uncompressed MVT source layer. MapLibre overzooms that z12
+data above zoom 12; no trail request is made below that zoom.
+
+The browser service worker caches only successful GET requests for the exact
+Waymarked Trails z12 JSON tile path in trail-data-tiles-v1, with a maximum of
+300 entries and seven days of retention. The optional Fog of Walk server is not
+in this path: it does not proxy, preprocess, cache, authenticate, or persist
+trail data. Disabling the drawer switch removes the trail layers and sources;
+trail geometry is never placed in React state, the activity library, fog
+revisions, or IndexedDB.
+
+Trail sources and layers are recreated during flat/relief style changes and
+WebGL context restoration from the current session-only visibility value. They
+are inserted below fog and imported activities, so visible fog can obscure
+unexplored routes while imported activity lines remain prominent. Trails are
+not registered as interactive targets and are omitted from share maps/cards.
+
+The encoder currently uses @maplibre/geojson-vt 6.1.0 for direct tile
+conversion and @maplibre/vt-pbf 4.3.0 for serialization. The latter's published
+type declarations expose a nested geojson-vt 5 tile type even though the runtime
+tile shape is compatible; the narrow cast is confined to the PBF boundary and
+is covered by decoder tests. Revisit that cast when either package publishes
+aligned types.

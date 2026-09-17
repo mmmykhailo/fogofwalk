@@ -142,10 +142,12 @@ export default function TermsPage() {
       <PageSection title="Third-party services">
         <p className="leading-relaxed">
           The Service relies on third-party services for map tiles,
-          authentication, hosting, and other infrastructure. We are not
-          responsible for the availability, accuracy, privacy practices,
-          security, or terms of those third-party services. Your use of those
-          services is subject to their respective terms and policies.
+          authentication, hosting, and other infrastructure, including
+          OpenFreeMap, Esri, and Waymarked Trails route data derived from
+          OpenStreetMap. We are not responsible for the availability, accuracy,
+          privacy practices, security, or terms of those third-party services.
+          Your use of those services is subject to their respective terms and
+          policies.
         </p>
       </PageSection>
 

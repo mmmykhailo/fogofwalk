@@ -227,14 +227,26 @@ export default function PrivacyPage() {
             GitHub, Google, etc.).
           </li>
           <li>
-            <strong>Maps:</strong> OpenFreeMap and Esri — map tiles and related
-            mapping resources.
+            <strong>Maps:</strong> OpenFreeMap, Esri, and{" "}
+            <a
+              href="https://waymarkedtrails.org/"
+              target="_blank"
+              rel="noreferrer"
+              className="text-primary underline underline-offset-4 hover:text-primary/80"
+            >
+              Waymarked Trails
+            </a>{" "}
+            — map tiles and related mapping resources.
           </li>
         </ul>
         <p className="mt-4 leading-relaxed">
           Map providers may receive your IP address and the geographic area for
-          which map information is requested. Their processing is governed by
-          their own privacy policies.
+          which map information is requested. If you enable the trail overlay,
+          your browser requests route tiles directly from Waymarked Trails and
+          may send standard browser request metadata, including the page origin
+          or referrer, together with the requested map tile area. Fog of Walk
+          does not proxy or authenticate those requests. Their processing is
+          governed by their own privacy policies.
         </p>
         <p className="mt-4 leading-relaxed">
           We may also disclose information where reasonably necessary to comply

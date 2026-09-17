@@ -1,5 +1,9 @@
 const TOGGLES = [
   ["Show activities", "draw the route lines on top of the cleared fog"],
+  [
+    "Show trails",
+    "show hiking and cycling routes from the external route-data provider",
+  ],
   ["Show fog", "turn the fog off entirely to see the bare map underneath"],
   [
     "Show photos",
@@ -41,6 +45,14 @@ export function MapControlsSection() {
         between visits, and the compass in the corner resets the view to north
         when you've rotated or tilted the map. Use the adjacent buttons to zoom
         in or out.
+      </p>
+      <p>
+        Trails appear from zoom 12 onward. Hiking routes use a neutral purple
+        line unless Waymarked Trails provides a recognized Czech or Slovak KCT
+        color; shared routes can show several centered color lines. Cycling
+        routes use a dashed pink line. The overlay is a display aid only: route
+        coverage, geometry, access, and conditions may be incomplete or out of
+        date, so do not use it as a navigation or safety-critical source.
       </p>
     </div>
   )
