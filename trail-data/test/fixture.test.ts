@@ -94,7 +94,7 @@ test("builds a local PBF manifest and de-duplicates overlapping inputs", async (
         {
           schemaVersion: 1,
           coverage,
-          snapshot: "2026-09-07T00:00:00Z",
+          snapshot: "2026-09-08T00:00:00Z",
           inputs: [input(firstInput), input(secondInput)],
         },
         null,

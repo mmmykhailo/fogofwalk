@@ -395,15 +395,12 @@ async function buildArchive(options: BuildOptions): Promise<BuildResult> {
     })
 
     const archiveBounds = bounds ?? boundsFromCoverage(options.coverage.bounds)
-    const metadata = buildMetadata(
-      [
-        archiveBounds.minLon,
-        archiveBounds.minLat,
-        archiveBounds.maxLon,
-        archiveBounds.maxLat,
-      ],
-      options.snapshot
-    )
+    const metadata = buildMetadata([
+      archiveBounds.minLon,
+      archiveBounds.minLat,
+      archiveBounds.maxLon,
+      archiveBounds.maxLat,
+    ])
     const writeResult = await runPass(
       report,
       "mvt-packing",
@@ -562,10 +559,7 @@ async function runPass<T>(
   }
 }
 
-function buildMetadata(
-  bounds: Bounds,
-  snapshot: string
-): Record<string, unknown> {
+function buildMetadata(bounds: Bounds): Record<string, unknown> {
   return {
     tilejson: "3.0.0",
     name: "Fog of Walk marked trails",
@@ -574,7 +568,7 @@ function buildMetadata(
     attribution: "© OpenStreetMap contributors",
     license: "ODbL-1.0",
     dataLicense: "ODbL-1.0",
-    description: `Marked hiking and cycling routes derived from OpenStreetMap (${snapshot})`,
+    description: "Marked hiking and cycling routes derived from OpenStreetMap",
     bounds,
     vector_layers: [
       {
