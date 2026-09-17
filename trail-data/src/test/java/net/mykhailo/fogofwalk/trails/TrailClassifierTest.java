@@ -52,6 +52,19 @@ class TrailClassifierTest {
   }
 
   @Test
+  void coversEverySupportedNetworkRank() {
+    assertEquals(4, TrailClassifier.networkRank(TrailClassifier.Kind.HIKING, "iwn"));
+    assertEquals(3, TrailClassifier.networkRank(TrailClassifier.Kind.HIKING, "nwn"));
+    assertEquals(2, TrailClassifier.networkRank(TrailClassifier.Kind.HIKING, "rwn"));
+    assertEquals(1, TrailClassifier.networkRank(TrailClassifier.Kind.HIKING, "lwn"));
+    assertEquals(4, TrailClassifier.networkRank(TrailClassifier.Kind.CYCLING, "icn"));
+    assertEquals(3, TrailClassifier.networkRank(TrailClassifier.Kind.CYCLING, "ncn"));
+    assertEquals(2, TrailClassifier.networkRank(TrailClassifier.Kind.CYCLING, "rcn"));
+    assertEquals(1, TrailClassifier.networkRank(TrailClassifier.Kind.CYCLING, "lcn"));
+    assertEquals(0, TrailClassifier.networkRank(TrailClassifier.Kind.CYCLING, "unknown"));
+  }
+
+  @Test
   void deduplicatesSharedKeysAndCentersFourLanes() {
     List<TrailClassifier.Membership> memberships = new ArrayList<>();
     String[] colors = { "#d9272e", "#15803d", "#1769aa", "#eab308", "#ea580c" };

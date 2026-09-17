@@ -12,6 +12,11 @@
     {"way": 106, "kind": "hiking", "color": "#d9272e", "offset": -4.5, "sort": 11},
     {"way": 106, "kind": "hiking", "color": "#15803d", "offset": -1.5, "sort": 11},
     {"way": 106, "kind": "hiking", "color": "#1769aa", "offset": 1.5, "sort": 11},
-    {"way": 106, "kind": "hiking", "color": "#eab308", "offset": 4.5, "sort": 11}
+    {"way": 106, "kind": "hiking", "color": "#eab308", "offset": 4.5, "sort": 11},
+    {"way": 108, "kind": "hiking", "color": "#7e22ce", "offset": 0, "sort": 13},
+    {"way": 109, "kind": "cycling", "color": "#ec4899", "offset": 0, "sort": 24},
+    {"way": 110, "kind": "cycling", "color": "#ec4899", "offset": 0, "sort": 23},
+    {"way": 111, "kind": "cycling", "color": "#ec4899", "offset": 0, "sort": 22},
+    {"way": 112, "kind": "cycling", "color": "#ec4899", "offset": 0, "sort": 21}
   ]
 }

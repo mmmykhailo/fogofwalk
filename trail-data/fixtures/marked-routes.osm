@@ -33,6 +33,11 @@
   <way id="106"><nd ref="16"/><nd ref="17"/><nd ref="18"/></way>
   <way id="107"><nd ref="19"/><nd ref="20"/><nd ref="21"/></way>
   <way id="108"><nd ref="22"/><nd ref="23"/><nd ref="24"/></way>
+  <way id="109"><nd ref="1"/><nd ref="2"/></way>
+  <way id="110"><nd ref="4"/><nd ref="5"/></way>
+  <way id="111"><nd ref="7"/><nd ref="8"/></way>
+  <way id="112"><nd ref="10"/><nd ref="11"/></way>
+  <way id="113"><nd ref="999998"/><nd ref="999999"/></way>
 
   <relation id="1001">
     <tag k="type" v="route"/><tag k="route" v="hiking"/><tag k="network" v="nwn"/>
@@ -74,10 +79,22 @@
   </relation>
   <relation id="1201">
     <tag k="type" v="superroute"/><tag k="route" v="hiking"/><tag k="network" v="rwn"/>
-    <tag k="colour" v="purple"/><member type="relation" ref="1200" role=""/>
+    <tag k="colour" v="purple"/><member type="relation" ref="1200" role=""/><member type="way" ref="108" role=""/>
   </relation>
   <relation id="1300">
     <tag k="type" v="route"/><tag k="route" v="hiking"/><tag k="network" v="rwn"/>
-    <member type="node" ref="1" role="guidepost"/><member type="way" ref="999999" role=""/>
+    <member type="node" ref="1" role="guidepost"/><member type="way" ref="999999" role=""/><member type="way" ref="113" role=""/>
+  </relation>
+  <relation id="1020">
+    <tag k="type" v="route"/><tag k="route" v="bicycle"/><tag k="network" v="icn"/><member type="way" ref="109" role=""/>
+  </relation>
+  <relation id="1021">
+    <tag k="type" v="route"/><tag k="route" v="bicycle"/><tag k="network" v="ncn"/><member type="way" ref="110" role=""/>
+  </relation>
+  <relation id="1022">
+    <tag k="type" v="route"/><tag k="route" v="bicycle"/><tag k="network" v="rcn"/><member type="way" ref="111" role=""/>
+  </relation>
+  <relation id="1023">
+    <tag k="type" v="route"/><tag k="route" v="bicycle"/><tag k="network" v="lcn"/><member type="way" ref="112" role=""/>
   </relation>
 </osm>
