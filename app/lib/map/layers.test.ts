@@ -13,6 +13,7 @@ import {
   TRAIL_HIKING_CASING_OPACITY,
   TRAIL_HIKING_CASING_WIDTH_DELTA,
   TRAIL_HIKING_COLOR,
+  TRAIL_HIKING_DASH_ARRAY,
   TRAIL_HIKING_OPACITY,
   TRAIL_HIKING_WIDTH_STOPS,
   TRAIL_LAYER_IDS,
@@ -232,6 +233,7 @@ describe("saved-point map layers", () => {
         "line-color": TRAIL_HIKING_COLOR,
         "line-opacity": TRAIL_HIKING_OPACITY,
         "line-width": hikingWidth,
+        "line-dasharray": ["literal", TRAIL_HIKING_DASH_ARRAY],
       },
     })
     expect(casing.paint).toMatchObject({
@@ -265,6 +267,7 @@ describe("saved-point map layers", () => {
         index % 2 === 0 ? [value] : [value + TRAIL_HIKING_CASING_WIDTH_DELTA]
       ),
     ])
+    expect(casing.paint["line-dasharray"]).toBeUndefined()
     expect(hiking.paint["line-color"]).toBe(TRAIL_HIKING_COLOR)
     expect(cycling).toMatchObject({
       source: TRAIL_SOURCE_ID,

@@ -23,7 +23,8 @@ export const REVERSE_TRAIL_LAYER_IDS = [...ORDERED_TRAIL_LAYER_IDS].reverse()
 export const ORDERED_TRAIL_SOURCE_IDS = [TRAIL_SOURCE_ID] as const
 
 export const TRAIL_HIKING_CASING_COLOR = "rgba(255, 255, 255, 0.82)"
-export const TRAIL_HIKING_COLOR = "#d9272e"
+export const TRAIL_HIKING_COLOR = "#3b82f6"
+export const TRAIL_HIKING_DASH_ARRAY = [3, 2] as const
 export const TRAIL_HIKING_OPACITY = 0.92
 export const TRAIL_HIKING_CASING_OPACITY = 0.82
 export const TRAIL_HIKING_WIDTH_STOPS = [
@@ -31,7 +32,7 @@ export const TRAIL_HIKING_WIDTH_STOPS = [
 ] as const
 export const TRAIL_HIKING_CASING_WIDTH_DELTA = 1.8
 
-export const TRAIL_CYCLING_COLOR = "#ec4899"
+export const TRAIL_CYCLING_COLOR = "#f472b6"
 export const TRAIL_CYCLING_OPACITY = 0.95
 export const TRAIL_CYCLING_WIDTH_STOPS = [
   7, 1.4, 12, 2.2, 15, 3.4, 20, 5.4,

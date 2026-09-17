@@ -19,6 +19,7 @@ import {
   TRAIL_HIKING_CASING_OPACITY,
   TRAIL_HIKING_CASING_WIDTH_DELTA,
   TRAIL_HIKING_COLOR,
+  TRAIL_HIKING_DASH_ARRAY,
   TRAIL_HIKING_OPACITY,
   TRAIL_HIKING_WIDTH_STOPS,
   TRAIL_LAYER_IDS,
@@ -109,6 +110,7 @@ function hikingLayer(): AddLayerObject {
       "line-color": TRAIL_HIKING_COLOR,
       "line-opacity": TRAIL_HIKING_OPACITY,
       "line-width": widthExpression(TRAIL_HIKING_WIDTH_STOPS),
+      "line-dasharray": expression(["literal", TRAIL_HIKING_DASH_ARRAY]),
     },
   }
 }

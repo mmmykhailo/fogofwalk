@@ -349,7 +349,7 @@ test.describe("Maptoolkit trail overlay", () => {
     await assertTrailOrder(app.page, true)
   })
 
-  test("uses Maptoolkit route-network fields for hiking and cycling filters", async ({
+  test("uses Maptoolkit route-network fields and both trail visual styles", async ({
     app,
   }) => {
     await installTrailTiles(app.page)
@@ -381,7 +381,7 @@ test.describe("Maptoolkit trail overlay", () => {
         ["get", "walking_network"],
         ["literal", ["iwn", "nwn", "rwn", "lwn"]],
       ],
-      color: "#d9272e",
+      color: "#3b82f6",
     })
     expect(styles[1]).toMatchObject({
       sourceLayer: "road",
@@ -390,8 +390,9 @@ test.describe("Maptoolkit trail overlay", () => {
         ["get", "cycling_network"],
         ["literal", ["icn", "ncn", "rcn", "lcn"]],
       ],
-      color: "#ec4899",
+      color: "#f472b6",
     })
+    expect(JSON.stringify(styles[0]?.dash)).toContain("[3,2]")
     expect(JSON.stringify(styles[1]?.dash)).toContain("[2,2]")
   })
 
