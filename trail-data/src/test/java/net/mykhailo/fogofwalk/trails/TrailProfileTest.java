@@ -1,6 +1,7 @@
 package net.mykhailo.fogofwalk.trails;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.nio.file.Path;
@@ -26,6 +27,21 @@ class TrailProfileTest {
 
   @Test
   void acceptsOnlyCredentialFreeSourceUrlsAndChecksums() {
+    assertDoesNotThrow(() -> TrailProfile.validateSourceUrl(
+      "https://planet.openstreetmap.org/pbf/planet-260907.osm.pbf"
+    ));
+    assertDoesNotThrow(() -> TrailProfile.validateSourceUrl(
+      "https://download.geofabrik.de/europe/czech-republic-260907.osm.pbf"
+    ));
+    for (String value : new String[] {
+      "http://planet.openstreetmap.org/pbf/planet-260907.osm.pbf",
+      "https://example.test/planet-260907.osm.pbf",
+      "https://planet.openstreetmap.org/pbf/planet-260907.osm.pbf?token=secret",
+      "https://user:password@planet.openstreetmap.org/pbf/planet-260907.osm.pbf",
+      "https://planet.openstreetmap.org/pbf/planet-260907.zip",
+    }) {
+      assertThrows(IllegalArgumentException.class, () -> TrailProfile.validateSourceUrl(value));
+    }
     assertEquals("a".repeat(64), TrailProfile.normalizeSha256("sha256:" + "a".repeat(64)));
     assertThrows(IllegalArgumentException.class, () -> TrailProfile.normalizeSha256("not-a-checksum"));
   }

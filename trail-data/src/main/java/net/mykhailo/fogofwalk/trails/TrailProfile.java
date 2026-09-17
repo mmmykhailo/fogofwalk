@@ -32,6 +32,7 @@ public final class TrailProfile implements Profile {
   public static final int MAX_ZOOM = 12;
   public static final String SOURCE_LAYER = "trails";
   public static final String PINNED_PLANETILER_VERSION = "0.8.14";
+  public static final String DATA_LICENSE = "ODbL-1.0";
 
   private final TrailBuildReport report;
 
@@ -124,7 +125,7 @@ public final class TrailProfile implements Profile {
 
   @Override
   public String attribution() {
-    return Profile.OSM_ATTRIBUTION;
+    return Profile.OSM_ATTRIBUTION + "; data license: " + DATA_LICENSE;
   }
 
   @Override
@@ -258,12 +259,27 @@ public final class TrailProfile implements Profile {
     }
   }
 
-  private static void validateSourceUrl(String value) {
-    URI uri = URI.create(value);
+  static void validateSourceUrl(String value) {
+    URI uri;
+    try {
+      uri = URI.create(value);
+    } catch (IllegalArgumentException exception) {
+      throw new IllegalArgumentException("OSM source URL must be a public HTTPS URL", exception);
+    }
     String scheme = uri.getScheme();
-    if (!("https".equalsIgnoreCase(scheme) || "http".equalsIgnoreCase(scheme))
-      || uri.getUserInfo() != null || uri.getQuery() != null || uri.getFragment() != null) {
-      throw new IllegalArgumentException("OSM source URL must be a public credential-free URL");
+    String host = uri.getHost();
+    String path = uri.getPath();
+    boolean allowedHost = "planet.openstreetmap.org".equalsIgnoreCase(host)
+      || "download.geofabrik.de".equalsIgnoreCase(host);
+    if (!"https".equalsIgnoreCase(scheme)
+      || uri.getPort() != -1
+      || uri.getUserInfo() != null
+      || uri.getQuery() != null
+      || uri.getFragment() != null
+      || !allowedHost
+      || path == null
+      || !path.endsWith(".osm.pbf")) {
+      throw new IllegalArgumentException("OSM source URL must be a dated public HTTPS .osm.pbf URL");
     }
   }
 

@@ -18,7 +18,7 @@ function required(name) {
 const archivePath = required("archive")
 const reportPath = required("report")
 const manifestPath = required("manifest")
-const noticePath = required("notice")
+const licensePath = required("license")
 const archiveBytes = await readFile(archivePath)
 const report = JSON.parse(await readFile(reportPath, "utf8"))
 const sha256 = createHash("sha256").update(archiveBytes).digest("hex")
@@ -61,7 +61,7 @@ const manifest = {
   attribution: report.attribution,
   dataLicense: report.dataLicense,
   report: basename(reportPath),
-  notice: basename(noticePath),
+  license: basename(licensePath),
 }
 await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
 await writeFile(
@@ -69,7 +69,7 @@ await writeFile(
   `${sha256}  ${basename(archivePath)}\n`
 )
 await writeFile(
-  noticePath,
+  licensePath,
   [
     "Fog of Walk marked trails archive",
     "",
@@ -94,6 +94,6 @@ console.log(
     bytes,
     sha256,
     manifest: basename(manifestPath),
-    notice: basename(noticePath),
+    license: basename(licensePath),
   })
 )

@@ -125,7 +125,7 @@ jobs:
             --archive="$OUTPUT_DIR/trails-build.pmtiles" \
             --report="$OUTPUT_DIR/trails-build-report.json" \
             --manifest="$OUTPUT_DIR/trails-build-manifest.json" \
-            --notice="$OUTPUT_DIR/ODbL-NOTICE.txt"
+            --license="$OUTPUT_DIR/DATA-LICENSE.txt"
 
       - name: Upload dated build for review or publication
         uses: actions/upload-artifact@v4
@@ -182,7 +182,7 @@ jobs:
             --archive="trail-archive/$archive_name" \
             --report="trail-archive/$archive_name.report.json" \
             --manifest="trail-archive/$archive_name.manifest.json" \
-            --notice="trail-archive/$archive_name.ODbL-NOTICE.txt"
+            --license="trail-archive/$archive_name.DATA-LICENSE.txt"
           echo "name=$archive_name" >> "$GITHUB_OUTPUT"
           echo "sha256=$sha256" >> "$GITHUB_OUTPUT"
           echo "origin=$TRAIL_PUBLIC_ORIGIN" >> "$GITHUB_OUTPUT"
@@ -243,13 +243,13 @@ jobs:
             *) echo "Unexpected archive filename." >&2; exit 1 ;;
           esac
           remote="/srv/fogofwalk/map-data/trails/v1/$ARCHIVE_NAME"
-          ssh vps "set -eu; test ! -e '$remote'; test ! -e '$remote.report.json'; test ! -e '$remote.manifest.json'; test ! -e '$remote.ODbL-NOTICE.txt'; test ! -e '$remote.sha256'"
+          ssh vps "set -eu; test ! -e '$remote'; test ! -e '$remote.report.json'; test ! -e '$remote.manifest.json'; test ! -e '$remote.DATA-LICENSE.txt'; test ! -e '$remote.sha256'"
           scp -p "trail-archive/$ARCHIVE_NAME" "vps:$remote.tmp.$GITHUB_RUN_ID"
           scp -p "trail-archive/$ARCHIVE_NAME.report.json" "vps:$remote.report.tmp.$GITHUB_RUN_ID"
           scp -p "trail-archive/$ARCHIVE_NAME.manifest.json" "vps:$remote.manifest.tmp.$GITHUB_RUN_ID"
-          scp -p "trail-archive/$ARCHIVE_NAME.ODbL-NOTICE.txt" "vps:$remote.ODbL-NOTICE.tmp.$GITHUB_RUN_ID"
+          scp -p "trail-archive/$ARCHIVE_NAME.DATA-LICENSE.txt" "vps:$remote.DATA-LICENSE.tmp.$GITHUB_RUN_ID"
           scp -p "trail-archive/$ARCHIVE_NAME.sha256" "vps:$remote.sha256.tmp.$GITHUB_RUN_ID"
-          ssh vps "set -eu; sha256sum '$remote.tmp.$GITHUB_RUN_ID'; mv -n '$remote.tmp.$GITHUB_RUN_ID' '$remote'; mv -n '$remote.report.tmp.$GITHUB_RUN_ID' '$remote.report.json'; mv -n '$remote.manifest.tmp.$GITHUB_RUN_ID' '$remote.manifest.json'; mv -n '$remote.ODbL-NOTICE.tmp.$GITHUB_RUN_ID' '$remote.ODbL-NOTICE.txt'; mv -n '$remote.sha256.tmp.$GITHUB_RUN_ID' '$remote.sha256'; test ! -e '$remote.tmp.$GITHUB_RUN_ID'; test ! -e '$remote.report.tmp.$GITHUB_RUN_ID'; test ! -e '$remote.manifest.tmp.$GITHUB_RUN_ID'; test ! -e '$remote.ODbL-NOTICE.tmp.$GITHUB_RUN_ID'; test ! -e '$remote.sha256.tmp.$GITHUB_RUN_ID'"
+          ssh vps "set -eu; sha256sum '$remote.tmp.$GITHUB_RUN_ID'; mv -n '$remote.tmp.$GITHUB_RUN_ID' '$remote'; mv -n '$remote.report.tmp.$GITHUB_RUN_ID' '$remote.report.json'; mv -n '$remote.manifest.tmp.$GITHUB_RUN_ID' '$remote.manifest.json'; mv -n '$remote.DATA-LICENSE.tmp.$GITHUB_RUN_ID' '$remote.DATA-LICENSE.txt'; mv -n '$remote.sha256.tmp.$GITHUB_RUN_ID' '$remote.sha256'; test ! -e '$remote.tmp.$GITHUB_RUN_ID'; test ! -e '$remote.report.tmp.$GITHUB_RUN_ID'; test ! -e '$remote.manifest.tmp.$GITHUB_RUN_ID'; test ! -e '$remote.DATA-LICENSE.tmp.$GITHUB_RUN_ID'; test ! -e '$remote.sha256.tmp.$GITHUB_RUN_ID'"
 
       - name: Probe public archive ranges
         env:

@@ -77,6 +77,6 @@ bun "$root_dir/trail-data/scripts/write-publication-manifest.mjs" \
   "--archive=$output" \
   "--report=$report" \
   "--manifest=$report.manifest.json" \
-  "--notice=$report.ODbL-NOTICE.txt" \
+  "--license=$report.DATA-LICENSE.txt" \
   ${peak_memory_bytes:+"--peak-resident-memory-bytes=$peak_memory_bytes"} \
   "--scratch-disk-high-water-mark-bytes=$scratch_high_water"
