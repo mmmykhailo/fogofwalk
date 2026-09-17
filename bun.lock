@@ -7,7 +7,6 @@
       "dependencies": {
         "@base-ui/react": "^1.4.1",
         "@fontsource-variable/jetbrains-mono": "^5.2.8",
-        "@maplibre/geojson-vt": "^6.1.0",
         "@maptoolkit/maplibre-gl-logo": "0.1.0",
         "@phosphor-icons/react": "^2.1.10",
         "@react-router/node": "7.13.1",
@@ -37,6 +36,7 @@
         "vaul": "^1.1.2",
       },
       "devDependencies": {
+        "@maplibre/geojson-vt": "^6.1.0",
         "@maplibre/vt-pbf": "^4.3.0",
         "@react-router/dev": "7.13.1",
         "@storybook/addon-a11y": "10.6.0",
