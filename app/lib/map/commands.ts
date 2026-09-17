@@ -65,15 +65,16 @@ export function setFogVisible(map: maplibregl.Map, isVisible: boolean): void {
 
 export function setTrailsEnabled(
   map: maplibregl.Map,
-  isEnabled: boolean
+  isEnabled: boolean,
+  archiveUrl = TRAIL_ARCHIVE_URL
 ): void {
   const getZoom = (map as unknown as { getZoom?: () => number }).getZoom
   const zoom = typeof getZoom === "function" ? getZoom.call(map) : Infinity
-  if (!TRAIL_ARCHIVE_URL || !isEnabled || zoom < TRAIL_MIN_RENDER_ZOOM) {
+  if (!archiveUrl || !isEnabled || zoom < TRAIL_MIN_RENDER_ZOOM) {
     removeTrailLayers(map)
     return
   }
-  ensureTrailLayers(map, TRAIL_ARCHIVE_URL)
+  ensureTrailLayers(map, archiveUrl)
 }
 
 /** Apply the latest accepted fog snapshot only after map sources are ready. */

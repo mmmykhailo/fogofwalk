@@ -16,7 +16,6 @@ import { useAuth } from "~/lib/server/authStore"
 import { useServerHealth } from "~/lib/server/serverHealth"
 import { useUploadHoldSeconds } from "~/lib/server/uploadGate"
 import { useFogStatus } from "~/lib/mapStore"
-import { TRAIL_ARCHIVE_URL } from "~/lib/map/trails/config"
 import { Button } from "./ui/button"
 import { MapDrawer } from "./MapDrawer"
 
@@ -35,6 +34,54 @@ export const EmptyServerless: Story = {
   render: () => {
     setServerless()
     return <MapDrawerStoryHarness drawerProps={makeDrawerProps()} />
+  },
+}
+
+export const TrailToggleUnavailable: Story = {
+  render: () => {
+    setServerless()
+    return (
+      <MapDrawerStoryHarness
+        drawerProps={makeDrawerProps({ trailArchiveUrl: null })}
+      />
+    )
+  },
+  play: async () => {
+    const drawer = within(document.body)
+    await userEvent.click(
+      await drawer.findByRole("button", { name: "Open drawer" })
+    )
+    await expect(
+      within(document.body).queryByRole("switch", { name: "Show trails" })
+    ).not.toBeInTheDocument()
+  },
+}
+
+export const TrailToggleAvailable: Story = {
+  render: () => {
+    setServerless()
+    return (
+      <MapDrawerStoryHarness
+        drawerProps={makeDrawerProps({
+          trailArchiveUrl: "https://cdn.example.test/map-data/trails-v1.pmtiles",
+        })}
+      />
+    )
+  },
+  play: async () => {
+    const drawer = within(document.body)
+    await userEvent.click(
+      await drawer.findByRole("button", { name: "Open drawer" })
+    )
+    const trailSwitch = await drawer.findByRole("switch", {
+      name: "Show trails",
+    })
+    await expect(trailSwitch).toBeChecked()
+    await userEvent.click(trailSwitch)
+    await expect(onShowTrailsChange).toHaveBeenCalledWith(
+      false,
+      expect.objectContaining({ reason: "none" })
+    )
   },
 }
 
@@ -167,11 +214,9 @@ export const TogglesActionsAndNestedClear: Story = {
     fireEvent.click(
       await drawer.findByRole("switch", { name: "Show activities" })
     )
-    if (TRAIL_ARCHIVE_URL !== null) {
-      fireEvent.click(
-        await drawer.findByRole("switch", { name: "Show trails" })
-      )
-    }
+    fireEvent.click(
+      await drawer.findByRole("switch", { name: "Show trails" })
+    )
     fireEvent.click(await drawer.findByRole("switch", { name: "Show fog" }))
     fireEvent.click(await drawer.findByRole("switch", { name: "Fill loops" }))
     fireEvent.click(await drawer.findByRole("switch", { name: "Show photos" }))
@@ -187,9 +232,7 @@ export const TogglesActionsAndNestedClear: Story = {
       false,
       switchEvent
     )
-    if (TRAIL_ARCHIVE_URL !== null) {
-      await expect(onShowTrailsChange).toHaveBeenCalledWith(false, switchEvent)
-    }
+    await expect(onShowTrailsChange).toHaveBeenCalledWith(false, switchEvent)
     await expect(onShowFogChange).toHaveBeenCalledWith(false, switchEvent)
     await expect(onFogModeChange).toHaveBeenCalledWith("fill")
     await expect(onMapModeChange).toHaveBeenCalledWith("relief")
@@ -268,6 +311,7 @@ function DrawerInteractionHarness() {
       {!isOpen && <Button onClick={() => setIsOpen(true)}>Open drawer</Button>}
       <MapDrawer
         {...makeDrawerProps({
+          trailArchiveUrl: "https://cdn.example.test/map-data/trails-v1.pmtiles",
           isOpen,
           onOpenChange: setIsOpen,
           activityCount: 4,
@@ -309,6 +353,7 @@ function NavigationHarness() {
 
 function makeDrawerProps(overrides: Partial<DrawerProps> = {}): DrawerProps {
   return {
+    trailArchiveUrl: null,
     isOpen: false,
     onOpenChange: () => {},
     activityCount: 0,

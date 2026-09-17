@@ -13,6 +13,8 @@ import { mapStore, saveMapPosition } from "~/lib/mapStore"
 import { styleForMapMode } from "~/lib/map/styles"
 import { incrementPerformanceCounter } from "~/lib/performance"
 import type { MapMode } from "~/types/activities"
+import { TRAIL_SOURCE_ID } from "~/constants/trails"
+import { recordTrailArchiveError } from "~/lib/map/trails/diagnostics"
 
 declare global {
   interface Window {
@@ -143,6 +145,15 @@ export function useMapLifecycle(
     map.on("webglcontextlost", handleContextLost)
     map.on("webglcontextrestored", handleContextRestored)
 
+    const handleMapError = (event: unknown) => {
+      const sourceId =
+        event && typeof event === "object" && "sourceId" in event
+          ? (event as { sourceId?: unknown }).sourceId
+          : undefined
+      if (sourceId === TRAIL_SOURCE_ID) recordTrailArchiveError(event)
+    }
+    map.on("error", handleMapError as never)
+
     const handleMoveStart = () => {
       mapSurface.dataset.mapMoving = ""
     }
@@ -190,6 +201,7 @@ export function useMapLifecycle(
       detachMapInteractions()
       map.off("webglcontextlost", handleContextLost)
       map.off("webglcontextrestored", handleContextRestored)
+      map.off("error", handleMapError as never)
       map.off("movestart", handleMoveStart)
       map.off("moveend", handleMoveEnd)
       map.off("remove", handleMapRemove)

@@ -43,6 +43,7 @@ import type { FogMode, MapMode } from "~/types/activities"
 import { TRAIL_ARCHIVE_URL } from "~/lib/map/trails/config"
 
 interface MapDrawerProps {
+  trailArchiveUrl?: string | null
   isOpen: boolean
   onOpenChange: (open: boolean) => void
   activityCount: number
@@ -73,6 +74,7 @@ interface MapDrawerProps {
 }
 
 export function MapDrawer({
+  trailArchiveUrl = TRAIL_ARCHIVE_URL,
   isOpen,
   onOpenChange,
   activityCount,
@@ -223,7 +225,7 @@ export function MapDrawer({
                   aria-label="Show activities"
                 />
               </div>
-              {TRAIL_ARCHIVE_URL !== null && (
+              {trailArchiveUrl !== null && (
                 <div className="flex items-center px-3 py-2.5">
                   <SignpostIcon
                     weight="duotone"
