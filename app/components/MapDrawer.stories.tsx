@@ -83,6 +83,12 @@ export const TrailToggleAvailable: Story = {
       false,
       expect.objectContaining({ reason: "none" })
     )
+    await userEvent.click(await drawer.findByRole("button", { name: "Close" }))
+    await waitFor(() =>
+      expect(
+        within(document.body).queryByRole("dialog")
+      ).not.toBeInTheDocument()
+    )
   },
 }
 
