@@ -12,7 +12,7 @@ import {
   TRAIL_LAYER_IDS,
   TRAIL_MAX_RENDER_ZOOM,
   TRAIL_MIN_RENDER_ZOOM,
-  TRAIL_SOURCE_IDS,
+  TRAIL_SOURCE_ID,
   TRAIL_SOURCE_LAYER,
 } from "~/constants/trails"
 import { SAVED_POINT_COLORS } from "~shared/saved-points"
@@ -135,7 +135,10 @@ describe("saved-point map layers", () => {
     fake.map.addLayer({ id: MAP_LAYER_IDS.fog })
     fake.map.addLayer({ id: MAP_LAYER_IDS.activities })
 
-    ensureTrailLayers(fake.map as never)
+    ensureTrailLayers(
+      fake.map as never,
+      "https://trails.example.test/map-data/trails/v1/trails-fixture.pmtiles"
+    )
 
     expect(fake.layerOrder).toEqual([
       ...ORDERED_TRAIL_LAYER_IDS,
@@ -147,12 +150,13 @@ describe("saved-point map layers", () => {
       [TRAIL_LAYER_IDS.hiking, MAP_LAYER_IDS.fog],
       [TRAIL_LAYER_IDS.cycling, MAP_LAYER_IDS.fog],
     ])
-    expect(fake.sources.get(TRAIL_SOURCE_IDS.hiking)).toEqual({
+    expect(fake.sources.get(TRAIL_SOURCE_ID)).toEqual({
       type: "vector",
-      tiles: ["fow-trails://hiking/{z}/{x}/{y}"],
+      url: "pmtiles://https://trails.example.test/map-data/trails/v1/trails-fixture.pmtiles",
       minzoom: TRAIL_DATA_ZOOM,
       maxzoom: TRAIL_DATA_ZOOM,
-      attribution: expect.any(String),
+      attribution:
+        '<a href="https://www.openstreetmap.org/copyright" target="_blank">© OpenStreetMap contributors</a>',
     })
 
     const casing = fake.layers.get(TRAIL_LAYER_IDS.hikingCasing) as {
@@ -176,7 +180,7 @@ describe("saved-point map layers", () => {
       paint: Record<string, unknown>
     }
     expect(casing).toMatchObject({
-      source: TRAIL_SOURCE_IDS.hiking,
+      source: TRAIL_SOURCE_ID,
       "source-layer": TRAIL_SOURCE_LAYER,
       minzoom: TRAIL_MIN_RENDER_ZOOM,
       maxzoom: TRAIL_MAX_RENDER_ZOOM,
@@ -192,7 +196,7 @@ describe("saved-point map layers", () => {
     ])
     expect(hiking.paint["line-color"]).toEqual(["get", "color"])
     expect(cycling).toMatchObject({
-      source: TRAIL_SOURCE_IDS.cycling,
+      source: TRAIL_SOURCE_ID,
       "source-layer": TRAIL_SOURCE_LAYER,
       minzoom: TRAIL_MIN_RENDER_ZOOM,
       maxzoom: TRAIL_MAX_RENDER_ZOOM,
@@ -208,11 +212,17 @@ describe("saved-point map layers", () => {
   test("repeated trail setup is idempotent and removes layers before sources", () => {
     const fake = createFakeMap()
 
-    ensureTrailLayers(fake.map as never)
+    ensureTrailLayers(
+      fake.map as never,
+      "https://trails.example.test/map-data/trails/v1/trails-fixture.pmtiles"
+    )
     const sourceCount = fake.sources.size
     const layerCount = fake.layers.size
     const addCount = fake.layerAddCalls.length
-    ensureTrailLayers(fake.map as never)
+    ensureTrailLayers(
+      fake.map as never,
+      "https://trails.example.test/map-data/trails/v1/trails-fixture.pmtiles"
+    )
 
     expect(fake.sources).toHaveLength(sourceCount)
     expect(fake.layers).toHaveLength(layerCount)
@@ -225,6 +235,6 @@ describe("saved-point map layers", () => {
       TRAIL_LAYER_IDS.hikingCasing,
     ])
     expect(fake.sourceRemoveCalls).toEqual([...ORDERED_TRAIL_SOURCE_IDS])
-    expect(fake.sources.has(TRAIL_SOURCE_IDS.hiking)).toBe(false)
+    expect(fake.sources.has(TRAIL_SOURCE_ID)).toBe(false)
   })
 })

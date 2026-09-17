@@ -104,10 +104,8 @@ import {
   measurePerformance,
 } from "~/lib/performance"
 import { shouldRevalidateHome, withoutSearchParams } from "~/lib/homeRoute"
-import {
-  TRAILS_FEATURE_ENABLED,
-  TRAILS_VISIBLE_DEFAULT,
-} from "~/constants/trails"
+import { TRAILS_VISIBLE_DEFAULT } from "~/constants/trails"
+import { TRAIL_ARCHIVE_URL } from "~/lib/map/trails/config"
 import {
   createInitialMapSurfaceState,
   mapSurfaceReducer,
@@ -602,7 +600,7 @@ export default function Home() {
     fogStatus.phase === "processing" || fogStatus.phase === "recovering"
   const [showActivities, setShowActivities] = useState(true)
   const [showTrails, setShowTrails] = useState(
-    TRAILS_FEATURE_ENABLED && TRAILS_VISIBLE_DEFAULT
+    TRAIL_ARCHIVE_URL !== null && TRAILS_VISIBLE_DEFAULT
   )
   const [showFog, setShowFog] = useState(true)
   const [fogMode, setFogMode] = useState<FogMode>(loaderData.restoredFogMode)

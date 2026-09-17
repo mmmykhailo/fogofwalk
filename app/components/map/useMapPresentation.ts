@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react"
+import type maplibregl from "maplibre-gl"
 import bbox from "@turf/bbox"
 import { lineString, multiLineString } from "@turf/helpers"
 import {
@@ -12,6 +13,7 @@ import { mapStore } from "~/lib/mapStore"
 import type { ActivityPaths } from "~/types/activities"
 
 interface MapPresentationOptions {
+  map: maplibregl.Map | null
   showActivities: boolean
   showTrails: boolean
   showFog: boolean
@@ -27,6 +29,8 @@ export function useMapPresentation(options: MapPresentationOptions): void {
   focusPathsRef.current = options.focusPaths
   const highlightPathsRef = useRef(options.highlightPaths)
   highlightPathsRef.current = options.highlightPaths
+  const showTrailsRef = useRef(options.showTrails)
+  showTrailsRef.current = options.showTrails
 
   useEffect(() => {
     if (mapStore.map && mapStore.sourcesReady) {
@@ -35,10 +39,26 @@ export function useMapPresentation(options: MapPresentationOptions): void {
   }, [options.showActivities])
 
   useEffect(() => {
-    if (mapStore.map && mapStore.sourcesReady) {
-      setTrailsEnabled(mapStore.map, options.showTrails)
+    const map = options.map
+    if (!map) return
+
+    const applyTrails = () => {
+      if (!mapStore.sourcesReady) return
+      setTrailsEnabled(map, showTrailsRef.current)
     }
-  }, [options.showTrails])
+
+    map.on("zoomend", applyTrails)
+    applyTrails()
+    return () => {
+      map.off("zoomend", applyTrails)
+    }
+  }, [options.map])
+
+  useEffect(() => {
+    if (options.map && mapStore.sourcesReady) {
+      setTrailsEnabled(options.map, options.showTrails)
+    }
+  }, [options.map, options.showTrails])
 
   useEffect(() => {
     const map = mapStore.map

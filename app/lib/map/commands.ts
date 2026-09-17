@@ -1,5 +1,6 @@
 import type maplibregl from "maplibre-gl"
-import { TRAILS_FEATURE_ENABLED } from "~/constants/trails"
+import { TRAIL_ARCHIVE_URL } from "~/lib/map/trails/config"
+import { TRAIL_MIN_RENDER_ZOOM } from "~/constants/trails"
 import {
   ACTIVITY_COLOR,
   ACTIVITY_COLOR_DIM,
@@ -66,11 +67,13 @@ export function setTrailsEnabled(
   map: maplibregl.Map,
   isEnabled: boolean
 ): void {
-  if (!TRAILS_FEATURE_ENABLED || !isEnabled) {
+  const getZoom = (map as unknown as { getZoom?: () => number }).getZoom
+  const zoom = typeof getZoom === "function" ? getZoom.call(map) : Infinity
+  if (!TRAIL_ARCHIVE_URL || !isEnabled || zoom < TRAIL_MIN_RENDER_ZOOM) {
     removeTrailLayers(map)
     return
   }
-  ensureTrailLayers(map)
+  ensureTrailLayers(map, TRAIL_ARCHIVE_URL)
 }
 
 /** Apply the latest accepted fog snapshot only after map sources are ready. */

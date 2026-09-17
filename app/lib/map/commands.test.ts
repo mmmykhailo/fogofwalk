@@ -7,13 +7,13 @@ import {
   setLapHighlightData,
   setTrailsEnabled,
 } from "~/lib/map/commands"
-import { TRAIL_LAYER_IDS, TRAIL_SOURCE_IDS } from "~/constants/trails"
+import { TRAIL_LAYER_IDS, TRAIL_SOURCE_ID } from "~/constants/trails"
 import { mapStore, worldFogGeoJSON } from "~/lib/mapStore"
 
 describe("map rendering commands", () => {
   test("removes every trail resource when trails are disabled", () => {
     const layers = new Set<string>(Object.values(TRAIL_LAYER_IDS))
-    const sources = new Set<string>(Object.values(TRAIL_SOURCE_IDS))
+    const sources = new Set<string>([TRAIL_SOURCE_ID])
     const removedLayers: string[] = []
     const removedSources: string[] = []
     const map = {
@@ -36,10 +36,7 @@ describe("map rendering commands", () => {
       TRAIL_LAYER_IDS.hiking,
       TRAIL_LAYER_IDS.hikingCasing,
     ])
-    expect(removedSources).toEqual([
-      TRAIL_SOURCE_IDS.hiking,
-      TRAIL_SOURCE_IDS.cycling,
-    ])
+    expect(removedSources).toEqual([TRAIL_SOURCE_ID])
     expect(layers).toHaveLength(0)
     expect(sources).toHaveLength(0)
   })

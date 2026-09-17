@@ -100,6 +100,7 @@ export function MapView({
   // Declared after map initialization so its first effect sees the live map.
   useMyLocationMarker(showMyLocation, myLocation)
   useMapPresentation({
+    map,
     showActivities,
     showTrails,
     showFog,

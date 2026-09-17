@@ -16,7 +16,7 @@ import { useAuth } from "~/lib/server/authStore"
 import { useServerHealth } from "~/lib/server/serverHealth"
 import { useUploadHoldSeconds } from "~/lib/server/uploadGate"
 import { useFogStatus } from "~/lib/mapStore"
-import { TRAILS_FEATURE_ENABLED } from "~/constants/trails"
+import { TRAIL_ARCHIVE_URL } from "~/lib/map/trails/config"
 import { Button } from "./ui/button"
 import { MapDrawer } from "./MapDrawer"
 
@@ -167,8 +167,10 @@ export const TogglesActionsAndNestedClear: Story = {
     fireEvent.click(
       await drawer.findByRole("switch", { name: "Show activities" })
     )
-    if (TRAILS_FEATURE_ENABLED) {
-      fireEvent.click(await drawer.findByRole("switch", { name: "Show trails" }))
+    if (TRAIL_ARCHIVE_URL !== null) {
+      fireEvent.click(
+        await drawer.findByRole("switch", { name: "Show trails" })
+      )
     }
     fireEvent.click(await drawer.findByRole("switch", { name: "Show fog" }))
     fireEvent.click(await drawer.findByRole("switch", { name: "Fill loops" }))
@@ -185,7 +187,7 @@ export const TogglesActionsAndNestedClear: Story = {
       false,
       switchEvent
     )
-    if (TRAILS_FEATURE_ENABLED) {
+    if (TRAIL_ARCHIVE_URL !== null) {
       await expect(onShowTrailsChange).toHaveBeenCalledWith(false, switchEvent)
     }
     await expect(onShowFogChange).toHaveBeenCalledWith(false, switchEvent)

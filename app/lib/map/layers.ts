@@ -1,5 +1,6 @@
 import type maplibregl from "maplibre-gl"
-import { TRAILS_FEATURE_ENABLED } from "~/constants/trails"
+import { TRAIL_ARCHIVE_URL } from "~/lib/map/trails/config"
+import { TRAIL_MIN_RENDER_ZOOM } from "~/constants/trails"
 import {
   ACTIVITY_COLOR,
   ACTIVITY_HIT_WIDTH,
@@ -37,6 +38,7 @@ export const SAVED_POINT_LAYER_IDS = [
 
 export interface MapLayerSetupOptions {
   showTrails: boolean
+  trailArchiveUrl?: string | null
 }
 
 export function setupMapLayers(
@@ -59,8 +61,13 @@ export function setupMapLayers(
     map.setTerrain({ source: "terrain-source", exaggeration: 2.5 })
   }
 
-  if (TRAILS_FEATURE_ENABLED && options.showTrails) {
-    ensureTrailLayers(map)
+  const trailArchiveUrl = options.trailArchiveUrl ?? TRAIL_ARCHIVE_URL
+  const zoom =
+    typeof (map as unknown as { getZoom?: unknown }).getZoom === "function"
+      ? map.getZoom()
+      : TRAIL_MIN_RENDER_ZOOM
+  if (options.showTrails && trailArchiveUrl && zoom >= TRAIL_MIN_RENDER_ZOOM) {
+    ensureTrailLayers(map, trailArchiveUrl)
   } else {
     removeTrailLayers(map)
   }

@@ -40,7 +40,7 @@ import { FogProgressText } from "~/components/FogProgressText"
 import { useAuth } from "~/lib/server/authStore"
 import type { clientLoader as accessRequestLoader } from "~/routes/account.access-request"
 import type { FogMode, MapMode } from "~/types/activities"
-import { TRAILS_FEATURE_ENABLED } from "~/constants/trails"
+import { TRAIL_ARCHIVE_URL } from "~/lib/map/trails/config"
 
 interface MapDrawerProps {
   isOpen: boolean
@@ -223,7 +223,7 @@ export function MapDrawer({
                   aria-label="Show activities"
                 />
               </div>
-              {TRAILS_FEATURE_ENABLED && (
+              {TRAIL_ARCHIVE_URL !== null && (
                 <div className="flex items-center px-3 py-2.5">
                   <SignpostIcon
                     weight="duotone"

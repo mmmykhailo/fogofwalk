@@ -19,14 +19,13 @@ import {
   TRAIL_HIKING_CASING_WIDTH_DELTA,
   TRAIL_HIKING_OPACITY,
   TRAIL_HIKING_WIDTH_STOPS,
-  TRAIL_INTERNAL_TILE_URLS,
   TRAIL_LAYER_IDS,
   TRAIL_LINE_CAP,
   TRAIL_LINE_JOIN,
   TRAIL_MAX_RENDER_ZOOM,
   TRAIL_MIN_RENDER_ZOOM,
-  TRAIL_PROVIDER_ATTRIBUTION,
-  TRAIL_SOURCE_IDS,
+  TRAIL_ATTRIBUTION,
+  TRAIL_SOURCE_ID,
   TRAIL_SOURCE_LAYER,
   TRAIL_THEMES,
 } from "~/constants/trails"
@@ -54,15 +53,13 @@ function kindFilter(kind: (typeof TRAIL_THEMES)[number]): FilterSpecification {
   return expression(["==", ["get", "kind"], kind]) as FilterSpecification
 }
 
-function sourceSpecification(
-  theme: (typeof TRAIL_THEMES)[number]
-): VectorSourceSpecification {
+function sourceSpecification(archiveUrl: string): VectorSourceSpecification {
   return {
     type: "vector",
-    tiles: [TRAIL_INTERNAL_TILE_URLS[theme]],
+    url: `pmtiles://${archiveUrl}`,
     minzoom: TRAIL_DATA_ZOOM,
     maxzoom: TRAIL_DATA_ZOOM,
-    attribution: TRAIL_PROVIDER_ATTRIBUTION,
+    attribution: TRAIL_ATTRIBUTION,
   }
 }
 
@@ -70,7 +67,7 @@ function hikingCasingLayer(): AddLayerObject {
   return {
     id: TRAIL_LAYER_IDS.hikingCasing,
     type: "line",
-    source: TRAIL_SOURCE_IDS.hiking,
+    source: TRAIL_SOURCE_ID,
     "source-layer": TRAIL_SOURCE_LAYER,
     minzoom: TRAIL_MIN_RENDER_ZOOM,
     maxzoom: TRAIL_MAX_RENDER_ZOOM,
@@ -96,7 +93,7 @@ function hikingLayer(): AddLayerObject {
   return {
     id: TRAIL_LAYER_IDS.hiking,
     type: "line",
-    source: TRAIL_SOURCE_IDS.hiking,
+    source: TRAIL_SOURCE_ID,
     "source-layer": TRAIL_SOURCE_LAYER,
     minzoom: TRAIL_MIN_RENDER_ZOOM,
     maxzoom: TRAIL_MAX_RENDER_ZOOM,
@@ -119,7 +116,7 @@ function cyclingLayer(): AddLayerObject {
   return {
     id: TRAIL_LAYER_IDS.cycling,
     type: "line",
-    source: TRAIL_SOURCE_IDS.cycling,
+    source: TRAIL_SOURCE_ID,
     "source-layer": TRAIL_SOURCE_LAYER,
     minzoom: TRAIL_MIN_RENDER_ZOOM,
     maxzoom: TRAIL_MAX_RENDER_ZOOM,
@@ -144,12 +141,13 @@ export function trailInsertionPoint(map: maplibregl.Map): string | undefined {
   return undefined
 }
 
-export function ensureTrailLayers(map: maplibregl.Map): void {
-  for (const theme of TRAIL_THEMES) {
-    const sourceId = TRAIL_SOURCE_IDS[theme]
-    if (!map.getSource(sourceId)) {
-      map.addSource(sourceId, sourceSpecification(theme))
-    }
+export function ensureTrailLayers(
+  map: maplibregl.Map,
+  archiveUrl: string | null
+): void {
+  if (!archiveUrl) return
+  if (!map.getSource(TRAIL_SOURCE_ID)) {
+    map.addSource(TRAIL_SOURCE_ID, sourceSpecification(archiveUrl))
   }
 
   const beforeId = trailInsertionPoint(map)
