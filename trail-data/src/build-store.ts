@@ -246,9 +246,44 @@ export class BuildStore {
     })
   }
 
-  addWay(way: OsmWay): void {
-    if (!this.isWantedWay(way.id)) return
-    this.upsertVersioned(
+  addWay(way: OsmWay): boolean {
+    if (!this.isWantedWay(way.id)) return false
+    return this.upsertWay(way)
+  }
+
+  addWays(ways: OsmWay[]): number {
+    const wanted = this.wantedIds(
+      "wanted_ways",
+      "way_id",
+      ways.map((way) => way.id)
+    )
+    let retained = 0
+    for (const way of ways) {
+      if (wanted.has(way.id) && this.upsertWay(way)) retained++
+    }
+    return retained
+  }
+
+  addNode(node: OsmNode): boolean {
+    if (!this.isWantedNode(node.id)) return false
+    return this.upsertNode(node)
+  }
+
+  addNodes(nodes: OsmNode[]): number {
+    const wanted = this.wantedIds(
+      "wanted_nodes",
+      "node_id",
+      nodes.map((node) => node.id)
+    )
+    let retained = 0
+    for (const node of nodes) {
+      if (wanted.has(node.id) && this.upsertNode(node)) retained++
+    }
+    return retained
+  }
+
+  private upsertWay(way: OsmWay): boolean {
+    return this.upsertVersioned(
       "way",
       way.id,
       way.version,
@@ -272,8 +307,7 @@ export class BuildStore {
     )
   }
 
-  addNode(node: OsmNode): void {
-    if (!this.isWantedNode(node.id)) return
+  private upsertNode(node: OsmNode): boolean {
     const existing = this.db
       .query<
         NodeRow,
@@ -288,7 +322,7 @@ export class BuildStore {
       existing.tags === canonicalJson(node.tags)
     if (same) {
       this.counters.duplicateSourceObjects++
-      return
+      return false
     }
     if (existing && existing.version === node.version) {
       this.counters.sourceConflicts++
@@ -296,13 +330,14 @@ export class BuildStore {
     }
     if (existing && existing.version > node.version) {
       this.counters.duplicateSourceObjects++
-      return
+      return false
     }
     this.db.run(
       `INSERT INTO nodes(id, version, lon, lat, tags) VALUES (?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET version=excluded.version, lon=excluded.lon, lat=excluded.lat, tags=excluded.tags`,
       [node.id, node.version, node.lon, node.lat, canonicalJson(node.tags)]
     )
+    return true
   }
 
   populateWantedNodes(): void {
@@ -426,7 +461,7 @@ export class BuildStore {
     refs: string,
     equal: (existing: WayRow) => boolean,
     replace: () => void
-  ): void {
+  ): boolean {
     const existing = this.db
       .query<
         WayRow,
@@ -435,11 +470,11 @@ export class BuildStore {
       .get(id)
     if (!existing) {
       replace()
-      return
+      return true
     }
     if (existing.version === version && equal(existing)) {
       this.counters.duplicateSourceObjects++
-      return
+      return false
     }
     if (existing.version === version) {
       this.counters.sourceConflicts++
@@ -447,9 +482,35 @@ export class BuildStore {
     }
     if (existing.version > version) {
       this.counters.duplicateSourceObjects++
-      return
+      return false
     }
     replace()
+    return true
+  }
+
+  private wantedIds(
+    table: "wanted_ways" | "wanted_nodes",
+    column: "way_id" | "node_id",
+    ids: number[]
+  ): Set<number> {
+    const wanted = new Set<number>()
+    const uniqueIds = [...new Set(ids)]
+    for (let offset = 0; offset < uniqueIds.length; offset += 500) {
+      const batch = uniqueIds.slice(offset, offset + 500)
+      if (batch.length === 0) continue
+      const placeholders = batch.map(() => "?").join(",")
+      const rows = this.db
+        .query<
+          { way_id?: number; node_id?: number },
+          number[]
+        >(`SELECT ${column} FROM ${table} WHERE ${column} IN (${placeholders})`)
+        .all(...batch)
+      for (const row of rows) {
+        const id = row[column]
+        if (typeof id === "number") wanted.add(id)
+      }
+    }
+    return wanted
   }
 }
 

@@ -338,12 +338,7 @@ async function buildArchive(options: BuildOptions): Promise<BuildResult> {
         await scanInput(input, controller.signal, (block) => {
           metrics.rowsRead += block.ways.length
           store?.withTransaction(() => {
-            for (const way of block.ways) {
-              const before = store?.count("ways") ?? 0
-              store?.addWay(way)
-              const after = store?.count("ways") ?? before
-              if (after > before) metrics.rowsRetained++
-            }
+            metrics.rowsRetained += store?.addWays(block.ways) ?? 0
           })
         })
       }
@@ -355,12 +350,7 @@ async function buildArchive(options: BuildOptions): Promise<BuildResult> {
         await scanInput(input, controller.signal, (block) => {
           metrics.rowsRead += block.nodes.length
           store?.withTransaction(() => {
-            for (const node of block.nodes) {
-              const before = store?.count("nodes") ?? 0
-              store?.addNode(node)
-              const after = store?.count("nodes") ?? before
-              if (after > before) metrics.rowsRetained++
-            }
+            metrics.rowsRetained += store?.addNodes(block.nodes) ?? 0
           })
         })
       }
