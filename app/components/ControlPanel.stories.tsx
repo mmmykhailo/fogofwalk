@@ -77,6 +77,7 @@ export const OpenDrawerAndSelectFile: Story = {
 
 function ControlPanelHarness() {
   const [showActivities, setShowActivities] = useState(true)
+  const [showTrails, setShowTrails] = useState(true)
   const [showFog, setShowFog] = useState(true)
   const [showPhotos, setShowPhotos] = useState(true)
   const [showSavedPoints, setShowSavedPoints] = useState(true)
@@ -89,6 +90,8 @@ function ControlPanelHarness() {
         savedPointCount: 1,
         showActivities,
         onShowActivitiesChange: setShowActivities,
+        showTrails,
+        onShowTrailsChange: setShowTrails,
         showFog,
         onShowFogChange: setShowFog,
         showPhotos,
@@ -111,6 +114,8 @@ function makeControlPanelProps(
     isProcessing: false,
     showActivities: true,
     onShowActivitiesChange: () => {},
+    showTrails: true,
+    onShowTrailsChange: () => {},
     showFog: true,
     onShowFogChange: () => {},
     fogMode: "corridor",

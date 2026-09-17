@@ -19,6 +19,7 @@ import {
   ShieldCheckIcon,
   XIcon,
   UserIcon,
+  SignpostIcon,
 } from "@phosphor-icons/react"
 import {
   Drawer,
@@ -39,6 +40,7 @@ import { FogProgressText } from "~/components/FogProgressText"
 import { useAuth } from "~/lib/server/authStore"
 import type { clientLoader as accessRequestLoader } from "~/routes/account.access-request"
 import type { FogMode, MapMode } from "~/types/activities"
+import { TRAILS_FEATURE_ENABLED } from "~/constants/trails"
 
 interface MapDrawerProps {
   isOpen: boolean
@@ -52,6 +54,8 @@ interface MapDrawerProps {
   onClearAll: () => void
   showActivities: boolean
   onShowActivitiesChange: (v: boolean) => void
+  showTrails: boolean
+  onShowTrailsChange: (v: boolean) => void
   showFog: boolean
   onShowFogChange: (v: boolean) => void
   fogMode: FogMode
@@ -80,6 +84,8 @@ export function MapDrawer({
   onClearAll,
   showActivities,
   onShowActivitiesChange,
+  showTrails,
+  onShowTrailsChange,
   showFog,
   onShowFogChange,
   fogMode,
@@ -217,6 +223,20 @@ export function MapDrawer({
                   aria-label="Show activities"
                 />
               </div>
+              {TRAILS_FEATURE_ENABLED && (
+                <div className="flex items-center px-3 py-2.5">
+                  <SignpostIcon
+                    weight="duotone"
+                    className="mr-3 size-5 shrink-0 text-muted-foreground"
+                  />
+                  <span className="flex-1 text-sm">Show trails</span>
+                  <Switch
+                    checked={showTrails}
+                    onCheckedChange={onShowTrailsChange}
+                    aria-label="Show trails"
+                  />
+                </div>
+              )}
               <div className="flex items-center px-3 py-2.5">
                 <CloudIcon
                   weight="duotone"

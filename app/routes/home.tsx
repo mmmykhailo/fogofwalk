@@ -1364,6 +1364,8 @@ export default function Home() {
                 isProcessing={isProcessing}
                 showActivities={showActivities}
                 onShowActivitiesChange={setShowActivities}
+                showTrails={showTrails}
+                onShowTrailsChange={setShowTrails}
                 showFog={showFog}
                 onShowFogChange={setShowFog}
                 fogMode={fogMode}

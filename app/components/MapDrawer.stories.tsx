@@ -16,6 +16,7 @@ import { useAuth } from "~/lib/server/authStore"
 import { useServerHealth } from "~/lib/server/serverHealth"
 import { useUploadHoldSeconds } from "~/lib/server/uploadGate"
 import { useFogStatus } from "~/lib/mapStore"
+import { TRAILS_FEATURE_ENABLED } from "~/constants/trails"
 import { Button } from "./ui/button"
 import { MapDrawer } from "./MapDrawer"
 
@@ -144,6 +145,7 @@ const onAddFiles = fn()
 const onAddPhotos = fn()
 const onClearAll = fn()
 const onShowActivitiesChange = fn()
+const onShowTrailsChange = fn()
 const onShowFogChange = fn()
 const onFogModeChange = fn()
 const onMapModeChange = fn()
@@ -165,6 +167,9 @@ export const TogglesActionsAndNestedClear: Story = {
     fireEvent.click(
       await drawer.findByRole("switch", { name: "Show activities" })
     )
+    if (TRAILS_FEATURE_ENABLED) {
+      fireEvent.click(await drawer.findByRole("switch", { name: "Show trails" }))
+    }
     fireEvent.click(await drawer.findByRole("switch", { name: "Show fog" }))
     fireEvent.click(await drawer.findByRole("switch", { name: "Fill loops" }))
     fireEvent.click(await drawer.findByRole("switch", { name: "Show photos" }))
@@ -180,6 +185,9 @@ export const TogglesActionsAndNestedClear: Story = {
       false,
       switchEvent
     )
+    if (TRAILS_FEATURE_ENABLED) {
+      await expect(onShowTrailsChange).toHaveBeenCalledWith(false, switchEvent)
+    }
     await expect(onShowFogChange).toHaveBeenCalledWith(false, switchEvent)
     await expect(onFogModeChange).toHaveBeenCalledWith("fill")
     await expect(onMapModeChange).toHaveBeenCalledWith("relief")
@@ -265,6 +273,7 @@ function DrawerInteractionHarness() {
           savedPointCount: 2,
           showAddPhotosOption: true,
           onShowActivitiesChange,
+          onShowTrailsChange,
           onShowFogChange,
           onFogModeChange,
           onMapModeChange,
@@ -309,6 +318,8 @@ function makeDrawerProps(overrides: Partial<DrawerProps> = {}): DrawerProps {
     onClearAll: () => {},
     showActivities: true,
     onShowActivitiesChange: () => {},
+    showTrails: true,
+    onShowTrailsChange: () => {},
     showFog: true,
     onShowFogChange: () => {},
     fogMode: "corridor",
