@@ -92,6 +92,28 @@ class TrailClassifierTest {
     assertEquals(24, selected.features().getLast().sort());
   }
 
+  @Test
+  void usesPaletteOrderWhenRanksAreEqual() {
+    var selected = TrailClassifier.selectVisualFeatures(List.of(
+      new TrailClassifier.Membership(
+        300, TrailClassifier.Kind.HIKING, 2, "#eab308", false
+      ),
+      new TrailClassifier.Membership(
+        100, TrailClassifier.Kind.HIKING, 2, "#d9272e", false
+      ),
+      new TrailClassifier.Membership(
+        200, TrailClassifier.Kind.HIKING, 2, "#15803d", false
+      )
+    ));
+
+    assertEquals(
+      List.of("#d9272e", "#15803d", "#eab308"),
+      selected.features().stream()
+        .map(TrailClassifier.VisualFeature::color)
+        .toList()
+    );
+  }
+
   private static java.util.Optional<TrailClassifier.RelationClassification> classify(
     long id, String type, String route
   ) {

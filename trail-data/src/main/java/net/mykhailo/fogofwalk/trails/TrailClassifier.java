@@ -177,8 +177,11 @@ public final class TrailClassifier {
   }
 
   public static int colorOrder(String color) {
-    int index = COLOR_ORDER.indexOf(color);
-    return index < 0 ? COLOR_ORDER.size() : index;
+    for (int index = 0; index < COLOR_ORDER.size(); index++) {
+      String name = COLOR_ORDER.get(index);
+      if (name.equals(color) || COLORS.get(name).equals(color)) return index;
+    }
+    return COLOR_ORDER.size();
   }
 
   private static String visualKey(Membership membership) {
