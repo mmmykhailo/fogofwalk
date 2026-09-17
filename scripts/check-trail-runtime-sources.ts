@@ -1,6 +1,8 @@
 import { readdir, readFile } from "node:fs/promises"
 import { basename, relative, resolve } from "node:path"
 
+import { findPublicPmtiles } from "./trail-runtime-sources"
+
 const runtimeRoots = ["app", "server/src", "package.json", "bun.lock"]
 const extraRoots = process.argv.slice(2).map((argument) => {
   if (!argument.startsWith("--root=")) {
@@ -37,6 +39,14 @@ const files: string[] = []
 const runtimeFiles = new Set<string>()
 const trailDataFiles: string[] = []
 const violations: { file: string; line: number; name: string }[] = []
+
+for (const file of await findPublicPmtiles(resolve(root, "public"))) {
+  violations.push({
+    file: relative(root, file),
+    line: 1,
+    name: "public PMTiles archive; release archives belong on an external static host",
+  })
+}
 
 async function collect(
   path: string,
