@@ -238,11 +238,13 @@ test.describe("trail overlay", () => {
 
     expect(
       fixture.requests.every(
-        ({ range, status, url }) =>
+        ({ authorization, cookie, range, status, url }) =>
           url === TRAIL_ARCHIVE_URL &&
           status === 206 &&
           range !== null &&
-          /^bytes=\d+-\d*$/.test(range)
+          /^bytes=\d+-\d*$/.test(range) &&
+          authorization === null &&
+          cookie === null
       )
     ).toBe(true)
     expect(forbiddenRequests).toEqual([])
@@ -415,7 +417,10 @@ test.describe("trail overlay", () => {
 
   for (const mode of [
     "http",
+    "not-found",
     "range",
+    "truncated",
+    "cors",
     "invalid-pmtiles",
     "offline",
   ] as const satisfies readonly TrailArchiveMode[]) {
