@@ -187,6 +187,9 @@ test.describe("Maptoolkit trail overlay", () => {
     await expect(app.page.locator(".maplibregl-ctrl-attrib")).toContainText(
       "Maptoolkit"
     )
+    await expect(app.page.locator(".maplibregl-ctrl-attrib")).toContainText(
+      "OpenStreetMap"
+    )
     expect(
       fixture.requests.every(
         ({ authorization, cookie }) =>

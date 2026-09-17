@@ -77,7 +77,7 @@ async function stubMapTiles(context: BrowserContext) {
           maxzoom: 15,
           bounds: [-180, -85.0511287, 180, 85.0511287],
           attribution:
-            "<a href='https://www.maptoolkit.com/copyright/'>&copy; Maptoolkit</a> <a href='https://www.openstreetmap.org/copyright'>&copy; Openstreetmap</a>",
+            "<a href='https://www.maptoolkit.com/copyright/'>&copy; Maptoolkit</a> <a href='https://www.openstreetmap.org/copyright'>&copy; OpenStreetMap</a>",
           tiles: [
             "https://tiles.maptoolkit.org/e2e-empty/{z}/{x}/{y}.mvt",
           ],

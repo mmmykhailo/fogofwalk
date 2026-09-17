@@ -121,7 +121,7 @@ export async function installTrailTiles(page: Page) {
         maxzoom: 15,
         bounds: [-180, -85.0511287, 180, 85.0511287],
         attribution:
-          "<a href='https://www.maptoolkit.com/copyright/'>&copy; Maptoolkit</a> <a href='https://www.openstreetmap.org/copyright'>&copy; Openstreetmap</a>",
+          "<a href='https://www.maptoolkit.com/copyright/'>&copy; Maptoolkit</a> <a href='https://www.openstreetmap.org/copyright'>&copy; OpenStreetMap</a>",
         tiles: [MAPTOOLKIT_TILE_URL_PATTERN],
         vector_layers: [{ id: "road", minzoom: 4, maxzoom: 15 }],
       }),
