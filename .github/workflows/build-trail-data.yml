@@ -71,6 +71,9 @@ jobs:
         with:
           bun-version: latest
 
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
       - name: Check dated input configuration
         run: |
           set -euo pipefail
@@ -95,6 +98,12 @@ jobs:
           case "$TRAIL_OSM_SOURCE_URL" in
             http://*|https://*) ;;
             *) echo "TRAIL_OSM_SOURCE_URL must be an HTTP(S) URL." >&2; exit 1 ;;
+          esac
+          case "$TRAIL_OSM_SOURCE_URL" in
+            https://planet.openstreetmap.org/*/planet-latest.osm.pbf)
+              echo "Mutable planet-latest.osm.pbf is not an eligible production input." >&2
+              exit 1
+              ;;
           esac
           case "$TRAIL_OSM_SOURCE_URL" in
             *\?*|*\#*|*@*)
@@ -155,6 +164,9 @@ jobs:
         uses: oven-sh/setup-bun@v1
         with:
           bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
 
       - name: Download verified build
         uses: actions/download-artifact@v4
