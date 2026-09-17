@@ -146,6 +146,10 @@ filters `walking_network` to `iwn`, `nwn`, `rwn`, or `lwn`. Cycling filters
 rendering threshold of zoom 7, while the hosted vector source has a maximum
 zoom of 15. The existing OpenFreeMap or Esri basemap remains unchanged.
 
+The hiking foreground is blue (#3b82f6) with dash array [3, 2] over the
+existing solid light casing. The cycling foreground is lighter pink
+(#f472b6) with dash array [2, 2] and no casing.
+
 Maptoolkit's TileJSON supplies the copyright attribution. The map keeps
 MapLibre's attribution control expanded at every viewport size, and one
 Maptoolkit logo control is shown whenever the hosted source is enabled. Trails
