@@ -143,11 +143,27 @@ export default function TermsPage() {
         <p className="leading-relaxed">
           The Service relies on third-party services for map tiles,
           authentication, hosting, and other infrastructure, including
-          OpenFreeMap, Esri, and Waymarked Trails route data derived from
-          OpenStreetMap. We are not responsible for the availability, accuracy,
-          privacy practices, security, or terms of those third-party services.
-          Your use of those services is subject to their respective terms and
-          policies.
+          OpenFreeMap, Esri, and{" "}
+          <a
+            href="https://waymarkedtrails.org/"
+            target="_blank"
+            rel="noreferrer"
+            className="text-primary underline underline-offset-4 hover:text-primary/80"
+          >
+            Waymarked Trails
+          </a>{" "}
+          route data derived from{" "}
+          <a
+            href="https://www.openstreetmap.org/copyright"
+            target="_blank"
+            rel="noreferrer"
+            className="text-primary underline underline-offset-4 hover:text-primary/80"
+          >
+            OpenStreetMap
+          </a>
+          . We are not responsible for the availability, accuracy, privacy
+          practices, security, or terms of those third-party services. Your use
+          of those services is subject to their respective terms and policies.
         </p>
       </PageSection>
 
