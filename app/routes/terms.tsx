@@ -17,7 +17,7 @@ export default function TermsPage() {
   return (
     <PageShell title="Terms of Service">
       <p className="mb-10 text-sm text-muted-foreground">
-        Last updated: August 13, 2026
+        Last updated: September 17, 2026
       </p>
 
       <PageSection title="Acceptance of terms">

@@ -17,7 +17,7 @@ export default function PrivacyPage() {
   return (
     <PageShell title="Privacy Policy">
       <p className="mb-10 text-sm text-muted-foreground">
-        Last updated: August 13, 2026
+        Last updated: September 17, 2026
       </p>
 
       <PageSection title="Introduction">
