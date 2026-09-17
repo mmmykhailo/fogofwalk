@@ -38,6 +38,7 @@ class TrailProfileTest {
       "https://example.test/planet-260907.osm.pbf",
       "https://planet.openstreetmap.org/pbf/planet-260907.osm.pbf?token=secret",
       "https://user:password@planet.openstreetmap.org/pbf/planet-260907.osm.pbf",
+      "https://planet.openstreetmap.org/pbf/planet-latest.osm.pbf",
       "https://planet.openstreetmap.org/pbf/planet-260907.zip",
     }) {
       assertThrows(IllegalArgumentException.class, () -> TrailProfile.validateSourceUrl(value));

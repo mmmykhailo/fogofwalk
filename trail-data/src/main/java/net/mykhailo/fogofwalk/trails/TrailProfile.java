@@ -271,12 +271,15 @@ public final class TrailProfile implements Profile {
     String path = uri.getPath();
     boolean allowedHost = "planet.openstreetmap.org".equalsIgnoreCase(host)
       || "download.geofabrik.de".equalsIgnoreCase(host);
+    boolean mutablePlanet = "planet.openstreetmap.org".equalsIgnoreCase(host)
+      && path != null && path.endsWith("/planet-latest.osm.pbf");
     if (!"https".equalsIgnoreCase(scheme)
       || uri.getPort() != -1
       || uri.getUserInfo() != null
       || uri.getQuery() != null
       || uri.getFragment() != null
       || !allowedHost
+      || mutablePlanet
       || path == null
       || !path.endsWith(".osm.pbf")) {
       throw new IllegalArgumentException("OSM source URL must be a dated public HTTPS .osm.pbf URL");
