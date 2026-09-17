@@ -74,6 +74,9 @@ export function validateSourceManifest(value: unknown): SourceManifest {
   if (
     typeof value.snapshot !== "string" ||
     !value.snapshot ||
+    !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(
+      value.snapshot
+    ) ||
     !Number.isFinite(Date.parse(value.snapshot))
   ) {
     throw new Error("manifest snapshot must be an ISO timestamp")
@@ -173,9 +176,10 @@ function parseSourceInput(value: unknown, index: number): SourceInput {
   if (typeof value.path !== "string" || !value.path.startsWith("/")) {
     throw new Error(`manifest input ${index} path must be absolute`)
   }
+  const fileName = value.path.split("/").at(-1) ?? ""
   if (
-    !value.path.endsWith(".osm.pbf") ||
-    value.path.endsWith("/planet-latest.osm.pbf")
+    !fileName.endsWith(".osm.pbf") ||
+    /(^|[-_.])latest([-.]|$)/i.test(fileName)
   ) {
     throw new Error(
       `manifest input ${index} path must be a dated .osm.pbf file`

@@ -48,6 +48,25 @@ test("rejects credentials, mutable names, unapproved hosts, and bad bounds", () 
       inputs: [],
     })
   ).toThrow()
+  expect(() =>
+    validateSourceManifest({
+      schemaVersion: 1,
+      coverage: { kind: "regional", bounds: [14, 49, 15, 51] },
+      snapshot: "September 7, 2026",
+      inputs: [
+        {
+          path: "/data/czechia-latest.osm.pbf",
+          sourceUrl:
+            "https://download.geofabrik.de/europe/czech-republic-260907.osm.pbf",
+          publishedChecksum: {
+            algorithm: "md5",
+            value: "a".repeat(32),
+          },
+          sha256: "b".repeat(64),
+        },
+      ],
+    })
+  ).toThrow()
   expect(normalizeChecksum("sha256", `sha256:${"a".repeat(64)}`)).toBe(
     "a".repeat(64)
   )
