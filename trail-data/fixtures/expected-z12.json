@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "sourceLayer": "trails",
+  "droppedOverlapKeys": 1,
+  "features": [
+    {"way": 101, "kind": "hiking", "color": "#d9272e", "offset": 0, "sort": 13},
+    {"way": 101, "kind": "cycling", "color": "#ec4899", "offset": 0, "sort": 23},
+    {"way": 102, "kind": "hiking", "color": "#854d0e", "offset": -1.5, "sort": 14},
+    {"way": 102, "kind": "hiking", "color": "#15803d", "offset": 1.5, "sort": 11},
+    {"way": 103, "kind": "hiking", "color": "#7e22ce", "offset": 0, "sort": 12},
+    {"way": 104, "kind": "hiking", "color": "#7e22ce", "offset": 0, "sort": 11},
+    {"way": 106, "kind": "hiking", "color": "#d9272e", "offset": -4.5, "sort": 11},
+    {"way": 106, "kind": "hiking", "color": "#15803d", "offset": -1.5, "sort": 11},
+    {"way": 106, "kind": "hiking", "color": "#1769aa", "offset": 1.5, "sort": 11},
+    {"way": 106, "kind": "hiking", "color": "#eab308", "offset": 4.5, "sort": 11}
+  ]
+}

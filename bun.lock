@@ -8,7 +8,6 @@
         "@base-ui/react": "^1.4.1",
         "@fontsource-variable/jetbrains-mono": "^5.2.8",
         "@maplibre/geojson-vt": "^6.1.0",
-        "@maplibre/vt-pbf": "^4.3.0",
         "@phosphor-icons/react": "^2.1.10",
         "@react-router/node": "7.13.1",
         "@react-router/serve": "7.13.1",
@@ -39,6 +38,7 @@
       },
       "devDependencies": {
         "@mapbox/vector-tile": "^2.0.4",
+        "@maplibre/vt-pbf": "^4.3.0",
         "@react-router/dev": "7.13.1",
         "@storybook/addon-a11y": "10.6.0",
         "@storybook/addon-docs": "10.6.0",
