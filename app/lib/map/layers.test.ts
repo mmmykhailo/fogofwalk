@@ -130,6 +130,19 @@ describe("saved-point map layers", () => {
     expect(fake.addedImages).toHaveLength(imageAdditionCount)
   })
 
+  test("honors an explicit unavailable archive", () => {
+    const fake = createFakeMap()
+    fake.map.addLayer({ id: MAP_LAYER_IDS.fog })
+
+    setupMapLayers(fake.map as never, "flat", {
+      showTrails: true,
+      trailArchiveUrl: null,
+    })
+
+    expect(fake.sources.has(TRAIL_SOURCE_ID)).toBe(false)
+    expect(fake.layers.has(TRAIL_LAYER_IDS.hiking)).toBe(false)
+  })
+
   test("adds trail sources and layers in order with configured styles", () => {
     const fake = createFakeMap()
     fake.map.addLayer({ id: MAP_LAYER_IDS.fog })

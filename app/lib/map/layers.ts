@@ -61,7 +61,10 @@ export function setupMapLayers(
     map.setTerrain({ source: "terrain-source", exaggeration: 2.5 })
   }
 
-  const trailArchiveUrl = options.trailArchiveUrl ?? TRAIL_ARCHIVE_URL
+  const trailArchiveUrl =
+    options.trailArchiveUrl === undefined
+      ? TRAIL_ARCHIVE_URL
+      : options.trailArchiveUrl
   const zoom =
     typeof (map as unknown as { getZoom?: unknown }).getZoom === "function"
       ? map.getZoom()

@@ -30,9 +30,14 @@ trail-data/scripts/build-region.sh \
 
 `build-planet.sh` has the same interface and is named separately for the
 production runbook. Both scripts run the unit suite, refuse an existing output,
-and verify the completed archive. `verify-archive.sh` checks PMTiles v3,
+verify the completed archive, and write sidecars next to the report: a
+content SHA-256 file, publication manifest, and ODbL data notice.
+`verify-archive.sh` checks PMTiles v3,
 z12-only MVT data, the `trails` layer, the four-property schema, palette/rank
-ranges, tile size, attribution, and an optional SHA-256 value.
+ranges, tile size, attribution, and an optional SHA-256 value. Linux builds
+also record peak builder memory and sampled scratch-disk high-water usage in
+the report; tile count, compressed-size percentiles, and densest tiles are
+filled by the archive verifier.
 
 The fixture is intentionally XML and is used by the Java tests and the small
 deterministic PMTiles fixture generator. CI does not download live OSM data.

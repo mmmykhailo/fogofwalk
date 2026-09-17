@@ -102,10 +102,10 @@ jobs:
               exit 1
               ;;
           esac
-          case "$TRAIL_OSM_SOURCE_CHECKSUM" in
-            sha256:[0-9a-fA-F][0-9a-fA-F]*) ;;
-            *) echo "TRAIL_OSM_SOURCE_CHECKSUM must use the published sha256:<64-hex> form." >&2; exit 1 ;;
-          esac
+          if [[ ! "$TRAIL_OSM_SOURCE_CHECKSUM" =~ ^sha256:[0-9a-fA-F]{64}$ ]]; then
+            echo "TRAIL_OSM_SOURCE_CHECKSUM must use the published sha256:<64-hex> form." >&2
+            exit 1
+          fi
 
       - name: Build and verify dated archive
         env:
@@ -121,6 +121,11 @@ jobs:
             "--report=$OUTPUT_DIR/trails-build-report.json" \
             "--osm-snapshot=$TRAIL_OSM_SNAPSHOT"
           sha256sum "$OUTPUT_DIR/trails-build.pmtiles" > "$OUTPUT_DIR/trails-build.pmtiles.sha256"
+          bun trail-data/scripts/write-publication-manifest.mjs \
+            --archive="$OUTPUT_DIR/trails-build.pmtiles" \
+            --report="$OUTPUT_DIR/trails-build-report.json" \
+            --manifest="$OUTPUT_DIR/trails-build-manifest.json" \
+            --notice="$OUTPUT_DIR/ODbL-NOTICE.txt"
 
       - name: Upload dated build for review or publication
         uses: actions/upload-artifact@v4
@@ -166,17 +171,18 @@ jobs:
           [ -f "$archive" ] && [ -f "$report" ]
           bun trail-data/scripts/verify-archive.mjs --archive="$archive" --report="$report"
           sha256="$(sha256sum "$archive" | awk '{print $1}')"
-          bytes="$(wc -c < "$archive" | tr -d '[:space:]')"
-          case "$TRAIL_ARCHIVE_DATE" in
-            ????-??-??) ;;
-            *) echo "TRAIL_ARCHIVE_DATE must be YYYY-MM-DD." >&2; exit 1 ;;
-          esac
+          if [[ ! "$TRAIL_ARCHIVE_DATE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+            echo "TRAIL_ARCHIVE_DATE must be YYYY-MM-DD." >&2
+            exit 1
+          fi
           archive_name="trails-${TRAIL_ARCHIVE_DATE}-${sha256:0:12}.pmtiles"
-          jq --arg file "$archive_name" --arg sha256 "$sha256" --arg bytes "$bytes" \
-            '.archive.file = $file | .archive.sha256 = $sha256 | .archive.bytes = ($bytes | tonumber)' \
-            "$report" > "$report.tmp"
-          mv "$report.tmp" "$report"
           mv "$archive" "trail-archive/$archive_name"
+          mv "$report" "trail-archive/$archive_name.report.json"
+          bun trail-data/scripts/write-publication-manifest.mjs \
+            --archive="trail-archive/$archive_name" \
+            --report="trail-archive/$archive_name.report.json" \
+            --manifest="trail-archive/$archive_name.manifest.json" \
+            --notice="trail-archive/$archive_name.ODbL-NOTICE.txt"
           echo "name=$archive_name" >> "$GITHUB_OUTPUT"
           echo "sha256=$sha256" >> "$GITHUB_OUTPUT"
           echo "origin=$TRAIL_PUBLIC_ORIGIN" >> "$GITHUB_OUTPUT"
@@ -186,6 +192,30 @@ jobs:
       - name: Configure SSH
         run: |
           set -euo pipefail
+          for name in VPS_HOST VPS_USER TRAIL_PUBLIC_ORIGIN VPS_SSH_KEY VPS_KNOWN_HOSTS; do
+            if [ -z "${!name:-}" ]; then
+              echo "Missing publication variable or secret: $name" >&2
+              exit 1
+            fi
+          done
+          TRAIL_PUBLIC_ORIGIN="${TRAIL_PUBLIC_ORIGIN%/}"
+          case "$TRAIL_PUBLIC_ORIGIN" in
+            https://*) ;;
+            *) echo "TRAIL_PUBLIC_ORIGIN must use HTTPS." >&2; exit 1 ;;
+          esac
+          case "$TRAIL_PUBLIC_ORIGIN" in
+            *\?*|*\#*|*@*)
+              echo "TRAIL_PUBLIC_ORIGIN must not contain a query, fragment, or credentials." >&2
+              exit 1
+              ;;
+          esac
+          public_authority="${TRAIL_PUBLIC_ORIGIN#https://}"
+          case "$public_authority" in
+            */*)
+              echo "TRAIL_PUBLIC_ORIGIN must contain only an HTTPS origin." >&2
+              exit 1
+              ;;
+          esac
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
           printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/id_deploy
@@ -213,18 +243,20 @@ jobs:
             *) echo "Unexpected archive filename." >&2; exit 1 ;;
           esac
           remote="/srv/fogofwalk/map-data/trails/v1/$ARCHIVE_NAME"
-          ssh vps "test ! -e '$remote'"
+          ssh vps "set -eu; test ! -e '$remote'; test ! -e '$remote.report.json'; test ! -e '$remote.manifest.json'; test ! -e '$remote.ODbL-NOTICE.txt'; test ! -e '$remote.sha256'"
           scp -p "trail-archive/$ARCHIVE_NAME" "vps:$remote.tmp.$GITHUB_RUN_ID"
-          ssh vps "set -eu; test ! -e '$remote'; sha256sum '$remote.tmp.$GITHUB_RUN_ID'; mv '$remote.tmp.$GITHUB_RUN_ID' '$remote'"
-          scp -p trail-archive/trails-build-report.json "vps:$remote.report.tmp.$GITHUB_RUN_ID"
-          ssh vps "set -eu; mv '$remote.report.tmp.$GITHUB_RUN_ID' '$remote.report.json'"
+          scp -p "trail-archive/$ARCHIVE_NAME.report.json" "vps:$remote.report.tmp.$GITHUB_RUN_ID"
+          scp -p "trail-archive/$ARCHIVE_NAME.manifest.json" "vps:$remote.manifest.tmp.$GITHUB_RUN_ID"
+          scp -p "trail-archive/$ARCHIVE_NAME.ODbL-NOTICE.txt" "vps:$remote.ODbL-NOTICE.tmp.$GITHUB_RUN_ID"
+          scp -p "trail-archive/$ARCHIVE_NAME.sha256" "vps:$remote.sha256.tmp.$GITHUB_RUN_ID"
+          ssh vps "set -eu; sha256sum '$remote.tmp.$GITHUB_RUN_ID'; mv -n '$remote.tmp.$GITHUB_RUN_ID' '$remote'; mv -n '$remote.report.tmp.$GITHUB_RUN_ID' '$remote.report.json'; mv -n '$remote.manifest.tmp.$GITHUB_RUN_ID' '$remote.manifest.json'; mv -n '$remote.ODbL-NOTICE.tmp.$GITHUB_RUN_ID' '$remote.ODbL-NOTICE.txt'; mv -n '$remote.sha256.tmp.$GITHUB_RUN_ID' '$remote.sha256'; test ! -e '$remote.tmp.$GITHUB_RUN_ID'; test ! -e '$remote.report.tmp.$GITHUB_RUN_ID'; test ! -e '$remote.manifest.tmp.$GITHUB_RUN_ID'; test ! -e '$remote.ODbL-NOTICE.tmp.$GITHUB_RUN_ID'; test ! -e '$remote.sha256.tmp.$GITHUB_RUN_ID'"
 
       - name: Probe public archive ranges
         env:
           ARCHIVE_NAME: ${{ steps.archive.outputs.name }}
         run: |
           set -euo pipefail
-          url="$TRAIL_PUBLIC_ORIGIN/map-data/trails/v1/$ARCHIVE_NAME"
+          url="${TRAIL_PUBLIC_ORIGIN%/}/map-data/trails/v1/$ARCHIVE_NAME"
           headers="$(mktemp)"
           body="$(mktemp)"
           trap 'rm -f "$headers" "$body"' EXIT

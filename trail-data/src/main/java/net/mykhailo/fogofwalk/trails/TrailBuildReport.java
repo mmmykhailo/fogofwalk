@@ -74,6 +74,8 @@ public final class TrailBuildReport {
     return """
       {
         "schemaVersion": 1,
+        "attribution": "© OpenStreetMap contributors",
+        "dataLicense": "ODbL-1.0",
         "osmSnapshot": "%s",
         "osmSourceUrl": "%s",
         "osmSourceChecksum": "%s",
