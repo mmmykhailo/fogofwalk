@@ -161,6 +161,9 @@ jobs:
           VITE_API_URL: ${{ vars.VITE_API_URL }}
           VITE_TRAIL_ARCHIVE_URL: ${{ vars.VITE_TRAIL_ARCHIVE_URL }}
 
+      - name: Check built client trail sources
+        run: bun scripts/check-trail-runtime-sources.ts --root=build
+
       - name: Setup Pages
         uses: actions/configure-pages@v4
 

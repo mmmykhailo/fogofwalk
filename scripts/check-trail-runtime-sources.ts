@@ -2,6 +2,14 @@ import { readdir, readFile } from "node:fs/promises"
 import { basename, relative, resolve } from "node:path"
 
 const runtimeRoots = ["app", "server/src", "package.json", "bun.lock"]
+const extraRoots = process.argv.slice(2).map((argument) => {
+  if (!argument.startsWith("--root=")) {
+    throw new Error(`unknown argument: ${argument}`)
+  }
+  const value = argument.slice("--root=".length)
+  if (!value) throw new Error("--root must not be blank")
+  return value
+})
 const forbidden = [
   { name: "provider trail host", pattern: /waymarkedtrails\.org/i },
   { name: "public Overpass host", pattern: /overpass-api\.de/i },
@@ -37,7 +45,7 @@ async function collect(path: string): Promise<void> {
   }
 }
 
-for (const configuredRoot of runtimeRoots) {
+for (const configuredRoot of [...runtimeRoots, ...extraRoots]) {
   const path = resolve(root, configuredRoot)
   if (basename(path) === configuredRoot && configuredRoot.includes(".")) {
     files.push(path)
