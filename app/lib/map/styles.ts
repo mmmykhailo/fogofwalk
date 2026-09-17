@@ -1,10 +1,6 @@
-import maplibregl, { type StyleSpecification } from "maplibre-gl"
-import { Protocol } from "pmtiles"
+import type { StyleSpecification } from "maplibre-gl"
 import { MAP_STYLE_URL } from "~/constants/fog"
 import type { MapMode } from "~/types/activities"
-
-const pmtilesProtocol = new Protocol()
-maplibregl.addProtocol("pmtiles", pmtilesProtocol.tile.bind(pmtilesProtocol))
 
 export const SATELLITE_STYLE: StyleSpecification = {
   version: 8,

@@ -5,10 +5,42 @@ import {
   clearRenderedActivityState,
   rehydrateMapPresentation,
   setLapHighlightData,
+  setTrailsEnabled,
 } from "~/lib/map/commands"
+import {
+  REVERSE_TRAIL_LAYER_IDS,
+  TRAIL_LAYER_IDS,
+  TRAIL_SOURCE_ID,
+} from "~/constants/trails"
 import { mapStore, worldFogGeoJSON } from "~/lib/mapStore"
 
 describe("map rendering commands", () => {
+  test("removes every trail resource when trails are disabled", () => {
+    const layers = new Set<string>(Object.values(TRAIL_LAYER_IDS))
+    const sources = new Set<string>([TRAIL_SOURCE_ID])
+    const removedLayers: string[] = []
+    const removedSources: string[] = []
+    const map = {
+      getLayer: (id: string) => (layers.has(id) ? { id } : undefined),
+      getSource: (id: string) => (sources.has(id) ? { id } : undefined),
+      removeLayer: (id: string) => {
+        layers.delete(id)
+        removedLayers.push(id)
+      },
+      removeSource: (id: string) => {
+        sources.delete(id)
+        removedSources.push(id)
+      },
+    }
+
+    setTrailsEnabled(map as never, false)
+
+    expect(removedLayers).toEqual([...REVERSE_TRAIL_LAYER_IDS])
+    expect(removedSources).toEqual([TRAIL_SOURCE_ID])
+    expect(layers).toHaveLength(0)
+    expect(sources).toHaveLength(0)
+  })
+
   test("sets the default activity paint when nothing is selected", () => {
     const calls: unknown[][] = []
     const map = {
@@ -97,12 +129,15 @@ describe("map rendering commands", () => {
     const map = {
       getLayer: (id: string) => (id === "fog-layer" ? undefined : { id }),
       getSource: () => ({ setData: () => undefined }),
+      removeLayer: () => undefined,
+      removeSource: () => undefined,
       setLayoutProperty: (...args: unknown[]) => layoutCalls.push(args),
       setPaintProperty: (...args: unknown[]) => paintCalls.push(args),
     }
 
     rehydrateMapPresentation(map as never, {
       showActivities: false,
+      showTrails: false,
       showFog: false,
       selectedActivityIds: [],
       highlightPaths: null,

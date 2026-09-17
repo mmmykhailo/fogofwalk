@@ -13,6 +13,9 @@ import { mapStore, saveMapPosition } from "~/lib/mapStore"
 import { styleForMapMode } from "~/lib/map/styles"
 import { incrementPerformanceCounter } from "~/lib/performance"
 import type { MapMode } from "~/types/activities"
+import { TRAIL_SOURCE_ID } from "~/constants/trails"
+import { removeTrailLayers } from "~/lib/map/trails/layers"
+import { recordTrailTileError } from "~/lib/map/trails/diagnostics"
 
 declare global {
   interface Window {
@@ -56,6 +59,7 @@ export function useMapLifecycle(
 
   const currentPresentation = (): MapPresentationState => ({
     showActivities: optionsRef.current.showActivities,
+    showTrails: optionsRef.current.showTrails,
     showFog: optionsRef.current.showFog,
     selectedActivityIds: optionsRef.current.selectedActivityIds,
     highlightPaths: optionsRef.current.highlightPaths,
@@ -91,7 +95,9 @@ export function useMapLifecycle(
 
     const rehydrateAfterContextRestore = () => {
       if (disposed) return
-      setupMapLayers(map, optionsRef.current.mapMode)
+      setupMapLayers(map, optionsRef.current.mapMode, {
+        showTrails: currentPresentation().showTrails,
+      })
       mapStore.sourcesReady = true
       const activitiesSource = map.getSource(MAP_SOURCE_IDS.activities) as
         | maplibregl.GeoJSONSource
@@ -103,7 +109,11 @@ export function useMapLifecycle(
         )
       }
       optionsRef.current.invalidateActivitiesCache()
-      rehydrateMapPresentation(map, currentPresentation())
+      rehydrateMapPresentation(
+        map,
+        currentPresentation(),
+        "webgl-context-restoration"
+      )
       applyFogDataToMap(map)
       isInitialStyleLoadedRef.current = true
       optionsRef.current.rebuildPhotoMarkers()
@@ -140,6 +150,15 @@ export function useMapLifecycle(
     map.on("webglcontextlost", handleContextLost)
     map.on("webglcontextrestored", handleContextRestored)
 
+    const handleMapError = (event: unknown) => {
+      const sourceId =
+        event && typeof event === "object" && "sourceId" in event
+          ? (event as { sourceId?: unknown }).sourceId
+          : undefined
+      if (sourceId === TRAIL_SOURCE_ID) recordTrailTileError(event)
+    }
+    map.on("error", handleMapError as never)
+
     const handleMoveStart = () => {
       mapSurface.dataset.mapMoving = ""
     }
@@ -169,9 +188,11 @@ export function useMapLifecycle(
 
     map.once("load", () => {
       map.resize()
-      setupMapLayers(map, initialMode)
+      setupMapLayers(map, initialMode, {
+        showTrails: currentPresentation().showTrails,
+      })
       mapStore.sourcesReady = true
-      rehydrateMapPresentation(map, currentPresentation())
+      rehydrateMapPresentation(map, currentPresentation(), "initial-load")
       applyFogDataToMap(map)
       isInitialStyleLoadedRef.current = true
       optionsRef.current.rebuildPhotoMarkers()
@@ -185,10 +206,12 @@ export function useMapLifecycle(
       detachMapInteractions()
       map.off("webglcontextlost", handleContextLost)
       map.off("webglcontextrestored", handleContextRestored)
+      map.off("error", handleMapError as never)
       map.off("movestart", handleMoveStart)
       map.off("moveend", handleMoveEnd)
       map.off("remove", handleMapRemove)
       delete mapSurface.dataset.mapMoving
+      removeTrailLayers(map)
       mapStore.sourcesReady = false
       mapStore.renderSourceRevision = null
       mapStore.map = null
@@ -220,10 +243,12 @@ export function useMapLifecycle(
       map.off("style.load", onStyleLoad)
       pendingStyleLoadRef.current = null
 
-      setupMapLayers(map, options.mapMode)
+      setupMapLayers(map, options.mapMode, {
+        showTrails: currentPresentation().showTrails,
+      })
       mapStore.sourcesReady = true
       optionsRef.current.invalidateActivitiesCache()
-      rehydrateMapPresentation(map, currentPresentation())
+      rehydrateMapPresentation(map, currentPresentation(), "style-reload")
       applyFogDataToMap(map)
       map.easeTo({
         pitch: options.mapMode === "relief" ? 45 : 0,

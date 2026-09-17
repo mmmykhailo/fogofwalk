@@ -10,6 +10,7 @@ import { mapStore, worldFogGeoJSON } from "~/lib/mapStore"
 import { activitiesFeatureCollection } from "~/lib/map/geojson"
 import { createFogMaskLayer } from "~/lib/map/fogMaskLayer"
 import { ensureSavedPointMarkerImages } from "~/lib/map/savedPointMarkerImages"
+import { ensureTrailLayers, removeTrailLayers } from "~/lib/map/trails/layers"
 import type { MapMode } from "~/types/activities"
 
 export const MAP_SOURCE_IDS = {
@@ -33,7 +34,19 @@ export const SAVED_POINT_LAYER_IDS = [
   MAP_LAYER_IDS.savedPointHit,
 ] as const
 
-export function setupMapLayers(map: maplibregl.Map, mode: MapMode): void {
+export interface MapLayerSetupOptions {
+  showTrails: boolean
+}
+
+export function setupMapLayers(
+  map: maplibregl.Map,
+  mode: MapMode,
+  options: MapLayerSetupOptions
+): void {
+  if (mode === "relief" && map.getLayer(MAP_LAYER_IDS.fog)) {
+    map.removeLayer(MAP_LAYER_IDS.fog)
+  }
+
   if (mode === "relief") {
     if (!map.getSource("terrain-source")) {
       map.addSource("terrain-source", {
@@ -49,8 +62,24 @@ export function setupMapLayers(map: maplibregl.Map, mode: MapMode): void {
     map.setTerrain({ source: "terrain-source", exaggeration: 2.5 })
   }
 
-  if (mode !== "relief" && !map.getLayer(MAP_LAYER_IDS.fog)) {
-    map.addLayer(createFogMaskLayer(mapStore.fogData ?? worldFogGeoJSON()))
+  if (options.showTrails) {
+    ensureTrailLayers(map)
+  } else {
+    removeTrailLayers(map)
+  }
+
+  if (mode !== "relief") {
+    if (!map.getLayer(MAP_LAYER_IDS.fog)) {
+      const beforeId = map.getLayer(MAP_LAYER_IDS.activities)
+        ? MAP_LAYER_IDS.activities
+        : undefined
+      map.addLayer(
+        createFogMaskLayer(mapStore.fogData ?? worldFogGeoJSON()),
+        beforeId
+      )
+    } else if (map.getLayer(MAP_LAYER_IDS.activities)) {
+      map.moveLayer(MAP_LAYER_IDS.fog, MAP_LAYER_IDS.activities)
+    }
   }
 
   if (!map.getSource(MAP_SOURCE_IDS.activities)) {

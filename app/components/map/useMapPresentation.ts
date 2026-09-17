@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react"
+import type maplibregl from "maplibre-gl"
 import bbox from "@turf/bbox"
 import { lineString, multiLineString } from "@turf/helpers"
 import {
@@ -6,12 +7,15 @@ import {
   setActivitiesVisible,
   setFogVisible,
   setLapHighlightData,
+  setTrailsEnabled,
 } from "~/lib/map/commands"
 import { mapStore } from "~/lib/mapStore"
 import type { ActivityPaths } from "~/types/activities"
 
 interface MapPresentationOptions {
+  map: maplibregl.Map | null
   showActivities: boolean
+  showTrails: boolean
   showFog: boolean
   selectedActivityIds: string[]
   highlightPaths: ActivityPaths | null
@@ -25,12 +29,25 @@ export function useMapPresentation(options: MapPresentationOptions): void {
   focusPathsRef.current = options.focusPaths
   const highlightPathsRef = useRef(options.highlightPaths)
   highlightPathsRef.current = options.highlightPaths
+  const previousShowTrailsRef = useRef(options.showTrails)
 
   useEffect(() => {
     if (mapStore.map && mapStore.sourcesReady) {
       setActivitiesVisible(mapStore.map, options.showActivities)
     }
   }, [options.showActivities])
+
+  useEffect(() => {
+    if (options.map && mapStore.sourcesReady) {
+      const wasChanged = previousShowTrailsRef.current !== options.showTrails
+      previousShowTrailsRef.current = options.showTrails
+      setTrailsEnabled(
+        options.map,
+        options.showTrails,
+        wasChanged ? "switch-change" : undefined
+      )
+    }
+  }, [options.map, options.showTrails])
 
   useEffect(() => {
     const map = mapStore.map

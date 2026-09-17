@@ -104,6 +104,7 @@ import {
   measurePerformance,
 } from "~/lib/performance"
 import { shouldRevalidateHome, withoutSearchParams } from "~/lib/homeRoute"
+import { TRAILS_VISIBLE_DEFAULT } from "~/constants/trails"
 import {
   createInitialMapSurfaceState,
   mapSurfaceReducer,
@@ -597,6 +598,7 @@ export default function Home() {
   const isProcessing =
     fogStatus.phase === "processing" || fogStatus.phase === "recovering"
   const [showActivities, setShowActivities] = useState(true)
+  const [showTrails, setShowTrails] = useState(TRAILS_VISIBLE_DEFAULT)
   const [showFog, setShowFog] = useState(true)
   const [fogMode, setFogMode] = useState<FogMode>(loaderData.restoredFogMode)
   const [mapMode, setMapMode] = useState<MapMode>("flat")
@@ -1316,6 +1318,7 @@ export default function Home() {
           <ErrorBoundary>
             <MapView
               showActivities={showActivities}
+              showTrails={showTrails}
               showFog={showFog}
               onMapReady={() => setMapReady(true)}
               onProcessingComplete={handleProcessingComplete}
@@ -1356,6 +1359,8 @@ export default function Home() {
                 isProcessing={isProcessing}
                 showActivities={showActivities}
                 onShowActivitiesChange={setShowActivities}
+                showTrails={showTrails}
+                onShowTrailsChange={setShowTrails}
                 showFog={showFog}
                 onShowFogChange={setShowFog}
                 fogMode={fogMode}

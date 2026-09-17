@@ -47,7 +47,7 @@ export default defineConfig({
     {
       name: "synced",
       testIgnore:
-        /(?:serverless|fog-visual|fog-worker|paths|gps-anomalies|activities-performance|map-interaction-performance)\.spec\.ts/,
+        /(?:serverless|trails|fog-visual|fog-worker|paths|gps-anomalies|activities-performance|map-interaction-performance)\.spec\.ts/,
       use: { ...devices["Desktop Chrome"], baseURL: WEB_URL },
     },
     {
@@ -70,6 +70,11 @@ export default defineConfig({
     {
       name: "paths",
       testMatch: /(?:paths|gps-anomalies)\.spec\.ts/,
+      use: { ...devices["Desktop Chrome"], baseURL: WEB_URL_SERVERLESS },
+    },
+    {
+      name: "trails",
+      testMatch: /trails\.spec\.ts/,
       use: { ...devices["Desktop Chrome"], baseURL: WEB_URL_SERVERLESS },
     },
   ],

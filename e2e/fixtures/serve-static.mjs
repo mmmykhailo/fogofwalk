@@ -16,20 +16,32 @@ const contentTypes = {
   ".woff2": "font/woff2",
 }
 
-createServer((request, response) => {
-  const requestPath = decodeURIComponent((request.url ?? "/").split("?")[0])
+function fileForRequest(requestPath) {
   const candidate = normalize(join(root, requestPath))
-  const filePath =
+  if (
     candidate.startsWith(root) &&
     existsSync(candidate) &&
     statSync(candidate).isFile()
-      ? candidate
-      : join(root, "index.html")
-  response.statusCode = candidate === filePath ? 200 : 200
+  ) {
+    return candidate
+  }
+  return join(root, "index.html")
+}
+
+createServer((request, response) => {
+  const requestPath = decodeURIComponent((request.url ?? "/").split("?")[0])
+  const filePath = fileForRequest(requestPath)
+  const fileSize = statSync(filePath).size
+  response.statusCode = 200
   response.setHeader(
     "Content-Type",
     contentTypes[extname(filePath)] ?? "application/octet-stream"
   )
+  response.setHeader("Content-Length", String(fileSize))
+  if (request.method === "HEAD") {
+    response.end()
+    return
+  }
   createReadStream(filePath).pipe(response)
 }).listen(port, "127.0.0.1", () => {
   console.log(`static server listening on ${port}`)

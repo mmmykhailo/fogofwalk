@@ -37,6 +37,38 @@ export const EmptyServerless: Story = {
   },
 }
 
+export const TrailToggleAvailable: Story = {
+  render: () => {
+    setServerless()
+    return (
+      <MapDrawerStoryHarness
+        drawerProps={makeDrawerProps({ onShowTrailsChange })}
+      />
+    )
+  },
+  play: async () => {
+    const drawer = within(document.body)
+    await userEvent.click(
+      await drawer.findByRole("button", { name: "Open drawer" })
+    )
+    const trailSwitch = await drawer.findByRole("switch", {
+      name: "Show trails",
+    })
+    await expect(trailSwitch).toBeChecked()
+    await userEvent.click(trailSwitch)
+    await expect(onShowTrailsChange).toHaveBeenCalledWith(
+      false,
+      expect.objectContaining({ reason: "none" })
+    )
+    await userEvent.click(await drawer.findByRole("button", { name: "Close" }))
+    await waitFor(() =>
+      expect(
+        within(document.body).queryByRole("dialog")
+      ).not.toBeInTheDocument()
+    )
+  },
+}
+
 export const PopulatedWithPhotosAndSavedPoints: Story = {
   render: () => {
     setServerless()
@@ -144,6 +176,7 @@ const onAddFiles = fn()
 const onAddPhotos = fn()
 const onClearAll = fn()
 const onShowActivitiesChange = fn()
+const onShowTrailsChange = fn()
 const onShowFogChange = fn()
 const onFogModeChange = fn()
 const onMapModeChange = fn()
@@ -165,6 +198,7 @@ export const TogglesActionsAndNestedClear: Story = {
     fireEvent.click(
       await drawer.findByRole("switch", { name: "Show activities" })
     )
+    fireEvent.click(await drawer.findByRole("switch", { name: "Show trails" }))
     fireEvent.click(await drawer.findByRole("switch", { name: "Show fog" }))
     fireEvent.click(await drawer.findByRole("switch", { name: "Fill loops" }))
     fireEvent.click(await drawer.findByRole("switch", { name: "Show photos" }))
@@ -180,6 +214,7 @@ export const TogglesActionsAndNestedClear: Story = {
       false,
       switchEvent
     )
+    await expect(onShowTrailsChange).toHaveBeenCalledWith(false, switchEvent)
     await expect(onShowFogChange).toHaveBeenCalledWith(false, switchEvent)
     await expect(onFogModeChange).toHaveBeenCalledWith("fill")
     await expect(onMapModeChange).toHaveBeenCalledWith("relief")
@@ -265,6 +300,7 @@ function DrawerInteractionHarness() {
           savedPointCount: 2,
           showAddPhotosOption: true,
           onShowActivitiesChange,
+          onShowTrailsChange,
           onShowFogChange,
           onFogModeChange,
           onMapModeChange,
@@ -309,6 +345,8 @@ function makeDrawerProps(overrides: Partial<DrawerProps> = {}): DrawerProps {
     onClearAll: () => {},
     showActivities: true,
     onShowActivitiesChange: () => {},
+    showTrails: true,
+    onShowTrailsChange: () => {},
     showFog: true,
     onShowFogChange: () => {},
     fogMode: "corridor",

@@ -3,6 +3,7 @@ import { precacheAndRoute, cleanupOutdatedCaches } from "workbox-precaching"
 import { registerRoute } from "workbox-routing"
 import { CacheFirst, StaleWhileRevalidate } from "workbox-strategies"
 import { ExpirationPlugin } from "workbox-expiration"
+import { isMapStyleRequest, isMapTileRequest } from "./lib/map/swRouting"
 
 declare let self: ServiceWorkerGlobalScope & typeof globalThis
 
@@ -11,8 +12,7 @@ precacheAndRoute(self.__WB_MANIFEST)
 
 // Map tiles: long-lived CacheFirst (e.g. OpenFreeMap vector tiles)
 registerRoute(
-  ({ url }) =>
-    url.pathname.includes("/tiles/") || url.pathname.endsWith(".pmtiles"),
+  isMapTileRequest,
   new CacheFirst({
     cacheName: "map-tiles",
     plugins: [
@@ -26,7 +26,7 @@ registerRoute(
 
 // Map style JSON: StaleWhileRevalidate so updates are picked up next load
 registerRoute(
-  ({ url }) => url.pathname.endsWith(".json"),
+  isMapStyleRequest,
   new StaleWhileRevalidate({ cacheName: "map-styles" })
 )
 

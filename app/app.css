@@ -222,3 +222,10 @@
   margin-bottom: 0;
   border-radius: 0%;
 }
+
+/* Tailwind's image reset replaces the logo control's 24px height attribute
+   with height:auto. Keep the provider mark at its required CSS size. */
+.maptoolkit-logo-control img {
+  width: auto;
+  height: 24px;
+}

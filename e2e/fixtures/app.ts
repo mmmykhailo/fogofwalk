@@ -66,9 +66,37 @@ async function stubMapTiles(context: BrowserContext) {
     return route.abort()
   })
 
+  await context.route("https://tiles.maptoolkit.org/**", (route) => {
+    if (route.request().url() === "https://tiles.maptoolkit.org/mtk.json") {
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          tilejson: "3.0.0",
+          minzoom: 0,
+          maxzoom: 15,
+          bounds: [-180, -85.0511287, 180, 85.0511287],
+          attribution:
+            "<a href='https://www.maptoolkit.com/copyright/'>&copy; Maptoolkit</a> <a href='https://www.openstreetmap.org/copyright'>&copy; OpenStreetMap</a>",
+          tiles: ["https://tiles.maptoolkit.org/e2e-empty/{z}/{x}/{y}.mvt"],
+          vector_layers: [{ id: "road", minzoom: 4, maxzoom: 15 }],
+        }),
+      })
+    }
+    return route.fulfill({
+      status: 200,
+      contentType: "application/vnd.mapbox-vector-tile",
+      body: Buffer.alloc(0),
+    })
+  })
+
   for (const host of [
     "https://server.arcgisonline.com/**",
     "https://s3.amazonaws.com/**",
+    "https://**.waymarkedtrails.org/**",
+    "https://overpass-api.de/**",
+    "https://api.openstreetmap.org/**",
+    "https://tile.openstreetmap.org/**",
   ]) {
     await context.route(host, (route) => route.abort())
   }

@@ -123,3 +123,52 @@ map resources, and implements the GPX/FIT web share target. Its contract spans
 `public/site.webmanifest`, `app/sw.ts`, and `app/routes/home.tsx`; change those
 three together. Shared files remain in `share-target-queue` until the import
 action returns a terminal result so a failed import stays retryable.
+
+## Trail overlay data flow
+
+The optional trail overlay is a display-only map resource. Its data flow is:
+
+```text
+drawer state
+  -> setupMapLayers / setTrailsEnabled
+  -> MapLibre source reads Maptoolkit TileJSON
+  -> MapLibre fetches visible vector tiles directly
+  -> local Fog of Walk line styles filter road.walking_network and
+     road.cycling_network
+```
+
+The source is `trails-source` and reads
+`https://tiles.maptoolkit.org/mtk.json`. The three local line layers are
+`trails-hiking-casing-layer`, `trails-hiking-layer`, and
+`trails-cycling-layer`; each reads the hosted `road` source layer. Hiking
+filters `walking_network` to `iwn`, `nwn`, `rwn`, or `lwn`. Cycling filters
+`cycling_network` to `icn`, `ncn`, `rcn`, or `lcn`. All three layers have a
+rendering threshold of zoom 7, while the hosted vector source has a maximum
+zoom of 15. The existing OpenFreeMap or Esri basemap remains unchanged.
+
+The hiking foreground is blue (#3b82f6) with dash array [3, 2] over the
+existing solid light casing. The cycling foreground is light green (#4cb056)
+with dash array [2, 2] and no casing.
+
+Maptoolkit's TileJSON supplies the copyright attribution. The map keeps
+MapLibre's attribution control expanded at every viewport size, and one
+Maptoolkit logo control is shown whenever the hosted source is enabled. Trails
+are inserted below the fog layer and imported activity line, are not
+interactive targets, and are omitted from share maps and cards. The source,
+layers, and logo are recreated from the current session-only switch value on
+initial load, flat/relief style changes, and WebGL context restoration.
+
+The browser contacts Maptoolkit directly for TileJSON and visible vector tiles;
+the optional Fog of Walk sync server has no trail role. Fog of Walk does not
+download OSM data, query a route API, extract or publish trails, proxy the
+provider, or put Maptoolkit responses into application-managed Cache Storage or
+IndexedDB. The service worker excludes Maptoolkit from its generic map and
+style caches. Ordinary transient browser or provider HTTP caching can still
+occur and is outside the application's control.
+
+Provider, network, HTTP, CORS, vector-tile decode, and unknown map errors are
+reported as bounded coordinate-free diagnostics, at most once per error class
+per session. A provider failure affects only the optional overlay; imports,
+fog, activities, photos, saved points, basemaps, and optional sync continue to
+work. Disabling the drawer switch removes the three trail layers, the source,
+and the logo, preventing new trail requests.

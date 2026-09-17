@@ -106,7 +106,7 @@ focused references in [`docs/`](docs). The optional sync API and deployment guid
 ## Stack
 
 - [React Router 7](https://reactrouter.com/) (SPA mode)
-- [MapLibre GL JS](https://maplibre.org/) + [OpenFreeMap](https://openfreemap.org/) tiles via [PMTiles](https://protomaps.com/docs/pmtiles)
+- [MapLibre GL JS](https://maplibre.org/) with OpenFreeMap, Esri, and Maptoolkit map resources
 - [Turf.js](https://turfjs.org/) for geometry
 - [exifr](https://github.com/MikeKovarik/exifr) for EXIF parsing
 - [Tailwind CSS v4](https://tailwindcss.com/) + [shadcn/ui](https://ui.shadcn.com/) + [Base UI](https://base-ui.com/)

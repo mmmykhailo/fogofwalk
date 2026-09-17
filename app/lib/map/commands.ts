@@ -18,6 +18,12 @@ import {
   MAP_SOURCE_IDS,
   SAVED_POINT_LAYER_IDS,
 } from "~/lib/map/layers"
+import { ensureTrailLayers, removeTrailLayers } from "~/lib/map/trails/layers"
+import {
+  recordTrailReconciliation,
+  trailResourcePresence,
+  type TrailReconciliationTrigger,
+} from "~/lib/map/trails/diagnostics"
 import type { FogMaskLayer } from "~/lib/map/fogMaskLayer"
 import type { ActivityCoords, ActivityPaths } from "~/types/activities"
 import type { SavedPoint } from "~shared/saved-points"
@@ -26,6 +32,7 @@ import { incrementPerformanceCounter } from "~/lib/performance"
 
 export interface MapPresentationState {
   showActivities: boolean
+  showTrails: boolean
   showFog: boolean
   selectedActivityIds: string[]
   highlightPaths: ActivityPaths | null
@@ -57,6 +64,28 @@ export function setActivitiesVisible(
 
 export function setFogVisible(map: maplibregl.Map, isVisible: boolean): void {
   setLayerVisibility(map, MAP_LAYER_IDS.fog, isVisible)
+}
+
+export function setTrailsEnabled(
+  map: maplibregl.Map,
+  isEnabled: boolean,
+  trigger?: TrailReconciliationTrigger
+): void {
+  const before = trigger ? trailResourcePresence(map) : null
+  if (!isEnabled) {
+    removeTrailLayers(map)
+  } else {
+    ensureTrailLayers(map)
+  }
+  if (trigger && before) {
+    recordTrailReconciliation({
+      trigger,
+      showTrails: isEnabled,
+      sourcesReady: mapStore.sourcesReady,
+      before,
+      after: trailResourcePresence(map),
+    })
+  }
 }
 
 /** Apply the latest accepted fog snapshot only after map sources are ready. */
@@ -179,8 +208,10 @@ export function setLapHighlightData(
 /** Restores everything setStyle removes before sourcesReady becomes true. */
 export function rehydrateMapPresentation(
   map: maplibregl.Map,
-  state: MapPresentationState
+  state: MapPresentationState,
+  trailTrigger?: TrailReconciliationTrigger
 ): void {
+  setTrailsEnabled(map, state.showTrails, trailTrigger)
   setSavedPointsPresentation(map, state.savedPoints, state.showSavedPoints)
   setActivitiesVisible(map, state.showActivities)
   setLapHighlightData(map, state.highlightPaths)

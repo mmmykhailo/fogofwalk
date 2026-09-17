@@ -39,3 +39,14 @@ match. After a successful client deployment, the client workflow creates the
 matching `vX.X.X` Git tag if it does not already exist.
 
 Regular code, documentation, and workflow commits do not deploy on their own.
+
+## Trail provider checklist
+
+- No trail artifact is produced during a release, and no trail-specific
+  environment variable is required.
+- When changing the provider contract, verify the official Maptoolkit endpoint,
+  TileJSON schema, logo sizing, attribution wording, and attribution
+  requirements.
+- A provider outage requires no application rollback and affects only the
+  optional trail overlay; local imports, fog, activities, photos, saved points,
+  basemaps, and optional sync remain available.

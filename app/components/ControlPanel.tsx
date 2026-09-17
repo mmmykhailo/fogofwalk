@@ -11,6 +11,8 @@ interface ControlPanelProps {
   isProcessing: boolean
   showActivities: boolean
   onShowActivitiesChange: (value: boolean) => void
+  showTrails: boolean
+  onShowTrailsChange: (value: boolean) => void
   showFog: boolean
   onShowFogChange: (value: boolean) => void
   fogMode: FogMode
@@ -37,6 +39,8 @@ export function ControlPanel({
   isProcessing,
   showActivities,
   onShowActivitiesChange,
+  showTrails,
+  onShowTrailsChange,
   showFog,
   onShowFogChange,
   fogMode,
@@ -132,6 +136,8 @@ export function ControlPanel({
         onClearAll={onClearAll}
         showActivities={showActivities}
         onShowActivitiesChange={onShowActivitiesChange}
+        showTrails={showTrails}
+        onShowTrailsChange={onShowTrailsChange}
         showFog={showFog}
         onShowFogChange={onShowFogChange}
         fogMode={fogMode}

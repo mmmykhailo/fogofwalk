@@ -50,7 +50,7 @@ cd e2e && bun run test:performance
 
 The performance configuration covers six activity-library datasets (metadata
 and geometry fixtures at 100, 500, and 2,000 activities), sampled map
-interaction scenarios, and desktop dialog pointer-move coalescing, for 22
+interaction scenarios, and desktop dialog pointer-move coalescing, for 23
 benchmark tests in total. It is intentionally isolated from the functional
 suite, runs with one worker and non-parallel execution, and should not be split
 across workers merely to reduce wall-clock time. Deterministic work-count,
@@ -64,9 +64,9 @@ The default E2E command is the functional suite only:
 cd e2e && bun run test
 ```
 
-It lists 70 tests and excludes `activities-performance.spec.ts` and
+It lists 80 tests and excludes `activities-performance.spec.ts` and
 `map-interaction-performance.spec.ts`, which are owned by
-`bun run test:performance` (22 tests). Run both responsibilities in sequence
+`bun run test:performance` (23 tests). Run both responsibilities in sequence
 with the explicit aggregate command:
 
 ```bash

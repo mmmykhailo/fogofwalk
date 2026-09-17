@@ -17,7 +17,7 @@ export default function TermsPage() {
   return (
     <PageShell title="Terms of Service">
       <p className="mb-10 text-sm text-muted-foreground">
-        Last updated: August 13, 2026
+        Last updated: September 17, 2026
       </p>
 
       <PageSection title="Acceptance of terms">
@@ -142,10 +142,57 @@ export default function TermsPage() {
       <PageSection title="Third-party services">
         <p className="leading-relaxed">
           The Service relies on third-party services for map tiles,
-          authentication, hosting, and other infrastructure. We are not
-          responsible for the availability, accuracy, privacy practices,
-          security, or terms of those third-party services. Your use of those
-          services is subject to their respective terms and policies.
+          authentication, hosting, and other infrastructure, including
+          OpenFreeMap, Esri, and Maptoolkit. The optional trail overlay uses
+          Maptoolkit's hosted vector-tile service, which is derived from{" "}
+          <a
+            href="https://www.openstreetmap.org/copyright"
+            target="_blank"
+            rel="noreferrer"
+            className="text-primary underline underline-offset-4 hover:text-primary/80"
+          >
+            OpenStreetMap
+          </a>{" "}
+          data. Use of that service is subject to Maptoolkit's{" "}
+          <a
+            href="https://www.maptoolkit.org/tos"
+            target="_blank"
+            rel="noreferrer"
+            className="text-primary underline underline-offset-4 hover:text-primary/80"
+          >
+            Community License Terms of Use
+          </a>{" "}
+          and its{" "}
+          <a
+            href="https://docs.maptoolkit.org/attribution/"
+            target="_blank"
+            rel="noreferrer"
+            className="text-primary underline underline-offset-4 hover:text-primary/80"
+          >
+            attribution requirements
+          </a>
+          . OpenStreetMap data is subject to its applicable attribution and{" "}
+          <a
+            href="https://www.openstreetmap.org/copyright"
+            target="_blank"
+            rel="noreferrer"
+            className="text-primary underline underline-offset-4 hover:text-primary/80"
+          >
+            copyright requirements
+          </a>{" "}
+          and the{" "}
+          <a
+            href="https://opendatacommons.org/licenses/odbl/1-0/"
+            target="_blank"
+            rel="noreferrer"
+            className="text-primary underline underline-offset-4 hover:text-primary/80"
+          >
+            Open Database License (ODbL 1.0)
+          </a>{" "}
+          obligations. We are not responsible for the availability, accuracy,
+          privacy practices, security, or terms of third-party services. Your
+          use of those services is subject to their respective terms and
+          policies.
         </p>
       </PageSection>
 

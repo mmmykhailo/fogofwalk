@@ -5,11 +5,25 @@ declare global {
     project(coordinate: [number, number]): { x: number; y: number }
     getCanvas(): HTMLCanvasElement
     getZoom(): number
+    setZoom(zoom: number): void
     getLayer(id: string): unknown
+    getLayersOrder(): string[]
+    getStyle(): {
+      layers?: Array<{
+        id: string
+        filter?: unknown
+        "source-layer"?: unknown
+      }>
+      sources?: Record<string, unknown>
+    }
     queryRenderedFeatures(
-      point: [number, number],
-      options: { layers: readonly string[] }
+      geometry?: [number, number] | [[number, number], [number, number]],
+      options?: { layers?: readonly string[] }
     ): unknown[]
+    querySourceFeatures(
+      sourceId: string,
+      options?: unknown
+    ): Array<{ properties?: Record<string, unknown> }>
     jumpTo(options: { center: [number, number]; zoom: number }): void
     easeTo(options: {
       zoom: number
@@ -20,11 +34,14 @@ declare global {
     once(event: string, handler: () => void): void
     off(event: string, handler?: () => void): void
     getSource(id: string): unknown
+    getPaintProperty(layerId: string, property: string): unknown
     getCenter(): { lng: number; lat: number }
+    isStyleLoaded(): boolean
   }
 
   interface Window {
     __fogofwalkE2eMap?: FogofwalkE2eMap
+    __fogofwalkE2eOriginalMap?: FogofwalkE2eMap
     __fogofwalkE2eMapStore?: { sourcesReady: boolean }
     __fogofwalkE2eShareGeometry?: {
       type?: string
