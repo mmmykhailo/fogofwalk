@@ -64,6 +64,7 @@ export const TrailToggleAvailable: Story = {
       <MapDrawerStoryHarness
         drawerProps={makeDrawerProps({
           trailArchiveUrl: "https://cdn.example.test/map-data/trails-v1.pmtiles",
+          onShowTrailsChange,
         })}
       />
     )
