@@ -3,11 +3,39 @@ import { precacheAndRoute, cleanupOutdatedCaches } from "workbox-precaching"
 import { registerRoute } from "workbox-routing"
 import { CacheFirst, StaleWhileRevalidate } from "workbox-strategies"
 import { ExpirationPlugin } from "workbox-expiration"
+import { CacheableResponsePlugin } from "workbox-cacheable-response"
+import {
+  TRAIL_CACHE_MAX_AGE_SECONDS,
+  TRAIL_CACHE_MAX_ENTRIES,
+  TRAIL_CACHE_NAME,
+  TRAIL_PROVIDER_HOSTNAMES,
+  TRAIL_PROVIDER_TILE_PATH_PREFIX,
+} from "~/constants/trails"
 
 declare let self: ServiceWorkerGlobalScope & typeof globalThis
 
 cleanupOutdatedCaches()
 precacheAndRoute(self.__WB_MANIFEST)
+
+// Waymarked Trails JSON: cache only the exact provider hosts and zoom-12 tile
+// path before the generic map tile rule below sees the shared `/tiles/` path.
+registerRoute(
+  ({ request, url }) =>
+    request.method === "GET" &&
+    TRAIL_PROVIDER_HOSTNAMES.some((hostname) => hostname === url.hostname) &&
+    url.pathname.startsWith(TRAIL_PROVIDER_TILE_PATH_PREFIX) &&
+    url.pathname.endsWith(".json"),
+  new CacheFirst({
+    cacheName: TRAIL_CACHE_NAME,
+    plugins: [
+      new CacheableResponsePlugin({ statuses: [200] }),
+      new ExpirationPlugin({
+        maxEntries: TRAIL_CACHE_MAX_ENTRIES,
+        maxAgeSeconds: TRAIL_CACHE_MAX_AGE_SECONDS,
+      }),
+    ],
+  })
+)
 
 // Map tiles: long-lived CacheFirst (e.g. OpenFreeMap vector tiles)
 registerRoute(
