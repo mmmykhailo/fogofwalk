@@ -9,8 +9,8 @@ declare global {
     getLayer(id: string): unknown
     getStyle(): { layers?: unknown[] }
     queryRenderedFeatures(
-      point: [number, number],
-      options: { layers: readonly string[] }
+      geometry?: [number, number] | [[number, number], [number, number]],
+      options?: { layers?: readonly string[] }
     ): unknown[]
     querySourceFeatures(sourceId: string, options?: unknown): unknown[]
     jumpTo(options: { center: [number, number]; zoom: number }): void
@@ -29,6 +29,7 @@ declare global {
 
   interface Window {
     __fogofwalkE2eMap?: FogofwalkE2eMap
+    __fogofwalkE2eOriginalMap?: FogofwalkE2eMap
     __fogofwalkE2eMapStore?: { sourcesReady: boolean }
     __fogofwalkE2eShareGeometry?: {
       type?: string
