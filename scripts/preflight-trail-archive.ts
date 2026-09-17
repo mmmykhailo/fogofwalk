@@ -40,6 +40,11 @@ export interface PublishedTrailSummary {
   sha256: string
 }
 
+export type TrailFetch = (
+  input: string | URL,
+  init?: RequestInit
+) => Promise<Response>
+
 export function validatePublishedTrailUrl(value: unknown): URL | null {
   if (typeof value !== "string" || value.trim().length === 0) return null
 
@@ -265,7 +270,7 @@ export function assertBoundsWithinCoverage(
 
 export async function preflightPublishedTrail(
   rawUrl: unknown,
-  fetchImpl: typeof fetch = fetch
+  fetchImpl: TrailFetch = fetch
 ): Promise<PublishedTrailSummary | null> {
   const url = validatePublishedTrailUrl(rawUrl)
   if (!url) return null
@@ -354,7 +359,7 @@ export function parseUrlArgument(argv: string[]): string {
 }
 
 async function fetchRange(
-  fetchImpl: typeof fetch,
+  fetchImpl: TrailFetch,
   url: URL,
   start: number,
   end: number,
@@ -380,7 +385,7 @@ async function fetchRange(
 }
 
 async function readJson(
-  fetchImpl: typeof fetch,
+  fetchImpl: TrailFetch,
   url: string,
   label: string
 ): Promise<unknown> {
@@ -395,7 +400,7 @@ async function readJson(
 }
 
 async function readText(
-  fetchImpl: typeof fetch,
+  fetchImpl: TrailFetch,
   url: string,
   label: string
 ): Promise<string> {
@@ -406,7 +411,7 @@ async function readText(
 }
 
 async function request(
-  fetchImpl: typeof fetch,
+  fetchImpl: TrailFetch,
   input: string | URL,
   init: RequestInit | undefined,
   label: string

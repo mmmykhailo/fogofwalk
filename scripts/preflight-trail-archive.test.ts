@@ -1,8 +1,11 @@
 import { expect, test } from "bun:test"
+import { resolve } from "node:path"
 import { Compression, type Header } from "pmtiles"
 
 import {
   assertBoundsWithinCoverage,
+  preflightPublishedTrail,
+  type TrailFetch,
   validateArchiveHeadHeaders,
   validatePublishedTrailManifest,
   validatePublishedTrailUrl,
@@ -58,6 +61,83 @@ test("accepts a content-addressed regional archive and manifest", () => {
       bytes: 2101,
     }).coverage.kind
   ).toBe("regional")
+})
+
+test("preflights a real fixture archive through range responses", async () => {
+  const archiveUrl =
+    "https://trails.example.test/map-data/trails-2026-09-07-b940d2e350e6.pmtiles"
+  const archiveFilename = "trails-2026-09-07-b940d2e350e6.pmtiles"
+  const archiveSha256 =
+    "b940d2e350e6bb3b13f78d643a8d896c7213dfa06aed745e5ce90961f650f5d2"
+  const archive = new Uint8Array(
+    await Bun.file(
+      resolve(import.meta.dir, "../e2e/fixtures/trails-v1.pmtiles")
+    ).arrayBuffer()
+  )
+  const manifest = {
+    schemaVersion: 1,
+    coverage: { kind: "regional", bounds: [14.4, 50.04, 14.44, 50.19] },
+    snapshot: "2026-09-07T00:00:00Z",
+    inputs: [
+      {
+        path: "/data/czech-republic-260907.osm.pbf",
+        sourceUrl:
+          "https://download.geofabrik.de/europe/czech-republic-260907.osm.pbf",
+        publishedChecksum: { algorithm: "md5", value: "a".repeat(32) },
+        sha256: "b".repeat(64),
+      },
+    ],
+    archive: {
+      file: archiveFilename,
+      bytes: archive.length,
+      sha256: archiveSha256,
+    },
+  }
+  const fakeFetch: TrailFetch = async (input, init) => {
+    const requestUrl = String(input)
+    if (requestUrl === archiveUrl) {
+      const range = new Headers(init?.headers).get("range")
+      if (init?.method === "HEAD") {
+        return new Response(null, {
+          status: 200,
+          headers: {
+            "Accept-Ranges": "bytes",
+            "Access-Control-Allow-Origin": "*",
+            "Cache-Control": "public, max-age=31536000, immutable",
+            "Content-Length": String(archive.length),
+          },
+        })
+      }
+      const match = /^bytes=(\d+)-(\d+)$/.exec(range ?? "")
+      if (!match) return new Response(null, { status: 416 })
+      const start = Number(match[1])
+      const end = Number(match[2])
+      return new Response(archive.slice(start, end + 1), {
+        status: 206,
+        headers: {
+          "Content-Range": `bytes ${start}-${end}/${archive.length}`,
+        },
+      })
+    }
+    if (requestUrl === `${archiveUrl}.manifest.json`) {
+      return new Response(JSON.stringify(manifest), { status: 200 })
+    }
+    if (requestUrl === `${archiveUrl}.sha256`) {
+      return new Response(`${archiveSha256}  ${archiveFilename}\n`, {
+        status: 200,
+      })
+    }
+    return new Response(null, { status: 404 })
+  }
+
+  await expect(
+    preflightPublishedTrail(archiveUrl, fakeFetch)
+  ).resolves.toMatchObject({
+    filename: archiveFilename,
+    bytes: archive.length,
+    sha256: archiveSha256,
+    coverage: { kind: "regional" },
+  })
 })
 
 test("allows an explicitly disabled archive URL", () => {
