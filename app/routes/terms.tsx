@@ -165,9 +165,9 @@ export default function TermsPage() {
             Open Database License (ODbL 1.0)
           </a>{" "}
           obligations. We are not responsible for the availability, accuracy,
-          privacy practices, security, or terms of
-          third-party services. Your use of those services is subject to their
-          respective terms and policies.
+          privacy practices, security, or terms of third-party services. Your
+          use of those services is subject to their respective terms and
+          policies.
         </p>
       </PageSection>
 

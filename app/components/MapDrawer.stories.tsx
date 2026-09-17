@@ -63,7 +63,8 @@ export const TrailToggleAvailable: Story = {
     return (
       <MapDrawerStoryHarness
         drawerProps={makeDrawerProps({
-          trailArchiveUrl: "https://cdn.example.test/map-data/trails-v1.pmtiles",
+          trailArchiveUrl:
+            "https://cdn.example.test/map-data/trails-v1.pmtiles",
           onShowTrailsChange,
         })}
       />
@@ -221,9 +222,7 @@ export const TogglesActionsAndNestedClear: Story = {
     fireEvent.click(
       await drawer.findByRole("switch", { name: "Show activities" })
     )
-    fireEvent.click(
-      await drawer.findByRole("switch", { name: "Show trails" })
-    )
+    fireEvent.click(await drawer.findByRole("switch", { name: "Show trails" }))
     fireEvent.click(await drawer.findByRole("switch", { name: "Show fog" }))
     fireEvent.click(await drawer.findByRole("switch", { name: "Fill loops" }))
     fireEvent.click(await drawer.findByRole("switch", { name: "Show photos" }))
@@ -318,7 +317,8 @@ function DrawerInteractionHarness() {
       {!isOpen && <Button onClick={() => setIsOpen(true)}>Open drawer</Button>}
       <MapDrawer
         {...makeDrawerProps({
-          trailArchiveUrl: "https://cdn.example.test/map-data/trails-v1.pmtiles",
+          trailArchiveUrl:
+            "https://cdn.example.test/map-data/trails-v1.pmtiles",
           isOpen,
           onOpenChange: setIsOpen,
           activityCount: 4,
