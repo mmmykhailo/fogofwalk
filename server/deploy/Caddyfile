@@ -3,8 +3,9 @@
 # port 80 has to stay open (ACME HTTP challenge) even though nothing is served
 # there.
 #
-# The API owns its own CORS headers. The static trail archive below is public,
-# immutable map data and therefore has an explicit wildcard CORS policy.
+	# The API owns its own CORS headers. The trail archive below is public,
+	# immutable map data served directly from disk with an explicit wildcard CORS
+	# policy. The matching handle is isolated from the Bun reverse proxy.
 
 api.fog-of-walk.mykhailo.net {
 	encode zstd gzip
@@ -26,6 +27,8 @@ api.fog-of-walk.mykhailo.net {
 		respond @trail_options 204
 		@trail_archive method GET HEAD
 		file_server @trail_archive
+		# No browse directive is enabled: directories and missing files are not
+		# exposed, and this handler never falls through to the API proxy.
 		respond 404
 	}
 

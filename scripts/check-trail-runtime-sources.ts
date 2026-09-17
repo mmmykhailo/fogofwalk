@@ -35,8 +35,14 @@ const runtimeForbidden = [
 const root = process.cwd()
 const files: string[] = []
 const runtimeFiles = new Set<string>()
+const trailDataFiles: string[] = []
+const violations: { file: string; line: number; name: string }[] = []
 
-async function collect(path: string, isRuntime: boolean): Promise<void> {
+async function collect(
+  path: string,
+  isRuntime: boolean,
+  collection = files
+): Promise<void> {
   const entries = await readdir(path, { withFileTypes: true })
   for (const entry of entries) {
     if (
@@ -49,11 +55,28 @@ async function collect(path: string, isRuntime: boolean): Promise<void> {
     }
     const child = resolve(path, entry.name)
     if (entry.isDirectory()) {
-      await collect(child, isRuntime)
+      await collect(child, isRuntime, collection)
     } else if (entry.isFile()) {
-      files.push(child)
+      collection.push(child)
       if (isRuntime) runtimeFiles.add(child)
     }
+  }
+}
+
+await collect(resolve(root, "trail-data"), false, trailDataFiles)
+for (const file of trailDataFiles) {
+  const relativePath = relative(root, file)
+  if (
+    /\.(?:java|class|jar)$/i.test(relativePath) ||
+    /(?:^|\/)(?:gradle|gradlew|build\.gradle(?:\.kts)?|settings\.gradle(?:\.kts)?|gradle\.properties|versions\.properties)(?:\/|$)/i.test(
+      relativePath
+    )
+  ) {
+    violations.push({
+      file: relativePath,
+      line: 1,
+      name: "legacy trail build file",
+    })
   }
 }
 
@@ -68,7 +91,6 @@ for (const configuredRoot of [...runtimeRoots, ...extraRoots]) {
   }
 }
 
-const violations: { file: string; line: number; name: string }[] = []
 for (const file of files.sort()) {
   const contents = await readFile(file, "utf8")
   contents.split(/\r?\n/).forEach((line, index) => {

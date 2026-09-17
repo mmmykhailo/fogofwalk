@@ -60,7 +60,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v1
         with:
-          bun-version: latest
+          bun-version: "1.3.4"
 
       - name: Check trail runtime sources
         run: bun run check:trail-runtime-sources
@@ -68,7 +68,7 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Preflight trail archive
+      - name: Preflight published trail archive
         env:
           TRAIL_ARCHIVE_URL: ${{ vars.VITE_TRAIL_ARCHIVE_URL }}
         run: |

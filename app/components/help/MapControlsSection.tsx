@@ -53,9 +53,11 @@ export function MapControlsSection() {
         OpenStreetMap snapshot archive is configured. Hiking routes use their
         recognized OSM relation color, with a neutral purple fallback; shared
         routes can show several centered color lines. Cycling routes use a
-        dashed pink line. The overlay is a display aid only: route coverage,
-        geometry, access, and conditions may be incomplete or out of date, so do
-        not use it as a navigation or safety-critical source.
+        dashed pink line. The browser reads the public static archive in small
+        byte-range requests; no activity data is sent with those requests. The
+        overlay is a display aid only: route coverage, geometry, access, and
+        conditions may be incomplete or out of date, so do not use it as a
+        navigation or safety-critical source.
       </p>
     </div>
   )
