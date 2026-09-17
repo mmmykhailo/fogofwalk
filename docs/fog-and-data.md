@@ -126,52 +126,45 @@ action returns a terminal result so a failed import stays retryable.
 
 ## Trail overlay data flow
 
-The optional trail overlay is a display-only map resource. When it is enabled
-and the map reaches zoom 12, one MapLibre vector source reads the validated
-`VITE_TRAIL_ARCHIVE_URL` through the globally registered `pmtiles://` protocol.
-The source is a public, immutable PMTiles v3 archive containing one `trails`
-layer of z12 gzip-compressed Mapbox Vector Tiles. PMTiles requests its header,
-directory, metadata, and tile bytes with ordinary HTTP `Range` requests;
-MapLibre overzooms the z12 data above zoom 12 and no trail source is materialized
-below that zoom.
+The optional trail overlay is a display-only map resource. Its data flow is:
 
-The archive is generated outside the SPA by the local Bun/TypeScript builder in
-`trail-data/build.ts`. It reads an explicit dated OpenStreetMap PBF, streams
-accepted hiking, foot, bicycle, and superroute relations through a temporary
-SQLite index, joins their membership to line ways, and emits only the four
-properties used by the style: `kind`, `color`, `offset`, and `sort`. Relation
-IDs, raw tags, route names, and geometry-processing diagnostics stay in the
-build report rather than in the browser archive. The checked-in fixture is the
-ordinary offline CI input; production builds record the source URL, snapshot,
-published checksum, archive SHA-256, schema version, tile-size metrics,
-coverage, attribution, and ODbL notice.
+```text
+drawer state
+  -> setupMapLayers / setTrailsEnabled
+  -> MapLibre source reads Maptoolkit TileJSON
+  -> MapLibre fetches visible vector tiles directly
+  -> local Fog of Walk line styles filter road.walking_network and
+     road.cycling_network
+```
 
-The browser does not download OSM data, query a route API, parse provider JSON,
-reproject coordinates, or encode vector tiles. The optional Fog of Walk sync
-server does not proxy, preprocess, cache, authenticate, or persist trail data.
-If the URL is unset or invalid, only the trail toggle and resources disappear;
-imports, fog, map state, photos, saved points, and optional sync continue to
-work. Disabling the drawer switch removes the three trail layers and the one
-source, preventing further range requests.
+The source is `trails-source` and reads
+`https://tiles.maptoolkit.org/mtk.json`. The three local line layers are
+`trails-hiking-casing-layer`, `trails-hiking-layer`, and
+`trails-cycling-layer`; each reads the hosted `road` source layer. Hiking
+filters `walking_network` to `iwn`, `nwn`, `rwn`, or `lwn`. Cycling filters
+`cycling_network` to `icn`, `ncn`, `rcn`, or `lcn`. All three layers have a
+rendering threshold of zoom 7, while the hosted vector source has a maximum
+zoom of 15. The existing OpenFreeMap or Esri basemap remains unchanged.
 
-The service worker deliberately excludes the configured archive from the
-generic map CacheFirst route. PMTiles and normal HTTP/CDN caching own the
-archive's byte-range and directory caching; `clearAll()` never touches public
-map caches. A cold offline load may therefore have no trail overlay, and the
-application does not claim full offline trail availability.
+Maptoolkit's TileJSON supplies the copyright attribution. The map keeps
+MapLibre's attribution control expanded at every viewport size, and one
+Maptoolkit logo control is shown whenever the hosted source is enabled. Trails
+are inserted below the fog layer and imported activity line, are not
+interactive targets, and are omitted from share maps and cards. The source,
+layers, and logo are recreated from the current session-only switch value on
+initial load, flat/relief style changes, and WebGL context restoration.
 
-Trail sources and layers are recreated during flat/relief style changes and
-WebGL context restoration from the current session-only visibility value. They
-are inserted below fog and imported activities, so visible fog can obscure
-unexplored routes while imported activity lines remain prominent. Trails are
-not registered as interactive targets and are omitted from share maps/cards.
+The browser contacts Maptoolkit directly for TileJSON and visible vector tiles;
+the optional Fog of Walk sync server has no trail role. Fog of Walk does not
+download OSM data, query a route API, extract or publish trails, proxy the
+provider, or put Maptoolkit responses into application-managed Cache Storage or
+IndexedDB. The service worker excludes Maptoolkit from its generic map and
+style caches. Ordinary transient browser or provider HTTP caching can still
+occur and is outside the application's control.
 
-Activation verification covers a saved eligible zoom (12), a first crossing
-from 11.99 to 12, and a warm reload of the built client served with byte-range
-support. Each case requests and renders the fixture archive before any drawer
-switch interaction; below zoom 12 no trail source or archive request is
-materialized. The same suite covers disable/re-enable, style changes, WebGL
-restoration, and archive-failure isolation. The reported toggle-only sequence
-was not reproduced in these clean-session checks, so no lifecycle rewrite is
-claimed. E2E builds expose only a bounded, coordinate-free reconciliation
-buffer on assertion failure; production builds emit no such telemetry.
+Provider, network, HTTP, CORS, vector-tile decode, and unknown map errors are
+reported as bounded coordinate-free diagnostics, at most once per error class
+per session. A provider failure affects only the optional overlay; imports,
+fog, activities, photos, saved points, basemaps, and optional sync continue to
+work. Disabling the drawer switch removes the three trail layers, the source,
+and the logo, preventing new trail requests.

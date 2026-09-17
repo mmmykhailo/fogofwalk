@@ -227,25 +227,22 @@ export default function PrivacyPage() {
             GitHub, Google, etc.).
           </li>
           <li>
-            <strong>Basemap services:</strong> OpenFreeMap and Esri — map tiles
-            and related basemap resources.
-          </li>
-          <li>
-            <strong>Trail archive hosting:</strong> Fog of Walk-controlled
-            static hosting — a public PMTiles archive generated from a dated
-            OpenStreetMap snapshot.
+            <strong>Map services:</strong> OpenFreeMap, Esri, and Maptoolkit —
+            basemap resources and hosted trail vector tiles.
           </li>
         </ul>
         <p className="mt-4 leading-relaxed">
           Basemap providers may receive your IP address and the geographic area
-          for which map information is requested. If you enable the trail
-          overlay and an archive is configured, your browser makes anonymous
-          HTTP range requests to Fog of Walk-controlled static hosting for the
-          relevant bytes of that public archive. Those requests contain normal
-          browser and network metadata, but Fog of Walk does not include your
-          account credentials, activity files, saved points, photos, or user
-          identifiers in the archive URL or range request. If no archive is
-          configured or it is unavailable, the trail overlay remains disabled.
+          for which map information is requested. The trail switch is on by
+          default; when it is enabled, your browser requests Maptoolkit's
+          TileJSON and vector tiles directly for the area currently visible on
+          the map. Maptoolkit can receive normal network metadata such as your
+          IP address, browser headers, and requested tile coordinates. Fog of
+          Walk does not attach account credentials or activity content to those
+          requests and does not send your photos or saved points. These
+          requests are not anonymous because the provider can see normal
+          network metadata. Disabling the trail overlay removes its map source
+          and stops new trail requests.
         </p>
         <p className="mt-4 leading-relaxed">
           We may also disclose information where reasonably necessary to comply

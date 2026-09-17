@@ -4,7 +4,7 @@ const TOGGLES = [
   ["Show activities", "draw the route lines on top of the cleared fog"],
   [
     "Show trails",
-    "show marked hiking and cycling routes derived from OpenStreetMap relations when the archive is available",
+    "show hosted hiking and cycling route networks from Maptoolkit, derived from OpenStreetMap",
   ],
   ["Show fog", "turn the fog off entirely to see the bare map underneath"],
   [
@@ -49,15 +49,15 @@ export function MapControlsSection() {
         in or out.
       </p>
       <p>
-        Trails appear from zoom {TRAIL_MIN_RENDER_ZOOM} onward when a periodic
-        OpenStreetMap snapshot archive is configured. Hiking routes use their
-        recognized OSM relation color, with a neutral purple fallback; shared
-        routes can show several centered color lines. Cycling routes use a
-        dashed pink line. The browser reads the public static archive in small
-        byte-range requests; no activity data is sent with those requests. The
-        overlay is a display aid only: route coverage, geometry, access, and
-        conditions may be incomplete or out of date, so do not use it as a
-        navigation or safety-critical source.
+        Trails begin at zoom {TRAIL_MIN_RENDER_ZOOM}. The overlay shows hosted
+        hiking and cycling route networks from Maptoolkit, derived from
+        OpenStreetMap. Hiking is red with a light casing, and cycling is
+        dashed pink. Your browser contacts Maptoolkit directly for the visible
+        map area; Fog of Walk does not send activities, account data, photos, or
+        saved points in those requests. The overlay is a display aid only:
+        route coverage, geometry, access, and conditions may be incomplete or
+        out of date, so do not use it for navigation or as a safety-critical
+        source.
       </p>
     </div>
   )

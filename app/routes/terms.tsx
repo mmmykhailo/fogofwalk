@@ -143,9 +143,8 @@ export default function TermsPage() {
         <p className="leading-relaxed">
           The Service relies on third-party services for map tiles,
           authentication, hosting, and other infrastructure, including
-          OpenFreeMap and Esri. The optional trail overlay is served from a Fog
-          of Walk-controlled static PMTiles archive generated from marked route
-          relations in a dated{" "}
+          OpenFreeMap, Esri, and Maptoolkit. The optional trail overlay uses
+          Maptoolkit's hosted vector-tile service, which is derived from{" "}
           <a
             href="https://www.openstreetmap.org/copyright"
             target="_blank"
@@ -153,9 +152,35 @@ export default function TermsPage() {
             className="text-primary underline underline-offset-4 hover:text-primary/80"
           >
             OpenStreetMap
+          </a>{" "}
+          data. Use of that service is subject to Maptoolkit's{" "}
+          <a
+            href="https://www.maptoolkit.org/tos"
+            target="_blank"
+            rel="noreferrer"
+            className="text-primary underline underline-offset-4 hover:text-primary/80"
+          >
+            Community License Terms of Use
+          </a>{" "}
+          and its{" "}
+          <a
+            href="https://docs.maptoolkit.org/attribution/"
+            target="_blank"
+            rel="noreferrer"
+            className="text-primary underline underline-offset-4 hover:text-primary/80"
+          >
+            attribution requirements
           </a>
-          snapshot. OpenStreetMap data is subject to its applicable attribution
-          and{" "}
+          . OpenStreetMap data is subject to its applicable attribution and{" "}
+          <a
+            href="https://www.openstreetmap.org/copyright"
+            target="_blank"
+            rel="noreferrer"
+            className="text-primary underline underline-offset-4 hover:text-primary/80"
+          >
+            copyright requirements
+          </a>{" "}
+          and the{" "}
           <a
             href="https://opendatacommons.org/licenses/odbl/1-0/"
             target="_blank"

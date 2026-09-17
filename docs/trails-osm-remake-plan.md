@@ -1,3 +1,7 @@
+> Historical and superseded: this PMTiles design is no longer the active trail
+> architecture. It was superseded by
+> [the Maptoolkit hosted-trails plan](trails-maptoolkit-remaining-plan.md).
+
 # TypeScript-only OSM trails migration plan
 
 ## Follow-up status

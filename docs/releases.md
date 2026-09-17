@@ -40,51 +40,13 @@ matching `vX.X.X` Git tag if it does not already exist.
 
 Regular code, documentation, and workflow commits do not deploy on their own.
 
-## Trail archive compatibility and rollback
+## Trail provider checklist
 
-Trail data is a separately built but client-versioned public artifact. It is
-generated locally by the Bun/TypeScript release tool; neither deploy workflow
-downloads OSM data nor rebuilds an archive. Before referencing a new archive
-from a client release:
-
-1. Run `bun run build:trail-fixture`, `bun run verify:trail-fixture`, and the
-   trail TypeScript tests.
-2. Build from a reviewed manifest of local, dated, checksummed PBF inputs:
-
-   ```sh
-   bun trail-data/build.ts build \
-     --manifest=/data/manifests/trails.json \
-     --output=/data/trails/trails-build.pmtiles \
-     --report=/data/trails/trails-build.report.json \
-     --scratch-dir=/data/scratch/fogofwalk-trails
-   ```
-
-3. Review the report for schema version 1, explicit coverage, source
-   checksums, generated SHA-256, attribution/licence, tile-size metrics,
-   duplicate/conflict counts, geometry loss, and the overlap-cap gate. Run
-   `bun trail-data/build.ts manifest` to produce the checksum, source manifest,
-   and ODbL `DATA-LICENSE.txt` sidecars.
-4. Name the archive `trails-YYYY-MM-DD-<12 lowercase hex>.pmtiles`. Upload
-   the archive and all sidecars under a temporary static name, compare remote
-   size/checksums, atomically move them to immutable names, and perform
-   external `HEAD` plus several `Range` probes. A missing `206` response or
-   incorrect `Content-Range` leaves the active client unchanged.
-5. Run the tested release gate against the final URL:
-
-   ```sh
-   bun run check:published-trail \
-     --url=https://<host>/map-data/trails/v1/trails-<YYYY-MM-DD>-<sha12>.pmtiles
-   ```
-
-   It verifies the manifest, checksum, ODbL sidecar, source provenance,
-   PMTiles header/metadata, coverage bounds, public CORS, immutable caching,
-   and the initial 127-byte range. Only then set `VITE_TRAIL_ARCHIVE_URL` to
-   that exact immutable URL and deploy the client; the deployment workflow
-   repeats the same gate before building.
-
-Retain the current archive and at least the previous two archives. Delete an
-old archive only when no retained client release references it and it is at
-least 90 days old. Rollback is a client redeploy using the prior immutable URL;
-the corresponding archive must remain available for the lifetime of that
-release. A missing archive disables only the trail overlay and does not block
-local imports, fog rendering, saved points, photos, or optional sync.
+- No trail artifact is produced during a release, and no trail-specific
+  environment variable is required.
+- When changing the provider contract, verify the official Maptoolkit endpoint,
+  TileJSON schema, logo sizing, attribution wording, and attribution
+  requirements.
+- A provider outage requires no application rollback and affects only the
+  optional trail overlay; local imports, fog, activities, photos, saved points,
+  basemaps, and optional sync remain available.
