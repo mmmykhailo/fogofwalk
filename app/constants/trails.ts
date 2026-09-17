@@ -32,7 +32,7 @@ export const TRAIL_HIKING_WIDTH_STOPS = [
 ] as const
 export const TRAIL_HIKING_CASING_WIDTH_DELTA = 1.8
 
-export const TRAIL_CYCLING_COLOR = "#f472b6"
+export const TRAIL_CYCLING_COLOR = "#4cb056"
 export const TRAIL_CYCLING_OPACITY = 0.95
 export const TRAIL_CYCLING_WIDTH_STOPS = [
   7, 1.4, 12, 2.2, 15, 3.4, 20, 5.4,
