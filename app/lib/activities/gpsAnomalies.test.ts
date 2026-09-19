@@ -152,10 +152,31 @@ function expectAccounting(
   expect(result.counts.removedPoints).toBeLessThanOrEqual(
     result.counts.inputPoints
   )
-  const inputPoints = new Set(sourcePaths.flatMap((source) => source.points))
-  const retainedPoints = result.paths.flatMap((path) => path)
-  expect(new Set(retainedPoints).size).toBe(retainedPoints.length)
-  expect(retainedPoints.every((point) => inputPoints.has(point))).toBe(true)
+  const sourcePathByPoint = new Map<AnomalyPoint, number>()
+  const inputKeys = new Set<string>()
+  for (const source of sourcePaths) {
+    for (const point of source.points) {
+      sourcePathByPoint.set(point, source.sourcePathIndex)
+      inputKeys.add(`${source.sourcePathIndex}:${point.sourcePointIndex}`)
+    }
+  }
+  const retainedKeys = result.paths.flatMap((path) =>
+    path.map((point) => {
+      const sourcePathIndex = sourcePathByPoint.get(point)
+      expect(sourcePathIndex).toBeDefined()
+      return `${sourcePathIndex}:${point.sourcePointIndex}`
+    })
+  )
+  const uniqueRetainedKeys = new Set(retainedKeys)
+  expect(uniqueRetainedKeys.size).toBe(retainedKeys.length)
+  expect(retainedKeys.every((key) => inputKeys.has(key))).toBe(true)
+  expect(
+    result.paths.every((path) => path.length >= MIN_RETAINED_PATH_POINTS)
+  ).toBe(true)
+  expect(result.counts.retainedPoints).toBe(retainedKeys.length)
+  expect(result.counts.removedPoints).toBe(
+    inputKeys.size - uniqueRetainedKeys.size
+  )
 
   const removalExamples = result.examples.filter(
     (example) => example.operation === "remove"
@@ -181,6 +202,9 @@ function expectAccounting(
   expect(result.counts.trimmedSuffixPoints).toBeLessThanOrEqual(
     result.counts.removedPoints
   )
+  expect(
+    result.counts.trimmedPrefixPoints + result.counts.trimmedSuffixPoints
+  ).toBeLessThanOrEqual(result.counts.removedPoints)
 }
 
 describe("GPS reliability cleaner", () => {
@@ -336,7 +360,7 @@ describe("GPS reliability cleaner", () => {
 
   test("removes a gap-bounded singleton without bridging either unsafe edge", () => {
     const input = gapIslandFixture()
-    const result = detectGpsAnomalies([input], { activityType: "cycling" })
+    const result = detectGpsAnomalies([input])
 
     expect(indexes(result.paths)).toEqual([
       [0, 1, 2, 3, 4, 5, 6],
