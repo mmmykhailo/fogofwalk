@@ -1437,9 +1437,11 @@ export function emptySavedPointSyncState(): SavedPointSyncState {
   }
 }
 
-export async function clearSyncState(
-  options: { allAccounts?: boolean } = {}
-): Promise<void> {
+async function clearSyncStateRecords(options: {
+  allAccounts?: boolean
+  includeSavedPointState: boolean
+  includeActivityDerivedState?: boolean
+}): Promise<void> {
   const db = await getDb()
   if (!db) return
   try {
@@ -1455,11 +1457,13 @@ export async function clearSyncState(
         prefsStore.getAllKeys()
       )
       for (const key of prefKeys) {
+        if (typeof key !== "string") continue
+        const isSavedPointState =
+          key === SAVED_POINT_SYNC_STATE_KEY ||
+          key.startsWith(SAVED_POINT_SYNC_STATE_ACCOUNT_PREFIX)
         if (
-          typeof key === "string" &&
-          (key === "syncState" ||
-            key === SAVED_POINT_SYNC_STATE_KEY ||
-            key.startsWith(SAVED_POINT_SYNC_STATE_ACCOUNT_PREFIX))
+          key === "syncState" ||
+          (options.includeSavedPointState && isSavedPointState)
         ) {
           prefsStore.delete(key)
         }
@@ -1467,7 +1471,13 @@ export async function clearSyncState(
     } else {
       stateStore.delete("default")
       prefsStore.delete("syncState")
-      prefsStore.delete(SAVED_POINT_SYNC_STATE_KEY)
+      if (options.includeSavedPointState) {
+        prefsStore.delete(SAVED_POINT_SYNC_STATE_KEY)
+      }
+    }
+    if (options.includeActivityDerivedState) {
+      prefsStore.delete("fogCache")
+      prefsStore.delete("uniqueDistanceState")
     }
     await new Promise<void>((resolve, reject) => {
       tx.oncomplete = () => resolve()
@@ -1475,14 +1485,46 @@ export async function clearSyncState(
       tx.onabort = () => reject(tx.error)
     })
   } catch (err) {
-    console.warn("[storage] clearSyncState failed:", err)
+    console.warn("[storage] clear sync state records failed:", err)
   }
 }
 
-// ─── Clear all ────────────────────────────────────────────────────────────────
+/** Clear only the activity sync cursors, preserving saved-point sync state. */
+export async function clearActivitySyncState(
+  options: { allAccounts?: boolean } = {}
+): Promise<void> {
+  return clearSyncStateRecords({
+    ...options,
+    includeSavedPointState: false,
+  })
+}
 
 /**
- * Wipe persisted library data and its derived state. Used by "clear-all".
+ * Clear activity-derived state after the activity library has been emptied.
+ * Photos, saved points, preferences, and saved-point sync records survive.
+ */
+export async function clearActivityDerivedState(): Promise<void> {
+  return clearSyncStateRecords({
+    allAccounts: true,
+    includeSavedPointState: false,
+    includeActivityDerivedState: true,
+  })
+}
+
+/** Clear the combined activity and saved-point sync state, such as on sign-out. */
+export async function clearSyncState(
+  options: { allAccounts?: boolean } = {}
+): Promise<void> {
+  return clearSyncStateRecords({
+    ...options,
+    includeSavedPointState: true,
+  })
+}
+
+// ─── Legacy whole-device cleanup ─────────────────────────────────────────────
+
+/**
+ * Wipe persisted library data and its derived state.
  *
  * The session and user preferences are deliberately kept: clearing the map is
  * neither signing out nor resetting controls such as Fill loops. The sync cursor
