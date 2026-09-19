@@ -1,7 +1,10 @@
 import { describe, expect, test } from "bun:test"
 import type { RawPoint } from "~shared/activities"
 import { buildLapActivity } from "~/lib/laps"
-import { detectGpsAnomalies } from "~/lib/activities/gpsAnomalies"
+import {
+  detectGpsAnomalies,
+  type AnomalyPoint,
+} from "~/lib/activities/gpsAnomalies"
 import { buildLapsFromFit, fitRecordToAnomalyPoint } from "./fit"
 
 function point(lng: number, timestampMs?: number): RawPoint {
@@ -268,4 +271,43 @@ describe("FIT reliability signals", () => {
     expect(result.counts.reasons.local_spike).toBe(1)
     expect(result.examples[0]?.triggerCode).toBe("impossible_speed")
   })
+
+  for (const withSensors of [false, true]) {
+    test(`recovers a reliable fragment ${withSensors ? "with" : "without"} optional sensors`, () => {
+      const positions = [
+        0, 10, 20, 30, 40, 50, 299, 309, 593.6, 603.6, 613.6, 623.6, 633.6,
+      ]
+      const points: AnomalyPoint[] = positions.map((xM, sourcePointIndex) => {
+        const timestampMs =
+          sourcePointIndex < 6
+            ? sourcePointIndex * 1_000
+            : sourcePointIndex === 6
+              ? 31_000
+              : sourcePointIndex === 7
+                ? 32_000
+                : 2_110_000 + (sourcePointIndex - 8) * 1_000
+        return {
+          sourcePointIndex,
+          lng: xM / 111_195,
+          lat: 0,
+          timestampMs,
+          ...(withSensors ? { gpsAccuracyM: 3, recordedSpeedMps: 10 } : {}),
+        }
+      })
+      const result = detectGpsAnomalies([{ sourcePathIndex: 0, points }], {
+        activityType: "walking",
+      })
+
+      expect(
+        result.paths.map((path) => path.map((point) => point.sourcePointIndex))
+      ).toEqual([
+        [0, 1, 2, 3, 4, 5],
+        [8, 9, 10, 11, 12],
+      ])
+      expect(result.counts.removedPoints).toBe(2)
+      expect(result.counts.reasons.recovered_fragment).toBe(1)
+      expect(result.counts.reasons.untrusted_suffix).toBeUndefined()
+      expect(result.work.fragmentPromotions).toBe(1)
+    })
+  }
 })
