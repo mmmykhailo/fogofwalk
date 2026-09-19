@@ -1,7 +1,7 @@
 import type { ActivityType } from "~shared/activities"
 
 /** Bump when a threshold or state-machine decision changes. */
-export const ANOMALY_ALGORITHM_VERSION = 2
+export const ANOMALY_ALGORITHM_VERSION = 3
 
 /** Maximum recent trusted edges used by the rolling reliability baselines. */
 export const RELIABILITY_WINDOW_EDGES = 31

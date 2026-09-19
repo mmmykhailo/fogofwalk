@@ -189,6 +189,35 @@ interface MutableCounts {
   trimmedPrefixPoints: number
   trimmedSuffixPoints: number
   reasons: Partial<Record<GpsAnomalyCode, number>>
+  removalRecords: RemovalRecord[]
+  splitRecords: SplitRecord[]
+  nextDecisionOrder: number
+}
+
+interface RemovalRecord {
+  sourcePathIndex: number
+  points: readonly AnomalyPoint[]
+  startIndex: number
+  endIndex: number
+  code: GpsAnomalyCode
+  entry: EdgeEvidence
+  triggerCode?: GpsAnomalyCode
+  rejoinPointIndex?: number | null
+  rejoin?: RejoinEvidence | null
+  isPrefix?: boolean
+  isSuffix?: boolean
+  order: number
+}
+
+interface SplitRecord {
+  code: "recording_gap" | "non_positive_time" | "recovered_fragment"
+  sourcePathIndex: number
+  points: readonly AnomalyPoint[]
+  startIndex: number
+  endIndex: number
+  entry: EdgeEvidence
+  triggerCode?: GpsAnomalyCode
+  order: number
 }
 
 interface EmittedPath {
@@ -290,6 +319,26 @@ function addReason(
   amount = 1
 ): void {
   counts.reasons[code] = (counts.reasons[code] ?? 0) + amount
+}
+
+function recordRemoval(
+  counts: MutableCounts,
+  record: Omit<RemovalRecord, "order">
+): void {
+  counts.removalRecords.push({
+    ...record,
+    order: counts.nextDecisionOrder++,
+  })
+}
+
+function recordSplit(
+  counts: MutableCounts,
+  record: Omit<SplitRecord, "order">
+): void {
+  counts.splitRecords.push({
+    ...record,
+    order: counts.nextDecisionOrder++,
+  })
 }
 
 function median(values: readonly number[]): number | null {
@@ -588,6 +637,8 @@ function makeExample(
   options: {
     triggerCode?: GpsAnomalyCode
     removedPointCount?: number
+    startPointIndex?: number
+    endPointIndex?: number
     rejoinPointIndex?: number | null
     rejoin?: RejoinEvidence | null
   } = {}
@@ -599,8 +650,13 @@ function makeExample(
     ...(options.triggerCode ? { triggerCode: options.triggerCode } : {}),
     sourcePathIndex,
     startPointIndex:
-      points[Math.max(0, startIndex)]?.sourcePointIndex ?? startIndex,
-    endPointIndex: points[Math.max(0, endIndex)]?.sourcePointIndex ?? endIndex,
+      options.startPointIndex ??
+      points[Math.max(0, startIndex)]?.sourcePointIndex ??
+      startIndex,
+    endPointIndex:
+      options.endPointIndex ??
+      points[Math.max(0, endIndex)]?.sourcePointIndex ??
+      endIndex,
     removedPointCount:
       options.removedPointCount ??
       (operation === "remove" ? Math.max(0, endIndex - startIndex + 1) : 0),
@@ -634,23 +690,18 @@ function addPrefixRemoval(
   triggerCode?: GpsAnomalyCode
 ): void {
   if (endIndex < startIndex) return
-  const removedPointCount = endIndex - startIndex + 1
-  addReason(counts, "untrusted_prefix")
-  counts.trimmedPrefixPoints += removedPointCount
-  collectExample(
-    examples,
-    makeExample(
-      "untrusted_prefix",
-      "remove",
-      sourcePathIndex,
-      points,
-      startIndex,
-      endIndex,
-      entry,
-      context,
-      { triggerCode, removedPointCount }
-    )
-  )
+  recordRemoval(counts, {
+    sourcePathIndex,
+    points,
+    startIndex,
+    endIndex,
+    code: "untrusted_prefix",
+    entry,
+    ...(triggerCode ? { triggerCode } : {}),
+    isPrefix: true,
+  })
+  void examples
+  void context
 }
 
 function addSuffixRemoval(
@@ -663,25 +714,18 @@ function addSuffixRemoval(
 ): void {
   const removedPointCount = points.length - quarantine.startIndex
   if (removedPointCount <= 0) return
-  addReason(counts, "untrusted_suffix")
-  counts.trimmedSuffixPoints += removedPointCount
-  collectExample(
-    examples,
-    makeExample(
-      "untrusted_suffix",
-      "remove",
-      sourcePathIndex,
-      points,
-      quarantine.startIndex,
-      points.length - 1,
-      quarantine.entry,
-      context,
-      {
-        triggerCode: quarantine.triggerCode,
-        removedPointCount,
-      }
-    )
-  )
+  recordRemoval(counts, {
+    sourcePathIndex,
+    points,
+    startIndex: quarantine.startIndex,
+    endIndex: points.length - 1,
+    code: "untrusted_suffix",
+    entry: quarantine.entry,
+    triggerCode: quarantine.triggerCode,
+    isSuffix: true,
+  })
+  void examples
+  void context
 }
 
 function addBoundarySplit(
@@ -694,22 +738,35 @@ function addBoundarySplit(
   entry: EdgeEvidence,
   context: AnalysisContext
 ): void {
-  addReason(counts, code)
-  counts.splitCount += 1
-  counts.gapSplitCount += code === "recording_gap" ? 1 : 0
-  collectExample(
-    examples,
-    makeExample(
-      code,
-      "split",
-      sourcePathIndex,
-      points,
-      edgeIndex,
-      edgeIndex + 1,
-      entry,
-      context
-    )
-  )
+  recordSplit(counts, {
+    code,
+    sourcePathIndex,
+    points,
+    startIndex: edgeIndex,
+    endIndex: edgeIndex + 1,
+    entry,
+  })
+  void examples
+  void context
+}
+
+function addRecoverySplit(
+  counts: MutableCounts,
+  sourcePathIndex: number,
+  points: readonly AnomalyPoint[],
+  entryIndex: number,
+  promotedEndIndex: number,
+  entry: EdgeEvidence
+): void {
+  recordSplit(counts, {
+    code: "recovered_fragment",
+    sourcePathIndex,
+    points,
+    startIndex: Math.max(0, entryIndex - 1),
+    endIndex: promotedEndIndex,
+    entry,
+    triggerCode: entry.primaryCode ?? entry.reason ?? undefined,
+  })
 }
 
 function addRemovalSplit(
@@ -728,14 +785,32 @@ function addRemovalSplit(
     rejoin?: RejoinEvidence | null
   } = {}
 ): void {
-  const removedPointCount = endIndex - startIndex + 1
-  addReason(counts, code)
-  counts.splitCount += 1
-  counts.removalSplitCount += 1
+  if (endIndex < startIndex) return
+  recordRemoval(counts, {
+    sourcePathIndex,
+    points,
+    startIndex,
+    endIndex,
+    code,
+    entry,
+    ...options,
+    ...(code === "untrusted_prefix" ? { isPrefix: true } : {}),
+    ...(code === "untrusted_suffix" ? { isSuffix: true } : {}),
+  })
+  void examples
+  void context
+}
+
+/*
+ * The legacy helper bodies below were intentionally collapsed into records.
+ * Public examples and counts are emitted only after all detector passes have
+ * finished, so overlapping decisions cannot double-count source points.
+ */
+/*
   collectExample(
     examples,
     makeExample(
-      code,
+      "untrusted_prefix",
       "remove",
       sourcePathIndex,
       points,
@@ -743,13 +818,10 @@ function addRemovalSplit(
       endIndex,
       entry,
       context,
-      {
-        ...options,
-        removedPointCount,
-      }
+      { triggerCode, removedPointCount }
     )
   )
-}
+*/
 
 function rejoinFromTrusted(
   lastTrusted: AnomalyPoint,
@@ -827,7 +899,7 @@ function isReliableEdge(
   baseline: RollingBaseline
 ): boolean {
   return (
-    edge.codes.length === 0 &&
+    edge.codes.every((code) => code === "recorded_speed_mismatch") &&
     !isUnsafePointEvidence(pointEvidence(first, baseline)) &&
     !isUnsafePointEvidence(pointEvidence(second, baseline))
   )
@@ -845,8 +917,7 @@ function hasSpatialEvidence(edge: EdgeEvidence): boolean {
     (code) =>
       code === "impossible_speed" ||
       code === "local_distance_jump" ||
-      code === "hard_teleport" ||
-      code === "recorded_speed_mismatch"
+      code === "hard_teleport"
   )
 }
 
@@ -879,25 +950,16 @@ function addRecoveredFragmentSplit(
   entry: EdgeEvidence,
   context: AnalysisContext
 ): void {
-  addReason(counts, "recovered_fragment")
-  counts.splitCount += 1
-  collectExample(
-    examples,
-    makeExample(
-      "recovered_fragment",
-      "split",
-      sourcePathIndex,
-      points,
-      Math.max(0, entryIndex - 1),
-      promotedEndIndex,
-      entry,
-      context,
-      {
-        triggerCode: entry.primaryCode ?? entry.reason ?? undefined,
-        removedPointCount: 0,
-      }
-    )
+  addRecoverySplit(
+    counts,
+    sourcePathIndex,
+    points,
+    entryIndex,
+    promotedEndIndex,
+    entry
   )
+  void examples
+  void context
 }
 
 interface CandidateBuffer {
@@ -1285,7 +1347,10 @@ function analyzeValidSegmentV3(
     index += 1
   }
 
-  if (candidate) emitCandidate(true)
+  if (candidate) {
+    if (!candidate.requiresRecovery) candidate.allowShortPath = true
+    emitCandidate(true)
+  }
   if (excursion) finishExcursion(true)
 
   return output.filter((path) => path.points.length >= MIN_RETAINED_PATH_POINTS)
@@ -1581,24 +1646,16 @@ function addInvalidCoordinateRemoval(
   context: AnalysisContext
 ): void {
   if (invalidPoints.length === 0) return
-  addReason(counts, "invalid_coordinate")
-  counts.splitCount += 1
-  counts.removalSplitCount += 1
   const entry = evidenceForPoint(baseline, context)
-  collectExample(
-    examples,
-    makeExample(
-      "invalid_coordinate",
-      "remove",
-      sourcePathIndex,
-      invalidPoints,
-      0,
-      invalidPoints.length - 1,
-      entry,
-      context,
-      { removedPointCount: invalidPoints.length }
-    )
-  )
+  recordRemoval(counts, {
+    sourcePathIndex,
+    points: invalidPoints,
+    startIndex: 0,
+    endIndex: invalidPoints.length - 1,
+    code: "invalid_coordinate",
+    entry,
+  })
+  void examples
 }
 
 interface PauseWindowPoint {
@@ -1990,44 +2047,34 @@ function addPauseRemoval(
           context
         )
       : evidenceForPoint({ distances: [], deltas: [], accuracies: [] }, context)
-  addReason(counts, "pause_drift")
-  counts.splitCount += 1
-  counts.removalSplitCount += 1
-  collectExample(
-    examples,
-    makeExample(
-      "pause_drift",
-      "remove",
-      path.sourcePathIndex,
-      path.points,
-      interiorStart,
-      Math.max(interiorStart, interiorEnd),
-      entry,
-      context,
-      {
-        triggerCode: "pause_drift",
-        removedPointCount: Math.max(0, interiorEnd - interiorStart + 1),
-        rejoinPointIndex: range.endIndex,
-        rejoin: {
-          distanceM: haversineMeters(
-            [
-              path.points[range.startIndex]!.lng,
-              path.points[range.startIndex]!.lat,
-            ],
-            [path.points[range.endIndex]!.lng, path.points[range.endIndex]!.lat]
-          ),
-          elapsedMs:
-            finiteTimestamp(path.points[range.endIndex]!) != null &&
-            finiteTimestamp(path.points[range.startIndex]!) != null
-              ? finiteTimestamp(path.points[range.endIndex]!)! -
-                finiteTimestamp(path.points[range.startIndex]!)!
-              : null,
-          rejoinLimitM: REJOIN_POSITION_CEILING_M,
-          reachable: true,
-        },
-      }
-    )
-  )
+  recordRemoval(counts, {
+    sourcePathIndex: path.sourcePathIndex,
+    points: path.points,
+    startIndex: interiorStart,
+    endIndex: Math.max(interiorStart, interiorEnd),
+    code: "pause_drift",
+    entry,
+    triggerCode: "pause_drift",
+    rejoinPointIndex: range.endIndex,
+    rejoin: {
+      distanceM: haversineMeters(
+        [
+          path.points[range.startIndex]!.lng,
+          path.points[range.startIndex]!.lat,
+        ],
+        [path.points[range.endIndex]!.lng, path.points[range.endIndex]!.lat]
+      ),
+      elapsedMs:
+        finiteTimestamp(path.points[range.endIndex]!) != null &&
+        finiteTimestamp(path.points[range.startIndex]!) != null
+          ? finiteTimestamp(path.points[range.endIndex]!)! -
+            finiteTimestamp(path.points[range.startIndex]!)!
+          : null,
+      rejoinLimitM: REJOIN_POSITION_CEILING_M,
+      reachable: true,
+    },
+  })
+  void examples
 }
 
 function applyPauseDriftCleanup(
@@ -2064,6 +2111,304 @@ function applyPauseDriftCleanup(
   return cleaned
 }
 
+interface NormalizedRemovalRange {
+  sourcePathIndex: number
+  startPointIndex: number
+  endPointIndex: number
+  removedPointCount: number
+  record: RemovalRecord
+}
+
+function removalPriority(code: GpsAnomalyCode): number {
+  switch (code) {
+    case "invalid_coordinate":
+      return 100
+    case "untrusted_accuracy":
+      return 95
+    case "relative_accuracy_outlier":
+      return 90
+    case "isolated_fix":
+      return 85
+    case "untrusted_island":
+      return 80
+    case "local_spike":
+      return 75
+    case "local_excursion":
+      return 74
+    case "pause_drift":
+      return 70
+    case "untrusted_prefix":
+    case "untrusted_suffix":
+      return 30
+    case "dropped_short_path":
+      return 10
+    default:
+      return 0
+  }
+}
+
+function sourcePointIndexAt(record: RemovalRecord, index: number): number {
+  return record.points[index]?.sourcePointIndex ?? index
+}
+
+function removalBounds(record: RemovalRecord): {
+  startPointIndex: number
+  endPointIndex: number
+} {
+  const startPointIndex = sourcePointIndexAt(record, record.startIndex)
+  const endPointIndex = sourcePointIndexAt(record, record.endIndex)
+  return {
+    startPointIndex: Math.min(startPointIndex, endPointIndex),
+    endPointIndex: Math.max(startPointIndex, endPointIndex),
+  }
+}
+
+function pointKey(sourcePathIndex: number, sourcePointIndex: number): string {
+  return `${sourcePathIndex}:${sourcePointIndex}`
+}
+
+function countUnretainedInRange(
+  source: AnomalySourcePath | undefined,
+  sourcePathIndex: number,
+  startPointIndex: number,
+  endPointIndex: number,
+  retainedKeys: ReadonlySet<string>
+): number {
+  if (!source) return 0
+  return source.points.filter((point) => {
+    const sourceIndex = point.sourcePointIndex
+    return (
+      sourceIndex >= startPointIndex &&
+      sourceIndex <= endPointIndex &&
+      !retainedKeys.has(pointKey(sourcePathIndex, sourceIndex))
+    )
+  }).length
+}
+
+function normalizeRemovalRanges(
+  sourcePaths: readonly AnomalySourcePath[],
+  cleanedPaths: readonly EmittedPath[],
+  counts: MutableCounts,
+  context: AnalysisContext
+): NormalizedRemovalRange[] {
+  const sourceByPath = new Map(
+    sourcePaths.map((source) => [source.sourcePathIndex, source] as const)
+  )
+  const retainedKeys = new Set<string>()
+  for (const path of cleanedPaths) {
+    for (const point of path.points) {
+      retainedKeys.add(pointKey(path.sourcePathIndex, point.sourcePointIndex))
+    }
+  }
+
+  const coveredKeys = new Set<string>()
+  for (const record of counts.removalRecords) {
+    const start = Math.max(0, record.startIndex)
+    const end = Math.min(record.points.length - 1, record.endIndex)
+    for (let index = start; index <= end; index += 1) {
+      coveredKeys.add(
+        pointKey(record.sourcePathIndex, record.points[index]!.sourcePointIndex)
+      )
+    }
+  }
+
+  const records = [...counts.removalRecords]
+  for (const source of sourcePaths) {
+    let missingStart = -1
+    const flushMissing = (endIndex: number) => {
+      if (missingStart === -1) return
+      const missingEnd = endIndex
+      const first = source.points[missingStart]!
+      const last = source.points[missingEnd]!
+      records.push({
+        sourcePathIndex: source.sourcePathIndex,
+        points: source.points,
+        startIndex: missingStart,
+        endIndex: missingEnd,
+        code: "dropped_short_path",
+        entry: evidenceForPoint(
+          { distances: [], deltas: [], accuracies: [] },
+          context
+        ),
+        order: Number.MAX_SAFE_INTEGER + records.length,
+      })
+      void first
+      void last
+      missingStart = -1
+    }
+    for (let index = 0; index < source.points.length; index += 1) {
+      const point = source.points[index]!
+      const key = pointKey(source.sourcePathIndex, point.sourcePointIndex)
+      const isMissing = !retainedKeys.has(key) && !coveredKeys.has(key)
+      if (isMissing && missingStart === -1) missingStart = index
+      if (!isMissing && missingStart !== -1) flushMissing(index - 1)
+    }
+    if (missingStart !== -1) flushMissing(source.points.length - 1)
+  }
+
+  const sorted = records
+    .map((record) => ({ record, ...removalBounds(record) }))
+    .sort(
+      (a, b) =>
+        a.record.sourcePathIndex - b.record.sourcePathIndex ||
+        a.startPointIndex - b.startPointIndex ||
+        a.endPointIndex - b.endPointIndex ||
+        a.record.order - b.record.order
+    )
+
+  const merged: Array<{
+    sourcePathIndex: number
+    startPointIndex: number
+    endPointIndex: number
+    record: RemovalRecord
+  }> = []
+  for (const item of sorted) {
+    const previous = merged[merged.length - 1]
+    if (
+      previous &&
+      previous.sourcePathIndex === item.record.sourcePathIndex &&
+      item.startPointIndex <= previous.endPointIndex
+    ) {
+      previous.startPointIndex = Math.min(
+        previous.startPointIndex,
+        item.startPointIndex
+      )
+      previous.endPointIndex = Math.max(
+        previous.endPointIndex,
+        item.endPointIndex
+      )
+      if (
+        removalPriority(item.record.code) >
+        removalPriority(previous.record.code)
+      ) {
+        previous.record = item.record
+      }
+    } else {
+      merged.push({
+        sourcePathIndex: item.record.sourcePathIndex,
+        startPointIndex: item.startPointIndex,
+        endPointIndex: item.endPointIndex,
+        record: item.record,
+      })
+    }
+  }
+
+  return merged.map((item) => ({
+    ...item,
+    removedPointCount: countUnretainedInRange(
+      sourceByPath.get(item.sourcePathIndex),
+      item.sourcePathIndex,
+      item.startPointIndex,
+      item.endPointIndex,
+      retainedKeys
+    ),
+  }))
+}
+
+function finalizeDiagnostics(
+  sourcePaths: readonly AnomalySourcePath[],
+  cleanedPaths: readonly EmittedPath[],
+  counts: MutableCounts,
+  context: AnalysisContext
+): {
+  examples: GpsAnomalyExample[]
+  reasons: Partial<Record<GpsAnomalyCode, number>>
+  splitCount: number
+  gapSplitCount: number
+  removalSplitCount: number
+  trimmedPrefixPoints: number
+  trimmedSuffixPoints: number
+  mergedRemovalRangeCount: number
+} {
+  const removals = normalizeRemovalRanges(
+    sourcePaths,
+    cleanedPaths,
+    counts,
+    context
+  )
+  context.work.mergedRemovalRangeCount = removals.length
+  const reasons: Partial<Record<GpsAnomalyCode, number>> = {}
+  const increment = (code: GpsAnomalyCode) => {
+    reasons[code] = (reasons[code] ?? 0) + 1
+  }
+  for (const split of counts.splitRecords) increment(split.code)
+  for (const removal of removals) increment(removal.record.code)
+
+  const examples: GpsAnomalyExample[] = []
+  const events = [
+    ...counts.splitRecords.map((split) => ({ type: "split" as const, split })),
+    ...removals.map((removal) => ({ type: "remove" as const, removal })),
+  ].sort((a, b) => {
+    const left = a.type === "split" ? a.split.order : a.removal.record.order
+    const right = b.type === "split" ? b.split.order : b.removal.record.order
+    return left - right
+  })
+  for (const event of events) {
+    if (examples.length >= MAX_RELIABILITY_EXAMPLES) break
+    if (event.type === "split") {
+      examples.push(
+        makeExample(
+          event.split.code,
+          "split",
+          event.split.sourcePathIndex,
+          event.split.points,
+          event.split.startIndex,
+          event.split.endIndex,
+          event.split.entry,
+          context,
+          {
+            triggerCode: event.split.triggerCode,
+            removedPointCount: 0,
+          }
+        )
+      )
+    } else {
+      const { record } = event.removal
+      examples.push(
+        makeExample(
+          record.code,
+          "remove",
+          event.removal.sourcePathIndex,
+          record.points,
+          record.startIndex,
+          record.endIndex,
+          record.entry,
+          context,
+          {
+            triggerCode: record.triggerCode,
+            removedPointCount: event.removal.removedPointCount,
+            startPointIndex: event.removal.startPointIndex,
+            endPointIndex: event.removal.endPointIndex,
+            rejoinPointIndex: record.rejoinPointIndex,
+            rejoin: record.rejoin,
+          }
+        )
+      )
+    }
+  }
+
+  const removalSplits = removals.filter(
+    ({ record }) =>
+      record.code !== "untrusted_prefix" && record.code !== "untrusted_suffix"
+  )
+  return {
+    examples,
+    reasons,
+    splitCount: counts.splitRecords.length + removalSplits.length,
+    gapSplitCount: counts.splitRecords.filter(
+      (split) => split.code === "recording_gap"
+    ).length,
+    removalSplitCount: removalSplits.length,
+    trimmedPrefixPoints: removals
+      .filter(({ record }) => record.isPrefix)
+      .reduce((total, range) => total + range.removedPointCount, 0),
+    trimmedSuffixPoints: removals
+      .filter(({ record }) => record.isSuffix)
+      .reduce((total, range) => total + range.removedPointCount, 0),
+    mergedRemovalRangeCount: removals.length,
+  }
+}
+
 /**
  * Clean each original source path independently. The result only contains raw
  * points; parsers remain responsible for canonical geometry and timestamps.
@@ -2097,6 +2442,9 @@ export function detectGpsAnomalies(
     trimmedPrefixPoints: 0,
     trimmedSuffixPoints: 0,
     reasons: {},
+    removalRecords: [],
+    splitRecords: [],
+    nextDecisionOrder: 0,
   }
   const examples: GpsAnomalyExample[] = []
   const analyzedPaths: EmittedPath[] = []
@@ -2159,11 +2507,14 @@ export function detectGpsAnomalies(
   )
   const paths = cleanedPaths.map(({ points }) => points)
   const retainedPoints = paths.reduce((total, path) => total + path.length, 0)
-  const removedPoints = Math.max(0, counts.inputPoints - retainedPoints)
-  counts.reasons = Object.fromEntries(
-    Object.entries(counts.reasons).filter(([, count]) => (count ?? 0) > 0)
-  ) as Partial<Record<GpsAnomalyCode, number>>
-  const hasDecision = Object.keys(counts.reasons).length > 0
+  const removedPoints = counts.inputPoints - retainedPoints
+  const diagnostics = finalizeDiagnostics(
+    sourcePaths,
+    cleanedPaths,
+    counts,
+    context
+  )
+  const hasDecision = Object.keys(diagnostics.reasons).length > 0
   const status: GpsAnomalyResult["status"] =
     paths.length === 0
       ? "rejected"
@@ -2179,14 +2530,14 @@ export function detectGpsAnomalies(
       retainedPoints,
       removedPoints,
       emittedPathCount: paths.length,
-      splitCount: counts.splitCount,
-      gapSplitCount: counts.gapSplitCount,
-      removalSplitCount: counts.removalSplitCount,
-      trimmedPrefixPoints: counts.trimmedPrefixPoints,
-      trimmedSuffixPoints: counts.trimmedSuffixPoints,
-      reasons: counts.reasons,
+      splitCount: diagnostics.splitCount,
+      gapSplitCount: diagnostics.gapSplitCount,
+      removalSplitCount: diagnostics.removalSplitCount,
+      trimmedPrefixPoints: diagnostics.trimmedPrefixPoints,
+      trimmedSuffixPoints: diagnostics.trimmedSuffixPoints,
+      reasons: diagnostics.reasons,
     },
-    examples,
+    examples: diagnostics.examples,
     work: context.work,
   }
 }

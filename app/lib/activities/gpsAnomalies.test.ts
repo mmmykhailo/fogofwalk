@@ -8,14 +8,23 @@ import {
   LOCAL_DISTANCE_MULTIPLIER,
   MAX_RELIABILITY_EXAMPLES,
   MAX_TRUSTED_GPS_ACCURACY_M,
+  MIN_RECOVERY_FRAGMENT_POINTS,
   MIN_CONFIDENT_FRAGMENT_POINTS,
   MIN_RETAINED_PATH_POINTS,
   PAUSE_DRIFT_MAX_WINDOW_POINTS,
+  RECOVERY_CONFIRMATION_EDGES,
   REJOIN_CONFIRMATION_EDGES,
   REJOIN_POSITION_CEILING_M,
   REJOIN_POSITION_FLOOR_M,
   RELIABILITY_MIN_BASELINE_EDGES,
   RELIABILITY_WINDOW_EDGES,
+  RELATIVE_ACCURACY_FLOOR_M,
+  RELATIVE_ACCURACY_MIN_SAMPLES,
+  RELATIVE_ACCURACY_MULTIPLIER,
+  SHORT_ISLAND_MAX_POINTS,
+  SPEED_MISMATCH_COORDINATE_FLOOR_MPS,
+  SPEED_MISMATCH_DIFFERENCE_MPS,
+  SPEED_MISMATCH_RATIO,
   SPEED_TEST_DISTANCE_FLOOR_M,
   TIME_GAP_CEILING_MS,
   TIME_GAP_FLOOR_MS,
@@ -72,6 +81,104 @@ function indexes(paths: AnomalyPoint[][]): number[][] {
 
 function baselinePositions(count = 8, stepM = 10): number[] {
   return Array.from({ length: count }, (_, index) => index * stepM)
+}
+
+function gapIslandFixture(): AnomalySourcePath {
+  const prefix = Array.from({ length: 7 }, (_, index) =>
+    point(index, index * 10, 0, index * 1_000, {
+      gpsAccuracyM: 3,
+      recordedSpeedMps: 10,
+    })
+  )
+  const entryMs = 7_000 + 47_000
+  const returnMs = entryMs + 38_000
+  return source([
+    ...prefix,
+    point(7, 1_452.9, 0, entryMs, {
+      gpsAccuracyM: 49.3,
+      recordedSpeedMps: 38.8,
+    }),
+    point(8, -106.4, 0, returnMs, {
+      gpsAccuracyM: 4.3,
+      recordedSpeedMps: 0.3,
+    }),
+    point(9, -96.4, 0, returnMs + 1_000, {
+      gpsAccuracyM: 3,
+      recordedSpeedMps: 10,
+    }),
+    point(10, -86.4, 0, returnMs + 2_000, {
+      gpsAccuracyM: 3,
+      recordedSpeedMps: 10,
+    }),
+    point(11, -76.4, 0, returnMs + 3_000, {
+      gpsAccuracyM: 3,
+      recordedSpeedMps: 10,
+    }),
+    point(12, -66.4, 0, returnMs + 4_000, {
+      gpsAccuracyM: 3,
+      recordedSpeedMps: 10,
+    }),
+  ])
+}
+
+function recoveredFragmentFixture(): AnomalySourcePath {
+  const prefix = Array.from({ length: 6 }, (_, index) =>
+    point(index, index * 10, 0, index * 1_000)
+  )
+  const jumpMs = 5_000 + 26_000
+  const gapMs = jumpMs + 1_000 + 2_078_000
+  return source([
+    ...prefix,
+    point(6, 299, jumpMs),
+    point(7, 309, jumpMs + 1_000),
+    point(8, 593.6, gapMs),
+    point(9, 603.6, gapMs + 1_000),
+    point(10, 613.6, gapMs + 2_000),
+    point(11, 623.6, gapMs + 3_000),
+    point(12, 633.6, gapMs + 4_000),
+  ])
+}
+
+function expectAccounting(
+  result: ReturnType<typeof detectGpsAnomalies>,
+  sourcePaths: readonly AnomalySourcePath[]
+): void {
+  expect(result.counts.retainedPoints + result.counts.removedPoints).toBe(
+    result.counts.inputPoints
+  )
+  expect(result.counts.removedPoints).toBeGreaterThanOrEqual(0)
+  expect(result.counts.removedPoints).toBeLessThanOrEqual(
+    result.counts.inputPoints
+  )
+  const inputPoints = new Set(sourcePaths.flatMap((source) => source.points))
+  const retainedPoints = result.paths.flatMap((path) => path)
+  expect(new Set(retainedPoints).size).toBe(retainedPoints.length)
+  expect(retainedPoints.every((point) => inputPoints.has(point))).toBe(true)
+
+  const removalExamples = result.examples.filter(
+    (example) => example.operation === "remove"
+  )
+  for (let leftIndex = 0; leftIndex < removalExamples.length; leftIndex += 1) {
+    for (
+      let rightIndex = leftIndex + 1;
+      rightIndex < removalExamples.length;
+      rightIndex += 1
+    ) {
+      const left = removalExamples[leftIndex]!
+      const right = removalExamples[rightIndex]!
+      if (left.sourcePathIndex !== right.sourcePathIndex) continue
+      expect(
+        left.endPointIndex < right.startPointIndex ||
+          right.endPointIndex < left.startPointIndex
+      ).toBe(true)
+    }
+  }
+  expect(result.counts.trimmedPrefixPoints).toBeLessThanOrEqual(
+    result.counts.removedPoints
+  )
+  expect(result.counts.trimmedSuffixPoints).toBeLessThanOrEqual(
+    result.counts.removedPoints
+  )
 }
 
 describe("GPS reliability cleaner", () => {
@@ -225,6 +332,39 @@ describe("GPS reliability cleaner", () => {
     expect(suffix.counts.trimmedSuffixPoints).toBe(3)
   })
 
+  test("removes a gap-bounded singleton without bridging either unsafe edge", () => {
+    const input = gapIslandFixture()
+    const result = detectGpsAnomalies([input], { activityType: "cycling" })
+
+    expect(indexes(result.paths)).toEqual([
+      [0, 1, 2, 3, 4, 5, 6],
+      [8, 9, 10, 11, 12],
+    ])
+    expect(result.counts.reasons).toMatchObject({ isolated_fix: 1 })
+    expect(result.counts.removedPoints).toBe(1)
+    expect(result.work.mergedRemovalRangeCount).toBe(1)
+    expect(
+      result.examples.some((example) => example.code === "isolated_fix")
+    ).toBe(true)
+    expectAccounting(result, [input])
+  })
+
+  test("recovers a coherent fragment after a long unsupported transition", () => {
+    const input = recoveredFragmentFixture()
+    const result = detectGpsAnomalies([input], { activityType: "walking" })
+
+    expect(indexes(result.paths)).toEqual([
+      [0, 1, 2, 3, 4, 5],
+      [8, 9, 10, 11, 12],
+    ])
+    expect(result.counts.reasons).toMatchObject({
+      recovered_fragment: 1,
+    })
+    expect(result.counts.reasons.untrusted_suffix).toBeUndefined()
+    expect(result.work.fragmentPromotions).toBe(1)
+    expectAccounting(result, [input])
+  })
+
   test("salvages a clean fragment after an untrusted beginning", () => {
     const points = [
       point(0, 1_000, 0, 0),
@@ -347,7 +487,7 @@ describe("GPS reliability cleaner", () => {
   })
 
   test("keeps the version-2 policy explicit", () => {
-    expect(ANOMALY_ALGORITHM_VERSION).toBe(2)
+    expect(ANOMALY_ALGORITHM_VERSION).toBe(3)
     expect(RELIABILITY_WINDOW_EDGES).toBe(31)
     expect(RELIABILITY_MIN_BASELINE_EDGES).toBe(4)
     expect(LOCAL_DISTANCE_FLOOR_M).toBe(100)
@@ -362,6 +502,15 @@ describe("GPS reliability cleaner", () => {
     expect(REJOIN_POSITION_FLOOR_M).toBe(100)
     expect(REJOIN_POSITION_CEILING_M).toBe(1_000)
     expect(REJOIN_CONFIRMATION_EDGES).toBe(2)
+    expect(RECOVERY_CONFIRMATION_EDGES).toBe(4)
+    expect(MIN_RECOVERY_FRAGMENT_POINTS).toBe(5)
+    expect(SHORT_ISLAND_MAX_POINTS).toBe(2)
+    expect(RELATIVE_ACCURACY_MIN_SAMPLES).toBe(5)
+    expect(RELATIVE_ACCURACY_FLOOR_M).toBe(25)
+    expect(RELATIVE_ACCURACY_MULTIPLIER).toBe(5)
+    expect(SPEED_MISMATCH_COORDINATE_FLOOR_MPS).toBe(5)
+    expect(SPEED_MISMATCH_RATIO).toBe(4)
+    expect(SPEED_MISMATCH_DIFFERENCE_MPS).toBe(5)
     expect(MIN_RETAINED_PATH_POINTS).toBe(2)
     expect(MIN_CONFIDENT_FRAGMENT_POINTS).toBe(3)
     expect(PAUSE_DRIFT_MAX_WINDOW_POINTS).toBe(600)
