@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test"
 import type { RawPoint } from "~shared/activities"
 import { buildLapActivity } from "~/lib/laps"
-import { buildLapsFromFit } from "./fit"
+import { detectGpsAnomalies } from "~/lib/activities/gpsAnomalies"
+import { buildLapsFromFit, fitRecordToAnomalyPoint } from "./fit"
 
 function point(lng: number, timestampMs?: number): RawPoint {
   return {
@@ -187,5 +188,74 @@ describe("FIT lap ranges", () => {
       [3_000, 4_000],
     ])
     expect(result.coordinates).toHaveLength(4)
+  })
+})
+
+describe("FIT reliability signals", () => {
+  test("preserves finite non-negative optional signals", () => {
+    const point = fitRecordToAnomalyPoint(
+      {
+        position_long: 14,
+        position_lat: 50,
+        timestamp: new Date(1_000),
+        enhanced_altitude: 123.4,
+        enhanced_speed: 2.5,
+        gps_accuracy: 8,
+      },
+      17
+    )
+
+    expect(point).toEqual({
+      sourcePointIndex: 17,
+      lng: 14,
+      lat: 50,
+      timestampMs: 1_000,
+      elevationM: 123.4,
+      recordedSpeedMps: 2.5,
+      gpsAccuracyM: 8,
+    })
+  })
+
+  test("omits absent, negative, non-finite, and malformed optional signals", () => {
+    const point = fitRecordToAnomalyPoint(
+      {
+        position_long: 14,
+        position_lat: 50,
+        timestamp: "not-a-date",
+        altitude: "bad",
+        speed: -1,
+        gps_accuracy: Number.NaN,
+      },
+      2
+    )
+
+    expect(point).toEqual({
+      sourcePointIndex: 2,
+      lng: 14,
+      lat: 50,
+    })
+  })
+
+  test("coordinate-derived impossibility wins over a contradictory low device speed", () => {
+    const points = [
+      { lng: 0, lat: 0, timestampMs: 0, recordedSpeedMps: 0 },
+      { lng: 0.0001, lat: 0, timestampMs: 1_000, recordedSpeedMps: 0 },
+      { lng: 0.0002, lat: 0, timestampMs: 2_000, recordedSpeedMps: 0 },
+      { lng: 0.0003, lat: 0, timestampMs: 3_000, recordedSpeedMps: 0 },
+      { lng: 0.0004, lat: 0, timestampMs: 4_000, recordedSpeedMps: 0 },
+      { lng: 0.0035, lat: 0, timestampMs: 5_000, recordedSpeedMps: 0 },
+      { lng: 0.0005, lat: 0, timestampMs: 6_000, recordedSpeedMps: 0 },
+      { lng: 0.0006, lat: 0, timestampMs: 7_000, recordedSpeedMps: 0 },
+      { lng: 0.0007, lat: 0, timestampMs: 8_000, recordedSpeedMps: 0 },
+    ].map((record, sourcePointIndex) => ({
+      ...record,
+      sourcePointIndex,
+    }))
+    const result = detectGpsAnomalies([{ sourcePathIndex: 0, points }], {
+      activityType: "walking",
+    })
+
+    expect(result.counts.reasons.local_spike).toBe(1)
+    expect(result.examples[0]?.triggerCode).toBe("impossible_speed")
   })
 })

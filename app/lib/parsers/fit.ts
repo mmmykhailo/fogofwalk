@@ -38,6 +38,34 @@ export function fitTimeToMs(value: unknown): number {
   return NaN
 }
 
+function finiteNonNegative(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? value
+    : undefined
+}
+
+/** Convert one decoded FIT record without allowing malformed optional sensors into the cleaner. */
+export function fitRecordToAnomalyPoint(
+  record: Record<string, unknown>,
+  sourcePointIndex: number
+): AnomalyPoint {
+  const alt = record.enhanced_altitude ?? record.altitude
+  const timestampMs = fitTimeToMs(record.timestamp)
+  const recordedSpeed = finiteNonNegative(record.enhanced_speed ?? record.speed)
+  const gpsAccuracy = finiteNonNegative(record.gps_accuracy)
+  return {
+    sourcePointIndex,
+    lng: record.position_long as number,
+    lat: record.position_lat as number,
+    ...(typeof alt === "number" && Number.isFinite(alt)
+      ? { elevationM: alt }
+      : {}),
+    ...(Number.isFinite(timestampMs) ? { timestampMs } : {}),
+    ...(recordedSpeed == null ? {} : { recordedSpeedMps: recordedSpeed }),
+    ...(gpsAccuracy == null ? {} : { gpsAccuracyM: gpsAccuracy }),
+  }
+}
+
 interface LapBoundary {
   number: number
   startMs: number
@@ -216,15 +244,23 @@ export async function parseFitFileWithResults(
   const data = await parser.parseAsync(buffer)
 
   // fit-file-parser already returns position_lat/long in degrees
-  const validRecords = (data.records ?? []).filter((r) => {
-    const lat = r.position_lat
-    const lng = r.position_long
-    if (lat == null || lng == null) return false
-    // Drop pre-GPS-lock records clustered near null island
-    if (Math.abs(lat as number) < 0.001 && Math.abs(lng as number) < 0.001)
-      return false
-    return true
-  })
+  const validRecords = (data.records ?? [])
+    .map((record, sourcePointIndex) => ({ record, sourcePointIndex }))
+    .filter(({ record }) => {
+      const lat = record.position_lat
+      const lng = record.position_long
+      if (
+        typeof lat !== "number" ||
+        typeof lng !== "number" ||
+        !Number.isFinite(lat) ||
+        !Number.isFinite(lng)
+      )
+        return false
+      // Drop pre-GPS-lock records clustered near null island
+      if (Math.abs(lat as number) < 0.001 && Math.abs(lng as number) < 0.001)
+        return false
+      return true
+    })
 
   if (validRecords.length < 2) {
     return {
@@ -238,24 +274,13 @@ export async function parseFitFileWithResults(
   const activityType = normalizeActivityType(
     data.sessions?.[0]?.sport ?? data.sports?.[0]?.sport
   )
-  const rawPoints: AnomalyPoint[] = validRecords.map((r, sourcePointIndex) => {
-    const alt = r.enhanced_altitude ?? r.altitude
-    const ts = fitTimeToMs(r.timestamp)
-    const recordedSpeed = r.enhanced_speed ?? r.speed
-    return {
-      sourcePointIndex,
-      lng: r.position_long as number,
-      lat: r.position_lat as number,
-      elevationM: typeof alt === "number" && isFinite(alt) ? alt : undefined,
-      timestampMs: isFinite(ts) ? ts : undefined,
-      ...(typeof recordedSpeed === "number" && isFinite(recordedSpeed)
-        ? { recordedSpeedMps: recordedSpeed }
-        : {}),
-      ...(typeof r.gps_accuracy === "number" && isFinite(r.gps_accuracy)
-        ? { gpsAccuracyM: r.gps_accuracy }
-        : {}),
-    }
-  })
+  const rawPoints: AnomalyPoint[] = validRecords.map(
+    ({ record, sourcePointIndex }) =>
+      fitRecordToAnomalyPoint(
+        record as unknown as Record<string, unknown>,
+        sourcePointIndex
+      )
+  )
 
   const detectorStartedAt = performance.now()
   const anomaly = detectGpsAnomalies(
