@@ -24,6 +24,8 @@ export const TIME_GAP_CEILING_MS = 120_000
 
 /** Avoid speed decisions dominated by metre-scale GPS noise. */
 export const SPEED_TEST_DISTANCE_FLOOR_M = 100
+/** Hard geometry jump that is never treated as a normal edge. */
+export const HARD_TELEPORT_DISTANCE_M = 250_000
 /** FIT fixes worse than this are not trusted. */
 export const MAX_TRUSTED_GPS_ACCURACY_M = 100
 /** Expands the local distance allowance for known uncertainty. */
@@ -90,7 +92,7 @@ export function clampReliabilityTimeGap(value: number): number {
 // Compatibility aliases retained while the parser/report migration lands.
 export const MAX_ANOMALY_EXAMPLES = MAX_RELIABILITY_EXAMPLES
 export const MIN_SPEED_TEST_DISTANCE_M = SPEED_TEST_DISTANCE_FLOOR_M
-export const ABSOLUTE_TELEPORT_DISTANCE_M = 250_000
+export const ABSOLUTE_TELEPORT_DISTANCE_M = HARD_TELEPORT_DISTANCE_M
 export const SPATIAL_FALLBACK_WINDOW_EDGES = RELIABILITY_WINDOW_EDGES
 export const REJOIN_POSITION_MARGIN_M = REJOIN_POSITION_FLOOR_M
 export const TRUSTED_PREFIX_MIN_POINTS = MIN_CONFIDENT_FRAGMENT_POINTS

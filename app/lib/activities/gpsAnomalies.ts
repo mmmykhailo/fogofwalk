@@ -1,8 +1,8 @@
 import type { ActivityType, RawPoint } from "~shared/activities"
 import {
-  ABSOLUTE_TELEPORT_DISTANCE_M,
   ANOMALY_ALGORITHM_VERSION,
   GPS_ACCURACY_MULTIPLIER,
+  HARD_TELEPORT_DISTANCE_M,
   LOCAL_DISTANCE_CEILING_M,
   LOCAL_DISTANCE_FLOOR_M,
   LOCAL_DISTANCE_MULTIPLIER,
@@ -303,7 +303,7 @@ function classifyEdge(
     reason = "non_positive_time"
   } else if (deltaMs != null && deltaMs > timeGapLimitMs) {
     reason = "recording_gap"
-  } else if (distanceM >= ABSOLUTE_TELEPORT_DISTANCE_M) {
+  } else if (distanceM >= HARD_TELEPORT_DISTANCE_M) {
     reason = "hard_teleport"
   } else if (
     deltaMs != null &&
@@ -384,7 +384,7 @@ function seedBaseline(
     ) {
       continue
     }
-    if (measured.distanceM >= ABSOLUTE_TELEPORT_DISTANCE_M) continue
+    if (measured.distanceM >= HARD_TELEPORT_DISTANCE_M) continue
     if (measured.distanceM <= 0 && measured.rawDeltaMs == null) continue
     if (measured.rawDeltaMs != null) {
       if (
@@ -1000,6 +1000,11 @@ interface NumericDequeEntry {
   value: number
 }
 
+interface NumericDeque {
+  entries: NumericDequeEntry[]
+  head: number
+}
+
 interface PauseRange {
   startIndex: number
   endIndex: number
@@ -1013,25 +1018,36 @@ function unwrapLongitude(previous: number, current: number): number {
 }
 
 function addMonotonicEntry(
-  queue: NumericDequeEntry[],
+  queue: NumericDeque,
   entry: NumericDequeEntry,
   ascending: boolean
 ): void {
-  while (queue.length > 0) {
-    const last = queue[queue.length - 1]!
+  while (queue.entries.length > queue.head) {
+    const last = queue.entries[queue.entries.length - 1]!
     if (ascending ? last.value <= entry.value : last.value >= entry.value) break
-    queue.pop()
+    queue.entries.pop()
   }
-  queue.push(entry)
+  queue.entries.push(entry)
 }
 
 function dropOldMonotonicEntries(
-  queue: NumericDequeEntry[],
+  queue: NumericDeque,
   firstPointIndex: number
 ): void {
-  while (queue.length > 0 && queue[0]!.pointIndex < firstPointIndex) {
-    queue.shift()
+  while (
+    queue.head < queue.entries.length &&
+    queue.entries[queue.head]!.pointIndex < firstPointIndex
+  ) {
+    queue.head += 1
   }
+  if (queue.head > 1_024) {
+    queue.entries = queue.entries.slice(queue.head)
+    queue.head = 0
+  }
+}
+
+function firstMonotonicEntry(queue: NumericDeque): NumericDequeEntry {
+  return queue.entries[queue.head]!
 }
 
 function pauseWindowIsSpatiallySmall(
@@ -1170,10 +1186,10 @@ function findPauseRanges(
   let sumPathDistanceM = 0
   let previousUnwrappedLng: number | null = null
   let activeCandidate: PauseRange | null = null
-  let minLng: NumericDequeEntry[] = []
-  let maxLng: NumericDequeEntry[] = []
-  let minLat: NumericDequeEntry[] = []
-  let maxLat: NumericDequeEntry[] = []
+  let minLng: NumericDeque = { entries: [], head: 0 }
+  let maxLng: NumericDeque = { entries: [], head: 0 }
+  let minLat: NumericDeque = { entries: [], head: 0 }
+  let maxLat: NumericDeque = { entries: [], head: 0 }
 
   const reset = () => {
     window = []
@@ -1182,10 +1198,10 @@ function findPauseRanges(
     sumLat = 0
     sumPathDistanceM = 0
     previousUnwrappedLng = null
-    minLng = []
-    maxLng = []
-    minLat = []
-    maxLat = []
+    minLng = { entries: [], head: 0 }
+    maxLng = { entries: [], head: 0 }
+    minLat = { entries: [], head: 0 }
+    maxLat = { entries: [], head: 0 }
   }
 
   const finishCandidate = () => {
@@ -1255,6 +1271,8 @@ function findPauseRanges(
       sumLng -= first.unwrappedLng
       sumLat -= first.point.lat
       sumPathDistanceM -= first.distanceM
+      const next = window[windowStart]
+      if (next) sumPathDistanceM -= next.distanceM
       dropOldMonotonicEntries(minLng, first.pointIndex + 1)
       dropOldMonotonicEntries(maxLng, first.pointIndex + 1)
       dropOldMonotonicEntries(minLat, first.pointIndex + 1)
@@ -1275,10 +1293,10 @@ function findPauseRanges(
         windowStart,
         sumLng,
         sumLat,
-        minLng[0]!,
-        maxLng[0]!,
-        minLat[0]!,
-        maxLat[0]!
+        firstMonotonicEntry(minLng),
+        firstMonotonicEntry(maxLng),
+        firstMonotonicEntry(minLat),
+        firstMonotonicEntry(maxLat)
       )
     if (window.length - windowStart > 1 && hasSpatialBreak()) {
       finishCandidate()

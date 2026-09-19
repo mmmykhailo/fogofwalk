@@ -5,9 +5,9 @@ import type {
   ActivityType,
 } from "~shared/activities"
 import {
-  ABSOLUTE_TELEPORT_DISTANCE_M,
   ANOMALY_ALGORITHM_VERSION,
   GPS_ACCURACY_MULTIPLIER,
+  HARD_TELEPORT_DISTANCE_M,
   LOCAL_DISTANCE_CEILING_M,
   LOCAL_DISTANCE_FLOOR_M,
   LOCAL_DISTANCE_MULTIPLIER,
@@ -320,7 +320,7 @@ export function logGpsAnomalyReport(input: {
       maxTrustedGpsAccuracyM: MAX_TRUSTED_GPS_ACCURACY_M,
       gpsAccuracyMultiplier: GPS_ACCURACY_MULTIPLIER,
       applicableSpeedCeilingMps: maxPlausibleSpeed(report.activityType),
-      absoluteFallbackM: ABSOLUTE_TELEPORT_DISTANCE_M,
+      hardTeleportDistanceM: HARD_TELEPORT_DISTANCE_M,
       confirmationEdges: REJOIN_CONFIRMATION_EDGES,
       rejoin: {
         floorM: REJOIN_POSITION_FLOOR_M,
