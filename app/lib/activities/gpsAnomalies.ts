@@ -127,6 +127,9 @@ export interface GpsAnomalyResult {
     distanceCalculations: number
     pointsVisited: number
     boundedLookaheadCount: number
+    candidatePointsVisited: number
+    fragmentPromotions: number
+    mergedRemovalRangeCount: number
     maxDistanceWindowSize: number
     maxTimeWindowSize: number
     pauseWindowPointsVisited: number
@@ -165,6 +168,9 @@ interface MutableWork {
   distanceCalculations: number
   pointsVisited: number
   boundedLookaheadCount: number
+  candidatePointsVisited: number
+  fragmentPromotions: number
+  mergedRemovalRangeCount: number
   maxDistanceWindowSize: number
   maxTimeWindowSize: number
   pauseWindowPointsVisited: number
@@ -331,7 +337,7 @@ function derivedLimits(baseline: RollingBaseline): {
     timeGapLimitMs:
       baseline.deltas.length < RELIABILITY_MIN_BASELINE_EDGES ||
       timeMedian == null
-        ? TIME_GAP_CEILING_MS
+        ? TIME_GAP_FLOOR_MS
         : clampReliabilityTimeGap(timeMedian * TIME_GAP_MULTIPLIER),
   }
 }
@@ -709,7 +715,7 @@ function addBoundarySplit(
 function addRemovalSplit(
   counts: MutableCounts,
   examples: GpsAnomalyExample[],
-  code: "local_spike" | "local_excursion" | "untrusted_accuracy",
+  code: GpsAnomalyCode,
   sourcePathIndex: number,
   points: readonly AnomalyPoint[],
   startIndex: number,
@@ -800,9 +806,489 @@ function confirmRejoin(
       context
     )
     context.work.boundedLookaheadCount += 1
-    if (edge.reason != null) return false
+    if (
+      !isReliableEdge(
+        points[index + offset]!,
+        points[index + offset + 1]!,
+        edge,
+        baseline
+      )
+    ) {
+      return false
+    }
   }
   return true
+}
+
+function isReliableEdge(
+  first: AnomalyPoint,
+  second: AnomalyPoint,
+  edge: EdgeEvidence,
+  baseline: RollingBaseline
+): boolean {
+  return (
+    edge.codes.length === 0 &&
+    !isUnsafePointEvidence(pointEvidence(first, baseline)) &&
+    !isUnsafePointEvidence(pointEvidence(second, baseline))
+  )
+}
+
+function hasTemporalBoundary(edge: EdgeEvidence): boolean {
+  return (
+    edge.codes.includes("recording_gap") ||
+    edge.codes.includes("non_positive_time")
+  )
+}
+
+function hasSpatialEvidence(edge: EdgeEvidence): boolean {
+  return edge.codes.some(
+    (code) =>
+      code === "impossible_speed" ||
+      code === "local_distance_jump" ||
+      code === "hard_teleport" ||
+      code === "recorded_speed_mismatch"
+  )
+}
+
+function boundaryCode(
+  edge: EdgeEvidence
+): "recording_gap" | "non_positive_time" {
+  return edge.codes.includes("recording_gap")
+    ? "recording_gap"
+    : "non_positive_time"
+}
+
+function removalCodeForIsland(
+  points: readonly AnomalyPoint[],
+  startIndex: number,
+  endIndex: number,
+  isSuffix = false
+): "isolated_fix" | "untrusted_island" | "untrusted_suffix" {
+  if (isSuffix) return "untrusted_suffix"
+  const length = endIndex - startIndex + 1
+  return length === 1 ? "isolated_fix" : "untrusted_island"
+}
+
+function addRecoveredFragmentSplit(
+  counts: MutableCounts,
+  examples: GpsAnomalyExample[],
+  sourcePathIndex: number,
+  points: readonly AnomalyPoint[],
+  entryIndex: number,
+  promotedEndIndex: number,
+  entry: EdgeEvidence,
+  context: AnalysisContext
+): void {
+  addReason(counts, "recovered_fragment")
+  counts.splitCount += 1
+  collectExample(
+    examples,
+    makeExample(
+      "recovered_fragment",
+      "split",
+      sourcePathIndex,
+      points,
+      Math.max(0, entryIndex - 1),
+      promotedEndIndex,
+      entry,
+      context,
+      {
+        triggerCode: entry.primaryCode ?? entry.reason ?? undefined,
+        removedPointCount: 0,
+      }
+    )
+  )
+}
+
+interface CandidateBuffer {
+  points: AnomalyPoint[]
+  startIndex: number
+  reliableEdges: EdgeEvidence[]
+  requiresRecovery: boolean
+  allowShortPath: boolean
+  boundaryEntry: EdgeEvidence | null
+}
+
+/**
+ * Version-3 forward scanner. Candidate buffers are deliberately separate from
+ * emitted paths: a boundary is not enough to trust the points on either side,
+ * and a later coherent fragment must remain reachable after an excursion.
+ */
+function analyzeValidSegmentV3(
+  sourcePathIndex: number,
+  points: AnomalyPoint[],
+  context: AnalysisContext,
+  counts: MutableCounts,
+  examples: GpsAnomalyExample[]
+): EmittedPath[] {
+  if (points.length === 0) return []
+
+  const baseline: RollingBaseline = {
+    distances: [],
+    deltas: [],
+    accuracies: [],
+  }
+  const output: EmittedPath[] = []
+  let candidate: CandidateBuffer | null = null
+  let trustedPath: EmittedPath | null = null
+  let excursion: {
+    points: AnomalyPoint[]
+    startIndex: number
+    lastTrustedIndex: number
+    entry: EdgeEvidence
+    reliableEdges: EdgeEvidence[]
+  } | null = null
+
+  const resetBaseline = () => {
+    baseline.distances.length = 0
+    baseline.deltas.length = 0
+    baseline.accuracies.length = 0
+  }
+
+  const startCandidate = (
+    index: number,
+    requiresRecovery: boolean,
+    allowShortPath: boolean,
+    boundaryEntry: EdgeEvidence | null = null
+  ) => {
+    resetBaseline()
+    candidate = {
+      points: [points[index]!],
+      startIndex: index,
+      reliableEdges: [],
+      requiresRecovery,
+      allowShortPath,
+      boundaryEntry,
+    }
+    context.work.candidatePointsVisited += 1
+    trustedPath = null
+    excursion = null
+  }
+
+  const addRemoval = (
+    code:
+      | "isolated_fix"
+      | "untrusted_island"
+      | "untrusted_suffix"
+      | "untrusted_prefix"
+      | "local_spike"
+      | "local_excursion"
+      | "untrusted_accuracy",
+    startIndex: number,
+    endIndex: number,
+    entry: EdgeEvidence,
+    triggerCode?: GpsAnomalyCode,
+    rejoinPointIndex?: number,
+    rejoin?: RejoinEvidence | null
+  ) => {
+    if (endIndex < startIndex) return
+    if (code === "untrusted_prefix") {
+      addPrefixRemoval(
+        counts,
+        examples,
+        sourcePathIndex,
+        points,
+        startIndex,
+        endIndex,
+        entry,
+        context,
+        triggerCode
+      )
+      return
+    }
+    addRemovalSplit(
+      counts,
+      examples,
+      code,
+      sourcePathIndex,
+      points,
+      startIndex,
+      endIndex,
+      entry,
+      context,
+      {
+        triggerCode,
+        rejoinPointIndex,
+        rejoin,
+      }
+    )
+    if (code === "untrusted_suffix") {
+      counts.trimmedSuffixPoints += endIndex - startIndex + 1
+    }
+  }
+
+  const emitCandidate = (atEnd = false) => {
+    if (!candidate) return
+    const candidateEnd = candidate.startIndex + candidate.points.length - 1
+    const ordinaryConfidence = candidate.reliableEdges.length >= 2
+    const recoveryConfidence =
+      candidate.reliableEdges.length >= 4 && candidate.points.length >= 5
+    const confident = candidate.requiresRecovery
+      ? recoveryConfidence
+      : ordinaryConfidence
+    const canKeep =
+      candidate.points.length >= MIN_RETAINED_PATH_POINTS &&
+      (confident || candidate.allowShortPath)
+
+    if (canKeep) {
+      output.push({ sourcePathIndex, points: candidate.points })
+      if (candidate.requiresRecovery && recoveryConfidence) {
+        addReason(counts, "recovered_fragment")
+        counts.splitCount += 1
+        context.work.fragmentPromotions += 1
+      }
+    } else if (candidate.points.length > 0) {
+      const code = candidate.requiresRecovery
+        ? removalCodeForIsland(
+            points,
+            candidate.startIndex,
+            candidateEnd,
+            atEnd
+          )
+        : candidate.startIndex === 0
+          ? "untrusted_prefix"
+          : removalCodeForIsland(points, candidate.startIndex, candidateEnd)
+      addRemoval(
+        code,
+        candidate.startIndex,
+        candidateEnd,
+        candidate.boundaryEntry ?? evidenceForPoint(baseline, context),
+        candidate.boundaryEntry?.reason ?? undefined
+      )
+    }
+    candidate = null
+  }
+
+  const promoteCandidate = () => {
+    if (!candidate) return
+    const newPath: EmittedPath = { sourcePathIndex, points: candidate.points }
+    output.push(newPath)
+    trustedPath = newPath
+    resetBaseline()
+    for (
+      let edgeIndex = 0;
+      edgeIndex < candidate.reliableEdges.length;
+      edgeIndex += 1
+    ) {
+      appendBaseline(
+        baseline,
+        candidate.reliableEdges[edgeIndex]!,
+        candidate.points[edgeIndex + 1]!,
+        context.work
+      )
+    }
+    if (candidate.requiresRecovery) {
+      addRecoveredFragmentSplit(
+        counts,
+        examples,
+        sourcePathIndex,
+        points,
+        candidate.startIndex,
+        candidate.startIndex + candidate.points.length - 1,
+        candidate.boundaryEntry ?? evidenceForPoint(baseline, context),
+        context
+      )
+      context.work.fragmentPromotions += 1
+    }
+    candidate = null
+  }
+
+  const finishExcursion = (isSuffix: boolean) => {
+    if (!excursion) return
+    const endIndex = excursion.startIndex + excursion.points.length - 1
+    const code = removalCodeForIsland(
+      points,
+      excursion.startIndex,
+      endIndex,
+      isSuffix
+    )
+    addRemoval(
+      code,
+      excursion.startIndex,
+      endIndex,
+      excursion.entry,
+      excursion.entry.reason ?? undefined
+    )
+    excursion = null
+    trustedPath = null
+  }
+
+  startCandidate(0, false, false)
+  let index = 1
+  while (index < points.length) {
+    const first = points[index - 1]!
+    const second = points[index]!
+
+    if (candidate) {
+      const edge = classifyEdge(first, second, baseline, context)
+      const reliable = isReliableEdge(first, second, edge, baseline)
+      if (reliable) {
+        candidate.points.push(second)
+        candidate.reliableEdges.push(edge)
+        context.work.candidatePointsVisited += 1
+        appendBaseline(baseline, edge, second, context.work)
+        const ordinaryConfidence = candidate.reliableEdges.length >= 2
+        const recoveryConfidence =
+          candidate.reliableEdges.length >= 4 && candidate.points.length >= 5
+        if (
+          (candidate.requiresRecovery && recoveryConfidence) ||
+          (!candidate.requiresRecovery && ordinaryConfidence)
+        ) {
+          promoteCandidate()
+        }
+        index += 1
+        continue
+      }
+
+      if (hasTemporalBoundary(edge)) {
+        if (!hasSpatialEvidence(edge)) candidate.allowShortPath = true
+        emitCandidate()
+        addBoundarySplit(
+          counts,
+          examples,
+          boundaryCode(edge),
+          sourcePathIndex,
+          points,
+          index - 1,
+          edge,
+          context
+        )
+        startCandidate(index, false, true, edge)
+        index += 1
+        continue
+      }
+
+      const hadTrustedOutput = output.length > 0
+      emitCandidate()
+      startCandidate(index, hadTrustedOutput, false, edge)
+      index += 1
+      continue
+    }
+
+    const activeTrustedPath = trustedPath as EmittedPath | null
+    if (activeTrustedPath) {
+      const edge = classifyEdge(first, second, baseline, context)
+      const reliable = isReliableEdge(first, second, edge, baseline)
+      if (reliable) {
+        activeTrustedPath.points.push(second)
+        appendBaseline(baseline, edge, second, context.work)
+        index += 1
+        continue
+      }
+      if (hasTemporalBoundary(edge)) {
+        addBoundarySplit(
+          counts,
+          examples,
+          boundaryCode(edge),
+          sourcePathIndex,
+          points,
+          index - 1,
+          edge,
+          context
+        )
+        startCandidate(index, false, true, edge)
+        index += 1
+        continue
+      }
+      excursion = {
+        points: [second],
+        startIndex: index,
+        lastTrustedIndex: index - 1,
+        entry: edge,
+        reliableEdges: [],
+      }
+      trustedPath = null
+      index += 1
+      continue
+    }
+
+    if (excursion) {
+      const edge = classifyEdge(first, second, baseline, context)
+      const rejoin = rejoinFromTrusted(
+        points[excursion.lastTrustedIndex]!,
+        second,
+        excursion.points.length,
+        baseline,
+        context
+      )
+      if (rejoin.reachable && confirmRejoin(points, index, baseline, context)) {
+        const removedEnd = index - 1
+        const code =
+          excursion.entry.reason === "untrusted_accuracy" ||
+          excursion.entry.reason === "relative_accuracy_outlier"
+            ? "untrusted_accuracy"
+            : excursion.points.length === 1
+              ? "local_spike"
+              : "local_excursion"
+        addRemoval(
+          code,
+          excursion.startIndex,
+          removedEnd,
+          excursion.entry,
+          excursion.entry.reason ?? undefined,
+          index,
+          rejoin
+        )
+        startCandidate(index, false, false)
+        index += 1
+        continue
+      }
+
+      if (hasTemporalBoundary(edge)) {
+        finishExcursion(false)
+        addBoundarySplit(
+          counts,
+          examples,
+          boundaryCode(edge),
+          sourcePathIndex,
+          points,
+          index - 1,
+          edge,
+          context
+        )
+        startCandidate(index, true, false, edge)
+        index += 1
+        continue
+      }
+
+      if (isReliableEdge(first, second, edge, baseline)) {
+        excursion.points.push(second)
+        excursion.reliableEdges.push(edge)
+        context.work.candidatePointsVisited += 1
+        if (
+          excursion.reliableEdges.length >= 4 &&
+          excursion.points.length >= 5
+        ) {
+          const promoted: CandidateBuffer = {
+            points: excursion.points,
+            startIndex: excursion.startIndex,
+            reliableEdges: excursion.reliableEdges,
+            requiresRecovery: true,
+            allowShortPath: false,
+            boundaryEntry: excursion.entry,
+          }
+          excursion = null
+          candidate = promoted
+          promoteCandidate()
+        }
+        index += 1
+        continue
+      }
+
+      finishExcursion(false)
+      startCandidate(index, true, false, edge)
+      index += 1
+      continue
+    }
+
+    startCandidate(index, false, false)
+    index += 1
+  }
+
+  if (candidate) emitCandidate(true)
+  if (excursion) finishExcursion(true)
+
+  return output.filter((path) => path.points.length >= MIN_RETAINED_PATH_POINTS)
 }
 
 function analyzeValidSegment(
@@ -1592,6 +2078,9 @@ export function detectGpsAnomalies(
       distanceCalculations: 0,
       pointsVisited: 0,
       boundedLookaheadCount: 0,
+      candidatePointsVisited: 0,
+      fragmentPromotions: 0,
+      mergedRemovalRangeCount: 0,
       maxDistanceWindowSize: 0,
       maxTimeWindowSize: 0,
       pauseWindowPointsVisited: 0,
@@ -1624,7 +2113,7 @@ export function detectGpsAnomalies(
     const flushValid = () => {
       if (validPoints.length > 0) {
         analyzedPaths.push(
-          ...analyzeValidSegment(
+          ...analyzeValidSegmentV3(
             source.sourcePathIndex,
             validPoints,
             context,
