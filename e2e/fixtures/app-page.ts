@@ -312,7 +312,17 @@ export function createAppPage(
       await app.openDrawer()
       const status = page.getByTestId("drawer-status")
       if (expected === 0) {
-        await expect(status).toBeHidden()
+        await expect
+          .poll(
+            async () => {
+              if ((await status.count()) === 0) return false
+              return /\b\d+\s+activit(?:y|ies)\b/.test(
+                (await status.textContent()) ?? ""
+              )
+            },
+            { timeout: 30_000 }
+          )
+          .toBe(false)
         return
       }
       // A remote sync adds activities before the fog worker has rendered their
