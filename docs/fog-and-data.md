@@ -20,21 +20,33 @@ the fog custom layer, which supplies the surrounding world stencil.
 
 ### GPS reliability cleaning
 
-GPX and FIT imports run through the version-2 GPS reliability cleaner in
+GPX and FIT imports run through the version-3 GPS reliability cleaner in
 `app/lib/activities/gpsAnomalies.ts` before statistics, sun phase, FIT laps,
 normalization, hashing, persistence, or worker projection. It processes each
-original GPX segment independently and emits only disconnected paths whose
-within-path edges have reliable coordinates, timestamps, speed, and (when FIT
-provides it) accuracy evidence.
+original GPX segment independently and keeps point trust, edge drawability, and
+fragment confidence as separate decisions. The forward scanner has candidate,
+trusted, and excursion states: temporal boundaries retain disconnected
+endpoints, returning excursions are removed, and a post-jump candidate becomes
+a new disconnected path only after four internally reliable edges and five
+points. A short run bounded by unsafe edges is resolved as an isolated fix or
+untrusted island rather than allowing a bad point to survive between gaps.
 
-The cleaner uses bounded rolling medians of kept edge distances and positive
-timestamp deltas. A long positive timestamp interval creates a path boundary
-and retains both endpoints; it never interpolates a tunnel or pause. Invalid
-coordinates, inaccurate FIT fixes, local jumps, impossible-speed excursions,
-and stationary GPS drift are removed when they can be identified. A displaced
-suffix without a trustworthy return is trimmed rather than emitted as a new
-route. No routing service, road snapping, interpolation, or synthesized
-coordinate is used.
+Edge evidence keeps every applicable code, including recording gaps, spatial
+jumps, impossible speed, and optional recorded-speed mismatch. Point evidence
+uses the hard accuracy limit and a bounded local horizontal-accuracy baseline;
+missing or malformed GPX/FIT sensor fields remain unknown and fall back to
+coordinate and timestamp evidence. Long stationary runs are summarized in
+bounded chunks, merged only across reliable boundaries, and evaluated with
+duration, geometry, coordinate speed, and sufficiently covered device-speed
+evidence. Removal ranges are sorted and merged before counts and diagnostics
+are emitted, so a source point is retained or removed once and examples remain
+coordinate-free and bounded.
+
+A long positive timestamp interval creates a path boundary and retains both
+endpoints; the cleaner never interpolates a tunnel or pause. Invalid
+coordinates, inaccurate fixes, local jumps, impossible-speed excursions, and
+stationary GPS drift are removed when they can be identified. No routing
+service, road snapping, interpolation, or synthesized coordinate is used.
 
 The stored `paths` and aligned `pathTimestamps` are the single cleaned source
 of truth. Statistics, laps, map GeoJSON, fog input, unique distance, sharing,
