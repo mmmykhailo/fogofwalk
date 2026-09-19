@@ -34,6 +34,8 @@ import {
 import { haversineMeters } from "~/lib/geo"
 import {
   detectGpsAnomalies,
+  isRecordedSpeedMismatch,
+  isRelativeAccuracyOutlier,
   type AnomalyPoint,
   type AnomalySourcePath,
 } from "./gpsAnomalies"
@@ -516,7 +518,7 @@ describe("GPS reliability cleaner", () => {
     expect(haversineMeters([179.9, 0], [-179.9, 0])).toBeCloseTo(22_239, 0)
   })
 
-  test("keeps the version-2 policy explicit", () => {
+  test("keeps the version-3 policy explicit", () => {
     expect(ANOMALY_ALGORITHM_VERSION).toBe(3)
     expect(RELIABILITY_WINDOW_EDGES).toBe(31)
     expect(RELIABILITY_MIN_BASELINE_EDGES).toBe(4)
@@ -553,5 +555,18 @@ describe("GPS reliability cleaner", () => {
       "other",
     ]
     expect(types.every((type) => maxPlausibleSpeed(type) > 0)).toBe(true)
+  })
+
+  test("uses strict accuracy and sensor-mismatch boundaries", () => {
+    expect(isRelativeAccuracyOutlier(25, [5, 5, 5, 5, 5])).toBe(false)
+    expect(isRelativeAccuracyOutlier(25.001, [5, 5, 5, 5, 5])).toBe(true)
+    expect(isRelativeAccuracyOutlier(26, [5, 5, 5, 5])).toBe(false)
+
+    expect(isRecordedSpeedMismatch(5, 0)).toBe(false)
+    expect(isRecordedSpeedMismatch(5.001, 0)).toBe(true)
+    expect(isRecordedSpeedMismatch(10, 5)).toBe(false)
+    expect(isRecordedSpeedMismatch(10, 4)).toBe(false)
+    expect(isRecordedSpeedMismatch(10, 2.5)).toBe(true)
+    expect(isRecordedSpeedMismatch(4.999, 0)).toBe(false)
   })
 })

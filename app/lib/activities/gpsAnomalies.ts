@@ -272,6 +272,51 @@ function finiteRecordedSpeed(point: AnomalyPoint): number | null {
     : null
 }
 
+export function isRelativeAccuracyOutlier(
+  accuracyM: number,
+  trustedAccuracies: readonly number[]
+): boolean {
+  if (
+    !Number.isFinite(accuracyM) ||
+    accuracyM < 0 ||
+    trustedAccuracies.length < RELATIVE_ACCURACY_MIN_SAMPLES
+  ) {
+    return false
+  }
+  const trustedMedian = median(trustedAccuracies)
+  return (
+    trustedMedian != null &&
+    accuracyM >
+      Math.max(
+        RELATIVE_ACCURACY_FLOOR_M,
+        trustedMedian * RELATIVE_ACCURACY_MULTIPLIER
+      )
+  )
+}
+
+export function isRecordedSpeedMismatch(
+  coordinateSpeedMps: number | null,
+  recordedSpeedMps: number | null
+): boolean {
+  if (
+    coordinateSpeedMps == null ||
+    recordedSpeedMps == null ||
+    !Number.isFinite(coordinateSpeedMps) ||
+    !Number.isFinite(recordedSpeedMps) ||
+    coordinateSpeedMps < SPEED_MISMATCH_COORDINATE_FLOOR_MPS
+  ) {
+    return false
+  }
+  return (
+    Math.abs(coordinateSpeedMps - recordedSpeedMps) >
+      SPEED_MISMATCH_DIFFERENCE_MPS &&
+    (recordedSpeedMps === 0 ||
+      Math.max(coordinateSpeedMps, recordedSpeedMps) /
+        Math.min(coordinateSpeedMps, recordedSpeedMps) >=
+        SPEED_MISMATCH_RATIO)
+  )
+}
+
 function isUntrustedAccuracy(point: AnomalyPoint): boolean {
   const accuracy = finiteAccuracy(point)
   return accuracy != null && accuracy > MAX_TRUSTED_GPS_ACCURACY_M
@@ -288,19 +333,9 @@ function pointEvidence(
     codes.push("untrusted_accuracy")
   } else if (
     accuracy != null &&
-    baseline.accuracies.length >= RELATIVE_ACCURACY_MIN_SAMPLES
+    isRelativeAccuracyOutlier(accuracy, baseline.accuracies)
   ) {
-    const trustedMedian = median(baseline.accuracies)
-    if (
-      trustedMedian != null &&
-      accuracy >
-        Math.max(
-          RELATIVE_ACCURACY_FLOOR_M,
-          trustedMedian * RELATIVE_ACCURACY_MULTIPLIER
-        )
-    ) {
-      codes.push("relative_accuracy_outlier")
-    }
+    codes.push("relative_accuracy_outlier")
   }
   return codes
 }
@@ -446,15 +481,7 @@ function classifyEdge(
     codes.push("local_distance_jump")
   }
   const recordedSpeed = finiteRecordedSpeed(second)
-  if (
-    speedMps != null &&
-    speedMps >= SPEED_MISMATCH_COORDINATE_FLOOR_MPS &&
-    recordedSpeed != null &&
-    Math.abs(speedMps - recordedSpeed) > SPEED_MISMATCH_DIFFERENCE_MPS &&
-    (recordedSpeed === 0 ||
-      Math.max(speedMps, recordedSpeed) / Math.min(speedMps, recordedSpeed) >=
-        SPEED_MISMATCH_RATIO)
-  ) {
+  if (isRecordedSpeedMismatch(speedMps, recordedSpeed)) {
     codes.push("recorded_speed_mismatch")
   }
 
@@ -2652,6 +2679,10 @@ function normalizeRemovalRanges(
         previous.endPointIndex,
         item.endPointIndex
       )
+      previous.record.isPrefix =
+        previous.record.isPrefix || item.record.isPrefix
+      previous.record.isSuffix =
+        previous.record.isSuffix || item.record.isSuffix
       if (
         removalPriority(item.record.code) >
         removalPriority(previous.record.code)
