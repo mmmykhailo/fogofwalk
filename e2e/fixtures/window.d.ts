@@ -3,6 +3,7 @@ export {}
 declare global {
   interface FogofwalkE2eMap {
     project(coordinate: [number, number]): { x: number; y: number }
+    unproject(point: { x: number; y: number }): { lng: number; lat: number }
     getCanvas(): HTMLCanvasElement
     getZoom(): number
     setZoom(zoom: number): void
