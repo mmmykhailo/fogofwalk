@@ -1,6 +1,7 @@
 import type { Page } from "@playwright/test"
 import { test, expect, readSessionToken } from "../fixtures/app"
 import { API_URL } from "../fixtures/ports"
+import { makeGpx } from "../fixtures/gpx"
 import { waitForMapIdle } from "../fixtures/performance"
 import type { AppPage } from "../fixtures/app-page"
 
@@ -14,6 +15,7 @@ const OVERLAP_OLDER_NAME = "Older overlap point"
 const OVERLAP_NEWER_COORDINATE: [number, number] = [14.42, 50.08804]
 const OVERLAP_OLDER_COORDINATE: [number, number] = [14.42015, 50.08804]
 const OVERLAP_NEWER_RGB: [number, number, number] = [124, 58, 237]
+const TRACK_COORDINATE: [number, number] = [13.452, 52.5516]
 
 type Pixel = [number, number, number, number]
 
@@ -108,6 +110,131 @@ async function assertNewestOverlapWins(app: AppPage): Promise<void> {
   await expect(nameInput).toHaveValue(OVERLAP_NEWER_NAME)
   await app.page.getByRole("button", { name: "Close" }).click()
   await expect(nameInput).toBeHidden()
+}
+
+interface ProjectedTrackCoordinate {
+  clientX: number
+  clientY: number
+  lng: number
+  lat: number
+}
+
+async function projectTrackCoordinate(
+  app: AppPage
+): Promise<ProjectedTrackCoordinate> {
+  await app.page.evaluate((coordinate) => {
+    const map = window.__fogofwalkE2eMap
+    if (!map) throw new Error("MapLibre test handle is unavailable")
+    map.jumpTo({ center: coordinate, zoom: 15 })
+  }, TRACK_COORDINATE)
+  await waitForMapIdle(app.page)
+
+  await app.page.waitForFunction((coordinate) => {
+    const map = window.__fogofwalkE2eMap
+    if (!map?.getLayer("activities-hit-layer")) return false
+    const point = map.project(coordinate)
+    return (
+      map.queryRenderedFeatures([point.x, point.y], {
+        layers: ["activities-hit-layer"],
+      }).length > 0
+    )
+  }, TRACK_COORDINATE)
+
+  return app.page.evaluate((coordinate) => {
+    const map = window.__fogofwalkE2eMap
+    if (!map) throw new Error("MapLibre test handle is unavailable")
+    const point = map.project(coordinate)
+    const hitFeatures = map.queryRenderedFeatures([point.x, point.y], {
+      layers: ["activities-hit-layer"],
+    })
+    if (hitFeatures.length === 0) {
+      throw new Error(
+        "The known route coordinate is not on activities-hit-layer"
+      )
+    }
+    const canvasBounds = map.getCanvas().getBoundingClientRect()
+    const projectedCoordinate = map.unproject(point)
+    return {
+      clientX: canvasBounds.left + point.x,
+      clientY: canvasBounds.top + point.y,
+      lng: projectedCoordinate.lng,
+      lat: projectedCoordinate.lat,
+    }
+  }, TRACK_COORDINATE)
+}
+
+async function expectSavedPointEditor(
+  app: AppPage,
+  coordinate: Pick<ProjectedTrackCoordinate, "lng" | "lat">
+): Promise<void> {
+  const title = app.page
+    .locator('[data-slot="card-title"], [data-slot="dialog-title"]')
+    .filter({ hasText: "Save point" })
+  await expect(title).toBeVisible()
+  await expect(app.page.getByLabel("Longitude")).toHaveValue(
+    coordinate.lng.toFixed(6)
+  )
+  await expect(app.page.getByLabel("Latitude")).toHaveValue(
+    coordinate.lat.toFixed(6)
+  )
+}
+
+async function closeSavedPointEditor(app: AppPage): Promise<void> {
+  await app.page.getByRole("button", { name: "Cancel", exact: true }).click()
+  const title = app.page
+    .locator('[data-slot="card-title"], [data-slot="dialog-title"]')
+    .filter({ hasText: "Save point" })
+  await expect(title).toBeHidden()
+}
+
+async function rightClickMapCoordinate(
+  app: AppPage,
+  coordinate: ProjectedTrackCoordinate
+): Promise<void> {
+  await app.page.mouse.click(coordinate.clientX, coordinate.clientY, {
+    button: "right",
+  })
+}
+
+async function dispatchTouchLongPress(
+  app: AppPage,
+  coordinate: ProjectedTrackCoordinate
+): Promise<void> {
+  await app.page.evaluate(({ clientX, clientY }) => {
+    const canvas =
+      document.querySelector<HTMLCanvasElement>(".maplibregl-canvas")
+    if (!canvas) throw new Error("Map canvas is unavailable")
+    canvas.dispatchEvent(
+      new PointerEvent("pointerdown", {
+        bubbles: true,
+        cancelable: true,
+        pointerId: 41,
+        pointerType: "touch",
+        isPrimary: true,
+        clientX,
+        clientY,
+        buttons: 1,
+      })
+    )
+  }, coordinate)
+  await app.page.waitForTimeout(600)
+  await app.page.evaluate(({ clientX, clientY }) => {
+    const canvas =
+      document.querySelector<HTMLCanvasElement>(".maplibregl-canvas")
+    if (!canvas) throw new Error("Map canvas is unavailable")
+    canvas.dispatchEvent(
+      new PointerEvent("pointerup", {
+        bubbles: true,
+        cancelable: true,
+        pointerId: 41,
+        pointerType: "touch",
+        isPrimary: true,
+        clientX,
+        clientY,
+        buttons: 0,
+      })
+    )
+  }, coordinate)
 }
 
 test.describe("saved points", () => {
@@ -243,5 +370,29 @@ test.describe("saved points", () => {
     })
     await app.reload()
     await assertNewestOverlapWins(app)
+  })
+
+  test("creates a saved point over an activity hitbox on desktop and touch", async ({
+    app,
+  }) => {
+    await app.goto()
+    await app.importFiles([makeGpx("saved-point-track.gpx", 1, 8)])
+    await app.waitForImportToSettle()
+    await app.closeDrawer()
+
+    const desktopCoordinate = await projectTrackCoordinate(app)
+    await rightClickMapCoordinate(app, desktopCoordinate)
+    await expectSavedPointEditor(app, desktopCoordinate)
+    await closeSavedPointEditor(app)
+
+    await app.page.setViewportSize({ width: 390, height: 844 })
+    await app.page.waitForFunction(
+      () => window.matchMedia("(max-width: 639px)").matches
+    )
+    await waitForMapIdle(app.page)
+
+    const mobileCoordinate = await projectTrackCoordinate(app)
+    await dispatchTouchLongPress(app, mobileCoordinate)
+    await expectSavedPointEditor(app, mobileCoordinate)
   })
 })

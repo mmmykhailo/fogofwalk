@@ -4,10 +4,11 @@ export function SavedPointsSection() {
   return (
     <div className="space-y-3 text-sm leading-relaxed text-muted-foreground">
       <p>
-        Save a place by right-clicking an empty part of the map on desktop or
-        pressing and holding it on a touch screen. Give the point a name, an
-        optional description, a colour, and exact coordinates. Tap an owned
-        marker to edit or delete it.
+        Save a place by right-clicking the map on desktop or pressing and
+        holding it on a touch screen, including over a recorded route. Existing
+        map markers keep their own interaction, so tap an owned marker to edit
+        or delete it. Give the point a name, an optional description, a colour,
+        and exact coordinates.
       </p>
       <p>
         The <AppLink to="/saved-points">My saved points</AppLink> page lists all

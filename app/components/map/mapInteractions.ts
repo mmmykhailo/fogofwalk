@@ -38,12 +38,17 @@ export function attachMapInteractions(
   const isInteractiveFeature = (feature: maplibregl.MapGeoJSONFeature) =>
     feature.layer.id !== MAP_LAYER_IDS.savedPointHit ||
     options.isShowingSavedPoints()
+  const isCreateGestureProtectedFeature = (
+    feature: maplibregl.MapGeoJSONFeature
+  ) =>
+    feature.layer.id !== MAP_LAYER_IDS.activityHit &&
+    isInteractiveFeature(feature)
   const isProtectedCreateGesture = (
     point: maplibregl.Point,
     target?: EventTarget | null
   ) =>
     isInteractiveDomTarget(target) ||
-    interactiveFeaturesAt(point).some(isInteractiveFeature)
+    interactiveFeaturesAt(point).some(isCreateGestureProtectedFeature)
   const createSavedPoint = (
     lngLat: maplibregl.LngLat,
     point: maplibregl.Point

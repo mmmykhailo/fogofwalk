@@ -109,7 +109,7 @@ function createFakeMap(
 }
 
 function mapEvent(
-  target: EventTarget | null = null,
+  target: EventTarget | { closest?: unknown } | null = null,
   point = { x: 10, y: 10 }
 ): maplibregl.MapMouseEvent {
   return {
@@ -278,42 +278,137 @@ describe("map interactive targets", () => {
     detach()
   })
 
-  test("protects context-menu creation over interactive layers", () => {
+  test("creates a saved point over an activity hitbox", () => {
     const state = createFakeMap()
     const { detach, savedPointCreates } = attachForTest(state)
+    state.setFeatures(MAP_LAYER_IDS.activityHit, [
+      createFeature(MAP_LAYER_IDS.activityHit),
+    ])
 
-    for (const layerId of INTERACTIVE_TARGET_LAYER_IDS) {
-      state.setFeatures(layerId, [createFeature(layerId)])
-      state.fire("contextmenu", mapEvent())
-      state.setFeatures(layerId, [])
-    }
+    state.fire("contextmenu", mapEvent())
+
+    expect(savedPointCreates).toEqual([
+      { lng: 10, lat: 20, point: { x: 10, y: 10 } },
+    ])
+    detach()
+  })
+
+  test("keeps a visible saved-point hit protected over an activity", () => {
+    const state = createFakeMap()
+    const { detach, savedPointCreates } = attachForTest(state)
+    state.setFeatures(MAP_LAYER_IDS.savedPointHit, [
+      createFeature(MAP_LAYER_IDS.savedPointHit),
+    ])
+    state.setFeatures(MAP_LAYER_IDS.activityHit, [
+      createFeature(MAP_LAYER_IDS.activityHit),
+    ])
+
+    state.fire("contextmenu", mapEvent())
+
+    expect(savedPointCreates).toEqual([])
+    detach()
+  })
+
+  test("does not let hidden saved-point hits block creation", () => {
+    const state = createFakeMap()
+    state.setFeatures(MAP_LAYER_IDS.savedPointHit, [
+      createFeature(MAP_LAYER_IDS.savedPointHit),
+    ])
+    const { detach, savedPointCreates } = attachForTest(state, {
+      isShowingSavedPoints: () => false,
+    })
+
     state.fire("contextmenu", mapEvent())
 
     expect(savedPointCreates).toHaveLength(1)
     detach()
   })
 
-  test("protects touch long-press creation over map and DOM targets", async () => {
+  test("protects a generic registered overlay from create gestures", () => {
+    const syntheticLayerId = "synthetic-hit-layer"
+    const registry = [...INTERACTIVE_TARGET_LAYER_IDS, syntheticLayerId]
+    const state = createFakeMap(registry)
+    state.setFeatures(syntheticLayerId, [createFeature(syntheticLayerId)])
+    const { detach, savedPointCreates } = attachForTest(state, {
+      interactiveTargetLayerIds: registry,
+    })
+
+    state.fire("contextmenu", mapEvent())
+
+    expect(savedPointCreates).toEqual([])
+    detach()
+  })
+
+  test("protects DOM-backed markers from create gestures", () => {
     const state = createFakeMap()
-    const { detach, savedPointCreates } = attachForTest(state)
-    const canvasTarget = {}
     const markerTarget = {
       closest: (selector: string) =>
         selector === MAP_INTERACTIVE_SELECTOR ? {} : null,
     }
+    const { detach, savedPointCreates } = attachForTest(state)
 
-    for (const layerId of INTERACTIVE_TARGET_LAYER_IDS) {
-      state.setFeatures(layerId, [createFeature(layerId)])
-      state.fireCanvas("pointerdown", {
-        pointerType: "touch",
-        isPrimary: true,
-        pointerId: 1,
-        clientX: 10,
-        clientY: 10,
-        target: canvasTarget,
-      })
-      state.setFeatures(layerId, [])
+    state.fire("contextmenu", mapEvent(markerTarget))
+
+    expect(savedPointCreates).toEqual([])
+    detach()
+  })
+
+  test("creates a saved point on an empty-map context menu", () => {
+    const state = createFakeMap()
+    const { detach, savedPointCreates } = attachForTest(state)
+
+    state.fire("contextmenu", mapEvent())
+
+    expect(savedPointCreates).toEqual([
+      { lng: 10, lat: 20, point: { x: 10, y: 10 } },
+    ])
+    detach()
+  })
+
+  test("creates a saved point on an activity hitbox after a touch long-press", async () => {
+    const state = createFakeMap()
+    const { detach, savedPointCreates } = attachForTest(state)
+    state.setFeatures(MAP_LAYER_IDS.activityHit, [
+      createFeature(MAP_LAYER_IDS.activityHit),
+    ])
+
+    state.fireCanvas("pointerdown", {
+      pointerType: "touch",
+      isPrimary: true,
+      pointerId: 1,
+      clientX: 10,
+      clientY: 10,
+      target: {},
+    })
+    await new Promise((resolve) => setTimeout(resolve, 550))
+
+    expect(savedPointCreates).toEqual([
+      { lng: 10, lat: 20, point: { x: 10, y: 10 } },
+    ])
+    detach()
+  })
+
+  test("protects saved points and DOM-backed markers from touch long-press", async () => {
+    const state = createFakeMap()
+    const { detach, savedPointCreates } = attachForTest(state)
+    const markerTarget = {
+      closest: (selector: string) =>
+        selector === MAP_INTERACTIVE_SELECTOR ? {} : null,
     }
+    state.setFeatures(MAP_LAYER_IDS.savedPointHit, [
+      createFeature(MAP_LAYER_IDS.savedPointHit),
+    ])
+
+    state.fireCanvas("pointerdown", {
+      pointerType: "touch",
+      isPrimary: true,
+      pointerId: 1,
+      clientX: 10,
+      clientY: 10,
+      target: {},
+    })
+    await new Promise((resolve) => setTimeout(resolve, 550))
+
     state.fireCanvas("pointerdown", {
       pointerType: "touch",
       isPrimary: true,
@@ -322,20 +417,84 @@ describe("map interactive targets", () => {
       clientY: 10,
       target: markerTarget,
     })
-    await new Promise((resolve) => setTimeout(resolve, 20))
+    await new Promise((resolve) => setTimeout(resolve, 550))
     expect(savedPointCreates).toEqual([])
+    detach()
+  })
+
+  test("cancels a touch long-press when the pointer moves", async () => {
+    const state = createFakeMap()
+    const { detach, savedPointCreates } = attachForTest(state)
+    state.setFeatures(MAP_LAYER_IDS.activityHit, [
+      createFeature(MAP_LAYER_IDS.activityHit),
+    ])
 
     state.fireCanvas("pointerdown", {
       pointerType: "touch",
       isPrimary: true,
-      pointerId: 3,
+      pointerId: 1,
       clientX: 10,
       clientY: 10,
-      target: canvasTarget,
+      target: {},
+    })
+    state.fireCanvas("pointermove", {
+      pointerId: 1,
+      clientX: 19,
+      clientY: 10,
     })
     await new Promise((resolve) => setTimeout(resolve, 550))
 
-    expect(savedPointCreates).toHaveLength(1)
+    expect(savedPointCreates).toEqual([])
     detach()
+  })
+
+  test("cancels a touch long-press when a secondary pointer appears", async () => {
+    const state = createFakeMap()
+    const { detach, savedPointCreates } = attachForTest(state)
+    state.setFeatures(MAP_LAYER_IDS.activityHit, [
+      createFeature(MAP_LAYER_IDS.activityHit),
+    ])
+
+    state.fireCanvas("pointerdown", {
+      pointerType: "touch",
+      isPrimary: true,
+      pointerId: 1,
+      clientX: 10,
+      clientY: 10,
+      target: {},
+    })
+    state.fireCanvas("pointerdown", {
+      pointerType: "touch",
+      isPrimary: false,
+      pointerId: 2,
+      clientX: 10,
+      clientY: 10,
+      target: {},
+    })
+    await new Promise((resolve) => setTimeout(resolve, 550))
+
+    expect(savedPointCreates).toEqual([])
+    detach()
+  })
+
+  test("cleans up a pending touch long-press", async () => {
+    const state = createFakeMap()
+    const { detach, savedPointCreates } = attachForTest(state)
+    state.setFeatures(MAP_LAYER_IDS.activityHit, [
+      createFeature(MAP_LAYER_IDS.activityHit),
+    ])
+
+    state.fireCanvas("pointerdown", {
+      pointerType: "touch",
+      isPrimary: true,
+      pointerId: 1,
+      clientX: 10,
+      clientY: 10,
+      target: {},
+    })
+    detach()
+    await new Promise((resolve) => setTimeout(resolve, 550))
+
+    expect(savedPointCreates).toEqual([])
   })
 })
