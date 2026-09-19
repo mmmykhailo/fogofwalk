@@ -21,8 +21,14 @@ import {
   REJOIN_DISTANCE_MULTIPLIER,
   REJOIN_POSITION_CEILING_M,
   REJOIN_POSITION_FLOOR_M,
+  RELATIVE_ACCURACY_FLOOR_M,
+  RELATIVE_ACCURACY_MIN_SAMPLES,
+  RELATIVE_ACCURACY_MULTIPLIER,
   RELIABILITY_MIN_BASELINE_EDGES,
   RELIABILITY_WINDOW_EDGES,
+  SPEED_MISMATCH_COORDINATE_FLOOR_MPS,
+  SPEED_MISMATCH_DIFFERENCE_MPS,
+  SPEED_MISMATCH_RATIO,
   SPEED_TEST_DISTANCE_FLOOR_M,
   TIME_GAP_CEILING_MS,
   TIME_GAP_MULTIPLIER,
@@ -47,20 +53,34 @@ export interface AnomalySourcePath {
   points: AnomalyPoint[]
 }
 
-export type GpsAnomalyCode =
-  | "invalid_coordinate"
-  | "untrusted_accuracy"
+export type GpsEdgeEvidenceCode =
   | "non_positive_time"
   | "recording_gap"
   | "impossible_speed"
   | "local_distance_jump"
   | "hard_teleport"
+  | "recorded_speed_mismatch"
+
+export type GpsPointEvidenceCode =
+  | "invalid_coordinate"
+  | "untrusted_accuracy"
+  | "relative_accuracy_outlier"
+
+export type GpsCleaningDecisionCode =
   | "local_spike"
   | "local_excursion"
   | "pause_drift"
   | "untrusted_prefix"
   | "untrusted_suffix"
+  | "isolated_fix"
+  | "untrusted_island"
+  | "recovered_fragment"
   | "dropped_short_path"
+
+export type GpsAnomalyCode =
+  | GpsEdgeEvidenceCode
+  | GpsPointEvidenceCode
+  | GpsCleaningDecisionCode
 
 export type GpsAnomalyOperation = "split" | "remove"
 
@@ -129,12 +149,16 @@ interface EdgeEvidence {
   timeGapLimitMs: number
   trustedDistanceSamples: number
   trustedTimeSamples: number
+  codes: GpsEdgeEvidenceCode[]
+  primaryCode: GpsEdgeEvidenceCode | null
+  /** Kept during the staged migration; output logic uses `codes`. */
   reason: GpsAnomalyCode | null
 }
 
 interface RollingBaseline {
   distances: number[]
   deltas: number[]
+  accuracies: number[]
 }
 
 interface MutableWork {
@@ -205,9 +229,53 @@ function finiteAccuracy(point: AnomalyPoint): number | null {
     : null
 }
 
+function finiteRecordedSpeed(point: AnomalyPoint): number | null {
+  return point.recordedSpeedMps != null &&
+    Number.isFinite(point.recordedSpeedMps) &&
+    point.recordedSpeedMps >= 0
+    ? point.recordedSpeedMps
+    : null
+}
+
 function isUntrustedAccuracy(point: AnomalyPoint): boolean {
   const accuracy = finiteAccuracy(point)
   return accuracy != null && accuracy > MAX_TRUSTED_GPS_ACCURACY_M
+}
+
+function pointEvidence(
+  point: AnomalyPoint,
+  baseline: RollingBaseline
+): GpsPointEvidenceCode[] {
+  const codes: GpsPointEvidenceCode[] = []
+  if (!isUsablePoint(point)) codes.push("invalid_coordinate")
+  const accuracy = finiteAccuracy(point)
+  if (accuracy != null && accuracy > MAX_TRUSTED_GPS_ACCURACY_M) {
+    codes.push("untrusted_accuracy")
+  } else if (
+    accuracy != null &&
+    baseline.accuracies.length >= RELATIVE_ACCURACY_MIN_SAMPLES
+  ) {
+    const trustedMedian = median(baseline.accuracies)
+    if (
+      trustedMedian != null &&
+      accuracy >
+        Math.max(
+          RELATIVE_ACCURACY_FLOOR_M,
+          trustedMedian * RELATIVE_ACCURACY_MULTIPLIER
+        )
+    ) {
+      codes.push("relative_accuracy_outlier")
+    }
+  }
+  return codes
+}
+
+function isUnsafePointEvidence(codes: readonly GpsPointEvidenceCode[]) {
+  return (
+    codes.includes("invalid_coordinate") ||
+    codes.includes("untrusted_accuracy") ||
+    codes.includes("relative_accuracy_outlier")
+  )
 }
 
 function addReason(
@@ -293,28 +361,61 @@ function classifyEdge(
     Math.max(distanceLimitM, accuracyAllowance ?? 0)
   )
 
-  let reason: GpsAnomalyCode | null = null
+  const codes: GpsEdgeEvidenceCode[] = []
   if (
     (firstAccuracyM != null && firstAccuracyM > MAX_TRUSTED_GPS_ACCURACY_M) ||
     (secondAccuracyM != null && secondAccuracyM > MAX_TRUSTED_GPS_ACCURACY_M)
   ) {
-    reason = "untrusted_accuracy"
-  } else if (rawDeltaMs != null && rawDeltaMs <= 0) {
-    reason = "non_positive_time"
-  } else if (deltaMs != null && deltaMs > timeGapLimitMs) {
-    reason = "recording_gap"
-  } else if (distanceM >= HARD_TELEPORT_DISTANCE_M) {
-    reason = "hard_teleport"
-  } else if (
+    // Accuracy is point evidence. The edge remains classifiable on its own so
+    // a gap can retain both endpoints while an outlier island is resolved
+    // later with both incident edges available.
+  }
+  if (rawDeltaMs != null && rawDeltaMs <= 0) {
+    codes.push("non_positive_time")
+  }
+  if (deltaMs != null && deltaMs > timeGapLimitMs) {
+    codes.push("recording_gap")
+  }
+  if (distanceM >= HARD_TELEPORT_DISTANCE_M) {
+    codes.push("hard_teleport")
+  }
+  if (
     deltaMs != null &&
     distanceM >= SPEED_TEST_DISTANCE_FLOOR_M &&
     speedMps != null &&
     speedMps > context.maxSpeedMps
   ) {
-    reason = "impossible_speed"
-  } else if (distanceM > effectiveDistanceLimitM) {
-    reason = "local_distance_jump"
+    codes.push("impossible_speed")
   }
+  if (distanceM > effectiveDistanceLimitM) {
+    codes.push("local_distance_jump")
+  }
+  const recordedSpeed = finiteRecordedSpeed(second)
+  if (
+    speedMps != null &&
+    speedMps >= SPEED_MISMATCH_COORDINATE_FLOOR_MPS &&
+    recordedSpeed != null &&
+    Math.abs(speedMps - recordedSpeed) > SPEED_MISMATCH_DIFFERENCE_MPS &&
+    (recordedSpeed === 0 ||
+      Math.max(speedMps, recordedSpeed) / Math.min(speedMps, recordedSpeed) >=
+        SPEED_MISMATCH_RATIO)
+  ) {
+    codes.push("recorded_speed_mismatch")
+  }
+
+  const primaryOrder: GpsEdgeEvidenceCode[] = [
+    "non_positive_time",
+    "recording_gap",
+    "hard_teleport",
+    "impossible_speed",
+    "local_distance_jump",
+    "recorded_speed_mismatch",
+  ]
+  const primaryCode = primaryOrder.find((code) => codes.includes(code)) ?? null
+  const pointCodes = [
+    ...pointEvidence(first, baseline),
+    ...pointEvidence(second, baseline),
+  ]
 
   return {
     distanceM,
@@ -328,7 +429,9 @@ function classifyEdge(
     timeGapLimitMs,
     trustedDistanceSamples: baseline.distances.length,
     trustedTimeSamples: baseline.deltas.length,
-    reason,
+    codes,
+    primaryCode,
+    reason: primaryCode ?? pointCodes[0] ?? null,
   }
 }
 
@@ -346,6 +449,7 @@ function updateWindowWork(baseline: RollingBaseline, work: MutableWork): void {
 function appendBaseline(
   baseline: RollingBaseline,
   edge: EdgeEvidence,
+  destination: AnomalyPoint,
   work: MutableWork
 ): void {
   if (edge.distanceM > 0) {
@@ -360,6 +464,13 @@ function appendBaseline(
       baseline.deltas.shift()
     }
   }
+  const accuracy = finiteAccuracy(destination)
+  if (accuracy != null && accuracy <= MAX_TRUSTED_GPS_ACCURACY_M) {
+    baseline.accuracies.push(accuracy)
+    if (baseline.accuracies.length > RELIABILITY_WINDOW_EDGES) {
+      baseline.accuracies.shift()
+    }
+  }
   updateWindowWork(baseline, work)
 }
 
@@ -371,6 +482,7 @@ function seedBaseline(
 ): void {
   baseline.distances.length = 0
   baseline.deltas.length = 0
+  baseline.accuracies.length = 0
   const end = Math.min(points.length - 1, startIndex + RELIABILITY_WINDOW_EDGES)
   for (let index = startIndex; index < end; index += 1) {
     const first = points[index]!
@@ -405,6 +517,10 @@ function seedBaseline(
     if (measured.rawDeltaMs != null && measured.rawDeltaMs > 0) {
       baseline.deltas.push(measured.rawDeltaMs)
     }
+    const accuracy = finiteAccuracy(second)
+    if (accuracy != null && accuracy <= MAX_TRUSTED_GPS_ACCURACY_M) {
+      baseline.accuracies.push(accuracy)
+    }
   }
   if (baseline.distances.length > RELIABILITY_WINDOW_EDGES) {
     baseline.distances.splice(
@@ -414,6 +530,12 @@ function seedBaseline(
   }
   if (baseline.deltas.length > RELIABILITY_WINDOW_EDGES) {
     baseline.deltas.splice(0, baseline.deltas.length - RELIABILITY_WINDOW_EDGES)
+  }
+  if (baseline.accuracies.length > RELIABILITY_WINDOW_EDGES) {
+    baseline.accuracies.splice(
+      0,
+      baseline.accuracies.length - RELIABILITY_WINDOW_EDGES
+    )
   }
   updateWindowWork(baseline, context.work)
 }
@@ -442,6 +564,8 @@ function evidenceForPoint(
     timeGapLimitMs,
     trustedDistanceSamples: baseline.distances.length,
     trustedTimeSamples: baseline.deltas.length,
+    codes: [],
+    primaryCode: null,
     reason: null,
   }
 }
@@ -690,7 +814,11 @@ function analyzeValidSegment(
 ): EmittedPath[] {
   if (points.length === 0) return []
 
-  const baseline: RollingBaseline = { distances: [], deltas: [] }
+  const baseline: RollingBaseline = {
+    distances: [],
+    deltas: [],
+    accuracies: [],
+  }
   const output: EmittedPath[] = []
   let currentPath: AnomalyPoint[] = []
   let currentStartIndex = -1
@@ -872,7 +1000,7 @@ function analyzeValidSegment(
 
     if (edge.reason == null) {
       currentPath.push(points[index]!)
-      appendBaseline(baseline, edge, context.work)
+      appendBaseline(baseline, edge, points[index]!, context.work)
       if (currentPath.length >= MIN_CONFIDENT_FRAGMENT_POINTS) {
         isConfident = true
       }
@@ -1372,10 +1500,10 @@ function addPauseRemoval(
       ? classifyEdge(
           path.points[range.startIndex]!,
           path.points[interiorStart]!,
-          { distances: [], deltas: [] },
+          { distances: [], deltas: [], accuracies: [] },
           context
         )
-      : evidenceForPoint({ distances: [], deltas: [] }, context)
+      : evidenceForPoint({ distances: [], deltas: [], accuracies: [] }, context)
   addReason(counts, "pause_drift")
   counts.splitCount += 1
   counts.removalSplitCount += 1
@@ -1486,7 +1614,11 @@ export function detectGpsAnomalies(
 
   for (const source of sourcePaths) {
     context.work.pointsVisited += source.points.length
-    const baseline: RollingBaseline = { distances: [], deltas: [] }
+    const baseline: RollingBaseline = {
+      distances: [],
+      deltas: [],
+      accuracies: [],
+    }
     let validPoints: AnomalyPoint[] = []
     let invalidPoints: AnomalyPoint[] = []
     const flushValid = () => {
