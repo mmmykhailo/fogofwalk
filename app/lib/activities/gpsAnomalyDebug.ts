@@ -7,11 +7,23 @@ import type {
 import {
   ABSOLUTE_TELEPORT_DISTANCE_M,
   ANOMALY_ALGORITHM_VERSION,
-  MAX_ANOMALY_EXAMPLES,
-  MIN_SPEED_TEST_DISTANCE_M,
+  GPS_ACCURACY_MULTIPLIER,
+  LOCAL_DISTANCE_CEILING_M,
+  LOCAL_DISTANCE_FLOOR_M,
+  LOCAL_DISTANCE_MULTIPLIER,
+  MAX_RELIABILITY_EXAMPLES,
+  MAX_TRUSTED_GPS_ACCURACY_M,
+  MIN_CONFIDENT_FRAGMENT_POINTS,
+  PAUSE_DRIFT_MAX_WINDOW_POINTS,
   REJOIN_CONFIRMATION_EDGES,
-  TRUSTED_PREFIX_MIN_POINTS,
-  TRUSTED_PREFIX_MIN_PLAUSIBLE_EDGES,
+  REJOIN_POSITION_CEILING_M,
+  REJOIN_POSITION_FLOOR_M,
+  RELIABILITY_MIN_BASELINE_EDGES,
+  RELIABILITY_WINDOW_EDGES,
+  SPEED_TEST_DISTANCE_FLOOR_M,
+  TIME_GAP_CEILING_MS,
+  TIME_GAP_FLOOR_MS,
+  TIME_GAP_MULTIPLIER,
   maxPlausibleSpeed,
 } from "~/constants/activityAnomalies"
 import {
@@ -219,11 +231,14 @@ function differenceOrNull(
 }
 
 function removalCount(report: GpsAnomalyReport): number {
-  return (
-    (report.counts.reasons.teleport_spike ?? 0) +
-    (report.counts.reasons.teleport_excursion ?? 0) +
-    (report.counts.reasons.teleport_tail ?? 0) +
-    (report.counts.reasons.ambiguous_discontinuity ?? 0)
+  return Object.entries(report.counts.reasons).reduce(
+    (total, [code, count]) =>
+      code === "recording_gap" ||
+      code === "non_positive_time" ||
+      code === "dropped_short_path"
+        ? total
+        : total + (count ?? 0),
+    0
   )
 }
 
@@ -238,6 +253,12 @@ function removalEvidence(example: GpsAnomalyExample) {
     entryDistanceM: example.entryDistanceM,
     entryDeltaMs: example.entryDeltaMs,
     entrySpeedMps: example.entrySpeedMps,
+    distanceLimitM: example.distanceLimitM,
+    effectiveDistanceLimitM: example.effectiveDistanceLimitM,
+    timeGapLimitMs: example.timeGapLimitMs,
+    trustedDistanceSamples: example.trustedDistanceSamples,
+    trustedTimeSamples: example.trustedTimeSamples,
+    triggerCode: example.triggerCode ?? null,
     exitEdgeImpossible: example.rejoinPointIndex != null,
     rejoinDistanceFromLastTrustedM: example.rejoinDistanceFromLastTrustedM,
     rejoinElapsedMs: example.rejoinElapsedMs,
@@ -287,14 +308,27 @@ export function logGpsAnomalyReport(input: {
     })
     console.debug("configuration", {
       algorithmVersion: ANOMALY_ALGORITHM_VERSION,
-      triggerFloorM: MIN_SPEED_TEST_DISTANCE_M,
+      reliabilityWindowEdges: RELIABILITY_WINDOW_EDGES,
+      minimumBaselineEdges: RELIABILITY_MIN_BASELINE_EDGES,
+      localDistanceFloorM: LOCAL_DISTANCE_FLOOR_M,
+      localDistanceMultiplier: LOCAL_DISTANCE_MULTIPLIER,
+      localDistanceCeilingM: LOCAL_DISTANCE_CEILING_M,
+      timeGapFloorMs: TIME_GAP_FLOOR_MS,
+      timeGapMultiplier: TIME_GAP_MULTIPLIER,
+      timeGapCeilingMs: TIME_GAP_CEILING_MS,
+      speedTestDistanceFloorM: SPEED_TEST_DISTANCE_FLOOR_M,
+      maxTrustedGpsAccuracyM: MAX_TRUSTED_GPS_ACCURACY_M,
+      gpsAccuracyMultiplier: GPS_ACCURACY_MULTIPLIER,
       applicableSpeedCeilingMps: maxPlausibleSpeed(report.activityType),
       absoluteFallbackM: ABSOLUTE_TELEPORT_DISTANCE_M,
       confirmationEdges: REJOIN_CONFIRMATION_EDGES,
-      trustedPrefix: {
-        points: TRUSTED_PREFIX_MIN_POINTS,
-        plausibleEdges: TRUSTED_PREFIX_MIN_PLAUSIBLE_EDGES,
+      rejoin: {
+        floorM: REJOIN_POSITION_FLOOR_M,
+        ceilingM: REJOIN_POSITION_CEILING_M,
       },
+      minimumConfidentFragmentPoints: MIN_CONFIDENT_FRAGMENT_POINTS,
+      pauseWindowMaxPoints: PAUSE_DRIFT_MAX_WINDOW_POINTS,
+      maximumExamples: MAX_RELIABILITY_EXAMPLES,
     })
     report.examples.forEach((example, index) => {
       console.groupCollapsed(
@@ -315,10 +349,14 @@ export function logGpsAnomalyReport(input: {
       sourcePathCount: report.sourcePathCount,
       emittedPathCount: report.emittedPathCount,
       splitCount: report.counts.splitCount,
+      gapSplitCount: report.counts.gapSplitCount,
+      removalSplitCount: report.counts.removalSplitCount,
+      trimmedPrefixPoints: report.counts.trimmedPrefixPoints,
+      trimmedSuffixPoints: report.counts.trimmedSuffixPoints,
       omittedExampleCount: Math.max(
         0,
         removalCount(report) -
-          Math.min(MAX_ANOMALY_EXAMPLES, report.examples.length)
+          Math.min(MAX_RELIABILITY_EXAMPLES, report.examples.length)
       ),
     })
     console.debug("statistics", {
@@ -347,6 +385,9 @@ export function logGpsAnomalyReport(input: {
       pointsVisited: report.work.pointsVisited,
       distanceCalculations: report.work.distanceCalculations,
       boundedLookaheadCount: report.work.boundedLookaheadCount,
+      maxDistanceWindowSize: report.work.maxDistanceWindowSize,
+      maxTimeWindowSize: report.work.maxTimeWindowSize,
+      pauseWindowPointsVisited: report.work.pauseWindowPointsVisited,
     })
   } finally {
     console.groupEnd()

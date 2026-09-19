@@ -265,7 +265,7 @@ export async function parseFitFileWithResults(
   const detectorDurationMs = performance.now() - detectorStartedAt
   const sourcePaths = [{ sourcePathIndex: 0, points: rawPoints }]
   const rejectionReport =
-    anomaly.status === "ambiguous" || anomaly.status === "rejected"
+    anomaly.status === "rejected"
       ? buildGpsAnomalyReport({
           result: anomaly,
           format: "fit",
@@ -279,10 +279,7 @@ export async function parseFitFileWithResults(
     const rejection: ParsedImportRejection = {
       id: createUuid(),
       activityIndex: 0,
-      reason:
-        anomaly.status === "ambiguous"
-          ? "ambiguous-gps-discontinuity"
-          : "no-renderable-path",
+      reason: "no-renderable-path",
       gpsAnomalyReport: rejectionReport,
     }
     return { activities: [], rejections: [rejection] }

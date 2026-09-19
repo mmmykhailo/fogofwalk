@@ -205,7 +205,7 @@ describe("GPS anomaly diagnostics", () => {
     expect(summary).not.toHaveProperty("elevationGainM")
   })
 
-  test("reports ambiguous and rejected statuses with one outer group", () => {
+  test("reports cleaned and rejected statuses with one outer group", () => {
     for (const [status, sourcePaths, result] of [
       (() => {
         const paths = [
@@ -215,7 +215,7 @@ describe("GPS anomaly diagnostics", () => {
             )
           ),
         ]
-        return ["ambiguous", paths, detectGpsAnomalies(paths)] as const
+        return ["cleaned", paths, detectGpsAnomalies(paths)] as const
       })(),
       (() => {
         const paths = [source([point(0, 0, 0)])]
@@ -234,7 +234,8 @@ describe("GPS anomaly diagnostics", () => {
       )
       expect(capture.groupEnds).toBe(capture.groups.length)
       expect(capture.debug.map(([label]) => label)).toContain("performance")
-      expect(report.afterStats).toBeNull()
+      if (status === "rejected") expect(report.afterStats).toBeNull()
+      else expect(report.afterStats).not.toBeNull()
       expect(Object.keys(report.beforeStats).sort()).toEqual([
         "distanceKm",
         "durationMs",

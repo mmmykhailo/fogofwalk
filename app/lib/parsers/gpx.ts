@@ -67,7 +67,7 @@ function buildParsedActivity(
   const anomaly = detectGpsAnomalies(sourcePaths, { activityType })
   const detectorDurationMs = performance.now() - detectorStartedAt
   const rejectionReport =
-    anomaly.status === "ambiguous" || anomaly.status === "rejected"
+    anomaly.status === "rejected"
       ? buildGpsAnomalyReport({
           result: anomaly,
           format: "gpx",
@@ -81,10 +81,7 @@ function buildParsedActivity(
     return {
       rejection: {
         id,
-        reason:
-          anomaly.status === "ambiguous"
-            ? "ambiguous-gps-discontinuity"
-            : "no-renderable-path",
+        reason: "no-renderable-path",
         gpsAnomalyReport: rejectionReport,
       },
     }

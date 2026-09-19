@@ -1,37 +1,65 @@
-import type { ActivityType } from "~/types/activities"
+import type { ActivityType } from "~shared/activities"
 
 /** Bump when a threshold or state-machine decision changes. */
-export const ANOMALY_ALGORITHM_VERSION = 1
+export const ANOMALY_ALGORITHM_VERSION = 2
 
-/** Distances below this are not speed-tested for anomaly entry. */
-export const MIN_SPEED_TEST_DISTANCE_M = 1_000
+/** Maximum recent trusted edges used by the rolling reliability baselines. */
+export const RELIABILITY_WINDOW_EDGES = 31
+/** Number of samples required before adaptive limits replace the bootstrap floors. */
+export const RELIABILITY_MIN_BASELINE_EDGES = 4
 
-/** Hard fallback for edges without usable time metadata. */
-export const ABSOLUTE_TELEPORT_DISTANCE_M = 250_000
+/** Smallest edge that can be locally suspicious. */
+export const LOCAL_DISTANCE_FLOOR_M = 100
+/** Maximum normal edge relative to the recent trusted median. */
+export const LOCAL_DISTANCE_MULTIPLIER = 20
+/** Upper bound on an adaptive local edge allowance. */
+export const LOCAL_DISTANCE_CEILING_M = 2_000
 
-/** Number of preceding non-zero trusted edges used by the spatial fallback. */
-export const SPATIAL_FALLBACK_WINDOW_EDGES = 31
+/** Smallest interval treated as missing recording data. */
+export const TIME_GAP_FLOOR_MS = 30_000
+/** Maximum normal interval relative to the recent trusted median cadence. */
+export const TIME_GAP_MULTIPLIER = 10
+/** Longest consecutive interval that may be drawn. */
+export const TIME_GAP_CEILING_MS = 120_000
 
-/** Generous lower/upper bounds keep no-time detection useful but conservative. */
-export const SPATIAL_FALLBACK_MIN_DISTANCE_M = 10_000
-export const SPATIAL_FALLBACK_MAX_DISTANCE_M = 100_000
+/** Avoid speed decisions dominated by metre-scale GPS noise. */
+export const SPEED_TEST_DISTANCE_FLOOR_M = 100
+/** FIT fixes worse than this are not trusted. */
+export const MAX_TRUSTED_GPS_ACCURACY_M = 100
+/** Expands the local distance allowance for known uncertainty. */
+export const GPS_ACCURACY_MULTIPLIER = 4
 
-/** Position uncertainty allowed when a stream snaps back to the trusted route. */
-export const REJOIN_POSITION_MARGIN_M = 250
+/** Minimum snap-back allowance. */
+export const REJOIN_POSITION_FLOOR_M = 100
+/** Scales rejoin allowance by expected skipped movement. */
+export const REJOIN_DISTANCE_MULTIPLIER = 4
+/** Prevents elapsed time from making a local rejoin unbounded. */
+export const REJOIN_POSITION_CEILING_M = 1_000
+/** Reliable edges required after a proposed rejoin. */
+export const REJOIN_CONFIRMATION_EDGES = 2
 
-/** Without usable time, a return must be local rather than point-count reachable. */
-export const NO_TIMESTAMP_REJOIN_RADIUS_M = 10_000
+/** Canonical renderability requirement. */
+export const MIN_RETAINED_PATH_POINTS = 2
+/** Evidence required before an isolated new fragment is accepted. */
+export const MIN_CONFIDENT_FRAGMENT_POINTS = 3
 
-/** A return point plus these many following points confirms a rejoin. */
-export const REJOIN_CONFIRMATION_POINTS = 3
-export const REJOIN_CONFIRMATION_EDGES = REJOIN_CONFIRMATION_POINTS - 1
+/** Minimum stationary window used by pause-drift cleanup. */
+export const PAUSE_DRIFT_MIN_DURATION_MS = 60_000
+/** Maximum radius of a stationary drift cloud. */
+export const PAUSE_DRIFT_MAX_RADIUS_M = 50
+/** Maximum first-to-last movement in that cloud. */
+export const PAUSE_DRIFT_MAX_NET_DISTANCE_M = 25
+/** Minimum accumulated noise before drift cleanup is useful. */
+export const PAUSE_DRIFT_MIN_PATH_DISTANCE_M = 100
+/** Distinguishes wandering noise from directional travel. */
+export const PAUSE_DRIFT_PATH_TO_NET_RATIO = 5
+/** Rejects clearly moving windows from pause classification. */
+export const PAUSE_DRIFT_MAX_MEDIAN_SPEED_MPS = 2
+/** Bounds pause-window memory and per-window checks. */
+export const PAUSE_DRIFT_MAX_WINDOW_POINTS = 600
 
-/** Minimum established baseline before an impossible suffix may be trimmed. */
-export const TRUSTED_PREFIX_MIN_POINTS = 5
-export const TRUSTED_PREFIX_MIN_PLAUSIBLE_EDGES = 3
-
-/** Keep reports useful without making logging proportional to file size. */
-export const MAX_ANOMALY_EXAMPLES = 20
+/** Bound on coordinate-free diagnostic examples. */
+export const MAX_RELIABILITY_EXAMPLES = 20
 
 export const MAX_PLAUSIBLE_SPEED_MPS: Record<ActivityType, number> = {
   walking: 15,
@@ -48,9 +76,30 @@ export function maxPlausibleSpeed(
   return MAX_PLAUSIBLE_SPEED_MPS[activityType ?? "other"]
 }
 
-export function spatialFallbackDistanceM(medianEdgeM: number): number {
+export function clampReliabilityDistance(value: number): number {
   return Math.min(
-    SPATIAL_FALLBACK_MAX_DISTANCE_M,
-    Math.max(SPATIAL_FALLBACK_MIN_DISTANCE_M, 1_000 * medianEdgeM)
+    LOCAL_DISTANCE_CEILING_M,
+    Math.max(LOCAL_DISTANCE_FLOOR_M, value)
   )
+}
+
+export function clampReliabilityTimeGap(value: number): number {
+  return Math.min(TIME_GAP_CEILING_MS, Math.max(TIME_GAP_FLOOR_MS, value))
+}
+
+// Compatibility aliases retained while the parser/report migration lands.
+export const MAX_ANOMALY_EXAMPLES = MAX_RELIABILITY_EXAMPLES
+export const MIN_SPEED_TEST_DISTANCE_M = SPEED_TEST_DISTANCE_FLOOR_M
+export const ABSOLUTE_TELEPORT_DISTANCE_M = 250_000
+export const SPATIAL_FALLBACK_WINDOW_EDGES = RELIABILITY_WINDOW_EDGES
+export const REJOIN_POSITION_MARGIN_M = REJOIN_POSITION_FLOOR_M
+export const TRUSTED_PREFIX_MIN_POINTS = MIN_CONFIDENT_FRAGMENT_POINTS
+export const TRUSTED_PREFIX_MIN_PLAUSIBLE_EDGES =
+  MIN_CONFIDENT_FRAGMENT_POINTS - 1
+
+/** Legacy helper for callers that only need the old no-time fallback. */
+export const SPATIAL_FALLBACK_MIN_DISTANCE_M = LOCAL_DISTANCE_FLOOR_M
+export const SPATIAL_FALLBACK_MAX_DISTANCE_M = LOCAL_DISTANCE_CEILING_M
+export function spatialFallbackDistanceM(medianEdgeM: number): number {
+  return clampReliabilityDistance(medianEdgeM * LOCAL_DISTANCE_MULTIPLIER)
 }

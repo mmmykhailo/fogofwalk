@@ -152,7 +152,7 @@ function parseAndReport(sourcePaths: AnomalySourcePath[]): BenchmarkRun {
   const result = detectGpsAnomalies(sourcePaths, { activityType: "cycling" })
   const detectorDurationMs = performance.now() - detectorStartedAt
 
-  if (result.status === "ambiguous" || result.status === "rejected") {
+  if (result.status === "rejected") {
     buildGpsAnomalyReport({
       result,
       format: "gpx",

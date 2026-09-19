@@ -106,16 +106,22 @@ const anomalyReport: GpsAnomalyReport = {
     inputPoints: 9,
     retainedPoints: 8,
     removedPoints: 1,
+    emittedPathCount: 2,
     splitCount: 1,
+    gapSplitCount: 0,
+    removalSplitCount: 1,
     trimmedPrefixPoints: 0,
     trimmedSuffixPoints: 0,
-    reasons: { teleport_spike: 1 },
+    reasons: { local_spike: 1 },
   },
   examples: [],
   work: {
     distanceCalculations: 10,
     pointsVisited: 9,
     boundedLookaheadCount: 2,
+    maxDistanceWindowSize: 4,
+    maxTimeWindowSize: 4,
+    pauseWindowPointsVisited: 0,
   },
   format: "gpx",
   activityType: "walking",
@@ -408,12 +414,12 @@ describe("ActivityImportService", () => {
         activities: [parsed],
         rejections: [
           {
-            id: "ambiguous",
-            reason: "ambiguous-gps-discontinuity",
+            id: "rejected",
+            reason: "no-renderable-path",
             activityIndex: 1,
             gpsAnomalyReport: {
               ...anomalyReport,
-              status: "ambiguous",
+              status: "rejected",
               afterStats: null,
             },
           },
@@ -432,9 +438,9 @@ describe("ActivityImportService", () => {
     expect(result.files[0]?.activities).toEqual(
       expect.arrayContaining([
         {
-          id: "ambiguous",
+          id: "rejected",
           status: "rejected",
-          reason: "ambiguous-gps-discontinuity",
+          reason: "no-renderable-path",
         },
         {
           id: expect.any(String),
