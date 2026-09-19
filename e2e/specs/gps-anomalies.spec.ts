@@ -14,6 +14,84 @@ interface GeometrySource {
   }>
 }
 
+interface FogData {
+  features: Array<{
+    geometry?:
+      | { type: "Polygon"; coordinates: number[][][] }
+      | { type: "MultiPolygon"; coordinates: number[][][][] }
+  }>
+}
+
+async function readFogData(
+  page: import("@playwright/test").Page
+): Promise<FogData | null> {
+  return page.evaluate(async () => {
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open("fogofwalk")
+      request.onsuccess = () => resolve(request.result)
+      request.onerror = () => reject(request.error)
+    })
+    const entry = await new Promise<any>((resolve) => {
+      const transaction = db.transaction("prefs", "readonly")
+      const request = transaction.objectStore("prefs").get("fogCache")
+      request.onsuccess = () => resolve(request.result?.value ?? null)
+      request.onerror = () => resolve(null)
+    })
+    db.close()
+    return entry?.fogData ?? null
+  })
+}
+
+function pointInRing(point: [number, number], ring: number[][]): boolean {
+  let inside = false
+  for (
+    let index = 0, previous = ring.length - 1;
+    index < ring.length;
+    previous = index++
+  ) {
+    const [x, y] = ring[index] ?? []
+    const [previousX, previousY] = ring[previous] ?? []
+    if (x == null || y == null || previousX == null || previousY == null) {
+      continue
+    }
+    const crosses =
+      y > point[1] !== previousY > point[1] &&
+      point[0] < ((previousX - x) * (point[1] - y)) / (previousY - y) + x
+    if (crosses) inside = !inside
+  }
+  return inside
+}
+
+function pointInPolygon(
+  point: [number, number],
+  polygon: number[][][]
+): boolean {
+  const [shell, ...holes] = polygon
+  return (
+    shell != null &&
+    pointInRing(point, shell) &&
+    holes.every((hole) => !pointInRing(point, hole))
+  )
+}
+
+function isExplored(fogData: FogData, point: [number, number]): boolean {
+  return fogData.features.some((feature) => {
+    const geometry = feature.geometry
+    if (!geometry) return false
+    return geometry.type === "Polygon"
+      ? pointInPolygon(point, geometry.coordinates)
+      : geometry.coordinates.some((polygon) => pointInPolygon(point, polygon))
+  })
+}
+
+function longitudeForMeters(
+  originLng: number,
+  latitude: number,
+  xM: number
+): number {
+  return originLng + xM / (111_195 * Math.cos((latitude * Math.PI) / 180))
+}
+
 async function readActivity(
   page: import("@playwright/test").Page,
   name: string
@@ -247,10 +325,38 @@ test("removes a GPX gap island while preserving later timestamps and fog topolog
     .poll(() => app.fogCacheSummary())
     .toMatchObject({ ringCount: expect.any(Number) })
   expect((await app.fogCacheSummary())?.ringCount).toBeGreaterThan(0)
+  const fogData = await readFogData(app.page)
+  expect(fogData).not.toBeNull()
+  for (const xM of [756.45, 673.25]) {
+    expect(
+      isExplored(fogData!, [longitudeForMeters(13.6, 52.5, xM), 52.5])
+    ).toBe(false)
+  }
+
+  await app.page.goto(`/map?activity=${encodeURIComponent(stored.id)}`)
+  await app.waitUntilReady()
+  await app.page.getByRole("button", { name: "Share" }).click()
+  const shareDialog = app.page.getByRole("dialog", { name: "Share activity" })
+  await expect(shareDialog).toBeVisible()
+  await expect(app.page.getByText("Rendering map…")).toBeHidden({
+    timeout: 30_000,
+  })
+  const shareGeometry = await app.page.evaluate(
+    () => window.__fogofwalkE2eShareGeometry ?? null
+  )
+  expect(shareGeometry).toMatchObject({ type: "MultiLineString" })
+  expect(
+    (shareGeometry as { coordinates?: unknown[][][] } | null)?.coordinates?.map(
+      (path) => path.length
+    )
+  ).toEqual([7, 5])
+  await app.page.keyboard.press("Escape")
+
   const diagnostics = consoleMessages.join("\n")
   expect(diagnostics).toMatch(/isolated_fix/)
   expect(diagnostics).toMatch(/removedPoints.*1/)
   expect(diagnostics).not.toMatch(/untrusted_suffix/)
+  expect(diagnostics).not.toContain("coordinates")
 })
 
 test("recovers the reliable GPX fragment after a discontinuity", async ({
@@ -271,10 +377,13 @@ test("recovers the reliable GPX fragment after a discontinuity", async ({
     stored.pathTimestamps[0].at(-1)
   )
   expect(stored.pathTimestamps).toHaveLength(2)
+  expect(stored.stats.durationMs).toBe(2_114_000)
+  expect(stored.stats.distanceKm).toBeLessThan(0.2)
 
   const diagnostics = consoleMessages.join("\n")
   expect(diagnostics).toMatch(/recovered_fragment/)
   expect(diagnostics).not.toMatch(/untrusted_suffix/)
   expect(diagnostics).toMatch(/retainedPoints.*11/)
   expect(diagnostics).toMatch(/removedPoints.*2/)
+  expect(diagnostics).not.toContain("coordinates")
 })
