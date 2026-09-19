@@ -67,6 +67,8 @@ export type GpsPointEvidenceCode =
   | "relative_accuracy_outlier"
 
 export type GpsCleaningDecisionCode =
+  | "recording_gap"
+  | "non_positive_time"
   | "local_spike"
   | "local_excursion"
   | "pause_drift"
