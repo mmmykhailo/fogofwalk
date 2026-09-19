@@ -1,5 +1,10 @@
 import { expect, test } from "../fixtures/app"
-import { makeGpsAnomalyGpx, makeGpsRecordingGapGpx } from "../fixtures/gpx"
+import {
+  makeGpsAnomalyGpx,
+  makeGpsGapIslandGpx,
+  makeGpsRecordingGapGpx,
+  makeGpsRecoveredFragmentGpx,
+} from "../fixtures/gpx"
 
 interface GeometrySource {
   getData?: () => Promise<{
@@ -202,4 +207,74 @@ test("stores a recording pause as disconnected paths with zero removed points", 
   ])
   expect(stored.stats.distanceKm).toBeLessThan(0.2)
   expect(stored.stats.durationMs).toBe(51_000)
+})
+
+test("removes a GPX gap island while preserving later timestamps and fog topology", async ({
+  app,
+}) => {
+  const consoleMessages: string[] = []
+  app.page.on("console", (message) => consoleMessages.push(message.text()))
+  const fixture = makeGpsGapIslandGpx()
+
+  await app.goto()
+  await app.importFiles([fixture])
+  await app.waitForImportToSettle()
+  const stored = await readActivity(app.page, fixture.name)
+
+  expect(stored.paths.map((path: unknown[]) => path.length)).toEqual([7, 5])
+  expect(stored.coordinates).toHaveLength(12)
+  expect(stored.pathTimestamps.map((path: unknown[]) => path.length)).toEqual([
+    7, 5,
+  ])
+  expect(stored.pathTimestamps[1][0]).toBeGreaterThan(
+    stored.pathTimestamps[0][stored.pathTimestamps[0].length - 1]
+  )
+
+  const activityGeometry = await app.page.evaluate(async () => {
+    const source = window.__fogofwalkE2eMap?.getSource("activities-source") as
+      | GeometrySource
+      | undefined
+    return source?.getData ? source.getData() : null
+  })
+  expect(activityGeometry?.features?.[0]?.geometry).toMatchObject({
+    type: "MultiLineString",
+  })
+  const activityCoordinates = activityGeometry?.features?.[0]?.geometry
+    ?.coordinates as unknown[][][] | undefined
+  expect(activityCoordinates?.map((path) => path.length)).toEqual([7, 5])
+
+  await expect
+    .poll(() => app.fogCacheSummary())
+    .toMatchObject({ ringCount: expect.any(Number) })
+  expect((await app.fogCacheSummary())?.ringCount).toBeGreaterThan(0)
+  const diagnostics = consoleMessages.join("\n")
+  expect(diagnostics).toMatch(/isolated_fix/)
+  expect(diagnostics).toMatch(/removedPoints.*1/)
+  expect(diagnostics).not.toMatch(/untrusted_suffix/)
+})
+
+test("recovers the reliable GPX fragment after a discontinuity", async ({
+  app,
+}) => {
+  const consoleMessages: string[] = []
+  app.page.on("console", (message) => consoleMessages.push(message.text()))
+  const fixture = makeGpsRecoveredFragmentGpx()
+
+  await app.goto()
+  await app.importFiles([fixture])
+  await app.waitForImportToSettle()
+  const stored = await readActivity(app.page, fixture.name)
+
+  expect(stored.paths.map((path: unknown[]) => path.length)).toEqual([6, 5])
+  expect(stored.coordinates).toHaveLength(11)
+  expect(stored.pathTimestamps.flat().at(-1)).toBeGreaterThan(
+    stored.pathTimestamps[0].at(-1)
+  )
+  expect(stored.pathTimestamps).toHaveLength(2)
+
+  const diagnostics = consoleMessages.join("\n")
+  expect(diagnostics).toMatch(/recovered_fragment/)
+  expect(diagnostics).not.toMatch(/untrusted_suffix/)
+  expect(diagnostics).toMatch(/retainedPoints.*11/)
+  expect(diagnostics).toMatch(/removedPoints.*2/)
 })
