@@ -244,6 +244,7 @@ function removalCount(report: GpsAnomalyReport): number {
     (total, [code, count]) =>
       code === "recording_gap" ||
       code === "non_positive_time" ||
+      code === "recovered_fragment" ||
       code === "dropped_short_path"
         ? total
         : total + (count ?? 0),
@@ -256,9 +257,7 @@ function removalEvidence(example: GpsAnomalyExample) {
     sourcePathIndex: example.sourcePathIndex,
     pointIndexes: [example.startPointIndex, example.endPointIndex],
     removedPointCount:
-      example.endPointIndex >= example.startPointIndex
-        ? example.endPointIndex - example.startPointIndex + 1
-        : 0,
+      example.operation === "remove" ? example.removedPointCount : 0,
     entryDistanceM: example.entryDistanceM,
     entryDeltaMs: example.entryDeltaMs,
     entrySpeedMps: example.entrySpeedMps,
@@ -354,7 +353,7 @@ export function logGpsAnomalyReport(input: {
     })
     report.examples.forEach((example, index) => {
       console.groupCollapsed(
-        `removal ${index + 1}: ${example.code} [` +
+        `${example.operation} ${index + 1}: ${example.code} [` +
           `${example.startPointIndex}..${example.endPointIndex}]`
       )
       try {

@@ -622,13 +622,6 @@ function seedBaseline(
   updateWindowWork(baseline, context.work)
 }
 
-function collectExample(
-  examples: GpsAnomalyExample[],
-  example: GpsAnomalyExample
-): void {
-  if (examples.length < MAX_RELIABILITY_EXAMPLES) examples.push(example)
-}
-
 function evidenceForPoint(
   baseline: RollingBaseline,
   context: AnalysisContext
@@ -827,28 +820,6 @@ function addRemovalSplit(
   void examples
   void context
 }
-
-/*
- * The legacy helper bodies below were intentionally collapsed into records.
- * Public examples and counts are emitted only after all detector passes have
- * finished, so overlapping decisions cannot double-count source points.
- */
-/*
-  collectExample(
-    examples,
-    makeExample(
-      "untrusted_prefix",
-      "remove",
-      sourcePathIndex,
-      points,
-      startIndex,
-      endIndex,
-      entry,
-      context,
-      { triggerCode, removedPointCount }
-    )
-  )
-*/
 
 function rejoinFromTrusted(
   lastTrusted: AnomalyPoint,
