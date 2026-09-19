@@ -87,6 +87,26 @@ export const PopulatedWithPhotosAndSavedPoints: Story = {
   },
 }
 
+export const ActivitiesOnly: Story = {
+  render: () => {
+    setServerless()
+    return (
+      <MapDrawerStoryHarness
+        drawerProps={makeDrawerProps({ activityCount: 8 })}
+      />
+    )
+  },
+}
+
+export const PhotosOnly: Story = {
+  render: () => {
+    setServerless()
+    return (
+      <MapDrawerStoryHarness drawerProps={makeDrawerProps({ photoCount: 4 })} />
+    )
+  },
+}
+
 export const Processing: Story = {
   render: () => {
     setServerless()
@@ -174,7 +194,8 @@ export const DesktopRightDrawer: Story = {
 
 const onAddFiles = fn()
 const onAddPhotos = fn()
-const onClearAll = fn()
+const onClearActivities = fn()
+const onClearPhotos = fn()
 const onShowActivitiesChange = fn()
 const onShowTrailsChange = fn()
 const onShowFogChange = fn()
@@ -233,20 +254,36 @@ export const TogglesActionsAndNestedClear: Story = {
       await drawer.findByRole("button", { name: "Open drawer" })
     )
     await userEvent.click(
-      await drawer.findByRole("button", { name: "Clear all" })
+      await drawer.findByRole("button", { name: "Clear activities" })
     )
-    const clearDialog = await within(document.body).findByRole("dialog", {
-      name: "Clear all data?",
+    const activityDialog = await within(document.body).findByRole("dialog", {
+      name: "Clear activities?",
     })
     await userEvent.click(
-      within(clearDialog).getByRole("button", { name: "Clear all" })
+      within(activityDialog).getByRole("button", { name: "Clear activities" })
     )
-    await waitFor(() => expect(onClearAll).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(onClearActivities).toHaveBeenCalledTimes(1))
+    await expect(onClearPhotos).not.toHaveBeenCalled()
     await waitFor(() =>
       expect(
         within(document.body).queryByRole("dialog")
       ).not.toBeInTheDocument()
     )
+
+    await userEvent.click(
+      await drawer.findByRole("button", { name: "Open drawer" })
+    )
+    await userEvent.click(
+      await drawer.findByRole("button", { name: "Clear photos" })
+    )
+    const photoDialog = await within(document.body).findByRole("dialog", {
+      name: "Clear photos?",
+    })
+    await userEvent.click(
+      within(photoDialog).getByRole("button", { name: "Clear photos" })
+    )
+    await waitFor(() => expect(onClearPhotos).toHaveBeenCalledTimes(1))
+    await expect(onClearActivities).toHaveBeenCalledTimes(1)
   },
 }
 
@@ -308,7 +345,8 @@ function DrawerInteractionHarness() {
           onAddPhotos: () => {
             onAddPhotos()
           },
-          onClearAll,
+          onClearActivities,
+          onClearPhotos,
           onShowPhotosChange,
           onShowSavedPointsChange,
           onShowMyLocationChange,
@@ -342,7 +380,8 @@ function makeDrawerProps(overrides: Partial<DrawerProps> = {}): DrawerProps {
     showAddPhotosOption: false,
     onAddFiles: () => {},
     onAddPhotos: () => {},
-    onClearAll: () => {},
+    onClearActivities: () => {},
+    onClearPhotos: () => {},
     showActivities: true,
     onShowActivitiesChange: () => {},
     showTrails: true,

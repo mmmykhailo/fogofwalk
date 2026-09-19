@@ -57,13 +57,16 @@ export const OpenDrawerAndSelectFile: Story = {
     return <ControlPanelHarness />
   },
   play: async ({ canvas, canvasElement }) => {
-    await userEvent.click(await canvas.findByRole("button", { name: "Open controls" }))
+    await userEvent.click(
+      await canvas.findByRole("button", { name: "Open controls" })
+    )
     await expect(within(document.body).getByText("Add files")).toBeVisible()
 
     const input = canvasElement.querySelector(
       'input[type="file"][accept=".gpx,.fit"]'
     )
-    if (!(input instanceof HTMLInputElement)) throw new Error("Activity file input missing")
+    if (!(input instanceof HTMLInputElement))
+      throw new Error("Activity file input missing")
     const file = new File(["fixture-gpx"], "story-route.gpx", {
       type: "application/gpx+xml",
     })
@@ -124,7 +127,8 @@ function makeControlPanelProps(
     mapMode: "flat",
     onMapModeChange: () => {},
     onAddFiles: () => {},
-    onClearAll: () => {},
+    onClearActivities: () => {},
+    onClearPhotos: () => {},
     photoCount: 0,
     onAddPhotos: () => {},
     showPhotos: true,

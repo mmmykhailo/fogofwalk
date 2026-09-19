@@ -1520,28 +1520,3 @@ export async function clearSyncState(
     includeSavedPointState: true,
   })
 }
-
-// ─── Legacy whole-device cleanup ─────────────────────────────────────────────
-
-/**
- * Wipe persisted library data and its derived state.
- *
- * The session and user preferences are deliberately kept: clearing the map is
- * neither signing out nor resetting controls such as Fill loops. The sync cursor
- * *is* dropped, so the next sync re-walks the manifest from zero rather than
- * believing it is already up to date with activities that are gone.
- */
-export async function clearAll(
-  options: { includeActivities?: boolean } = {}
-): Promise<void> {
-  const activityClear =
-    options.includeActivities === false ? Promise.resolve() : clearActivities()
-  await Promise.all([
-    activityClear,
-    clearPhotos(),
-    clearSavedPoints(),
-    prefDelete("fogCache"),
-    clearSyncState({ allAccounts: true }),
-    prefDelete("uniqueDistanceState"),
-  ])
-}

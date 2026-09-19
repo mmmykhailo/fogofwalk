@@ -31,7 +31,8 @@ import {
 import { Item, ItemContent, ItemMedia, ItemTitle } from "~/components/ui/item"
 import { Switch } from "~/components/ui/switch"
 import { Button } from "~/components/ui/button"
-import { ClearAllDialog } from "~/components/ClearAllDialog"
+import { ClearActivitiesDialog } from "~/components/ClearActivitiesDialog"
+import { ClearPhotosDialog } from "~/components/ClearPhotosDialog"
 import { AccountDrawerItem } from "~/components/account/AccountDrawerItem"
 import { AccountDialog } from "~/components/account/AccountDialog"
 import { SignInDialog } from "~/components/account/SignInDialog"
@@ -50,7 +51,8 @@ interface MapDrawerProps {
   showAddPhotosOption: boolean
   onAddFiles: () => void
   onAddPhotos: () => void
-  onClearAll: () => void
+  onClearActivities: () => void
+  onClearPhotos: () => void
   showActivities: boolean
   onShowActivitiesChange: (v: boolean) => void
   showTrails: boolean
@@ -80,7 +82,8 @@ export function MapDrawer({
   showAddPhotosOption,
   onAddFiles,
   onAddPhotos,
-  onClearAll,
+  onClearActivities,
+  onClearPhotos,
   showActivities,
   onShowActivitiesChange,
   showTrails,
@@ -101,7 +104,8 @@ export function MapDrawer({
   locationPermissionDenied,
 }: MapDrawerProps) {
   const close = () => onOpenChange(false)
-  const [isClearAllOpen, setIsClearAllOpen] = useState(false)
+  const [isClearActivitiesOpen, setIsClearActivitiesOpen] = useState(false)
+  const [isClearPhotosOpen, setIsClearPhotosOpen] = useState(false)
   const [isSignInOpen, setIsSignInOpen] = useState(false)
   const [isAccountOpen, setIsAccountOpen] = useState(false)
   const [isLocationHintOpen, setIsLocationHintOpen] = useState(false)
@@ -483,24 +487,41 @@ export function MapDrawer({
             </div>
 
             {/* 4. Destructive — isolated from file actions */}
-            {activityCount > 0 && (
+            {(activityCount > 0 || photoCount > 0) && (
               <div className="overflow-hidden ring-1 ring-foreground/10">
-                <Item
-                  variant="muted"
-                  render={<button type="button" disabled={isProcessing} />}
-                  onClick={() => {
-                    close()
-                    setTimeout(() => setIsClearAllOpen(true), 500)
-                  }}
-                  className="text-destructive active:brightness-95 disabled:opacity-40"
-                >
-                  <ItemMedia variant="icon">
-                    <TrashIcon weight="duotone" className="size-5" />
-                  </ItemMedia>
-                  <ItemContent>
-                    <ItemTitle>Clear all</ItemTitle>
-                  </ItemContent>
-                </Item>
+                {activityCount > 0 && (
+                  <Item
+                    variant="muted"
+                    render={<button type="button" disabled={isProcessing} />}
+                    onClick={() => closeThenOpen(setIsClearActivitiesOpen)}
+                    className="text-destructive active:brightness-95 disabled:opacity-40"
+                  >
+                    <ItemMedia variant="icon">
+                      <TrashIcon weight="duotone" className="size-5" />
+                    </ItemMedia>
+                    <ItemContent>
+                      <ItemTitle>Clear activities</ItemTitle>
+                    </ItemContent>
+                  </Item>
+                )}
+                {activityCount > 0 && photoCount > 0 && (
+                  <div className="border-t border-foreground/10" />
+                )}
+                {photoCount > 0 && (
+                  <Item
+                    variant="muted"
+                    render={<button type="button" disabled={isProcessing} />}
+                    onClick={() => closeThenOpen(setIsClearPhotosOpen)}
+                    className="text-destructive active:brightness-95 disabled:opacity-40"
+                  >
+                    <ItemMedia variant="icon">
+                      <TrashIcon weight="duotone" className="size-5" />
+                    </ItemMedia>
+                    <ItemContent>
+                      <ItemTitle>Clear photos</ItemTitle>
+                    </ItemContent>
+                  </Item>
+                )}
               </div>
             )}
 
@@ -528,12 +549,17 @@ export function MapDrawer({
         </DrawerContent>
       </Drawer>
 
-      <ClearAllDialog
-        open={isClearAllOpen}
-        onOpenChange={setIsClearAllOpen}
+      <ClearActivitiesDialog
+        open={isClearActivitiesOpen}
+        onOpenChange={setIsClearActivitiesOpen}
         activityCount={activityCount}
+        onConfirm={onClearActivities}
+      />
+      <ClearPhotosDialog
+        open={isClearPhotosOpen}
+        onOpenChange={setIsClearPhotosOpen}
         photoCount={photoCount}
-        onConfirm={onClearAll}
+        onConfirm={onClearPhotos}
       />
 
       <SignInDialog open={isSignInOpen} onOpenChange={setIsSignInOpen} />

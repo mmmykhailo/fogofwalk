@@ -21,7 +21,8 @@ interface ControlPanelProps {
   mapMode: MapMode
   onMapModeChange: (mode: MapMode) => void
   onAddFiles: (files: FileList) => void
-  onClearAll: () => void
+  onClearActivities: () => void
+  onClearPhotos: () => void
   photoCount: number
   onAddPhotos: (files: FileList) => void
   showPhotos: boolean
@@ -49,7 +50,8 @@ export function ControlPanel({
   mapMode,
   onMapModeChange,
   onAddFiles,
-  onClearAll,
+  onClearActivities,
+  onClearPhotos,
   photoCount,
   onAddPhotos,
   showPhotos,
@@ -133,7 +135,8 @@ export function ControlPanel({
         showAddPhotosOption={showAddPhotosOption}
         onAddFiles={() => fileInputRef.current?.click()}
         onAddPhotos={() => photoInputRef.current?.click()}
-        onClearAll={onClearAll}
+        onClearActivities={onClearActivities}
+        onClearPhotos={onClearPhotos}
         showActivities={showActivities}
         onShowActivitiesChange={onShowActivitiesChange}
         showTrails={showTrails}
