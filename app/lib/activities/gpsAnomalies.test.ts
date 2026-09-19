@@ -504,6 +504,43 @@ describe("GPS reliability cleaner", () => {
     expect(result.paths.length).toBeGreaterThanOrEqual(2)
   })
 
+  test("keeps a 100,000-point pause linear and window-bounded", () => {
+    const stoppedCount = 100_000
+    const prefix = [
+      point(0, -100, 0, 0),
+      point(1, -50, 0, 1_000),
+      point(2, 0, 0, 2_000),
+    ]
+    const stopped = Array.from({ length: stoppedCount }, (_, offset) =>
+      point(
+        offset + 3,
+        offset % 2 === 0 ? 0.05 : 0,
+        0,
+        3_000 + offset * 1_000,
+        { recordedSpeedMps: 0.1 }
+      )
+    )
+    const suffix = [
+      point(stoppedCount + 3, 50, 0, stoppedCount * 1_000 + 3_000),
+      point(stoppedCount + 4, 100, 0, stoppedCount * 1_000 + 4_000),
+      point(stoppedCount + 5, 150, 0, stoppedCount * 1_000 + 5_000),
+    ]
+    const sourcePoints = [...prefix, ...stopped, ...suffix]
+    const result = detectGpsAnomalies([source(sourcePoints)])
+
+    expect(result.counts.reasons.pause_drift).toBe(1)
+    expect(result.counts.removedPoints).toBeGreaterThan(stoppedCount - 10)
+    expect(result.work.pauseWindowPointsVisited).toBeLessThanOrEqual(
+      sourcePoints.length
+    )
+    expect(result.work.maxDistanceWindowSize).toBeLessThanOrEqual(
+      RELIABILITY_WINDOW_EDGES
+    )
+    expect(result.work.maxTimeWindowSize).toBeLessThanOrEqual(
+      RELIABILITY_WINDOW_EDGES
+    )
+  })
+
   test("keeps pause detection bounded and diagnostics capped", () => {
     const points = Array.from({ length: 2_500 }, (_, index) =>
       point(index, index * 10, 0, index * 1_000)
