@@ -31,7 +31,7 @@ profiles, and sync:
 | `activity-progress.spec.ts`           | unified parser/save/fog progress, accessible bars, persistence, terminal states, and mode-toggle generations                           |
 | `activity-sync.spec.ts`               | uploads, second-device downloads, content-hash dedupe, metadata sync, scheduling, and manifest paging                                  |
 | `auth.spec.ts`                        | local-account sign-in, session persistence, pending-vs-allowed access, log out, and account deletion                                   |
-| `deletion.spec.ts`                    | per-activity local/everywhere deletion, server purge, clear-all, re-imports, and tombstone semantics                                   |
+| `deletion.spec.ts`                    | per-activity local/everywhere deletion, server purge, clear-activities, re-imports, and tombstone semantics                         |
 | `fog-visual.spec.ts`                  | positive-mask rendering without triangle seams and stable corridor edges during animated zoom                                          |
 | `fog-worker.spec.ts`                  | real-worker revision identity, cache acceptance, partial rebuilds, append blocking, and watchdog recovery                              |
 | `map-dialog-dismissal.spec.ts`        | dialog dismissal with fog on/off and protection from delayed public saved-point responses                                              |
@@ -42,7 +42,7 @@ profiles, and sync:
 | `rate-limit.spec.ts`                  | bounded 429 retries and visible countdowns for server-directed and self-paced upload holds                                             |
 | `saved-points.spec.ts`                | saved-point editing, public links, atomic overlap rendering, and newest-created hit priority                                           |
 | `serverless.spec.ts`                  | no-API builds, offline imports, local metadata, fog restore/style changes, and keeping the map mounted across pages                    |
-| `suspension.spec.ts`                  | suspension and explicit/reload resume after clear-all or local-only deletion                                                           |
+| `suspension.spec.ts`                  | suspension and explicit/reload resume after clear-activities or local-only deletion                                                   |
 | `sync-cancellation.spec.ts`           | sign-out/account-switch cancellation and account isolation for activity effects and saved-point sync state                             |
 
 The default `bun run test` command selects the 80 functional tests and excludes
@@ -100,9 +100,9 @@ and check the matching spec fails — every case below has been verified to do s
 | dropping `announceHold` from the pacing branch of `acquireUploadSlot` | self-paced holds are announced too                                   |
 | `useUploadHoldNotice` not rendered by the account surfaces            | the account surfaces explain the hold and count down                 |
 | `newActivitiesCount: allActivities.length` in `add-files`             | re-importing the same files … does not hang                          |
-| `clear-all` propagating deletions to the server                       | clear all leaves the server untouched                                |
+| `clear-activities` propagating deletions to the server                 | clear activities leaves the server untouched                         |
 | dropping `appliedTombstones` freshness check                          | a deleted activity can be re-imported                                |
-| `isFromScratch = false`                                               | an activity re-imported after a clear-all survives its old tombstone |
+| `isFromScratch = false`                                               | an activity re-imported after clear activities survives its old tombstone |
 | `setIsProcessing(activityCount > 0)` without `isFogRunInFlight`       | deleting with the server switch on                                   |
 | missing account ownership on local outbox effects                     | switching accounts does not upload the previous account's activity   |
 | shared saved-point cursor or ownership state                          | saved-point cursors and ownership stay isolated across accounts      |

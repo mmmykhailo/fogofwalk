@@ -7,7 +7,7 @@ import { makeGpxSet } from "../fixtures/gpx"
  *
  *   delete activity, switch on   → server row gone, tombstone, other devices drop it
  *   delete activity, switch off  → server row kept, no tombstone, this device forgets it
- *   clear all                 → server untouched entirely
+ *   clear activities          → server untouched entirely
  *   remove all (account)      → every server row gone, no tombstone, devices keep theirs
  */
 test.describe("deletion semantics", () => {
@@ -65,8 +65,8 @@ test.describe("deletion semantics", () => {
     await app.expectActivityCount(1)
   })
 
-  /** The bug the user hit: clear-all used to tombstone every activity. */
-  test("clear all leaves the server untouched and the activities come back", async ({
+  /** The bug the user hit: clearing activities used to tombstone every activity. */
+  test("clear activities leaves the server untouched and the activities come back", async ({
     app,
     serverState,
   }) => {
@@ -79,7 +79,7 @@ test.describe("deletion semantics", () => {
     const before = await serverState(app.page)
     expect(before.activities).toHaveLength(2)
 
-    await app.clearAll()
+    await app.clearActivities()
     await app.expectActivityCount(0)
 
     // The server still has everything, and nothing was tombstoned.
@@ -126,12 +126,12 @@ test.describe("deletion semantics", () => {
   })
 
   /**
-   * `clear-all` drops syncState, so the next sync walks from scratch and the
+   * Clearing activities drops activity sync state, so the next sync walks from scratch and the
    * manifest replays every tombstone the account ever wrote. Honouring them
    * there deletes activities the user re-imported in the meantime — a from-scratch
    * walk must converge on the union of local and server, never on deletion.
    */
-  test("an activity re-imported after a clear-all survives its old tombstone", async ({
+  test("an activity re-imported after clearing activities survives its old tombstone", async ({
     app,
     serverState,
   }) => {
@@ -147,7 +147,7 @@ test.describe("deletion semantics", () => {
     expect((await serverState(app.page)).tombstones).toHaveLength(1)
 
     // …then everything local goes, taking the sync state with it.
-    await app.clearAll()
+    await app.clearActivities()
     await app.expectActivityCount(0)
 
     // Re-imported while sync is still suspended, so the next walk starts from

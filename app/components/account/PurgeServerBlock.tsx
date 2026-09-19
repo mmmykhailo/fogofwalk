@@ -14,7 +14,7 @@ interface PurgeServerBlockProps {
  * dialog opened from a vaul drawer is the combination this codebase carries
  * focus workarounds for.
  *
- * Distinct from deleting the account, and distinct from "Clear all": no
+ * Distinct from deleting the account, and distinct from "Clear activities": no
  * tombstones are written, so nothing on any device is deleted.
  */
 export function PurgeServerBlock({

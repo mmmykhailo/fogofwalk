@@ -54,7 +54,7 @@ export function saveMapPosition(center: [number, number], zoom: number): void {
   }
 }
 
-/** Remove the saved map position (called by clear-all). */
+/** Remove the saved map position (called by clear activities). */
 export function clearMapPosition(): void {
   try {
     localStorage.removeItem(MAP_POSITION_KEY)

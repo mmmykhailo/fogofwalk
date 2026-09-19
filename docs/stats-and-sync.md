@@ -36,7 +36,10 @@ changes and must land on both sides together.
 
 ### Deletion and cursor rules
 
-- Clear all is local only; it removes activities, photos, saved points, and fog from the device while preserving server copies. Removing all server activities is a separate explicit account action.
+- Clear activities is local only; it removes activities, fog, and activity-derived
+  caches from the device while preserving photos, saved points, and server
+  copies. Clearing photos removes only local photos. Removing all server
+  activities is a separate explicit account action.
 - A local-only delete records its hash in `ignoredHashes` and suspends automatic sync until reload. A manual sync clears that suspension.
 - Tombstones are applied once per device. A from-scratch sync (`since === 0`) never deletes local activities.
 - Do not advance the manifest cursor beyond a failed download; that item otherwise falls outside every future window.

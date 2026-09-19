@@ -512,12 +512,23 @@ export function createAppPage(
 
     // ─── Destructive actions ────────────────────────────────────────────────
 
-    async clearAll() {
+    async clearActivities() {
       await app.openDrawer()
-      await drawer.getByRole("button", { name: "Clear all" }).click()
-      const dialog = page.getByRole("dialog", { name: /Clear all data/ })
+      await drawer.getByRole("button", { name: "Clear activities" }).click()
+      const dialog = page.getByRole("dialog", {
+        name: /Clear activities\?/,
+      })
       await expect(dialog).toBeVisible()
-      await dialog.getByRole("button", { name: "Clear all" }).click()
+      await dialog.getByRole("button", { name: "Clear activities" }).click()
+      await expect(dialog).toBeHidden()
+    },
+
+    async clearPhotos() {
+      await app.openDrawer()
+      await drawer.getByRole("button", { name: "Clear photos" }).click()
+      const dialog = page.getByRole("dialog", { name: /Clear photos\?/ })
+      await expect(dialog).toBeVisible()
+      await dialog.getByRole("button", { name: "Clear photos" }).click()
       await expect(dialog).toBeHidden()
     },
 
@@ -559,6 +570,26 @@ export function createAppPage(
           const all = tx.objectStore("activities").getAll()
           all.onsuccess = () =>
             resolve(all.result.map((t: any) => ({ id: t.id, name: t.name })))
+          all.onerror = () => resolve([])
+        })
+      })
+    },
+
+    /** Local photo ids, read from the persisted photo store. */
+    async localPhotos(): Promise<{ id: string }[]> {
+      return page.evaluate(async () => {
+        const db = await new Promise<IDBDatabase>((resolve, reject) => {
+          const req = indexedDB.open("fogofwalk")
+          req.onsuccess = () => resolve(req.result)
+          req.onerror = () => reject(req.error)
+        })
+        return new Promise<{ id: string }[]>((resolve) => {
+          const tx = db.transaction("photos", "readonly")
+          const all = tx.objectStore("photos").getAll()
+          all.onsuccess = () =>
+            resolve(
+              all.result.map((photo: { id: string }) => ({ id: photo.id }))
+            )
           all.onerror = () => resolve([])
         })
       })
