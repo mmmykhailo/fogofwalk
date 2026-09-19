@@ -40,6 +40,27 @@ export const REJOIN_POSITION_CEILING_M = 1_000
 /** Reliable edges required after a proposed rejoin. */
 export const REJOIN_CONFIRMATION_EDGES = 2
 
+/** Consecutive reliable edges required to promote a post-jump fragment. */
+export const RECOVERY_CONFIRMATION_EDGES = 4
+/** Minimum point count for a promoted post-jump fragment. */
+export const MIN_RECOVERY_FRAGMENT_POINTS = 5
+/** Short bounded candidate runs need stronger evidence than ordinary paths. */
+export const SHORT_ISLAND_MAX_POINTS = 2
+
+/** Trusted accuracy samples required before local accuracy comparisons apply. */
+export const RELATIVE_ACCURACY_MIN_SAMPLES = 5
+/** Accuracy floor used when the local baseline is unusually small. */
+export const RELATIVE_ACCURACY_FLOOR_M = 25
+/** Maximum local accuracy increase before a point becomes suspect. */
+export const RELATIVE_ACCURACY_MULTIPLIER = 5
+
+/** Coordinate speed below this value does not trigger sensor mismatch checks. */
+export const SPEED_MISMATCH_COORDINATE_FLOOR_MPS = 5
+/** Relative difference required for a recorded-speed mismatch. */
+export const SPEED_MISMATCH_RATIO = 4
+/** Absolute difference required alongside the mismatch ratio. */
+export const SPEED_MISMATCH_DIFFERENCE_MPS = 5
+
 /** Canonical renderability requirement. */
 export const MIN_RETAINED_PATH_POINTS = 2
 /** Evidence required before an isolated new fragment is accepted. */
