@@ -10,7 +10,11 @@ import {
 import type { ParsedActivity } from "~/types/activities"
 import {
   activityToSummary,
+  clearActivityDerivedState,
   clearActivities,
+  clearPhotos,
+  clearSavedPoints,
+  clearSyncState,
   deleteActivity,
   isUniqueDistanceRevisionCurrent,
   loadActivitySummaries,
@@ -172,7 +176,12 @@ class FakeTransaction {
     if (this.pending !== 0 || this.completionQueued || this.aborted) return
     this.completionQueued = true
     queueMicrotask(() => {
-      if (this.aborted || this.pending !== 0) return
+      if (this.aborted) return
+      if (this.pending !== 0) {
+        this.completionQueued = false
+        this.completeIfIdle()
+        return
+      }
       for (const [name, store] of this.staged) {
         this.db.stores.set(name as StoreName, store)
       }
@@ -376,8 +385,13 @@ afterAll(() => {
 })
 
 beforeEach(async () => {
-  await clearActivities()
+  if (!fakeIndexedDb.database) await clearActivities()
   fakeIndexedDb.database!.failWrites = false
+  await clearActivityDerivedState()
+  await clearSyncState({ allAccounts: true })
+  await clearActivities()
+  await clearPhotos()
+  await clearSavedPoints()
   fakeIndexedDb.database!.duplicateSummaryRecords = []
   fakeIndexedDb.database!.resetMetrics()
 })
@@ -415,14 +429,12 @@ describe("activity summary storage recovery", () => {
       revision: 6,
       coverageRevision: 6,
     })
-    expect(fakeIndexedDb.database!.raw("library-meta").get("library")).toEqual(
-      {
-        key: "library",
-        schemaVersion: 2,
-        revision: 6,
-        coverageRevision: 6,
-      }
-    )
+    expect(fakeIndexedDb.database!.raw("library-meta").get("library")).toEqual({
+      key: "library",
+      schemaVersion: 2,
+      revision: 6,
+      coverageRevision: 6,
+    })
     expect(fakeIndexedDb.database!.metrics.activityGetAll).toBe(0)
   })
 
@@ -515,6 +527,97 @@ describe("activity summary storage recovery", () => {
     expect(fakeIndexedDb.database!.raw("activity-summaries").has("first")).toBe(
       true
     )
+  })
+})
+
+describe("scoped data cleanup", () => {
+  test("clears activity-derived data while preserving photos and saved points", async () => {
+    await saveActivities([activity("activity", 100)])
+    const database = fakeIndexedDb.database!
+    database.raw("photos").set("photo", { id: "photo" })
+    database.raw("saved-points").set("point", { id: "point" })
+    database.raw("prefs").set("fogMode", {
+      key: "fogMode",
+      value: "fill",
+    })
+    database.raw("prefs").set("fogCache", {
+      key: "fogCache",
+      value: { activityIds: ["activity"] },
+    })
+    database.raw("prefs").set("uniqueDistanceState", {
+      key: "uniqueDistanceState",
+      value: { activityIds: ["activity"] },
+    })
+    database.raw("prefs").set("syncState", {
+      key: "syncState",
+      value: { cursor: 4 },
+    })
+    database.raw("prefs").set("savedPointSyncState:account-a", {
+      key: "savedPointSyncState:account-a",
+      value: { cursor: 8 },
+    })
+    database.raw("sync-state").set("default", { id: "default", cursor: 4 })
+    database.raw("sync-state").set("account:account-a", {
+      id: "account:account-a",
+      cursor: 8,
+    })
+
+    await clearActivities()
+    await clearActivityDerivedState()
+
+    expect(database.raw("activities").size).toBe(0)
+    expect(database.raw("activity-summaries").size).toBe(0)
+    expect(database.raw("photos").has("photo")).toBe(true)
+    expect(database.raw("saved-points").has("point")).toBe(true)
+    expect(database.raw("prefs").has("fogMode")).toBe(true)
+    expect(database.raw("prefs").has("fogCache")).toBe(false)
+    expect(database.raw("prefs").has("uniqueDistanceState")).toBe(false)
+    expect(database.raw("prefs").has("syncState")).toBe(false)
+    expect(database.raw("prefs").has("savedPointSyncState:account-a")).toBe(
+      true
+    )
+    expect(database.raw("sync-state").size).toBe(0)
+  })
+
+  test("clears photos without changing activities, caches, or sync state", async () => {
+    await saveActivities([activity("activity", 100)])
+    const database = fakeIndexedDb.database!
+    database.raw("photos").set("photo", { id: "photo" })
+    database.raw("saved-points").set("point", { id: "point" })
+    database.raw("prefs").set("fogCache", {
+      key: "fogCache",
+      value: { activityIds: ["activity"] },
+    })
+    database.raw("prefs").set("uniqueDistanceState", {
+      key: "uniqueDistanceState",
+      value: { activityIds: ["activity"] },
+    })
+    database.raw("prefs").set("syncState", {
+      key: "syncState",
+      value: { cursor: 4 },
+    })
+    database.raw("prefs").set("savedPointSyncState:account-a", {
+      key: "savedPointSyncState:account-a",
+      value: { cursor: 8 },
+    })
+    database.raw("sync-state").set("account:account-a", {
+      id: "account:account-a",
+      cursor: 8,
+    })
+
+    await clearPhotos()
+
+    expect(database.raw("photos").size).toBe(0)
+    expect(database.raw("activities").has("activity")).toBe(true)
+    expect(database.raw("activity-summaries").has("activity")).toBe(true)
+    expect(database.raw("saved-points").has("point")).toBe(true)
+    expect(database.raw("prefs").has("fogCache")).toBe(true)
+    expect(database.raw("prefs").has("uniqueDistanceState")).toBe(true)
+    expect(database.raw("prefs").has("syncState")).toBe(true)
+    expect(database.raw("prefs").has("savedPointSyncState:account-a")).toBe(
+      true
+    )
+    expect(database.raw("sync-state").has("account:account-a")).toBe(true)
   })
 })
 

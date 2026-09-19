@@ -71,7 +71,8 @@ import {
   loadActivitySummaries,
   savePhotos,
   saveFogMode,
-  clearAll,
+  clearActivityDerivedState,
+  clearPhotos,
   loadSavedPoints,
   saveSavedPoint,
   deleteSavedPoint as deleteStoredSavedPoint,
@@ -406,7 +407,7 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
     }
   }
 
-  if (intent === "clear-all") {
+  if (intent === "clear-activities") {
     // Local only, deliberately. This resets *this device*; the server copies
     // are left alone and sync pulls them back. Deleting them is a separate,
     // explicit action — "Remove all" in the account dialog.
@@ -417,17 +418,26 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
     })
     // Runs synchronously before the fetcher effect resets React selection state.
     clearRenderedActivityState()
-    await clearAll({ includeActivities: false })
+    await clearActivityDerivedState()
     clearMapPosition()
-    // Pause automatic syncing. `clearAll` dropped syncState, so the next sync
-    // walks from scratch and would download everything straight back — the
-    // clear would undo itself within seconds. It resumes on reload, or when
-    // the user asks for it with "Sync now".
-    suspendAutoSync("clear-all")
+    // Pause automatic syncing. Clearing activity sync cursors means the next
+    // sync walks from scratch and would download everything straight back —
+    // the clear would undo itself within seconds. It resumes on reload, or
+    // when the user asks for it with "Sync now".
+    suspendAutoSync("clear-activities")
     return {
-      intent: "clear-all" as const,
+      intent: "clear-activities" as const,
       homeDataReconciled: true as const,
       activityCount: 0,
+    }
+  }
+
+  if (intent === "clear-photos") {
+    await clearPhotos()
+    return {
+      intent: "clear-photos" as const,
+      homeDataReconciled: true as const,
+      photoCount: 0,
     }
   }
 
@@ -1057,13 +1067,15 @@ export default function Home() {
         setIsDuplicateOpen(true)
       }
     }
-    if (data.intent === "clear-all") {
+    if (data.intent === "clear-activities") {
       setActivityCount(0)
       updateMapBootstrapCache({ activityCount: 0 })
-      dispatchMapSurface({ type: "dismissAll" })
+      dispatchMapSurface({ type: "closeActivity" })
       setShowShareDialog(false)
+    }
+    if (data.intent === "clear-photos") {
+      dispatchMapSurface({ type: "closePhoto" })
       replacePhotos([])
-      replaceSavedPoints([])
     }
     if (data.intent === "delete-activity") {
       dispatchMapSurface({ type: "closeActivity" })
@@ -1071,7 +1083,7 @@ export default function Home() {
       setActivityCount(data.activityCount)
       updateMapBootstrapCache({ activityCount: data.activityCount })
     }
-  }, [fetcher.data, replacePhotos, replaceSavedPoints])
+  }, [fetcher.data, replacePhotos])
 
   // The library subscription updates the activity projection; reconcile the
   // route-only state that the sync engine cannot reach.
@@ -1154,15 +1166,21 @@ export default function Home() {
     })
   }
 
-  function handleClearAll() {
-    photoUrlOwner.revokeAll()
+  function handleClearActivities() {
     // Release the cached share-card map bitmap so the GPU memory is freed
     if (mapStore.shareCardCache) {
       mapStore.shareCardCache.baseMap.close()
       mapStore.shareCardCache = null
     }
     const formData = new FormData()
-    formData.append("intent", "clear-all")
+    formData.append("intent", "clear-activities")
+    fetcher.submit(formData, { method: "post", action: "/map" })
+  }
+
+  function handleClearPhotos() {
+    photoUrlOwner.revokeAll()
+    const formData = new FormData()
+    formData.append("intent", "clear-photos")
     fetcher.submit(formData, { method: "post", action: "/map" })
   }
 
@@ -1369,7 +1387,8 @@ export default function Home() {
                 mapMode={mapMode}
                 onMapModeChange={setMapMode}
                 onAddFiles={handleAddFiles}
-                onClearAll={handleClearAll}
+                onClearActivities={handleClearActivities}
+                onClearPhotos={handleClearPhotos}
                 photoCount={photos.length}
                 onAddPhotos={handleAddPhotos}
                 showPhotos={showPhotos}

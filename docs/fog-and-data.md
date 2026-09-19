@@ -76,9 +76,12 @@ Import progress is a batch snapshot over the bounded parser pool: parsing and sa
 IndexedDB stores full activities, activity summaries, library revision metadata,
 photos, saved points, preferences, account-scoped sync state/outboxes, and
 derived caches. Preferences include fog mode/cache and the session.
-`clearAll()` preserves the session and user controls such as fog mode, while
-clearing local library data, photos, saved points, derived caches, and all sync
-state. `loadActivities()` performs read-time defaults for missing
+Clearing activities commits `clearLocal` through ActivityLibrary, then removes
+the fog cache, unique-distance cache, and activity sync cursors for all
+accounts. It preserves photos, saved points, preferences, the session, and
+saved-point sync state. Clearing photos only removes the photo store; it does
+not rebuild activities or fog, move the map, or touch either sync namespace.
+`loadActivities()` performs read-time defaults for missing
 `startedAtMs`, `isPublic`, and `uniqueDistanceKm`; do not re-save old records
 merely to apply those defaults. Metadata-only edits update the summary overlay
 without reading or rewriting geometry.

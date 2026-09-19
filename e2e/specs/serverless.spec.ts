@@ -146,27 +146,100 @@ test.describe("server-less build", () => {
     await app.waitForImportToSettle()
     releaseStyle()
 
-    await expect.poll(() => app.fogCacheSummary()).toMatchObject({
-      fogMode: "fill",
-    })
+    await expect
+      .poll(() => app.fogCacheSummary())
+      .toMatchObject({
+        fogMode: "fill",
+      })
     expect((await app.fogCacheSummary())?.ringCount).toBeGreaterThan(0)
   })
 
-  test("clear all simply clears, with no server caveat", async ({ app }) => {
+  test("clear activities simply clears, with no server caveat", async ({
+    app,
+  }) => {
     await app.goto()
     await app.importActivities(2)
     await app.waitForImportToSettle()
 
     await app.openDrawer()
-    await app.drawer.getByRole("button", { name: "Clear all" }).click()
-    const dialog = app.page.getByRole("dialog", { name: /Clear all data/ })
+    await app.drawer.getByRole("button", { name: "Clear activities" }).click()
+    const dialog = app.page.getByRole("dialog", {
+      name: /Clear activities\?/,
+    })
     await expect(dialog).toBeVisible()
     // The sync explanation belongs only to signed-in users.
     await expect(dialog).not.toContainText("server")
-    await dialog.getByRole("button", { name: "Clear all" }).click()
+    await dialog.getByRole("button", { name: "Clear activities" }).click()
     await expect(dialog).toBeHidden()
 
     await app.expectActivityCount(0)
+  })
+
+  test("clears activities and photos independently across reloads", async ({
+    app,
+  }) => {
+    await app.goto()
+    await app.importActivities(1)
+    await app.waitForImportToSettle()
+    await app.seedPhoto({
+      id: "e2e-split-clear-photo",
+      takenAtMs: Date.UTC(2024, 0, 2, 8, 0, 0),
+      lng: 13.45,
+      lat: 52.55,
+    })
+    await app.seedSavedPoint({
+      id: "e2e-split-clear-point",
+      name: "E2E split-clear point",
+      description: null,
+      lng: 13.46,
+      lat: 52.56,
+      color: "blue",
+      isPublic: false,
+      createdAt: 1_700_000_000_000,
+      updatedAt: 1_700_000_000_000,
+    })
+
+    await app.reload()
+    await app.expectActivityCount(1)
+    await expect.poll(() => app.localPhotos()).toHaveLength(1)
+    await expect.poll(() => app.localSavedPoints()).toHaveLength(1)
+    await expect
+      .poll(() => app.fogCacheSummary())
+      .toMatchObject({ activityIds: [expect.any(String)] })
+
+    await app.clearActivities()
+    await app.expectActivityCount(0)
+    expect(await app.localPhotos()).toHaveLength(1)
+    expect(await app.localSavedPoints()).toHaveLength(1)
+    expect(await app.fogCacheSummary()).toBeNull()
+
+    await app.reload()
+    await app.expectActivityCount(0)
+    expect(await app.localPhotos()).toHaveLength(1)
+    expect(await app.localSavedPoints()).toHaveLength(1)
+    expect(await app.fogCacheSummary()).toBeNull()
+
+    await app.importActivities(1, 10)
+    await app.waitForImportToSettle()
+    await expect
+      .poll(() => app.fogCacheSummary())
+      .toMatchObject({ activityIds: [expect.any(String)] })
+
+    await app.clearPhotos()
+    await app.expectActivityCount(1)
+    expect(await app.localPhotos()).toHaveLength(0)
+    expect(await app.localSavedPoints()).toHaveLength(1)
+    await expect
+      .poll(() => app.fogCacheSummary())
+      .toMatchObject({ activityIds: [expect.any(String)] })
+
+    await app.reload()
+    await app.expectActivityCount(1)
+    expect(await app.localPhotos()).toHaveLength(0)
+    expect(await app.localSavedPoints()).toHaveLength(1)
+    await expect
+      .poll(() => app.fogCacheSummary())
+      .toMatchObject({ activityIds: [expect.any(String)] })
   })
 
   test("keeps the live map mounted while visiting statistics", async ({

@@ -22,16 +22,30 @@ export const REMOVAL_KINDS: {
     ),
   },
   {
-    id: "clear-all",
-    title: "Clear all",
+    id: "clear-activities",
+    title: "Clear activities",
     where: "in the menu",
     body: (
       <>
-        Wipes every activity, photo, saved point and the fog from{" "}
-        <strong className="text-foreground">this device only</strong>. It
-        deliberately leaves the server untouched, so if you are signed in your
-        activities and saved points can download again when sync resumes. Photos
-        are not synced, so those are gone for good.
+        Removes every activity and resets the fog from{" "}
+        <strong className="text-foreground">this device only</strong>. Photos
+        and saved points are preserved. It deliberately leaves server activity
+        copies untouched, so if you are signed in they can download again when
+        sync resumes. To delete those server copies too, use <em>Remove all</em>{" "}
+        in the account dialog.
+      </>
+    ),
+  },
+  {
+    id: "clear-photos",
+    title: "Clear photos",
+    where: "in the menu",
+    body: (
+      <>
+        Permanently removes every photo from{" "}
+        <strong className="text-foreground">this device only</strong>. Photos
+        are local-only and cannot be recovered. Activities, fog, saved points,
+        and sync state are not changed.
       </>
     ),
   },
@@ -55,7 +69,7 @@ export function RemovingSection() {
   return (
     <div className="space-y-3 text-sm leading-relaxed text-muted-foreground">
       <p>
-        There are three different ways to remove data, and they do genuinely
+        There are four different ways to remove data, and they do genuinely
         different things — worth knowing before you pick one.
       </p>
       <div className="space-y-4">
@@ -72,10 +86,10 @@ export function RemovingSection() {
         ))}
       </div>
       <p>
-        In short: <em>Clear all</em> is a local reset whose synced data can
-        return; <em>Remove all</em> deletes only the server's activity copies.
-        Local-only photos cleared from the device are not recoverable. Both
-        actions ask you to confirm first.
+        In short: <em>Clear activities</em> is a local activity reset whose
+        synced data can return; <em>Clear photos</em> is permanent and local;
+        <em>Remove all</em> deletes only the server's activity copies. Each
+        destructive action asks you to confirm first.
       </p>
     </div>
   )

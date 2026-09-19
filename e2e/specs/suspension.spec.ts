@@ -3,18 +3,18 @@ import { test, expect } from "../fixtures/app"
 /**
  * A local-only deletion pauses automatic sync until the page reloads.
  *
- * Without it the very next sync — which `clear-all` triggers from scratch —
+ * Without it the very next sync — which clearing activities triggers from scratch —
  * downloads everything straight back and the delete undoes itself in seconds.
  */
 test.describe("sync suspension", () => {
-  test("clear all pauses sync and says so", async ({ app }) => {
+  test("clear activities pauses sync and says so", async ({ app }) => {
     await app.goto()
     await app.signIn()
     await app.importActivities(2)
     await app.waitForImportToSettle()
     await app.syncNow()
 
-    await app.clearAll()
+    await app.clearActivities()
 
     expect(await app.accountRowDescription()).toContain("Sync paused")
   })
@@ -25,7 +25,7 @@ test.describe("sync suspension", () => {
     await app.importActivities(2)
     await app.waitForImportToSettle()
     await app.syncNow()
-    await app.clearAll()
+    await app.clearActivities()
 
     await app.closeDrawer()
     await app.fireAutomaticSyncTriggers()
@@ -40,7 +40,7 @@ test.describe("sync suspension", () => {
     await app.importActivities(2)
     await app.waitForImportToSettle()
     await app.syncNow()
-    await app.clearAll()
+    await app.clearActivities()
     await app.expectActivityCount(0)
 
     // The button reads "Resume sync" while suspended.
@@ -65,7 +65,7 @@ test.describe("sync suspension", () => {
     await app.openDrawer()
     await app.drawer.getByRole("switch", { name: "Fill loops" }).click()
     await app.waitForImportToSettle()
-    await app.clearAll()
+    await app.clearActivities()
 
     await app.importActivities(1, 10)
     await app.waitForImportToSettle()
@@ -83,7 +83,7 @@ test.describe("sync suspension", () => {
     await app.importActivities(2)
     await app.waitForImportToSettle()
     await app.syncNow()
-    await app.clearAll()
+    await app.clearActivities()
     await app.expectActivityCount(0)
 
     await app.reload()

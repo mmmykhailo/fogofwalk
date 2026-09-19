@@ -9,21 +9,19 @@ import {
   DialogFooter,
 } from "~/components/ui/dialog"
 
-interface ClearAllDialogProps {
+interface ClearActivitiesDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   activityCount: number
-  photoCount: number
   onConfirm: () => void
 }
 
-export function ClearAllDialog({
+export function ClearActivitiesDialog({
   open,
   onOpenChange,
   activityCount,
-  photoCount,
   onConfirm,
-}: ClearAllDialogProps) {
+}: ClearActivitiesDialogProps) {
   const auth = useAuth()
   const isSynced = auth.status === "signedIn" && auth.canSync
 
@@ -31,15 +29,11 @@ export function ClearAllDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent showCloseButton={false}>
         <DialogHeader>
-          <DialogTitle>Clear all data?</DialogTitle>
+          <DialogTitle>Clear activities?</DialogTitle>
           <DialogDescription>
-            All {activityCount} activity{activityCount !== 1 ? "s" : ""}
-            {photoCount > 0
-              ? ` and ${photoCount} photo${photoCount !== 1 ? "s" : ""}`
-              : ""}{" "}
-            will be removed from this device and the fog map will be reset.
-            {photoCount > 0 &&
-              " Photos are not synced — those are gone for good."}
+            All {activityCount} activit{activityCount !== 1 ? "ies" : "y"} will
+            be removed from this device and the fog map will be reset. Photos
+            and saved points will be preserved.
           </DialogDescription>
         </DialogHeader>
 
@@ -61,7 +55,7 @@ export function ClearAllDialog({
               onConfirm()
             }}
           >
-            Clear all
+            Clear activities
           </Button>
         </DialogFooter>
       </DialogContent>

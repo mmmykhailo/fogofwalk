@@ -6,33 +6,24 @@ import { makeServerUser } from "../../.storybook/fixtures/auth"
 import { useAuth } from "~/lib/server/authStore"
 
 import { Button } from "./ui/button"
-import { ClearAllDialog } from "./ClearAllDialog"
+import { ClearActivitiesDialog } from "./ClearActivitiesDialog"
 
 const meta = {
-  title: "Feedback/ClearAllDialog",
-  component: ClearAllDialog,
+  title: "Feedback/ClearActivitiesDialog",
+  component: ClearActivitiesDialog,
   args: {
     open: false,
     onOpenChange: () => {},
     activityCount: 0,
-    photoCount: 0,
     onConfirm: () => {},
   },
-} satisfies Meta<typeof ClearAllDialog>
+} satisfies Meta<typeof ClearActivitiesDialog>
 
 export default meta
 type Story = StoryObj<typeof meta>
 
 export const ActivitiesOnly: Story = {
-  render: () => <ClearAllHarness activityCount={12} photoCount={0} />,
-}
-
-export const PhotosOnly: Story = {
-  render: () => <ClearAllHarness activityCount={0} photoCount={4} />,
-}
-
-export const ActivitiesAndPhotos: Story = {
-  render: () => <ClearAllHarness activityCount={12} photoCount={4} />,
+  render: () => <ClearActivitiesHarness activityCount={12} />,
 }
 
 export const SignedInServerCopy: Story = {
@@ -43,16 +34,16 @@ export const SignedInServerCopy: Story = {
       canSync: true,
       isAdmin: false,
     })
-    return <ClearAllHarness activityCount={12} photoCount={2} />
+    return <ClearActivitiesHarness activityCount={12} />
   },
 }
 
 export const ZeroCountDefensiveState: Story = {
-  render: () => <ClearAllHarness activityCount={0} photoCount={0} />,
+  render: () => <ClearActivitiesHarness activityCount={0} />,
 }
 
 export const ConfirmExactlyOnceAndCancel: Story = {
-  render: () => <ClearAllHarness activityCount={3} photoCount={1} />,
+  render: () => <ClearActivitiesHarness activityCount={3} />,
   play: async ({ canvas }) => {
     await userEvent.click(
       await canvas.findByRole("button", { name: "Open clear dialog" })
@@ -67,38 +58,33 @@ export const ConfirmExactlyOnceAndCancel: Story = {
       canvas.getByRole("button", { name: "Open clear dialog" })
     )
     await userEvent.click(
-      await within(document.body).findByRole("button", { name: "Clear all" })
+      await within(document.body).findByRole("button", {
+        name: "Clear activities",
+      })
     )
-    await expect(canvas.getByTestId("clear-confirmations")).toHaveTextContent(
-      "1"
-    )
+    await expect(
+      canvas.getByTestId("activity-clear-confirmations")
+    ).toHaveTextContent("1")
   },
 }
 
-function ClearAllHarness({
-  activityCount,
-  photoCount,
-}: {
-  activityCount: number
-  photoCount: number
-}) {
+function ClearActivitiesHarness({ activityCount }: { activityCount: number }) {
   const [open, setOpen] = useState(false)
   const [confirmations, setConfirmations] = useState(0)
   const onConfirm = fn()
   return (
     <>
       <Button onClick={() => setOpen(true)}>Open clear dialog</Button>
-      <ClearAllDialog
+      <ClearActivitiesDialog
         open={open}
         onOpenChange={setOpen}
         activityCount={activityCount}
-        photoCount={photoCount}
         onConfirm={() => {
           onConfirm()
           setConfirmations((count) => count + 1)
         }}
       />
-      <output data-testid="clear-confirmations" className="sr-only">
+      <output data-testid="activity-clear-confirmations" className="sr-only">
         {confirmations}
       </output>
     </>
