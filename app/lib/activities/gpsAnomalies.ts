@@ -183,12 +183,6 @@ interface AnalysisContext {
 
 interface MutableCounts {
   inputPoints: number
-  splitCount: number
-  gapSplitCount: number
-  removalSplitCount: number
-  trimmedPrefixPoints: number
-  trimmedSuffixPoints: number
-  reasons: Partial<Record<GpsAnomalyCode, number>>
   removalRecords: RemovalRecord[]
   splitRecords: SplitRecord[]
   nextDecisionOrder: number
@@ -223,13 +217,6 @@ interface SplitRecord {
 interface EmittedPath {
   sourcePathIndex: number
   points: AnomalyPoint[]
-}
-
-interface Quarantine {
-  startIndex: number
-  lastTrustedIndex: number
-  entry: EdgeEvidence
-  triggerCode: GpsAnomalyCode
 }
 
 interface RejoinEvidence {
@@ -346,14 +333,6 @@ function isUnsafePointEvidence(codes: readonly GpsPointEvidenceCode[]) {
     codes.includes("untrusted_accuracy") ||
     codes.includes("relative_accuracy_outlier")
   )
-}
-
-function addReason(
-  counts: Pick<MutableCounts, "reasons">,
-  code: GpsAnomalyCode,
-  amount = 1
-): void {
-  counts.reasons[code] = (counts.reasons[code] ?? 0) + amount
 }
 
 function recordRemoval(
@@ -556,72 +535,6 @@ function appendBaseline(
   updateWindowWork(baseline, work)
 }
 
-function seedBaseline(
-  points: readonly AnomalyPoint[],
-  startIndex: number,
-  baseline: RollingBaseline,
-  context: AnalysisContext
-): void {
-  baseline.distances.length = 0
-  baseline.deltas.length = 0
-  baseline.accuracies.length = 0
-  const end = Math.min(points.length - 1, startIndex + RELIABILITY_WINDOW_EDGES)
-  for (let index = startIndex; index < end; index += 1) {
-    const first = points[index]!
-    const second = points[index + 1]!
-    const measured = edgeDistance(first, second, context.work)
-    const firstAccuracy = finiteAccuracy(first)
-    const secondAccuracy = finiteAccuracy(second)
-    if (
-      (firstAccuracy != null && firstAccuracy > MAX_TRUSTED_GPS_ACCURACY_M) ||
-      (secondAccuracy != null && secondAccuracy > MAX_TRUSTED_GPS_ACCURACY_M)
-    ) {
-      continue
-    }
-    if (measured.distanceM >= HARD_TELEPORT_DISTANCE_M) continue
-    if (measured.distanceM <= 0 && measured.rawDeltaMs == null) continue
-    if (measured.rawDeltaMs != null) {
-      if (
-        measured.rawDeltaMs <= 0 ||
-        measured.rawDeltaMs > TIME_GAP_CEILING_MS
-      ) {
-        continue
-      }
-      const speedMps = measured.distanceM / (measured.rawDeltaMs / 1_000)
-      if (
-        measured.distanceM >= SPEED_TEST_DISTANCE_FLOOR_M &&
-        speedMps > context.maxSpeedMps
-      ) {
-        continue
-      }
-    }
-    if (measured.distanceM > 0) baseline.distances.push(measured.distanceM)
-    if (measured.rawDeltaMs != null && measured.rawDeltaMs > 0) {
-      baseline.deltas.push(measured.rawDeltaMs)
-    }
-    const accuracy = finiteAccuracy(second)
-    if (accuracy != null && accuracy <= MAX_TRUSTED_GPS_ACCURACY_M) {
-      baseline.accuracies.push(accuracy)
-    }
-  }
-  if (baseline.distances.length > RELIABILITY_WINDOW_EDGES) {
-    baseline.distances.splice(
-      0,
-      baseline.distances.length - RELIABILITY_WINDOW_EDGES
-    )
-  }
-  if (baseline.deltas.length > RELIABILITY_WINDOW_EDGES) {
-    baseline.deltas.splice(0, baseline.deltas.length - RELIABILITY_WINDOW_EDGES)
-  }
-  if (baseline.accuracies.length > RELIABILITY_WINDOW_EDGES) {
-    baseline.accuracies.splice(
-      0,
-      baseline.accuracies.length - RELIABILITY_WINDOW_EDGES
-    )
-  }
-  updateWindowWork(baseline, context.work)
-}
-
 function evidenceForPoint(
   baseline: RollingBaseline,
   context: AnalysisContext
@@ -719,30 +632,6 @@ function addPrefixRemoval(
     entry,
     ...(triggerCode ? { triggerCode } : {}),
     isPrefix: true,
-  })
-  void examples
-  void context
-}
-
-function addSuffixRemoval(
-  counts: MutableCounts,
-  examples: GpsAnomalyExample[],
-  sourcePathIndex: number,
-  points: readonly AnomalyPoint[],
-  quarantine: Quarantine,
-  context: AnalysisContext
-): void {
-  const removedPointCount = points.length - quarantine.startIndex
-  if (removedPointCount <= 0) return
-  recordRemoval(counts, {
-    sourcePathIndex,
-    points,
-    startIndex: quarantine.startIndex,
-    endIndex: points.length - 1,
-    code: "untrusted_suffix",
-    entry: quarantine.entry,
-    triggerCode: quarantine.triggerCode,
-    isSuffix: true,
   })
   void examples
   void context
@@ -1072,9 +961,6 @@ function analyzeValidSegmentV3(
         rejoin,
       }
     )
-    if (code === "untrusted_suffix") {
-      counts.trimmedSuffixPoints += endIndex - startIndex + 1
-    }
   }
 
   const emitCandidate = (atEnd = false) => {
@@ -1092,11 +978,6 @@ function analyzeValidSegmentV3(
 
     if (canKeep) {
       output.push({ sourcePathIndex, points: candidate.points })
-      if (candidate.requiresRecovery && recoveryConfidence) {
-        addReason(counts, "recovered_fragment")
-        counts.splitCount += 1
-        context.work.fragmentPromotions += 1
-      }
     } else if (candidate.points.length > 0) {
       const code = candidate.requiresRecovery
         ? removalCodeForIsland(
@@ -1354,287 +1235,6 @@ function analyzeValidSegmentV3(
   return output.filter((path) => path.points.length >= MIN_RETAINED_PATH_POINTS)
 }
 
-function analyzeValidSegment(
-  sourcePathIndex: number,
-  points: AnomalyPoint[],
-  context: AnalysisContext,
-  counts: MutableCounts,
-  examples: GpsAnomalyExample[]
-): EmittedPath[] {
-  if (points.length === 0) return []
-
-  const baseline: RollingBaseline = {
-    distances: [],
-    deltas: [],
-    accuracies: [],
-  }
-  const output: EmittedPath[] = []
-  let currentPath: AnomalyPoint[] = []
-  let currentStartIndex = -1
-  let needsConfidence = false
-  let isConfident = false
-  let quarantine: Quarantine | null = null
-
-  const resetBaseline = (startIndex: number) => {
-    seedBaseline(points, startIndex, baseline, context)
-  }
-
-  const startCandidate = (index: number, requireConfidence: boolean) => {
-    currentPath = [points[index]!]
-    currentStartIndex = index
-    needsConfidence = requireConfidence
-    isConfident = false
-    resetBaseline(index)
-  }
-
-  const pushCurrent = (allowUnconfident = true) => {
-    if (currentPath.length >= MIN_RETAINED_PATH_POINTS) {
-      if (!needsConfidence || isConfident || allowUnconfident) {
-        output.push({ sourcePathIndex, points: currentPath })
-      } else {
-        addPrefixRemoval(
-          counts,
-          examples,
-          sourcePathIndex,
-          points,
-          currentStartIndex,
-          currentStartIndex + currentPath.length - 1,
-          evidenceForPoint(baseline, context),
-          context
-        )
-      }
-    } else if (currentPath.length > 0) {
-      if (needsConfidence) {
-        addPrefixRemoval(
-          counts,
-          examples,
-          sourcePathIndex,
-          points,
-          currentStartIndex,
-          currentStartIndex + currentPath.length - 1,
-          evidenceForPoint(baseline, context),
-          context
-        )
-      } else {
-        addReason(counts, "dropped_short_path")
-      }
-    }
-    currentPath = []
-    currentStartIndex = -1
-    needsConfidence = false
-    isConfident = false
-  }
-
-  const dropCurrentAsPrefix = (
-    entry: EdgeEvidence,
-    triggerCode?: GpsAnomalyCode,
-    includeEndIndex?: number
-  ) => {
-    if (currentPath.length > 0) {
-      addPrefixRemoval(
-        counts,
-        examples,
-        sourcePathIndex,
-        points,
-        currentStartIndex,
-        includeEndIndex ?? currentStartIndex + currentPath.length - 1,
-        entry,
-        context,
-        triggerCode
-      )
-    }
-    currentPath = []
-    currentStartIndex = -1
-    isConfident = false
-  }
-
-  resetBaseline(0)
-  let index = 0
-  while (index < points.length) {
-    if (quarantine) {
-      const edge = classifyEdge(
-        points[index - 1]!,
-        points[index]!,
-        baseline,
-        context
-      )
-      if (
-        edge.reason === "recording_gap" ||
-        edge.reason === "non_positive_time"
-      ) {
-        pushCurrent()
-        addSuffixRemoval(
-          counts,
-          examples,
-          sourcePathIndex,
-          points,
-          quarantine,
-          context
-        )
-        break
-      }
-
-      const rejoin = rejoinFromTrusted(
-        points[quarantine.lastTrustedIndex]!,
-        points[index]!,
-        index - quarantine.startIndex,
-        baseline,
-        context
-      )
-      if (rejoin.reachable && confirmRejoin(points, index, baseline, context)) {
-        const removedStart = quarantine.startIndex
-        const removedEnd = index - 1
-        const removedCount = removedEnd - removedStart + 1
-        const code =
-          quarantine.triggerCode === "untrusted_accuracy"
-            ? "untrusted_accuracy"
-            : removedCount === 1
-              ? "local_spike"
-              : "local_excursion"
-        pushCurrent()
-        addRemovalSplit(
-          counts,
-          examples,
-          code,
-          sourcePathIndex,
-          points,
-          removedStart,
-          removedEnd,
-          quarantine.entry,
-          context,
-          {
-            triggerCode: quarantine.triggerCode,
-            rejoinPointIndex: index,
-            rejoin,
-          }
-        )
-        quarantine = null
-        startCandidate(index, true)
-        index += 1
-        continue
-      }
-      index += 1
-      continue
-    }
-
-    if (currentPath.length === 0) {
-      if (isUntrustedAccuracy(points[index]!)) {
-        addPrefixRemoval(
-          counts,
-          examples,
-          sourcePathIndex,
-          points,
-          index,
-          index,
-          evidenceForPoint(baseline, context),
-          context,
-          "untrusted_accuracy"
-        )
-        resetBaseline(index + 1)
-        needsConfidence = true
-        index += 1
-        continue
-      }
-      startCandidate(index, needsConfidence)
-      index += 1
-      continue
-    }
-
-    const edge = classifyEdge(
-      points[index - 1]!,
-      points[index]!,
-      baseline,
-      context
-    )
-
-    if (edge.reason == null) {
-      currentPath.push(points[index]!)
-      appendBaseline(baseline, edge, points[index]!, context.work)
-      if (currentPath.length >= MIN_CONFIDENT_FRAGMENT_POINTS) {
-        isConfident = true
-      }
-      index += 1
-      continue
-    }
-
-    if (
-      edge.reason === "recording_gap" ||
-      edge.reason === "non_positive_time"
-    ) {
-      if (needsConfidence && !isConfident) pushCurrent(false)
-      else pushCurrent()
-      addBoundarySplit(
-        counts,
-        examples,
-        edge.reason,
-        sourcePathIndex,
-        points,
-        index - 1,
-        edge,
-        context
-      )
-      startCandidate(index, false)
-      index += 1
-      continue
-    }
-
-    if (!isConfident) {
-      if (edge.reason === "untrusted_accuracy") {
-        dropCurrentAsPrefix(edge, edge.reason, index)
-        needsConfidence = true
-        resetBaseline(index + 1)
-        index += 1
-        continue
-      }
-      dropCurrentAsPrefix(edge, "untrusted_prefix")
-      if (isUntrustedAccuracy(points[index]!)) {
-        addPrefixRemoval(
-          counts,
-          examples,
-          sourcePathIndex,
-          points,
-          index,
-          index,
-          edge,
-          context,
-          "untrusted_accuracy"
-        )
-        resetBaseline(index + 1)
-        index += 1
-        needsConfidence = true
-        continue
-      }
-      startCandidate(index, true)
-      index += 1
-      continue
-    }
-
-    quarantine = {
-      startIndex: index,
-      lastTrustedIndex: index - 1,
-      entry: edge,
-      triggerCode: edge.reason,
-    }
-    index += 1
-  }
-
-  if (quarantine) {
-    pushCurrent()
-    addSuffixRemoval(
-      counts,
-      examples,
-      sourcePathIndex,
-      points,
-      quarantine,
-      context
-    )
-  } else if (currentPath.length > 0) {
-    pushCurrent(needsConfidence ? isConfident : true)
-  }
-
-  return output
-}
-
 function addInvalidCoordinateRemoval(
   counts: MutableCounts,
   examples: GpsAnomalyExample[],
@@ -1656,29 +1256,6 @@ function addInvalidCoordinateRemoval(
   void examples
 }
 
-interface PauseWindowPoint {
-  pointIndex: number
-  point: AnomalyPoint
-  unwrappedLng: number
-  distanceM: number
-  speedMps: number | null
-}
-
-interface NumericDequeEntry {
-  pointIndex: number
-  value: number
-}
-
-interface NumericDeque {
-  entries: NumericDequeEntry[]
-  head: number
-}
-
-interface PauseRange {
-  startIndex: number
-  endIndex: number
-}
-
 function unwrapLongitude(previous: number, current: number): number {
   let result = current
   while (result - previous > 180) result -= 360
@@ -1686,345 +1263,9 @@ function unwrapLongitude(previous: number, current: number): number {
   return result
 }
 
-function addMonotonicEntry(
-  queue: NumericDeque,
-  entry: NumericDequeEntry,
-  ascending: boolean
-): void {
-  while (queue.entries.length > queue.head) {
-    const last = queue.entries[queue.entries.length - 1]!
-    if (ascending ? last.value <= entry.value : last.value >= entry.value) break
-    queue.entries.pop()
-  }
-  queue.entries.push(entry)
-}
-
-function dropOldMonotonicEntries(
-  queue: NumericDeque,
-  firstPointIndex: number
-): void {
-  while (
-    queue.head < queue.entries.length &&
-    queue.entries[queue.head]!.pointIndex < firstPointIndex
-  ) {
-    queue.head += 1
-  }
-  if (queue.head > 1_024) {
-    queue.entries = queue.entries.slice(queue.head)
-    queue.head = 0
-  }
-}
-
-function firstMonotonicEntry(queue: NumericDeque): NumericDequeEntry {
-  return queue.entries[queue.head]!
-}
-
-function pauseWindowIsSpatiallySmall(
-  window: readonly PauseWindowPoint[],
-  windowStart: number,
-  sumLng: number,
-  sumLat: number,
-  minLng: NumericDequeEntry,
-  maxLng: NumericDequeEntry,
-  minLat: NumericDequeEntry,
-  maxLat: NumericDequeEntry
-): boolean {
-  const first = window[windowStart]!
-  const last = window[window.length - 1]!
-  const length = window.length - windowStart
-  const meanLng = sumLng / length
-  const meanLat = sumLat / length
-  const longitudeMeters =
-    111_195 * Math.max(0.01, Math.cos((meanLat * Math.PI) / 180))
-  const radiusByLongitude = Math.max(
-    Math.abs(maxLng.value - meanLng) * longitudeMeters,
-    Math.abs(minLng.value - meanLng) * longitudeMeters
-  )
-  const radiusByLatitude = Math.max(
-    Math.abs(maxLat.value - meanLat) * 111_195,
-    Math.abs(minLat.value - meanLat) * 111_195
-  )
-  if (
-    Math.max(radiusByLongitude, radiusByLatitude) > PAUSE_DRIFT_MAX_RADIUS_M
-  ) {
-    return false
-  }
-  return (
-    haversineMeters(
-      [first.point.lng, first.point.lat],
-      [last.point.lng, last.point.lat]
-    ) <= PAUSE_DRIFT_MAX_NET_DISTANCE_M
-  )
-}
-
-function pauseRangeQualifies(
-  path: readonly AnomalyPoint[],
-  startIndex: number,
-  endIndex: number,
-  context: AnalysisContext
-): boolean {
-  if (endIndex - startIndex < 2) return false
-  const first = path[startIndex]!
-  const last = path[endIndex]!
-  const firstTimestamp = finiteTimestamp(first)
-  const lastTimestamp = finiteTimestamp(last)
-  if (
-    firstTimestamp == null ||
-    lastTimestamp == null ||
-    lastTimestamp - firstTimestamp < PAUSE_DRIFT_MIN_DURATION_MS
-  ) {
-    return false
-  }
-
-  let sumLng = 0
-  let sumLat = 0
-  let unwrappedLng = first.lng
-  let previousUnwrappedLng = first.lng
-  let pathDistanceM = 0
-  const speeds: number[] = []
-  const recordedSpeeds: number[] = []
-  for (let index = startIndex; index <= endIndex; index += 1) {
-    const point = path[index]!
-    if (finiteTimestamp(point) == null) return false
-    if (index > startIndex) {
-      unwrappedLng = unwrapLongitude(previousUnwrappedLng, point.lng)
-      const previous = path[index - 1]!
-      const measured = edgeDistance(previous, point, context.work)
-      pathDistanceM += measured.distanceM
-      if (measured.rawDeltaMs == null || measured.rawDeltaMs <= 0) return false
-      speeds.push(measured.distanceM / (measured.rawDeltaMs / 1_000))
-    }
-    previousUnwrappedLng = unwrappedLng
-    sumLng += unwrappedLng
-    sumLat += point.lat
-    const recordedSpeed = point.recordedSpeedMps
-    if (
-      recordedSpeed != null &&
-      Number.isFinite(recordedSpeed) &&
-      recordedSpeed >= 0
-    ) {
-      recordedSpeeds.push(recordedSpeed)
-    }
-  }
-  const count = endIndex - startIndex + 1
-  const meanLng = sumLng / count
-  const meanLat = sumLat / count
-  for (let index = startIndex; index <= endIndex; index += 1) {
-    const point = path[index]!
-    const pointLng = unwrapLongitude(meanLng, point.lng)
-    context.work.pauseWindowPointsVisited += 1
-    if (
-      haversineMeters([meanLng, meanLat], [pointLng, point.lat]) >
-      PAUSE_DRIFT_MAX_RADIUS_M
-    ) {
-      return false
-    }
-  }
-  const netDistanceM = haversineMeters(
-    [first.lng, first.lat],
-    [last.lng, last.lat]
-  )
-  const medianSpeed = median(speeds)
-  if (
-    pathDistanceM < PAUSE_DRIFT_MIN_PATH_DISTANCE_M ||
-    pathDistanceM <
-      PAUSE_DRIFT_PATH_TO_NET_RATIO *
-        Math.max(netDistanceM, PAUSE_DRIFT_MAX_NET_DISTANCE_M - 5) ||
-    netDistanceM > PAUSE_DRIFT_MAX_NET_DISTANCE_M ||
-    medianSpeed == null ||
-    medianSpeed > PAUSE_DRIFT_MAX_MEDIAN_SPEED_MPS
-  ) {
-    return false
-  }
-  if (recordedSpeeds.length >= Math.ceil(count / 2)) {
-    const slowCount = recordedSpeeds.filter((speed) => speed < 1).length
-    if (slowCount / recordedSpeeds.length < 0.8) return false
-  }
-  return true
-}
-
-function findPauseRanges(
-  path: readonly AnomalyPoint[],
-  context: AnalysisContext
-): PauseRange[] {
-  const ranges: PauseRange[] = []
-  let window: PauseWindowPoint[] = []
-  let windowStart = 0
-  let sumLng = 0
-  let sumLat = 0
-  let sumPathDistanceM = 0
-  let previousUnwrappedLng: number | null = null
-  let activeCandidate: PauseRange | null = null
-  let minLng: NumericDeque = { entries: [], head: 0 }
-  let maxLng: NumericDeque = { entries: [], head: 0 }
-  let minLat: NumericDeque = { entries: [], head: 0 }
-  let maxLat: NumericDeque = { entries: [], head: 0 }
-
-  const reset = () => {
-    window = []
-    windowStart = 0
-    sumLng = 0
-    sumLat = 0
-    sumPathDistanceM = 0
-    previousUnwrappedLng = null
-    minLng = { entries: [], head: 0 }
-    maxLng = { entries: [], head: 0 }
-    minLat = { entries: [], head: 0 }
-    maxLat = { entries: [], head: 0 }
-  }
-
-  const finishCandidate = () => {
-    if (activeCandidate) {
-      if (
-        pauseRangeQualifies(
-          path,
-          activeCandidate.startIndex,
-          activeCandidate.endIndex,
-          context
-        )
-      ) {
-        ranges.push(activeCandidate)
-      }
-      activeCandidate = null
-    }
-  }
-
-  for (let index = 0; index < path.length; index += 1) {
-    const point = path[index]!
-    const timestamp = finiteTimestamp(point)
-    if (timestamp == null) {
-      finishCandidate()
-      reset()
-      continue
-    }
-
-    const previous = index > 0 ? path[index - 1] : undefined
-    const previousTimestamp = previous ? finiteTimestamp(previous) : null
-    if (previousTimestamp == null || previousUnwrappedLng == null) {
-      finishCandidate()
-      reset()
-    }
-
-    const unwrappedLng: number =
-      previousUnwrappedLng == null
-        ? point.lng
-        : unwrapLongitude(previousUnwrappedLng, point.lng)
-    const measured =
-      previous && previousTimestamp != null
-        ? edgeDistance(previous, point, context.work)
-        : { distanceM: 0, rawDeltaMs: null }
-    const speedMps =
-      measured.rawDeltaMs != null && measured.rawDeltaMs > 0
-        ? measured.distanceM / (measured.rawDeltaMs / 1_000)
-        : null
-    const item: PauseWindowPoint = {
-      pointIndex: index,
-      point,
-      unwrappedLng,
-      distanceM: measured.distanceM,
-      speedMps,
-    }
-    window.push(item)
-    sumLng += unwrappedLng
-    sumLat += point.lat
-    sumPathDistanceM += measured.distanceM
-    addMonotonicEntry(minLng, { pointIndex: index, value: unwrappedLng }, true)
-    addMonotonicEntry(maxLng, { pointIndex: index, value: unwrappedLng }, false)
-    addMonotonicEntry(minLat, { pointIndex: index, value: point.lat }, true)
-    addMonotonicEntry(maxLat, { pointIndex: index, value: point.lat }, false)
-    previousUnwrappedLng = unwrappedLng
-
-    const removeFirst = () => {
-      const first = window[windowStart]!
-      windowStart += 1
-      sumLng -= first.unwrappedLng
-      sumLat -= first.point.lat
-      sumPathDistanceM -= first.distanceM
-      const next = window[windowStart]
-      if (next) sumPathDistanceM -= next.distanceM
-      dropOldMonotonicEntries(minLng, first.pointIndex + 1)
-      dropOldMonotonicEntries(maxLng, first.pointIndex + 1)
-      dropOldMonotonicEntries(minLat, first.pointIndex + 1)
-      dropOldMonotonicEntries(maxLat, first.pointIndex + 1)
-      if (windowStart > 1_024) {
-        window = window.slice(windowStart)
-        windowStart = 0
-      }
-    }
-
-    while (window.length - windowStart > PAUSE_DRIFT_MAX_WINDOW_POINTS) {
-      removeFirst()
-    }
-
-    const hasSpatialBreak = () =>
-      !pauseWindowIsSpatiallySmall(
-        window,
-        windowStart,
-        sumLng,
-        sumLat,
-        firstMonotonicEntry(minLng),
-        firstMonotonicEntry(maxLng),
-        firstMonotonicEntry(minLat),
-        firstMonotonicEntry(maxLat)
-      )
-    if (window.length - windowStart > 1 && hasSpatialBreak()) {
-      finishCandidate()
-      while (window.length - windowStart > 1 && hasSpatialBreak()) {
-        removeFirst()
-      }
-    }
-
-    const first = window[windowStart]
-    const last = window[window.length - 1]
-    const windowLength = window.length - windowStart
-    const durationMs =
-      first && last
-        ? (finiteTimestamp(last.point) ?? 0) -
-          (finiteTimestamp(first.point) ?? 0)
-        : 0
-    const windowPathDistanceM = sumPathDistanceM
-    const netDistanceM =
-      first && last
-        ? haversineMeters(
-            [first.point.lng, first.point.lat],
-            [last.point.lng, last.point.lat]
-          )
-        : Infinity
-    const cheapCandidate =
-      windowLength >= 3 &&
-      durationMs >= PAUSE_DRIFT_MIN_DURATION_MS &&
-      windowPathDistanceM >= PAUSE_DRIFT_MIN_PATH_DISTANCE_M &&
-      netDistanceM <= PAUSE_DRIFT_MAX_NET_DISTANCE_M &&
-      windowPathDistanceM >=
-        PAUSE_DRIFT_PATH_TO_NET_RATIO *
-          Math.max(netDistanceM, PAUSE_DRIFT_MAX_NET_DISTANCE_M - 5)
-
-    if (cheapCandidate) {
-      if (!activeCandidate) {
-        activeCandidate = {
-          startIndex: first!.pointIndex,
-          endIndex: last!.pointIndex,
-        }
-      } else {
-        activeCandidate.endIndex = last!.pointIndex
-      }
-    } else if (activeCandidate) {
-      finishCandidate()
-    }
-  }
-  finishCandidate()
-
-  if (ranges.length < 2) return ranges
-  const merged: PauseRange[] = [ranges[0]!]
-  for (const range of ranges.slice(1)) {
-    const previous = merged[merged.length - 1]!
-    if (range.startIndex <= previous.endIndex + 1) {
-      previous.endIndex = Math.max(previous.endIndex, range.endIndex)
-    } else {
-      merged.push(range)
-    }
-  }
-  return merged
+interface PauseRange {
+  startIndex: number
+  endIndex: number
 }
 
 interface StationarySummary {
@@ -2469,16 +1710,12 @@ function applyPauseDriftCleanup(
       const before = path.points.slice(cursor, range.startIndex + 1)
       if (before.length >= MIN_RETAINED_PATH_POINTS) {
         cleaned.push({ sourcePathIndex: path.sourcePathIndex, points: before })
-      } else if (before.length > 0) {
-        addReason(counts, "dropped_short_path")
       }
       cursor = range.endIndex
     }
     const after = path.points.slice(cursor)
     if (after.length >= MIN_RETAINED_PATH_POINTS) {
       cleaned.push({ sourcePathIndex: path.sourcePathIndex, points: after })
-    } else if (after.length > 0) {
-      addReason(counts, "dropped_short_path")
     }
   }
   return cleaned
@@ -2813,12 +2050,6 @@ export function detectGpsAnomalies(
       (total, source) => total + source.points.length,
       0
     ),
-    splitCount: 0,
-    gapSplitCount: 0,
-    removalSplitCount: 0,
-    trimmedPrefixPoints: 0,
-    trimmedSuffixPoints: 0,
-    reasons: {},
     removalRecords: [],
     splitRecords: [],
     nextDecisionOrder: 0,
