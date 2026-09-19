@@ -16,10 +16,27 @@ import type {
   ParsedImportRejection,
 } from "./types"
 
-function buildRawPoints(
+export function buildRawPoints(
   coords: [number, number, number?][],
-  times?: string[]
+  times?: string[],
+  coordinateProperties?: Record<string, unknown>,
+  pathIndex = 0
 ): AnomalyPoint[] {
+  const alignedValue = (name: string, pointIndex: number): unknown => {
+    const values = coordinateProperties?.[name]
+    if (!Array.isArray(values)) return undefined
+    const pathValues =
+      Array.isArray(values[0]) &&
+      values.every((value) => value == null || Array.isArray(value))
+        ? values[pathIndex]
+        : values
+    return Array.isArray(pathValues) ? pathValues[pointIndex] : undefined
+  }
+  const finiteNonNegative = (value: unknown): number | undefined =>
+    typeof value === "number" && Number.isFinite(value) && value >= 0
+      ? value
+      : undefined
+
   return coords.map((c, sourcePointIndex) => ({
     lng: c[0],
     lat: c[1],
@@ -30,6 +47,20 @@ function buildRawPoints(
       const timestamp = Date.parse(times[sourcePointIndex]!)
       return Number.isFinite(timestamp) ? timestamp : undefined
     })(),
+    ...(finiteNonNegative(alignedValue("hAccs", sourcePointIndex)) != null
+      ? {
+          gpsAccuracyM: finiteNonNegative(
+            alignedValue("hAccs", sourcePointIndex)
+          ),
+        }
+      : {}),
+    ...(finiteNonNegative(alignedValue("speeds", sourcePointIndex)) != null
+      ? {
+          recordedSpeedMps: finiteNonNegative(
+            alignedValue("speeds", sourcePointIndex)
+          ),
+        }
+      : {}),
   }))
 }
 
@@ -47,7 +78,8 @@ function buildParsedActivity(
   file: File,
   paths: ActivityCoords[],
   pathTimestamps: (string[] | undefined)[],
-  activityType: ParsedImportActivity["activityType"]
+  activityType: ParsedImportActivity["activityType"],
+  coordinateProperties?: Record<string, unknown>
 ): GpxActivityBuildResult {
   const id = createUuid()
   if (paths.length === 0) {
@@ -60,7 +92,9 @@ function buildParsedActivity(
     sourcePathIndex: index,
     points: buildRawPoints(
       path as [number, number, number?][],
-      pathTimestamps[index]
+      pathTimestamps[index],
+      coordinateProperties,
+      index
     ),
   }))
   const detectorStartedAt = performance.now()
@@ -182,7 +216,13 @@ export async function parseGpxFileWithResults(
       const paths = [feat.geometry.coordinates as ActivityCoords]
       const times = [stringTimes(feat.properties?.coordinateProperties?.times)]
       addResult(
-        buildParsedActivity(file, paths, times, activityType),
+        buildParsedActivity(
+          file,
+          paths,
+          times,
+          activityType,
+          feat.properties?.coordinateProperties
+        ),
         activityIndex
       )
       continue
@@ -194,7 +234,13 @@ export async function parseGpxFileWithResults(
         ? rawTimes.map((value) => stringTimes(value))
         : paths.map(() => undefined)
       addResult(
-        buildParsedActivity(file, paths, times, activityType),
+        buildParsedActivity(
+          file,
+          paths,
+          times,
+          activityType,
+          feat.properties?.coordinateProperties
+        ),
         activityIndex
       )
     }
