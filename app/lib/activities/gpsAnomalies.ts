@@ -2029,6 +2029,381 @@ function findPauseRanges(
   return merged
 }
 
+interface StationarySummary {
+  startIndex: number
+  endIndex: number
+  pointCount: number
+  centerLng: number
+  centerLat: number
+  radiusM: number
+  netDistanceM: number
+  pathDistanceM: number
+  durationMs: number
+  medianSpeedMps: number
+  recordedCount: number
+  slowRecordedCount: number
+}
+
+interface StationaryAccumulator {
+  startIndex: number
+  endIndex: number
+  pointCount: number
+  firstPoint: AnomalyPoint
+  lastPoint: AnomalyPoint
+  previousUnwrappedLng: number
+  sumLng: number
+  sumLat: number
+  minLng: number
+  maxLng: number
+  minLat: number
+  maxLat: number
+  pathDistanceM: number
+  speeds: number[]
+  recordedCount: number
+  slowRecordedCount: number
+}
+
+function stationaryRadiusM(
+  centerLng: number,
+  centerLat: number,
+  minLng: number,
+  maxLng: number,
+  minLat: number,
+  maxLat: number
+): number {
+  const longitudeMeters =
+    111_195 * Math.max(0.01, Math.cos((centerLat * Math.PI) / 180))
+  return Math.max(
+    Math.abs(maxLng - centerLng) * longitudeMeters,
+    Math.abs(minLng - centerLng) * longitudeMeters,
+    Math.abs(maxLat - centerLat) * 111_195,
+    Math.abs(minLat - centerLat) * 111_195
+  )
+}
+
+function newStationaryAccumulator(
+  point: AnomalyPoint,
+  index: number
+): StationaryAccumulator {
+  return {
+    startIndex: index,
+    endIndex: index,
+    pointCount: 1,
+    firstPoint: point,
+    lastPoint: point,
+    previousUnwrappedLng: point.lng,
+    sumLng: point.lng,
+    sumLat: point.lat,
+    minLng: point.lng,
+    maxLng: point.lng,
+    minLat: point.lat,
+    maxLat: point.lat,
+    pathDistanceM: 0,
+    speeds: [],
+    recordedCount: 0,
+    slowRecordedCount: 0,
+  }
+}
+
+function addStationaryPoint(
+  accumulator: StationaryAccumulator,
+  point: AnomalyPoint,
+  index: number,
+  previous: AnomalyPoint,
+  context: AnalysisContext
+): boolean {
+  const previousTimestamp = finiteTimestamp(previous)
+  const timestamp = finiteTimestamp(point)
+  if (
+    previousTimestamp == null ||
+    timestamp == null ||
+    timestamp - previousTimestamp <= 0 ||
+    timestamp - previousTimestamp > TIME_GAP_CEILING_MS
+  ) {
+    return false
+  }
+  const unwrappedLng = unwrapLongitude(
+    accumulator.previousUnwrappedLng,
+    point.lng
+  )
+  const measured = edgeDistance(previous, point, context.work)
+  const speedMps =
+    measured.distanceM / ((timestamp - previousTimestamp) / 1_000)
+  accumulator.endIndex = index
+  accumulator.pointCount += 1
+  accumulator.lastPoint = point
+  accumulator.previousUnwrappedLng = unwrappedLng
+  accumulator.sumLng += unwrappedLng
+  accumulator.sumLat += point.lat
+  accumulator.minLng = Math.min(accumulator.minLng, unwrappedLng)
+  accumulator.maxLng = Math.max(accumulator.maxLng, unwrappedLng)
+  accumulator.minLat = Math.min(accumulator.minLat, point.lat)
+  accumulator.maxLat = Math.max(accumulator.maxLat, point.lat)
+  accumulator.pathDistanceM += measured.distanceM
+  accumulator.speeds.push(speedMps)
+  const recordedSpeed = finiteRecordedSpeed(point)
+  if (recordedSpeed != null) {
+    accumulator.recordedCount += 1
+    if (recordedSpeed < 1) accumulator.slowRecordedCount += 1
+  }
+  context.work.pauseWindowPointsVisited += 1
+  return true
+}
+
+function summarizeStationaryAccumulator(
+  accumulator: StationaryAccumulator
+): StationarySummary {
+  const centerLng = accumulator.sumLng / accumulator.pointCount
+  const centerLat = accumulator.sumLat / accumulator.pointCount
+  const firstTimestamp = finiteTimestamp(accumulator.firstPoint)
+  const lastTimestamp = finiteTimestamp(accumulator.lastPoint)
+  return {
+    startIndex: accumulator.startIndex,
+    endIndex: accumulator.endIndex,
+    pointCount: accumulator.pointCount,
+    centerLng,
+    centerLat,
+    radiusM: stationaryRadiusM(
+      centerLng,
+      centerLat,
+      accumulator.minLng,
+      accumulator.maxLng,
+      accumulator.minLat,
+      accumulator.maxLat
+    ),
+    netDistanceM: haversineMeters(
+      [accumulator.firstPoint.lng, accumulator.firstPoint.lat],
+      [accumulator.lastPoint.lng, accumulator.lastPoint.lat]
+    ),
+    pathDistanceM: accumulator.pathDistanceM,
+    durationMs:
+      firstTimestamp != null && lastTimestamp != null
+        ? lastTimestamp - firstTimestamp
+        : 0,
+    medianSpeedMps: median(accumulator.speeds) ?? Infinity,
+    recordedCount: accumulator.recordedCount,
+    slowRecordedCount: accumulator.slowRecordedCount,
+  }
+}
+
+function stationaryShapeIsSmall(summary: StationarySummary): boolean {
+  return (
+    summary.pointCount >= 3 &&
+    summary.radiusM <= PAUSE_DRIFT_MAX_RADIUS_M &&
+    summary.netDistanceM <= PAUSE_DRIFT_MAX_NET_DISTANCE_M &&
+    summary.medianSpeedMps <= PAUSE_DRIFT_MAX_MEDIAN_SPEED_MPS
+  )
+}
+
+function stationarySummaryQualifies(summary: StationarySummary): boolean {
+  if (!stationaryShapeIsSmall(summary)) return false
+  if (summary.durationMs < PAUSE_DRIFT_MIN_DURATION_MS) return false
+  const pathEvidence =
+    summary.pathDistanceM >= PAUSE_DRIFT_MIN_PATH_DISTANCE_M &&
+    summary.pathDistanceM >=
+      PAUSE_DRIFT_PATH_TO_NET_RATIO *
+        Math.max(summary.netDistanceM, PAUSE_DRIFT_MAX_NET_DISTANCE_M - 5)
+  const recordedCoverage = summary.recordedCount / summary.pointCount
+  const sensorEvidence =
+    recordedCoverage >= 0.5 &&
+    summary.slowRecordedCount / summary.recordedCount >= 0.8
+  return pathEvidence || sensorEvidence
+}
+
+function mergeStationarySummaries(
+  first: StationarySummary,
+  second: StationarySummary,
+  path: readonly AnomalyPoint[],
+  context: AnalysisContext
+): StationarySummary | null {
+  const boundaryFirst = path[first.endIndex]
+  const boundarySecond = path[second.startIndex]
+  if (!boundaryFirst || !boundarySecond) return null
+  const boundaryEdge = classifyEdge(
+    boundaryFirst,
+    boundarySecond,
+    { distances: [], deltas: [], accuracies: [] },
+    context
+  )
+  if (
+    !isReliableEdge(boundaryFirst, boundarySecond, boundaryEdge, {
+      distances: [],
+      deltas: [],
+      accuracies: [],
+    })
+  ) {
+    return null
+  }
+  const centerDistance = haversineMeters(
+    [first.centerLng, first.centerLat],
+    [second.centerLng, second.centerLat]
+  )
+  if (centerDistance > PAUSE_DRIFT_MAX_RADIUS_M) return null
+  const pointCount = first.pointCount + second.pointCount
+  const centerLng =
+    (first.centerLng * first.pointCount +
+      second.centerLng * second.pointCount) /
+    pointCount
+  const centerLat =
+    (first.centerLat * first.pointCount +
+      second.centerLat * second.pointCount) /
+    pointCount
+  const boundaryDistance = haversineMeters(
+    [boundaryFirst.lng, boundaryFirst.lat],
+    [boundarySecond.lng, boundarySecond.lat]
+  )
+  const firstTimestamp = finiteTimestamp(path[first.startIndex])
+  const lastTimestamp = finiteTimestamp(path[second.endIndex])
+  return {
+    startIndex: first.startIndex,
+    endIndex: second.endIndex,
+    pointCount,
+    centerLng,
+    centerLat,
+    radiusM: Math.max(
+      first.radiusM +
+        haversineMeters(
+          [first.centerLng, first.centerLat],
+          [centerLng, centerLat]
+        ),
+      second.radiusM +
+        haversineMeters(
+          [second.centerLng, second.centerLat],
+          [centerLng, centerLat]
+        )
+    ),
+    netDistanceM: haversineMeters(
+      [path[first.startIndex]!.lng, path[first.startIndex]!.lat],
+      [path[second.endIndex]!.lng, path[second.endIndex]!.lat]
+    ),
+    pathDistanceM:
+      first.pathDistanceM + boundaryDistance + second.pathDistanceM,
+    durationMs:
+      firstTimestamp != null && lastTimestamp != null
+        ? lastTimestamp - firstTimestamp
+        : first.durationMs + second.durationMs,
+    medianSpeedMps: Math.max(first.medianSpeedMps, second.medianSpeedMps),
+    recordedCount: first.recordedCount + second.recordedCount,
+    slowRecordedCount: first.slowRecordedCount + second.slowRecordedCount,
+  }
+}
+
+function findPauseRangesV3(
+  path: readonly AnomalyPoint[],
+  context: AnalysisContext
+): PauseRange[] {
+  const ranges: PauseRange[] = []
+  let activeSummary: StationarySummary | null = null
+  let accumulator: StationaryAccumulator | null = null
+
+  const flushActive = () => {
+    if (activeSummary && stationarySummaryQualifies(activeSummary)) {
+      ranges.push({
+        startIndex: activeSummary.startIndex,
+        endIndex: activeSummary.endIndex,
+      })
+    }
+    activeSummary = null
+  }
+
+  const pushSummary = (summary: StationarySummary) => {
+    if (!stationaryShapeIsSmall(summary)) {
+      flushActive()
+      return
+    }
+    if (!activeSummary) {
+      activeSummary = summary
+      return
+    }
+    const merged = mergeStationarySummaries(
+      activeSummary,
+      summary,
+      path,
+      context
+    )
+    if (merged) {
+      activeSummary = merged
+    } else {
+      flushActive()
+      activeSummary = summary
+    }
+  }
+
+  const flushAccumulator = () => {
+    if (!accumulator) return
+    if (accumulator.pointCount >= 3) {
+      pushSummary(summarizeStationaryAccumulator(accumulator))
+    } else {
+      flushActive()
+    }
+    accumulator = null
+  }
+
+  for (let index = 0; index < path.length; index += 1) {
+    const point = path[index]!
+    if (finiteTimestamp(point) == null) {
+      flushAccumulator()
+      flushActive()
+      accumulator = null
+      continue
+    }
+    if (!accumulator) {
+      accumulator = newStationaryAccumulator(point, index)
+      context.work.pauseWindowPointsVisited += 1
+      continue
+    }
+    const previous = path[index - 1]!
+    const previousTimestamp = finiteTimestamp(previous)
+    const timestamp = finiteTimestamp(point)
+    const deltaMs =
+      previousTimestamp != null && timestamp != null
+        ? timestamp - previousTimestamp
+        : null
+    if (deltaMs == null || deltaMs <= 0 || deltaMs > TIME_GAP_CEILING_MS) {
+      flushAccumulator()
+      flushActive()
+      accumulator = newStationaryAccumulator(point, index)
+      context.work.pauseWindowPointsVisited += 1
+      continue
+    }
+    const unwrappedLng = unwrapLongitude(
+      accumulator.previousUnwrappedLng,
+      point.lng
+    )
+    const nextPointCount = accumulator.pointCount + 1
+    const nextCenterLng = (accumulator.sumLng + unwrappedLng) / nextPointCount
+    const nextCenterLat = (accumulator.sumLat + point.lat) / nextPointCount
+    const nextRadiusM = stationaryRadiusM(
+      nextCenterLng,
+      nextCenterLat,
+      Math.min(accumulator.minLng, unwrappedLng),
+      Math.max(accumulator.maxLng, unwrappedLng),
+      Math.min(accumulator.minLat, point.lat),
+      Math.max(accumulator.maxLat, point.lat)
+    )
+    const nextNetDistanceM = haversineMeters(
+      [accumulator.firstPoint.lng, accumulator.firstPoint.lat],
+      [point.lng, point.lat]
+    )
+    if (
+      nextRadiusM > PAUSE_DRIFT_MAX_RADIUS_M ||
+      nextNetDistanceM > PAUSE_DRIFT_MAX_NET_DISTANCE_M
+    ) {
+      flushAccumulator()
+      accumulator = newStationaryAccumulator(point, index)
+      context.work.pauseWindowPointsVisited += 1
+      continue
+    }
+    addStationaryPoint(accumulator, point, index, previous, context)
+    if (accumulator.pointCount >= PAUSE_DRIFT_MAX_WINDOW_POINTS) {
+      flushAccumulator()
+    }
+  }
+  flushAccumulator()
+  flushActive()
+  return ranges
+}
+
 function addPauseRemoval(
   counts: MutableCounts,
   examples: GpsAnomalyExample[],
@@ -2085,7 +2460,7 @@ function applyPauseDriftCleanup(
 ): EmittedPath[] {
   const cleaned: EmittedPath[] = []
   for (const path of paths) {
-    const ranges = findPauseRanges(path.points, context)
+    const ranges = findPauseRangesV3(path.points, context)
     if (ranges.length === 0) {
       cleaned.push(path)
       continue

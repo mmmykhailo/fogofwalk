@@ -448,6 +448,36 @@ describe("GPS reliability cleaner", () => {
     expect(directional.counts.reasons.pause_drift).toBeUndefined()
   })
 
+  test("merges low-amplitude stationary chunks across the 600-point bound", () => {
+    const prefix = [
+      point(0, -100, 0, 0),
+      point(1, -50, 0, 1_000),
+      point(2, 0, 0, 2_000),
+    ]
+    const stopped = Array.from({ length: 1_201 }, (_, offset) =>
+      point(
+        offset + 3,
+        offset % 2 === 0 ? 0.05 : 0,
+        0,
+        3_000 + offset * 1_000,
+        { recordedSpeedMps: 0.1 }
+      )
+    )
+    const suffix = [
+      point(1_204, 50, 0, 1_204_000),
+      point(1_205, 100, 0, 1_205_000),
+      point(1_206, 150, 0, 1_206_000),
+    ]
+    const result = detectGpsAnomalies([
+      source([...prefix, ...stopped, ...suffix]),
+    ])
+
+    expect(result.counts.reasons.pause_drift).toBe(1)
+    expect(result.counts.removedPoints).toBeGreaterThan(1_000)
+    expect(result.work.pauseWindowPointsVisited).toBeLessThanOrEqual(1_210)
+    expect(result.paths.length).toBeGreaterThanOrEqual(2)
+  })
+
   test("keeps pause detection bounded and diagnostics capped", () => {
     const points = Array.from({ length: 2_500 }, (_, index) =>
       point(index, index * 10, 0, index * 1_000)
