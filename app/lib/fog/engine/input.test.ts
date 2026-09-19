@@ -73,6 +73,35 @@ describe("fog input sanitizer", () => {
     expect(result.paths[1][0]).toEqual([15, 50])
   })
 
+  test("preserves cleaned path timestamps without creating a bridge", () => {
+    const result = sanitizeFogInput(
+      geometry(
+        [
+          [
+            [14, 50],
+            [14.001, 50],
+          ],
+          [
+            [15, 50],
+            [15.001, 50],
+          ],
+        ],
+        [
+          [1_000, 2_000],
+          [60_000, 61_000],
+        ]
+      )
+    )
+
+    expect(result.rejected).toBe(false)
+    expect(result.paths).toHaveLength(2)
+    expect(result.pathTimestamps).toEqual([
+      [1_000, 2_000],
+      [60_000, 61_000],
+    ])
+    expect(result.warnings).toEqual([])
+  })
+
   test("drops invalid points by splitting, without connecting the remaining pieces", () => {
     const result = sanitizeFogInput(
       geometry([

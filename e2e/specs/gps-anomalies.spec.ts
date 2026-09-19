@@ -1,5 +1,5 @@
 import { expect, test } from "../fixtures/app"
-import { makeGpsAnomalyGpx } from "../fixtures/gpx"
+import { makeGpsAnomalyGpx, makeGpsRecordingGapGpx } from "../fixtures/gpx"
 
 interface GeometrySource {
   getData?: () => Promise<{
@@ -173,4 +173,33 @@ test("cleans one anomalous activity without bridging its retained paths", async 
   await app.expectActivityCount(1)
 
   expect(activity.id).toBe(reloaded.id)
+})
+
+test("stores a recording pause as disconnected paths with zero removed points", async ({
+  app,
+}) => {
+  const fixture = makeGpsRecordingGapGpx()
+
+  await app.goto()
+  await app.importFiles([fixture])
+  await app.waitForImportToSettle()
+  await app.expectActivityCount(1)
+
+  const stored = await readActivity(app.page, fixture.name)
+  expect(stored.paths).toEqual([
+    [
+      [13.41, 52.5],
+      [13.4101, 52.5],
+      [13.4102, 52.5],
+      [13.4103, 52.5],
+      [13.4104, 52.5],
+      [13.4105, 52.5],
+    ],
+    [
+      [13.4106, 52.5],
+      [13.4107, 52.5],
+    ],
+  ])
+  expect(stored.stats.distanceKm).toBeLessThan(0.2)
+  expect(stored.stats.durationMs).toBe(51_000)
 })

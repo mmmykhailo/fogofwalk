@@ -61,4 +61,23 @@ describe("computeActivityStatsForPaths", () => {
     expect(missingFirst.durationMs).toBeNull()
     expect(missingLast.durationMs).toBeNull()
   })
+
+  test("keeps elapsed duration across a cleaned gap but excludes its edge from every traversal metric", () => {
+    const result = computeActivityStatsForPaths([
+      [
+        { ...point(0, 0, 0), elevationM: 0 },
+        { ...point(0.001, 0, 1_000), elevationM: 0 },
+      ],
+      [
+        { ...point(1, 0, 61_000), elevationM: 0 },
+        { ...point(1.001, 0, 62_000), elevationM: 0 },
+      ],
+    ])
+    expect(result.durationMs).toBe(62_000)
+    expect(result.distanceKm).toBeCloseTo(0.222, 2)
+    expect(result.distanceKm).toBeLessThan(2)
+    expect(result.movingTimeMs).toBe(2_000)
+    expect(result.elevationGainM).toBe(0)
+    expect(result.elevationLossM).toBe(0)
+  })
 })

@@ -18,6 +18,36 @@ emits an updated positive explored-mask collection at most every 300 ms.
 `useFogWorkerBridge` validates current revisioned snapshots and writes them to
 the fog custom layer, which supplies the surrounding world stencil.
 
+### GPS reliability cleaning
+
+GPX and FIT imports run through the version-2 GPS reliability cleaner in
+`app/lib/activities/gpsAnomalies.ts` before statistics, sun phase, FIT laps,
+normalization, hashing, persistence, or worker projection. It processes each
+original GPX segment independently and emits only disconnected paths whose
+within-path edges have reliable coordinates, timestamps, speed, and (when FIT
+provides it) accuracy evidence.
+
+The cleaner uses bounded rolling medians of kept edge distances and positive
+timestamp deltas. A long positive timestamp interval creates a path boundary
+and retains both endpoints; it never interpolates a tunnel or pause. Invalid
+coordinates, inaccurate FIT fixes, local jumps, impossible-speed excursions,
+and stationary GPS drift are removed when they can be identified. A displaced
+suffix without a trustworthy return is trimmed rather than emitted as a new
+route. No routing service, road snapping, interpolation, or synthesized
+coordinate is used.
+
+The stored `paths` and aligned `pathTimestamps` are the single cleaned source
+of truth. Statistics, laps, map GeoJSON, fog input, unique distance, sharing,
+and photo matching must preserve those boundaries and must not flatten them
+into a drawable bridge. Cleaner diagnostics contain scalar evidence and exact
+bounded counts only; they do not log coordinates or source records.
+
+Cleaning is import-time behavior. Activities already stored locally or
+downloaded from sync are not rewritten or rehashed automatically. To apply the
+new policy to an existing activity, remove it and import the original GPX/FIT
+file again; remove the old copy first to avoid duplicate visible tracks and
+server identities.
+
 There are two distinct simplification tolerances. `ACTIVITY_SIMPLIFY_TOLERANCE` (0.0005, about 55 m) applies before buffering; `SIMPLIFY_TOLERANCE` (0.0001, about 11 m) applies to emitted fog. Swapping them visibly degrades the fog boundary or wastes a large vertex budget.
 
 Corridor mode clears only the buffered route. Fill mode indexes intersecting

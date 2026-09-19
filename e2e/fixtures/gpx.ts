@@ -133,6 +133,46 @@ ${trkpts}
   }
 }
 
+/** A local track with a 45-second recording pause that must remain disconnected. */
+export function makeGpsRecordingGapGpx(): GpxFixture {
+  const startMs = Date.UTC(2024, 0, 21, 8, 0, 0)
+  const coordinates: [number, number][] = [
+    [13.41, 52.5],
+    [13.4101, 52.5],
+    [13.4102, 52.5],
+    [13.4103, 52.5],
+    [13.4104, 52.5],
+    [13.4105, 52.5],
+    [13.4106, 52.5],
+    [13.4107, 52.5],
+  ]
+  const trkpts = coordinates
+    .map(([lng, lat], index) => {
+      const timestamp =
+        index < 6
+          ? startMs + index * 1_000
+          : startMs + 50_000 + (index - 6) * 1_000
+      return `      <trkpt lat="${lat.toFixed(6)}" lon="${lng.toFixed(6)}"><time>${new Date(timestamp).toISOString()}</time></trkpt>`
+    })
+    .join("\n")
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="fogofwalk-e2e" xmlns="http://www.topografix.com/GPX/1/1">
+  <trk>
+    <name>GPS recording gap fixture</name>
+    <type>Walking</type>
+    <trkseg>
+${trkpts}
+    </trkseg>
+  </trk>
+</gpx>
+`
+  return {
+    name: "gps-recording-gap-e2e.gpx",
+    buffer: Buffer.from(xml, "utf8"),
+    mimeType: "application/gpx+xml",
+  }
+}
+
 /** A dense, closed multi-segment route for real-browser fog rendering checks. */
 export function makeFogVisualGpx(): GpxFixture {
   const rectangle: [number, number][] = []

@@ -118,6 +118,16 @@ describe("FIT lap ranges", () => {
     ])
   })
 
+  test("drops laps reduced below two retained points", () => {
+    const paths = [
+      [point(0, 0), point(0.001, 1_000)],
+      [point(10, 2_000), point(10.001, 3_000)],
+    ]
+    const laps = buildLapsFromFit(paths, [lap(0), lap(2_000), lap(3_000)])
+
+    expect(laps).toBeUndefined()
+  })
+
   test("builds a synthetic lap activity from path ranges", () => {
     const activity = {
       id: "activity",
