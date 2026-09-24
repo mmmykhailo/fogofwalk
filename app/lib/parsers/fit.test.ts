@@ -5,7 +5,11 @@ import {
   detectGpsAnomalies,
   type AnomalyPoint,
 } from "~/lib/activities/gpsAnomalies"
-import { buildLapsFromFit, fitRecordToAnomalyPoint } from "./fit"
+import {
+  applyFitRecordedDistance,
+  buildLapsFromFit,
+  fitRecordToAnomalyPoint,
+} from "./fit"
 
 function point(lng: number, timestampMs?: number): RawPoint {
   return {
@@ -205,6 +209,57 @@ describe("FIT lap ranges", () => {
 })
 
 describe("FIT reliability signals", () => {
+  test("uses a plausible device-recorded distance without weakening cleaned geometry", () => {
+    const geometryStats = {
+      distanceKm: 98.714,
+      elevationGainM: 10,
+      elevationLossM: 5,
+      hasElevation: true,
+      durationMs: 72_000_000,
+      movingTimeMs: 66_000_000,
+      avgPaceMinPerKm: 0,
+      avgMovingPaceMinPerKm: 0,
+      avgSpeedKmh: 0,
+      avgMovingSpeedKmh: 0,
+      elevationProfile: [{ distanceKm: 98.714, elevationM: 100 }],
+    }
+
+    const result = applyFitRecordedDistance(geometryStats, 100_219.46)
+
+    expect(result.distanceKm).toBeCloseTo(100.21946, 5)
+    expect(result.avgPaceMinPerKm).toBeCloseTo(
+      72_000_000 / 60_000 / 100.21946,
+      8
+    )
+    expect(result.avgMovingSpeedKmh).toBeCloseTo(
+      100.21946 / (66_000_000 / 3_600_000),
+      8
+    )
+    expect(result.elevationProfile).toBe(geometryStats.elevationProfile)
+  })
+
+  test("ignores missing or implausible device-recorded distances", () => {
+    const geometryStats = {
+      distanceKm: 10,
+      elevationGainM: 0,
+      elevationLossM: 0,
+      hasElevation: false,
+      durationMs: null,
+      movingTimeMs: null,
+      avgPaceMinPerKm: null,
+      avgMovingPaceMinPerKm: null,
+      avgSpeedKmh: null,
+      avgMovingSpeedKmh: null,
+      elevationProfile: [],
+    }
+
+    expect(applyFitRecordedDistance(geometryStats, undefined)).toBe(
+      geometryStats
+    )
+    expect(applyFitRecordedDistance(geometryStats, 0)).toBe(geometryStats)
+    expect(applyFitRecordedDistance(geometryStats, 25_000)).toBe(geometryStats)
+  })
+
   test("preserves finite non-negative optional signals", () => {
     const point = fitRecordToAnomalyPoint(
       {

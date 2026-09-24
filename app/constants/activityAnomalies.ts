@@ -1,7 +1,7 @@
 import type { ActivityType } from "~shared/activities"
 
 /** Bump when a threshold or state-machine decision changes. */
-export const ANOMALY_ALGORITHM_VERSION = 3
+export const ANOMALY_ALGORITHM_VERSION = 5
 
 /** Maximum recent trusted edges used by the rolling reliability baselines. */
 export const RELIABILITY_WINDOW_EDGES = 31
@@ -69,7 +69,7 @@ export const MIN_CONFIDENT_FRAGMENT_POINTS = 3
 /** Minimum stationary window used by pause-drift cleanup. */
 export const PAUSE_DRIFT_MIN_DURATION_MS = 60_000
 /** Maximum radius of a stationary drift cloud. */
-export const PAUSE_DRIFT_MAX_RADIUS_M = 50
+export const PAUSE_DRIFT_MAX_RADIUS_M = 60
 /** Maximum first-to-last movement in that cloud. */
 export const PAUSE_DRIFT_MAX_NET_DISTANCE_M = 25
 /** Minimum accumulated noise before drift cleanup is useful. */

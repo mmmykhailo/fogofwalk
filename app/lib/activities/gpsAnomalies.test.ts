@@ -11,6 +11,7 @@ import {
   MIN_RECOVERY_FRAGMENT_POINTS,
   MIN_CONFIDENT_FRAGMENT_POINTS,
   MIN_RETAINED_PATH_POINTS,
+  PAUSE_DRIFT_MAX_RADIUS_M,
   PAUSE_DRIFT_MAX_WINDOW_POINTS,
   RECOVERY_CONFIRMATION_EDGES,
   REJOIN_CONFIRMATION_EDGES,
@@ -504,6 +505,46 @@ describe("GPS reliability cleaner", () => {
     expect(result.paths.length).toBeGreaterThanOrEqual(2)
   })
 
+  test("does not merge a gradual approach and departure into a stationary pause", () => {
+    const approach = Array.from({ length: 120 }, (_, index) =>
+      point(index, index, 0, index * 1_000, { recordedSpeedMps: 1.2 })
+    )
+    const stopped = Array.from({ length: 1_201 }, (_, offset) =>
+      point(
+        approach.length + offset,
+        120 + (offset % 2 === 0 ? 0.05 : 0),
+        0,
+        (approach.length + offset) * 1_000,
+        { recordedSpeedMps: 0.1 }
+      )
+    )
+    const departure = Array.from({ length: 120 }, (_, offset) =>
+      point(
+        approach.length + stopped.length + offset,
+        121 + offset,
+        0,
+        (approach.length + stopped.length + offset) * 1_000,
+        { recordedSpeedMps: 1.2 }
+      )
+    )
+    const sourcePoints = [...approach, ...stopped, ...departure]
+    const result = detectGpsAnomalies([source(sourcePoints)], {
+      activityType: "walking",
+    })
+
+    expect(result.counts.reasons.pause_drift).toBe(1)
+    expect(result.counts.removedPoints).toBeGreaterThan(1_000)
+    expect(
+      result.paths
+        .flat()
+        .some(
+          (item) =>
+            item.sourcePointIndex === sourcePoints.at(-1)!.sourcePointIndex
+        )
+    ).toBe(true)
+    expectAccounting(result, [source(sourcePoints)])
+  })
+
   test("keeps a 100,000-point pause linear and window-bounded", () => {
     const stoppedCount = 100_000
     const prefix = [
@@ -579,8 +620,8 @@ describe("GPS reliability cleaner", () => {
     expect(haversineMeters([179.9, 0], [-179.9, 0])).toBeCloseTo(22_239, 0)
   })
 
-  test("keeps the version-3 policy explicit", () => {
-    expect(ANOMALY_ALGORITHM_VERSION).toBe(3)
+  test("keeps the version-5 policy explicit", () => {
+    expect(ANOMALY_ALGORITHM_VERSION).toBe(5)
     expect(RELIABILITY_WINDOW_EDGES).toBe(31)
     expect(RELIABILITY_MIN_BASELINE_EDGES).toBe(4)
     expect(LOCAL_DISTANCE_FLOOR_M).toBe(100)
@@ -606,6 +647,7 @@ describe("GPS reliability cleaner", () => {
     expect(SPEED_MISMATCH_DIFFERENCE_MPS).toBe(5)
     expect(MIN_RETAINED_PATH_POINTS).toBe(2)
     expect(MIN_CONFIDENT_FRAGMENT_POINTS).toBe(3)
+    expect(PAUSE_DRIFT_MAX_RADIUS_M).toBe(60)
     expect(PAUSE_DRIFT_MAX_WINDOW_POINTS).toBe(600)
     const types: ActivityType[] = [
       "walking",

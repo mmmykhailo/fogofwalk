@@ -1562,7 +1562,7 @@ function findPauseRangesV3(
       path,
       context
     )
-    if (merged) {
+    if (merged && stationaryShapeIsSmall(merged)) {
       activeSummary = merged
     } else {
       flushActive()

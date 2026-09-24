@@ -20,7 +20,7 @@ the fog custom layer, which supplies the surrounding world stencil.
 
 ### GPS reliability cleaning
 
-GPX and FIT imports run through the version-3 GPS reliability cleaner in
+GPX and FIT imports run through the version-5 GPS reliability cleaner in
 `app/lib/activities/gpsAnomalies.ts` before statistics, sun phase, FIT laps,
 normalization, hashing, persistence, or worker projection. It processes each
 original GPX segment independently and keeps point trust, edge drawability, and
@@ -49,10 +49,15 @@ stationary GPS drift are removed when they can be identified. No routing
 service, road snapping, interpolation, or synthesized coordinate is used.
 
 The stored `paths` and aligned `pathTimestamps` are the single cleaned source
-of truth. Statistics, laps, map GeoJSON, fog input, unique distance, sharing,
-and photo matching must preserve those boundaries and must not flatten them
-into a drawable bridge. Cleaner diagnostics contain scalar evidence and exact
-bounded counts only; they do not log coordinates or source records.
+of spatial truth. Laps, map GeoJSON, fog input, unique distance, sharing, and
+photo matching must preserve those boundaries and must not flatten them into a
+drawable bridge. Activity statistics are geometry-derived except that a FIT
+session's device-recorded `total_distance` replaces the aggregate distance and
+its pace/speed derivatives when it is within 10% of the cleaned coordinate
+distance. This keeps strict anomaly removal from discarding reliable distance
+accumulated by the recording device; unique distance and elevation-profile
+positions remain geometry-derived. Cleaner diagnostics contain scalar evidence
+and exact bounded counts only; they do not log coordinates or source records.
 
 Cleaning is import-time behavior. Activities already stored locally or
 downloaded from sync are not rewritten or rehashed automatically. To apply the

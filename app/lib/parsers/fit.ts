@@ -3,6 +3,7 @@ import type {
   RawPoint,
   ActivityLap,
   ActivityLapPathRange,
+  ActivityStats,
 } from "~/types/activities"
 import { computeActivityStatsForPaths } from "~/lib/stats"
 import { LAP_PROFILE_POINTS, MAX_LAPS } from "~/constants/fog"
@@ -42,6 +43,62 @@ function finiteNonNegative(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) && value >= 0
     ? value
     : undefined
+}
+
+const MAX_RECORDED_DISTANCE_RELATIVE_DIFFERENCE = 0.1
+
+/**
+ * Prefer a FIT device's accumulated session distance when it agrees closely
+ * with the cleaned GPS geometry. FIT distance can incorporate the device's
+ * native filtering/calibration, while coordinate integration loses legitimate
+ * distance whenever strict anomaly cleaning removes a disconnected interval.
+ *
+ * The agreement guard prevents a malformed summary field from replacing a
+ * credible geometry-derived result. Spatial values such as unique distance
+ * and the elevation profile deliberately remain based on cleaned geometry.
+ */
+export function applyFitRecordedDistance(
+  stats: Omit<ActivityStats, "uniqueDistanceKm">,
+  totalDistanceM: unknown
+): Omit<ActivityStats, "uniqueDistanceKm"> {
+  const recordedDistanceM = finiteNonNegative(totalDistanceM)
+  if (
+    recordedDistanceM == null ||
+    recordedDistanceM === 0 ||
+    stats.distanceKm <= 0
+  ) {
+    return stats
+  }
+
+  const recordedDistanceKm = recordedDistanceM / 1000
+  const relativeDifference =
+    Math.abs(recordedDistanceKm - stats.distanceKm) /
+    Math.max(recordedDistanceKm, stats.distanceKm)
+  if (relativeDifference > MAX_RECORDED_DISTANCE_RELATIVE_DIFFERENCE) {
+    return stats
+  }
+
+  const { durationMs, movingTimeMs } = stats
+  return {
+    ...stats,
+    distanceKm: recordedDistanceKm,
+    avgPaceMinPerKm:
+      durationMs != null && durationMs > 0
+        ? durationMs / 60_000 / recordedDistanceKm
+        : null,
+    avgMovingPaceMinPerKm:
+      movingTimeMs != null && movingTimeMs > 0
+        ? movingTimeMs / 60_000 / recordedDistanceKm
+        : null,
+    avgSpeedKmh:
+      durationMs != null && durationMs > 0
+        ? recordedDistanceKm / (durationMs / 3_600_000)
+        : null,
+    avgMovingSpeedKmh:
+      movingTimeMs != null && movingTimeMs > 0
+        ? recordedDistanceKm / (movingTimeMs / 3_600_000)
+        : null,
+  }
 }
 
 /** Convert one decoded FIT record without allowing malformed optional sensors into the cleaner. */
@@ -322,8 +379,17 @@ export async function parseFitFileWithResults(
     .flat()
     .find((point) => point.timestampMs != null && isFinite(point.timestampMs))
   const startedAtMs = firstDatedPoint?.timestampMs ?? null
-  const stats = computeActivityStatsForPaths(retainedPaths)
-  const afterStats = { ...stats, uniqueDistanceKm: stats.distanceKm }
+  const geometryStats = computeActivityStatsForPaths(retainedPaths)
+  const stats = applyFitRecordedDistance(
+    geometryStats,
+    data.sessions?.[0]?.total_distance
+  )
+  const afterStats = {
+    ...stats,
+    // Unique distance is spatial and therefore remains tied to the cleaned
+    // geometry rather than the FIT device's accumulated distance.
+    uniqueDistanceKm: geometryStats.distanceKm,
+  }
   const completedReport =
     anomaly.status === "cleaned"
       ? buildGpsAnomalyReport({
