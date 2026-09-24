@@ -205,7 +205,7 @@ describe("GPS anomaly diagnostics", () => {
     expect(summary).not.toHaveProperty("elevationGainM")
   })
 
-  test("reports ambiguous and rejected statuses with one outer group", () => {
+  test("reports cleaned and rejected statuses with one outer group", () => {
     for (const [status, sourcePaths, result] of [
       (() => {
         const paths = [
@@ -215,7 +215,7 @@ describe("GPS anomaly diagnostics", () => {
             )
           ),
         ]
-        return ["ambiguous", paths, detectGpsAnomalies(paths)] as const
+        return ["cleaned", paths, detectGpsAnomalies(paths)] as const
       })(),
       (() => {
         const paths = [source([point(0, 0, 0)])]
@@ -234,7 +234,8 @@ describe("GPS anomaly diagnostics", () => {
       )
       expect(capture.groupEnds).toBe(capture.groups.length)
       expect(capture.debug.map(([label]) => label)).toContain("performance")
-      expect(report.afterStats).toBeNull()
+      if (status === "rejected") expect(report.afterStats).toBeNull()
+      else expect(report.afterStats).not.toBeNull()
       expect(Object.keys(report.beforeStats).sort()).toEqual([
         "distanceKm",
         "durationMs",
@@ -268,5 +269,54 @@ describe("GPS anomaly diagnostics", () => {
       | { omittedExampleCount?: number }
       | undefined
     expect(output?.omittedExampleCount).toBe(0)
+  })
+
+  test("does not count recovered split events as removals", () => {
+    const capture = captureConsole()
+    const positions = [
+      0, 10, 20, 30, 40, 50, 299, 309, 593.6, 603.6, 613.6, 623.6, 633.6,
+    ]
+    const sourcePaths = [
+      source(
+        positions.map((lng, index) =>
+          point(
+            index,
+            lng / 111_195,
+            index < 6
+              ? index * 1_000
+              : index === 6
+                ? 31_000
+                : index === 7
+                  ? 32_000
+                  : 2_110_000 + (index - 8) * 1_000
+          )
+        )
+      ),
+    ]
+    const result = detectGpsAnomalies(sourcePaths, { activityType: "walking" })
+    const report = reportFor(result, sourcePaths)
+
+    logGpsAnomalyReport({
+      fileName: "recovered.gpx",
+      activityIndex: 0,
+      report,
+    })
+
+    const output = capture.debug.find(([label]) => label === "output")?.[1] as
+      | { omittedExampleCount?: number }
+      | undefined
+    const recovered = report.examples.find(
+      (example) => example.code === "recovered_fragment"
+    )
+    const evidence = capture.debug
+      .filter(([label]) => label === "evidence")
+      .at(report.examples.indexOf(recovered!))?.[1]
+    expect(report.counts.reasons.recovered_fragment).toBe(1)
+    expect(recovered).toMatchObject({
+      operation: "split",
+      removedPointCount: 0,
+    })
+    expect(output?.omittedExampleCount).toBe(0)
+    expect(evidence).toMatchObject({ removedPointCount: 0 })
   })
 })

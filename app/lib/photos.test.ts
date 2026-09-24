@@ -48,4 +48,24 @@ describe("photo activity matching", () => {
       lat: 37.01,
     })
   })
+
+  test("does not use an omitted pause-drift sample as a photo candidate", () => {
+    const cleaned = activity()
+    cleaned.paths = [
+      [
+        [14, 50],
+        [14.01, 50.01],
+      ],
+      [
+        [-122, 37],
+        [-122.01, 37.01],
+      ],
+    ]
+    cleaned.pathTimestamps = [
+      [0, 3_600_000],
+      [10_000_000, 10_001_000],
+    ]
+
+    expect(matchPhotoToActivity(1_800_000, [cleaned])).toBeNull()
+  })
 })

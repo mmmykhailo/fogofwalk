@@ -1,7 +1,15 @@
 import { describe, expect, test } from "bun:test"
 import type { RawPoint } from "~shared/activities"
 import { buildLapActivity } from "~/lib/laps"
-import { buildLapsFromFit } from "./fit"
+import {
+  detectGpsAnomalies,
+  type AnomalyPoint,
+} from "~/lib/activities/gpsAnomalies"
+import {
+  applyFitRecordedDistance,
+  buildLapsFromFit,
+  fitRecordToAnomalyPoint,
+} from "./fit"
 
 function point(lng: number, timestampMs?: number): RawPoint {
   return {
@@ -117,6 +125,16 @@ describe("FIT lap ranges", () => {
     ])
   })
 
+  test("drops laps reduced below two retained points", () => {
+    const paths = [
+      [point(0, 0), point(0.001, 1_000)],
+      [point(10, 2_000), point(10.001, 3_000)],
+    ]
+    const laps = buildLapsFromFit(paths, [lap(0), lap(2_000), lap(3_000)])
+
+    expect(laps).toBeUndefined()
+  })
+
   test("builds a synthetic lap activity from path ranges", () => {
     const activity = {
       id: "activity",
@@ -188,4 +206,163 @@ describe("FIT lap ranges", () => {
     ])
     expect(result.coordinates).toHaveLength(4)
   })
+})
+
+describe("FIT reliability signals", () => {
+  test("uses a plausible device-recorded distance without weakening cleaned geometry", () => {
+    const geometryStats = {
+      distanceKm: 98.714,
+      elevationGainM: 10,
+      elevationLossM: 5,
+      hasElevation: true,
+      durationMs: 72_000_000,
+      movingTimeMs: 66_000_000,
+      avgPaceMinPerKm: 0,
+      avgMovingPaceMinPerKm: 0,
+      avgSpeedKmh: 0,
+      avgMovingSpeedKmh: 0,
+      elevationProfile: [{ distanceKm: 98.714, elevationM: 100 }],
+    }
+
+    const result = applyFitRecordedDistance(geometryStats, 100_219.46)
+
+    expect(result.distanceKm).toBeCloseTo(100.21946, 5)
+    expect(result.avgPaceMinPerKm).toBeCloseTo(
+      72_000_000 / 60_000 / 100.21946,
+      8
+    )
+    expect(result.avgMovingSpeedKmh).toBeCloseTo(
+      100.21946 / (66_000_000 / 3_600_000),
+      8
+    )
+    expect(result.elevationProfile).toBe(geometryStats.elevationProfile)
+  })
+
+  test("ignores missing or implausible device-recorded distances", () => {
+    const geometryStats = {
+      distanceKm: 10,
+      elevationGainM: 0,
+      elevationLossM: 0,
+      hasElevation: false,
+      durationMs: null,
+      movingTimeMs: null,
+      avgPaceMinPerKm: null,
+      avgMovingPaceMinPerKm: null,
+      avgSpeedKmh: null,
+      avgMovingSpeedKmh: null,
+      elevationProfile: [],
+    }
+
+    expect(applyFitRecordedDistance(geometryStats, undefined)).toBe(
+      geometryStats
+    )
+    expect(applyFitRecordedDistance(geometryStats, 0)).toBe(geometryStats)
+    expect(applyFitRecordedDistance(geometryStats, 25_000)).toBe(geometryStats)
+  })
+
+  test("preserves finite non-negative optional signals", () => {
+    const point = fitRecordToAnomalyPoint(
+      {
+        position_long: 14,
+        position_lat: 50,
+        timestamp: new Date(1_000),
+        enhanced_altitude: 123.4,
+        enhanced_speed: 2.5,
+        gps_accuracy: 8,
+      },
+      17
+    )
+
+    expect(point).toEqual({
+      sourcePointIndex: 17,
+      lng: 14,
+      lat: 50,
+      timestampMs: 1_000,
+      elevationM: 123.4,
+      recordedSpeedMps: 2.5,
+      gpsAccuracyM: 8,
+    })
+  })
+
+  test("omits absent, negative, non-finite, and malformed optional signals", () => {
+    const point = fitRecordToAnomalyPoint(
+      {
+        position_long: 14,
+        position_lat: 50,
+        timestamp: "not-a-date",
+        altitude: "bad",
+        speed: -1,
+        gps_accuracy: Number.NaN,
+      },
+      2
+    )
+
+    expect(point).toEqual({
+      sourcePointIndex: 2,
+      lng: 14,
+      lat: 50,
+    })
+  })
+
+  test("coordinate-derived impossibility wins over a contradictory low device speed", () => {
+    const points = [
+      { lng: 0, lat: 0, timestampMs: 0, recordedSpeedMps: 0 },
+      { lng: 0.0001, lat: 0, timestampMs: 1_000, recordedSpeedMps: 0 },
+      { lng: 0.0002, lat: 0, timestampMs: 2_000, recordedSpeedMps: 0 },
+      { lng: 0.0003, lat: 0, timestampMs: 3_000, recordedSpeedMps: 0 },
+      { lng: 0.0004, lat: 0, timestampMs: 4_000, recordedSpeedMps: 0 },
+      { lng: 0.0035, lat: 0, timestampMs: 5_000, recordedSpeedMps: 0 },
+      { lng: 0.0005, lat: 0, timestampMs: 6_000, recordedSpeedMps: 0 },
+      { lng: 0.0006, lat: 0, timestampMs: 7_000, recordedSpeedMps: 0 },
+      { lng: 0.0007, lat: 0, timestampMs: 8_000, recordedSpeedMps: 0 },
+    ].map((record, sourcePointIndex) => ({
+      ...record,
+      sourcePointIndex,
+    }))
+    const result = detectGpsAnomalies([{ sourcePathIndex: 0, points }], {
+      activityType: "walking",
+    })
+
+    expect(result.counts.reasons.local_spike).toBe(1)
+    expect(result.examples[0]?.triggerCode).toBe("impossible_speed")
+  })
+
+  for (const withSensors of [false, true]) {
+    test(`recovers a reliable fragment ${withSensors ? "with" : "without"} optional sensors`, () => {
+      const positions = [
+        0, 10, 20, 30, 40, 50, 299, 309, 593.6, 603.6, 613.6, 623.6, 633.6,
+      ]
+      const points: AnomalyPoint[] = positions.map((xM, sourcePointIndex) => {
+        const timestampMs =
+          sourcePointIndex < 6
+            ? sourcePointIndex * 1_000
+            : sourcePointIndex === 6
+              ? 31_000
+              : sourcePointIndex === 7
+                ? 32_000
+                : 2_110_000 + (sourcePointIndex - 8) * 1_000
+        return {
+          sourcePointIndex,
+          lng: xM / 111_195,
+          lat: 0,
+          timestampMs,
+          ...(withSensors ? { gpsAccuracyM: 3, recordedSpeedMps: 10 } : {}),
+        }
+      })
+      const result = detectGpsAnomalies([{ sourcePathIndex: 0, points }], {
+        activityType: "walking",
+      })
+
+      expect(
+        result.paths.map((path) => path.map((point) => point.sourcePointIndex))
+      ).toEqual([
+        [0, 1, 2, 3, 4, 5],
+        [8, 9, 10, 11, 12],
+      ])
+      expect(result.counts.removedPoints).toBe(2)
+      expect(result.counts.reasons.recovered_fragment).toBe(1)
+      expect(result.counts.reasons.untrusted_suffix).toBeUndefined()
+      expect(result.work.fragmentPromotions).toBe(1)
+    })
+  }
 })

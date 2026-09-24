@@ -5,13 +5,34 @@ import type {
   ActivityType,
 } from "~shared/activities"
 import {
-  ABSOLUTE_TELEPORT_DISTANCE_M,
   ANOMALY_ALGORITHM_VERSION,
-  MAX_ANOMALY_EXAMPLES,
-  MIN_SPEED_TEST_DISTANCE_M,
+  GPS_ACCURACY_MULTIPLIER,
+  HARD_TELEPORT_DISTANCE_M,
+  LOCAL_DISTANCE_CEILING_M,
+  LOCAL_DISTANCE_FLOOR_M,
+  LOCAL_DISTANCE_MULTIPLIER,
+  MAX_RELIABILITY_EXAMPLES,
+  MAX_TRUSTED_GPS_ACCURACY_M,
+  MIN_CONFIDENT_FRAGMENT_POINTS,
+  MIN_RECOVERY_FRAGMENT_POINTS,
+  PAUSE_DRIFT_MAX_WINDOW_POINTS,
+  RECOVERY_CONFIRMATION_EDGES,
   REJOIN_CONFIRMATION_EDGES,
-  TRUSTED_PREFIX_MIN_POINTS,
-  TRUSTED_PREFIX_MIN_PLAUSIBLE_EDGES,
+  REJOIN_POSITION_CEILING_M,
+  REJOIN_POSITION_FLOOR_M,
+  RELIABILITY_MIN_BASELINE_EDGES,
+  RELIABILITY_WINDOW_EDGES,
+  RELATIVE_ACCURACY_FLOOR_M,
+  RELATIVE_ACCURACY_MIN_SAMPLES,
+  RELATIVE_ACCURACY_MULTIPLIER,
+  SHORT_ISLAND_MAX_POINTS,
+  SPEED_MISMATCH_COORDINATE_FLOOR_MPS,
+  SPEED_MISMATCH_DIFFERENCE_MPS,
+  SPEED_MISMATCH_RATIO,
+  SPEED_TEST_DISTANCE_FLOOR_M,
+  TIME_GAP_CEILING_MS,
+  TIME_GAP_FLOOR_MS,
+  TIME_GAP_MULTIPLIER,
   maxPlausibleSpeed,
 } from "~/constants/activityAnomalies"
 import {
@@ -219,11 +240,15 @@ function differenceOrNull(
 }
 
 function removalCount(report: GpsAnomalyReport): number {
-  return (
-    (report.counts.reasons.teleport_spike ?? 0) +
-    (report.counts.reasons.teleport_excursion ?? 0) +
-    (report.counts.reasons.teleport_tail ?? 0) +
-    (report.counts.reasons.ambiguous_discontinuity ?? 0)
+  return Object.entries(report.counts.reasons).reduce(
+    (total, [code, count]) =>
+      code === "recording_gap" ||
+      code === "non_positive_time" ||
+      code === "recovered_fragment" ||
+      code === "dropped_short_path"
+        ? total
+        : total + (count ?? 0),
+    0
   )
 }
 
@@ -232,12 +257,16 @@ function removalEvidence(example: GpsAnomalyExample) {
     sourcePathIndex: example.sourcePathIndex,
     pointIndexes: [example.startPointIndex, example.endPointIndex],
     removedPointCount:
-      example.endPointIndex >= example.startPointIndex
-        ? example.endPointIndex - example.startPointIndex + 1
-        : 0,
+      example.operation === "remove" ? example.removedPointCount : 0,
     entryDistanceM: example.entryDistanceM,
     entryDeltaMs: example.entryDeltaMs,
     entrySpeedMps: example.entrySpeedMps,
+    distanceLimitM: example.distanceLimitM,
+    effectiveDistanceLimitM: example.effectiveDistanceLimitM,
+    timeGapLimitMs: example.timeGapLimitMs,
+    trustedDistanceSamples: example.trustedDistanceSamples,
+    trustedTimeSamples: example.trustedTimeSamples,
+    triggerCode: example.triggerCode ?? null,
     exitEdgeImpossible: example.rejoinPointIndex != null,
     rejoinDistanceFromLastTrustedM: example.rejoinDistanceFromLastTrustedM,
     rejoinElapsedMs: example.rejoinElapsedMs,
@@ -287,18 +316,44 @@ export function logGpsAnomalyReport(input: {
     })
     console.debug("configuration", {
       algorithmVersion: ANOMALY_ALGORITHM_VERSION,
-      triggerFloorM: MIN_SPEED_TEST_DISTANCE_M,
+      reliabilityWindowEdges: RELIABILITY_WINDOW_EDGES,
+      minimumBaselineEdges: RELIABILITY_MIN_BASELINE_EDGES,
+      localDistanceFloorM: LOCAL_DISTANCE_FLOOR_M,
+      localDistanceMultiplier: LOCAL_DISTANCE_MULTIPLIER,
+      localDistanceCeilingM: LOCAL_DISTANCE_CEILING_M,
+      timeGapFloorMs: TIME_GAP_FLOOR_MS,
+      timeGapMultiplier: TIME_GAP_MULTIPLIER,
+      timeGapCeilingMs: TIME_GAP_CEILING_MS,
+      speedTestDistanceFloorM: SPEED_TEST_DISTANCE_FLOOR_M,
+      maxTrustedGpsAccuracyM: MAX_TRUSTED_GPS_ACCURACY_M,
+      gpsAccuracyMultiplier: GPS_ACCURACY_MULTIPLIER,
       applicableSpeedCeilingMps: maxPlausibleSpeed(report.activityType),
-      absoluteFallbackM: ABSOLUTE_TELEPORT_DISTANCE_M,
+      hardTeleportDistanceM: HARD_TELEPORT_DISTANCE_M,
       confirmationEdges: REJOIN_CONFIRMATION_EDGES,
-      trustedPrefix: {
-        points: TRUSTED_PREFIX_MIN_POINTS,
-        plausibleEdges: TRUSTED_PREFIX_MIN_PLAUSIBLE_EDGES,
+      recoveryConfirmationEdges: RECOVERY_CONFIRMATION_EDGES,
+      minimumRecoveryFragmentPoints: MIN_RECOVERY_FRAGMENT_POINTS,
+      shortIslandMaxPoints: SHORT_ISLAND_MAX_POINTS,
+      relativeAccuracy: {
+        minimumSamples: RELATIVE_ACCURACY_MIN_SAMPLES,
+        floorM: RELATIVE_ACCURACY_FLOOR_M,
+        multiplier: RELATIVE_ACCURACY_MULTIPLIER,
       },
+      speedMismatch: {
+        coordinateFloorMps: SPEED_MISMATCH_COORDINATE_FLOOR_MPS,
+        ratio: SPEED_MISMATCH_RATIO,
+        differenceMps: SPEED_MISMATCH_DIFFERENCE_MPS,
+      },
+      rejoin: {
+        floorM: REJOIN_POSITION_FLOOR_M,
+        ceilingM: REJOIN_POSITION_CEILING_M,
+      },
+      minimumConfidentFragmentPoints: MIN_CONFIDENT_FRAGMENT_POINTS,
+      pauseWindowMaxPoints: PAUSE_DRIFT_MAX_WINDOW_POINTS,
+      maximumExamples: MAX_RELIABILITY_EXAMPLES,
     })
     report.examples.forEach((example, index) => {
       console.groupCollapsed(
-        `removal ${index + 1}: ${example.code} [` +
+        `${example.operation} ${index + 1}: ${example.code} [` +
           `${example.startPointIndex}..${example.endPointIndex}]`
       )
       try {
@@ -315,10 +370,14 @@ export function logGpsAnomalyReport(input: {
       sourcePathCount: report.sourcePathCount,
       emittedPathCount: report.emittedPathCount,
       splitCount: report.counts.splitCount,
+      gapSplitCount: report.counts.gapSplitCount,
+      removalSplitCount: report.counts.removalSplitCount,
+      trimmedPrefixPoints: report.counts.trimmedPrefixPoints,
+      trimmedSuffixPoints: report.counts.trimmedSuffixPoints,
       omittedExampleCount: Math.max(
         0,
         removalCount(report) -
-          Math.min(MAX_ANOMALY_EXAMPLES, report.examples.length)
+          Math.min(MAX_RELIABILITY_EXAMPLES, report.examples.length)
       ),
     })
     console.debug("statistics", {
@@ -345,8 +404,14 @@ export function logGpsAnomalyReport(input: {
     console.debug("performance", {
       detectorWallTimeMs: report.detectorDurationMs,
       pointsVisited: report.work.pointsVisited,
+      candidatePointsVisited: report.work.candidatePointsVisited,
+      fragmentPromotions: report.work.fragmentPromotions,
+      mergedRemovalRangeCount: report.work.mergedRemovalRangeCount,
       distanceCalculations: report.work.distanceCalculations,
       boundedLookaheadCount: report.work.boundedLookaheadCount,
+      maxDistanceWindowSize: report.work.maxDistanceWindowSize,
+      maxTimeWindowSize: report.work.maxTimeWindowSize,
+      pauseWindowPointsVisited: report.work.pauseWindowPointsVisited,
     })
   } finally {
     console.groupEnd()

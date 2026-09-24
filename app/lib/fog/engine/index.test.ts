@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises"
 import type { FogWorkerActivity } from "~/types/activities"
 import { FOG_PROTOCOL_VERSION, type FogRequest } from "../protocol"
 import { createFogEngine } from "."
+import { bufferFogActivity } from "./buffer"
 import { validateFogRenderData } from "./validate"
 
 const overlappingFillCoordinates = {
@@ -46,6 +47,33 @@ function request(overrides: Partial<FogRequest> = {}): FogRequest {
 }
 
 describe("FogEngine", () => {
+  test("buffers cleaned paths independently without inventing a corridor bridge", () => {
+    const result = bufferFogActivity({
+      id: "disconnected",
+      name: "disconnected",
+      coordinates: [
+        [14, 50],
+        [14.001, 50],
+        [15, 50],
+        [15.001, 50],
+      ],
+      paths: [
+        [
+          [14, 50],
+          [14.001, 50],
+        ],
+        [
+          [15, 50],
+          [15.001, 50],
+        ],
+      ],
+    })
+
+    expect(result.rejected).toBe(false)
+    expect(result.inputPointCount).toBe(4)
+    expect(result.masks).toHaveLength(2)
+  })
+
   test("[F-042] keeps a valid overlapping fill rebuild complete", async () => {
     const result = await createFogEngine().process(
       request({

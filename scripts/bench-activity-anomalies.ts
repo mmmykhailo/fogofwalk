@@ -33,6 +33,12 @@ interface BenchmarkSample {
   distanceCalculations: number
   pointsVisited: number
   boundedLookaheadCount: number
+  candidatePointsVisited: number
+  fragmentPromotions: number
+  mergedRemovalRangeCount: number
+  maxDistanceWindowSize: number
+  maxTimeWindowSize: number
+  pauseWindowPointsVisited: number
 }
 
 interface BenchmarkRun {
@@ -152,7 +158,7 @@ function parseAndReport(sourcePaths: AnomalySourcePath[]): BenchmarkRun {
   const result = detectGpsAnomalies(sourcePaths, { activityType: "cycling" })
   const detectorDurationMs = performance.now() - detectorStartedAt
 
-  if (result.status === "ambiguous" || result.status === "rejected") {
+  if (result.status === "rejected") {
     buildGpsAnomalyReport({
       result,
       format: "gpx",
@@ -215,6 +221,12 @@ function measure(scenario: ScenarioName, pointCount: number): BenchmarkSample {
     distanceCalculations: lastRun.result.work.distanceCalculations,
     pointsVisited: lastRun.result.work.pointsVisited,
     boundedLookaheadCount: lastRun.result.work.boundedLookaheadCount,
+    candidatePointsVisited: lastRun.result.work.candidatePointsVisited,
+    fragmentPromotions: lastRun.result.work.fragmentPromotions,
+    mergedRemovalRangeCount: lastRun.result.work.mergedRemovalRangeCount,
+    maxDistanceWindowSize: lastRun.result.work.maxDistanceWindowSize,
+    maxTimeWindowSize: lastRun.result.work.maxTimeWindowSize,
+    pauseWindowPointsVisited: lastRun.result.work.pauseWindowPointsVisited,
   }
 }
 

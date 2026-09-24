@@ -3,6 +3,7 @@ import type {
   RawPoint,
   ActivityLap,
   ActivityLapPathRange,
+  ActivityStats,
 } from "~/types/activities"
 import { computeActivityStatsForPaths } from "~/lib/stats"
 import { LAP_PROFILE_POINTS, MAX_LAPS } from "~/constants/fog"
@@ -36,6 +37,90 @@ export function fitTimeToMs(value: unknown): number {
   if (typeof value === "number") return value
   if (typeof value === "string") return Date.parse(value)
   return NaN
+}
+
+function finiteNonNegative(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? value
+    : undefined
+}
+
+const MAX_RECORDED_DISTANCE_RELATIVE_DIFFERENCE = 0.1
+
+/**
+ * Prefer a FIT device's accumulated session distance when it agrees closely
+ * with the cleaned GPS geometry. FIT distance can incorporate the device's
+ * native filtering/calibration, while coordinate integration loses legitimate
+ * distance whenever strict anomaly cleaning removes a disconnected interval.
+ *
+ * The agreement guard prevents a malformed summary field from replacing a
+ * credible geometry-derived result. Spatial values such as unique distance
+ * and the elevation profile deliberately remain based on cleaned geometry.
+ */
+export function applyFitRecordedDistance(
+  stats: Omit<ActivityStats, "uniqueDistanceKm">,
+  totalDistanceM: unknown
+): Omit<ActivityStats, "uniqueDistanceKm"> {
+  const recordedDistanceM = finiteNonNegative(totalDistanceM)
+  if (
+    recordedDistanceM == null ||
+    recordedDistanceM === 0 ||
+    stats.distanceKm <= 0
+  ) {
+    return stats
+  }
+
+  const recordedDistanceKm = recordedDistanceM / 1000
+  const relativeDifference =
+    Math.abs(recordedDistanceKm - stats.distanceKm) /
+    Math.max(recordedDistanceKm, stats.distanceKm)
+  if (relativeDifference > MAX_RECORDED_DISTANCE_RELATIVE_DIFFERENCE) {
+    return stats
+  }
+
+  const { durationMs, movingTimeMs } = stats
+  return {
+    ...stats,
+    distanceKm: recordedDistanceKm,
+    avgPaceMinPerKm:
+      durationMs != null && durationMs > 0
+        ? durationMs / 60_000 / recordedDistanceKm
+        : null,
+    avgMovingPaceMinPerKm:
+      movingTimeMs != null && movingTimeMs > 0
+        ? movingTimeMs / 60_000 / recordedDistanceKm
+        : null,
+    avgSpeedKmh:
+      durationMs != null && durationMs > 0
+        ? recordedDistanceKm / (durationMs / 3_600_000)
+        : null,
+    avgMovingSpeedKmh:
+      movingTimeMs != null && movingTimeMs > 0
+        ? recordedDistanceKm / (movingTimeMs / 3_600_000)
+        : null,
+  }
+}
+
+/** Convert one decoded FIT record without allowing malformed optional sensors into the cleaner. */
+export function fitRecordToAnomalyPoint(
+  record: Record<string, unknown>,
+  sourcePointIndex: number
+): AnomalyPoint {
+  const alt = record.enhanced_altitude ?? record.altitude
+  const timestampMs = fitTimeToMs(record.timestamp)
+  const recordedSpeed = finiteNonNegative(record.enhanced_speed ?? record.speed)
+  const gpsAccuracy = finiteNonNegative(record.gps_accuracy)
+  return {
+    sourcePointIndex,
+    lng: record.position_long as number,
+    lat: record.position_lat as number,
+    ...(typeof alt === "number" && Number.isFinite(alt)
+      ? { elevationM: alt }
+      : {}),
+    ...(Number.isFinite(timestampMs) ? { timestampMs } : {}),
+    ...(recordedSpeed == null ? {} : { recordedSpeedMps: recordedSpeed }),
+    ...(gpsAccuracy == null ? {} : { gpsAccuracyM: gpsAccuracy }),
+  }
 }
 
 interface LapBoundary {
@@ -216,15 +301,23 @@ export async function parseFitFileWithResults(
   const data = await parser.parseAsync(buffer)
 
   // fit-file-parser already returns position_lat/long in degrees
-  const validRecords = (data.records ?? []).filter((r) => {
-    const lat = r.position_lat
-    const lng = r.position_long
-    if (lat == null || lng == null) return false
-    // Drop pre-GPS-lock records clustered near null island
-    if (Math.abs(lat as number) < 0.001 && Math.abs(lng as number) < 0.001)
-      return false
-    return true
-  })
+  const validRecords = (data.records ?? [])
+    .map((record, sourcePointIndex) => ({ record, sourcePointIndex }))
+    .filter(({ record }) => {
+      const lat = record.position_lat
+      const lng = record.position_long
+      if (
+        typeof lat !== "number" ||
+        typeof lng !== "number" ||
+        !Number.isFinite(lat) ||
+        !Number.isFinite(lng)
+      )
+        return false
+      // Drop pre-GPS-lock records clustered near null island
+      if (Math.abs(lat as number) < 0.001 && Math.abs(lng as number) < 0.001)
+        return false
+      return true
+    })
 
   if (validRecords.length < 2) {
     return {
@@ -238,24 +331,13 @@ export async function parseFitFileWithResults(
   const activityType = normalizeActivityType(
     data.sessions?.[0]?.sport ?? data.sports?.[0]?.sport
   )
-  const rawPoints: AnomalyPoint[] = validRecords.map((r, sourcePointIndex) => {
-    const alt = r.enhanced_altitude ?? r.altitude
-    const ts = fitTimeToMs(r.timestamp)
-    const recordedSpeed = r.enhanced_speed ?? r.speed
-    return {
-      sourcePointIndex,
-      lng: r.position_long as number,
-      lat: r.position_lat as number,
-      elevationM: typeof alt === "number" && isFinite(alt) ? alt : undefined,
-      timestampMs: isFinite(ts) ? ts : undefined,
-      ...(typeof recordedSpeed === "number" && isFinite(recordedSpeed)
-        ? { recordedSpeedMps: recordedSpeed }
-        : {}),
-      ...(typeof r.gps_accuracy === "number" && isFinite(r.gps_accuracy)
-        ? { gpsAccuracyM: r.gps_accuracy }
-        : {}),
-    }
-  })
+  const rawPoints: AnomalyPoint[] = validRecords.map(
+    ({ record, sourcePointIndex }) =>
+      fitRecordToAnomalyPoint(
+        record as unknown as Record<string, unknown>,
+        sourcePointIndex
+      )
+  )
 
   const detectorStartedAt = performance.now()
   const anomaly = detectGpsAnomalies(
@@ -265,7 +347,7 @@ export async function parseFitFileWithResults(
   const detectorDurationMs = performance.now() - detectorStartedAt
   const sourcePaths = [{ sourcePathIndex: 0, points: rawPoints }]
   const rejectionReport =
-    anomaly.status === "ambiguous" || anomaly.status === "rejected"
+    anomaly.status === "rejected"
       ? buildGpsAnomalyReport({
           result: anomaly,
           format: "fit",
@@ -279,10 +361,7 @@ export async function parseFitFileWithResults(
     const rejection: ParsedImportRejection = {
       id: createUuid(),
       activityIndex: 0,
-      reason:
-        anomaly.status === "ambiguous"
-          ? "ambiguous-gps-discontinuity"
-          : "no-renderable-path",
+      reason: "no-renderable-path",
       gpsAnomalyReport: rejectionReport,
     }
     return { activities: [], rejections: [rejection] }
@@ -300,8 +379,17 @@ export async function parseFitFileWithResults(
     .flat()
     .find((point) => point.timestampMs != null && isFinite(point.timestampMs))
   const startedAtMs = firstDatedPoint?.timestampMs ?? null
-  const stats = computeActivityStatsForPaths(retainedPaths)
-  const afterStats = { ...stats, uniqueDistanceKm: stats.distanceKm }
+  const geometryStats = computeActivityStatsForPaths(retainedPaths)
+  const stats = applyFitRecordedDistance(
+    geometryStats,
+    data.sessions?.[0]?.total_distance
+  )
+  const afterStats = {
+    ...stats,
+    // Unique distance is spatial and therefore remains tied to the cleaned
+    // geometry rather than the FIT device's accumulated distance.
+    uniqueDistanceKm: geometryStats.distanceKm,
+  }
   const completedReport =
     anomaly.status === "cleaned"
       ? buildGpsAnomalyReport({
