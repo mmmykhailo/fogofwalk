@@ -2,6 +2,14 @@
 
 All notable changes to Fog of Walk are documented here.
 
+## [0.10.0] - 2026-09-25
+
+### Changed
+
+- improve gps anomalies detection (#43)
+- split clear button into clear activities and clear photos (#42)
+- allow creating saved points on activity hitbox (#41)
+
 ## [0.9.0] - 2026-09-17
 
 ### Changed
