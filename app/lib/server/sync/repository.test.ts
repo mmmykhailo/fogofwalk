@@ -109,6 +109,75 @@ describe("MemorySyncRepository", () => {
     )
   })
 
+  test("recovers leases left by an unloaded page", async () => {
+    const repository = createMemorySyncRepository({ now: () => 100 })
+    const active = await repository.enqueueOutbox(baseItem)
+    const [claimed] = await repository.claimOutbox({
+      now: 100,
+      leaseMs: 60_000,
+      owner: "old-page",
+    })
+    expect(claimed?.status).toBe("in-flight")
+
+    const recovered = await repository.recoverInFlightOutbox?.()
+
+    expect(recovered).toBe(1)
+    expect(await repository.loadOutbox()).toMatchObject([
+      { id: active.id, status: "pending", leaseId: undefined },
+    ])
+    expect(
+      await repository.claimOutbox({
+        now: 100,
+        leaseMs: 60_000,
+        owner: "new-page",
+      })
+    ).toHaveLength(1)
+  })
+
+  test("completes an abandoned superseded metadata request", async () => {
+    const repository = createMemorySyncRepository({ now: () => 100 })
+    const first = await repository.enqueueOutbox({
+      dedupeKey: "activity:local-metadata:hash:activityType",
+      operation: "metadata",
+      payload: {
+        kind: "local-metadata",
+        source: "local",
+        intentId: "one",
+        activityId: "activity",
+        contentHash: "hash",
+        patch: { activityType: "cycling" },
+        libraryRevision: 1,
+      },
+    })
+    await repository.claimOutbox({
+      now: 100,
+      leaseMs: 60_000,
+      owner: "old-page",
+    })
+    const latest = await repository.enqueueOutbox({
+      dedupeKey: "activity:local-metadata:hash:activityType",
+      operation: "metadata",
+      payload: {
+        kind: "local-metadata",
+        source: "local",
+        intentId: "two",
+        activityId: "activity",
+        contentHash: "hash",
+        patch: { activityType: "running" },
+        libraryRevision: 2,
+      },
+    })
+
+    await repository.recoverInFlightOutbox?.()
+
+    expect(await repository.loadOutbox()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: first.id, status: "complete" }),
+        expect.objectContaining({ id: latest.id, status: "pending" }),
+      ])
+    )
+  })
+
   test("can claim only the effects selected by a page plan", async () => {
     const repository = createMemorySyncRepository({ now: () => 100 })
     const first = await repository.enqueueOutbox(baseItem)

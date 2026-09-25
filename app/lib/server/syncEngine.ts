@@ -298,6 +298,10 @@ async function acquireSyncLeadership(
       { mode: "exclusive", ifAvailable: true },
       async (lock) => {
         if (!lock) return false
+        // A navigation can destroy a page while an effect is leased. The
+        // account lock proves that no other sync run owns the account now, so
+        // those abandoned leases are safe to hand to this run.
+        await repository.recoverInFlightOutbox?.()
         await run()
         return true
       }
@@ -311,6 +315,7 @@ async function acquireSyncLeadership(
   })
   if (!acquired) return false
   try {
+    await repository.recoverInFlightOutbox?.()
     await run()
     return true
   } finally {

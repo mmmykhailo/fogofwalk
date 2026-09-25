@@ -103,6 +103,8 @@ export interface SyncRepository {
   enqueueOutbox(item: SyncOutboxItemInput): Promise<SyncOutboxItem>
   loadOutbox(): Promise<SyncOutboxItem[]>
   claimOutbox(options: ClaimOutboxOptions): Promise<SyncOutboxItem[]>
+  /** Reclaim effects left leased by a page that was unloaded. */
+  recoverInFlightOutbox?(): Promise<number>
   completeOutbox(id: string, leaseId: string): Promise<boolean>
   failOutbox(
     id: string,
@@ -661,6 +663,34 @@ export function createIndexedDbSyncRepository(
     return claimed.map(clone)
   }
 
+  async function recoverInFlightOutbox(): Promise<number> {
+    const db = await openStorageDatabase()
+    if (!db) return 0
+    const tx = db.transaction("sync-outbox", "readwrite")
+    const store = tx.objectStore("sync-outbox")
+    const now = Date.now()
+    const items = await requestResult<SyncOutboxItem[]>(store.getAll())
+    let recovered = 0
+    for (const item of items) {
+      if (!belongsToScope(item, accountId) || item.status !== "in-flight") {
+        continue
+      }
+      store.put({
+        ...item,
+        // A superseded request can never become the latest value again. Its
+        // successor is the work that must be retried after the old page dies.
+        status: item.supersededBy ? "complete" : "pending",
+        updatedAt: now,
+        leaseId: undefined,
+        leaseOwner: undefined,
+        leaseUntil: undefined,
+      })
+      recovered++
+    }
+    await transactionResult(tx)
+    return recovered
+  }
+
   async function completeOutbox(id: string, leaseId: string): Promise<boolean> {
     const db = await openStorageDatabase()
     if (!db) return false
@@ -768,6 +798,7 @@ export function createIndexedDbSyncRepository(
     enqueueOutbox,
     loadOutbox,
     claimOutbox,
+    recoverInFlightOutbox,
     completeOutbox,
     failOutbox,
     adoptUnscopedOutbox,
@@ -1024,6 +1055,26 @@ export function createMemorySyncRepository(
     return claimed.map(clone)
   }
 
+  async function recoverInFlightOutbox(): Promise<number> {
+    const timestamp = now()
+    let recovered = 0
+    for (const [id, item] of items) {
+      if (!belongsToScope(item, accountId) || item.status !== "in-flight") {
+        continue
+      }
+      items.set(id, {
+        ...item,
+        status: item.supersededBy ? "complete" : "pending",
+        updatedAt: timestamp,
+        leaseId: undefined,
+        leaseOwner: undefined,
+        leaseUntil: undefined,
+      })
+      recovered++
+    }
+    return recovered
+  }
+
   async function completeOutbox(id: string, leaseId: string): Promise<boolean> {
     const item = items.get(id)
     if (
@@ -1114,6 +1165,7 @@ export function createMemorySyncRepository(
     enqueueOutbox,
     loadOutbox,
     claimOutbox,
+    recoverInFlightOutbox,
     completeOutbox,
     failOutbox,
     adoptUnscopedOutbox,
